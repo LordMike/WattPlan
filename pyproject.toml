@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "wattplan"
 version = "0.1.0"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = [
   "numpy",
   "pydantic>=2",
@@ -14,8 +14,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = [
-  "pytest",
-  "pytest-homeassistant-custom-component",
+  "pytest-homeassistant-custom-component==0.13.317",
 ]
 
 [tool.pytest.ini_options]
