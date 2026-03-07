@@ -1,0 +1,1056 @@
+{
+  "config": {
+    "step": {
+      "requirements": {
+        "title": "Before you start",
+        "description": "**Required before setup**\n\n- A **price forecast** source that covers the full plan period\n- Forecast values as timestamp/value pairs (`start`, `value`)\n\n**Optional**\n\n- A usage forecast source\n- A PV forecast source\n\nYou can either reference an existing entity that already exposes forecast data in its attributes, or write a Jinja2 template that returns the expected timestamp/value list.",
+        "submit": "Start"
+      },
+      "planner_setup": {
+        "title": "Add new WattPlan setup",
+        "description": "Create one WattPlan setup for your home.",
+        "submit": "Next",
+        "data": {
+          "name": "Setup name",
+          "slot_minutes": "Resolution (minutes)",
+          "hours_to_plan": "How many hours ahead should the plan cover"
+        },
+        "data_description": {
+          "name": "This name will identify this WattPlan setup in Home Assistant.",
+          "slot_minutes": "This is the plan resolution. A lower value means more detailed plans and more required forecast values.",
+          "hours_to_plan": "WattPlan needs forecasts that cover the full selected period."
+        }
+      },
+      "source_price": {
+        "title": "Price source",
+        "description": "**Choose how WattPlan reads your price forecast**\n\n- **Template**: Use Jinja2 to build a forecast list from one or more entities.\n- **Entity attribute**: Read a forecast list directly from an entity attribute.\n\nBoth source types must produce enough forecast data for the planner window.",
+        "submit": "Next",
+        "data": {
+          "source_mode": "Source mode"
+        },
+        "data_description": {
+          "source_mode": "Choose how to provide your price forecast. Use Template to build or reshape data with Jinja2. Use Entity attribute when an entity already exposes a forecast list."
+        }
+      },
+      "source_price_template": {
+        "title": "Price source template",
+        "description": "Provide a template that returns price forecast data.\n\nReturn either:\n- a list of objects with `start` and `value`\n- or a list of numeric values\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
+        "data": {
+          "template": "Template",
+          "fixup_profile": "Fixup profile"
+        },
+        "data_description": {
+          "template": "Return a native Python-style list from Jinja, not a JSON string.",
+          "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+            }
+          }
+        }
+      },
+      "source_price_adapter": {
+        "title": "Price source entity attribute",
+        "description": "Use an entity attribute for price forecast data.\n\nAdapter type formats:\n- **Attribute objects**: list of items with timestamp/value keys\n- **Attribute values**: list of numeric values",
+        "data": {
+          "entity_id": "Entity",
+          "adapter_type": "Adapter type",
+          "name": "Attribute name",
+          "time_key": "Timestamp key",
+          "value_key": "Value key",
+          "fixup_profile": "Fixup profile"
+        },
+        "data_description": {
+          "entity_id": "Entity that exposes the forecast attribute.",
+          "adapter_type": "Select how values are structured in the attribute.",
+          "name": "Attribute that contains the forecast list.",
+          "time_key": "Object mode only: key containing the timestamp, usually `start`.",
+          "value_key": "Object mode only: key containing the numeric value, usually `value`.",
+          "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+            }
+          }
+        }
+      },
+      "source_usage": {
+        "title": "Usage source",
+        "description": "**Choose how WattPlan reads your usage forecast**\n\n- **Built in**: Build a forecast from historical load in Home Assistant.\n- **Template**: Use Jinja2 to build a forecast list from one or more entities.\n- **Entity attribute**: Read a forecast list directly from an entity attribute.\n- **Not used**: Skip usage forecasting for this setup.\n\nIf used, the source must produce enough forecast data for the planner window.",
+        "submit": "Next",
+        "data": {
+          "source_mode": "Source mode"
+        },
+        "data_description": {
+          "source_mode": "Choose how to provide your usage forecast. Use Built in to forecast from load history, Template to build or reshape data with Jinja2, Entity attribute when an entity already exposes a forecast list, or Not used to skip usage."
+        }
+      },
+      "source_usage_built_in": {
+        "title": "Usage source built in forecast",
+        "description": "Use Home Assistant history to forecast usage for the next planner window.\n\nProvide a sensor with your running usage in kWh. WattPlan uses recorder history and long-term statistics from the last N days, with weekday weighting, to build enough values for your selected {slot_minutes}-minute interval.",
+        "data": {
+          "entity_id": "Load sensor",
+          "history_days": "History days"
+        },
+        "data_description": {
+          "entity_id": "Sensor that represents current/observed load in kWh. This sensor should update regularly.",
+          "history_days": "How many days of past data to use. More days are smoother; fewer days react faster to recent changes."
+        }
+      },
+      "source_usage_template": {
+        "title": "Usage source template",
+        "description": "Provide a template that returns usage forecast data.\n\nReturn either:\n- a list of objects with `start` and `value`\n- or a list of numeric values\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
+        "data": {
+          "template": "Template",
+          "fixup_profile": "Fixup profile"
+        },
+        "data_description": {
+          "template": "Return a native Python-style list from Jinja, not a JSON string.",
+          "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+            }
+          }
+        }
+      },
+      "source_usage_adapter": {
+        "title": "Usage source entity attribute",
+        "description": "Use an entity attribute for usage forecast data.\n\nAdapter type formats:\n- **Attribute objects**: list of items with timestamp/value keys\n- **Attribute values**: list of numeric values",
+        "data": {
+          "entity_id": "Entity",
+          "adapter_type": "Adapter type",
+          "name": "Attribute name",
+          "time_key": "Timestamp key",
+          "value_key": "Value key",
+          "fixup_profile": "Fixup profile"
+        },
+        "data_description": {
+          "entity_id": "Entity that exposes the forecast attribute.",
+          "adapter_type": "Select how values are structured in the attribute.",
+          "name": "Attribute that contains the forecast list.",
+          "time_key": "Object mode only: key containing the timestamp, usually `start`.",
+          "value_key": "Object mode only: key containing the numeric value, usually `value`.",
+          "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+            }
+          }
+        }
+      },
+      "source_pv": {
+        "title": "PV source",
+        "description": "**Choose how WattPlan reads your PV forecast**\n\n- **Template**: Use Jinja2 to build a forecast list from one or more entities.\n- **Entity attribute**: Read a forecast list directly from an entity attribute.\n- **Energy provider**: Use a Home Assistant integration that exposes an Energy solar forecast.\n- **Not used**: Skip PV forecasting for this setup.\n\nIf used, the source must produce enough forecast data for the planner window.",
+        "submit": "Next",
+        "data": {
+          "source_mode": "Source mode"
+        },
+        "data_description": {
+          "source_mode": "Choose how to provide your PV forecast. Use Template to build or reshape data with Jinja2, Entity attribute when an entity already exposes a forecast list, Energy provider for integrations that publish Home Assistant Energy solar forecasts, or Not used to skip PV."
+        }
+      },
+      "source_pv_template": {
+        "title": "PV source template",
+        "description": "Provide a template that returns PV forecast data.\n\nReturn either:\n- a list of objects with `start` and `value`\n- or a list of numeric values\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
+        "data": {
+          "template": "Template",
+          "fixup_profile": "Fixup profile"
+        },
+        "data_description": {
+          "template": "Return a native Python-style list from Jinja, not a JSON string.",
+          "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+            }
+          }
+        }
+      },
+      "source_pv_adapter": {
+        "title": "PV source entity attribute",
+        "description": "Use an entity attribute for PV forecast data.\n\nAdapter type formats:\n- **Attribute objects**: list of items with timestamp/value keys\n- **Attribute values**: list of numeric values",
+        "data": {
+          "entity_id": "Entity",
+          "adapter_type": "Adapter type",
+          "name": "Attribute name",
+          "time_key": "Timestamp key",
+          "value_key": "Value key",
+          "fixup_profile": "Fixup profile"
+        },
+        "data_description": {
+          "entity_id": "Entity that exposes the forecast attribute.",
+          "adapter_type": "Select how values are structured in the attribute.",
+          "name": "Attribute that contains the forecast list.",
+          "time_key": "Object mode only: key containing the timestamp, usually `start`.",
+          "value_key": "Object mode only: key containing the numeric value, usually `value`.",
+          "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+            }
+          }
+        }
+      },
+      "source_pv_energy_provider": {
+        "title": "PV source Energy provider",
+        "description": "Use a Home Assistant Energy solar forecast provider for PV data.\n\nSelect a loaded integration that exposes Energy solar forecast data. WattPlan converts the provider's hourly Wh forecast into kWh planner intervals and extends the horizon by repeating the value from 24 hours earlier.\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
+        "data": {
+          "config_entry_id": "Energy provider",
+          "fixup_profile": "Tail fill model"
+        },
+        "data_description": {
+          "config_entry_id": "Choose the Home Assistant integration entry that should provide the solar forecast.",
+          "fixup_profile": "Energy provider mode always extends the horizon by repeating the value from 24 hours earlier."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge stays enabled in Energy provider mode so the initial daily forecast can always be expanded to the full horizon."
+            }
+          }
+        }
+      },
+      "source_review": {
+        "title": "Review source coverage",
+        "description": "**Coverage summary**\n\n- The source provided **{coverage_summary}**\n- Coverage starts at **{coverage_start}**\n- Coverage ends at **{coverage_end}**\n\n**Review**\n\n{review_text}\n\n{accept_note}",
+        "submit": "Next",
+        "data": {
+          "accept_source_summary": "I accept this source setup"
+        },
+        "data_description": {
+          "accept_source_summary": "Enable this to continue. Leave it off to return to the source input page and adjust the provider or fixup settings."
+        }
+      }
+    },
+    "error": {
+      "text_required": "Please enter a value.",
+      "text_too_long": "That is too long. Please shorten it.",
+      "template_required": "A template is required for template mode.",
+      "template_invalid_json": "Template output is not valid JSON. Render a JSON list of forecast entries before submitting.",
+      "adapter_config_required": "Entity and adapter type are required for adapter mode.",
+      "entity_not_found": "The selected entity was not found.",
+      "built_in_requires_energy_kwh": "Select an energy sensor with unit `kWh` for the built-in usage forecast.",
+      "attribute_name_required": "An attribute name is required for this adapter.",
+      "invalid_payload": "Source output must be a list of numeric values or a list of objects containing timestamp and value fields.",
+      "built_in_no_numeric_history": "No usable numeric history was found for the selected load sensor in the configured lookback period.",
+      "invalid_start": "One or more entries has an invalid timestamp. Check the configured time key and use ISO format with timezone.",
+      "invalid_value": "One or more entries has a non-numeric value. Check the configured value key and output numeric values.",
+      "not_enough_values": "The source produced {available_count} usable values for {slot_minutes}-minute intervals, but {required_count} are needed. Try enabling timestamp alignment, aggregation, resampling, or edge fill to produce enough values for the selected horizon.",
+      "invalid_source_mode": "Invalid source mode selected.",
+      "template_invalid_structure": "Template returned text. Return a native list of objects or numeric values.",
+      "source_fetch_error": "Source data could not be fetched. Check entity/template settings and try again."
+      ,
+      "energy_provider_none_available": "No loaded Home Assistant Energy solar forecast providers were found.",
+      "energy_provider_unavailable": "The selected Energy solar forecast provider is unavailable or returned no forecast data."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Planner settings",
+        "description": "Edit planner settings and forecast sources for this setup.",
+        "menu_options": {
+          "planner_core": "Core planner settings",
+          "source_price": "Price source",
+          "source_usage": "Usage source",
+          "source_pv": "Solar source",
+          "planner_timers": "Planner timer settings",
+          "battery_entities": "Battery entities",
+          "comfort_entities": "Comfort entities",
+          "optional_entities": "Optional entities",
+          "init": "Back to main menu"
+        }
+      },
+      "planner_core": {
+        "title": "Core settings",
+        "description": "Set interval size and planning horizon. These values define how many forecast values are required.",
+        "data": {
+          "slot_minutes": "Resolution (minutes)",
+          "hours_to_plan": "How many hours ahead should the plan cover"
+        },
+        "data_description": {
+          "slot_minutes": "This is the plan resolution. A lower value means more detailed plans and more required forecast values.",
+          "hours_to_plan": "WattPlan needs forecasts that cover the full selected period."
+        }
+      },
+      "source_price": {
+        "title": "Price source",
+        "description": "**Choose how WattPlan reads your price forecast**\n\n- **Template**: Use Jinja2 to build a forecast list from one or more entities.\n- **Entity attribute**: Read a forecast list directly from an entity attribute.\n\nBoth source types must produce enough forecast data for the planner window.",
+        "data": {
+          "source_mode": "Source mode"
+        },
+        "data_description": {
+          "source_mode": "Choose how to provide your price forecast. Use Template to build or reshape data with Jinja2. Use Entity attribute when an entity already exposes a forecast list."
+        }
+      },
+      "source_price_template": {
+        "title": "Price source template",
+        "description": "Provide a template that returns price forecast data.\n\nReturn either:\n- a list of objects with `start` and `value`\n- or a list of numeric values\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
+        "data": {
+          "template": "Template",
+          "fixup_profile": "Fixup profile"
+        },
+        "data_description": {
+          "template": "Return a native Python-style list from Jinja, not a JSON string.",
+          "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+            }
+          }
+        }
+      },
+      "source_price_adapter": {
+        "title": "Price source entity attribute",
+        "description": "Use an entity attribute for price forecast data.\n\nAdapter type formats:\n- **Attribute objects**: list of items with timestamp/value keys\n- **Attribute values**: list of numeric values\n\nModifiers below control aggregation, timestamp alignment, resampling, and edge filling.",
+        "data": {
+          "entity_id": "Entity",
+          "adapter_type": "Adapter type",
+          "name": "Attribute name",
+          "time_key": "Timestamp key",
+          "value_key": "Value key",
+          "fixup_profile": "Fixup profile"
+        },
+        "data_description": {
+          "entity_id": "Entity that exposes the forecast attribute.",
+          "adapter_type": "Select how values are structured in the attribute.",
+          "name": "Attribute that contains the forecast list.",
+          "time_key": "Object mode only: key containing the timestamp, usually `start`.",
+          "value_key": "Object mode only: key containing the numeric value, usually `value`.",
+          "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+            }
+          }
+        }
+      },
+      "source_usage": {
+        "title": "Usage source",
+        "description": "**Choose how WattPlan reads your usage forecast**\n\n- **Built in**: Build a forecast from historical load in Home Assistant.\n- **Template**: Use Jinja2 to build a forecast list from one or more entities.\n- **Entity attribute**: Read a forecast list directly from an entity attribute.\n- **Not used**: Skip usage forecasting for this setup.\n\nIf used, the source must produce enough forecast data for the planner window.",
+        "data": {
+          "source_mode": "Source mode"
+        },
+        "data_description": {
+          "source_mode": "Choose how to provide your usage forecast. Use Built in to forecast from load history, Template to build or reshape data with Jinja2, Entity attribute when an entity already exposes a forecast list, or Not used to skip usage."
+        }
+      },
+      "source_usage_built_in": {
+        "title": "Usage source built in forecast",
+        "description": "Use Home Assistant history to forecast usage for the next planner window.\n\nProvide a sensor with your running usage in kWh. WattPlan uses recorder history and long-term statistics from the last N days, with weekday weighting, to build enough values for your selected {slot_minutes}-minute interval.",
+        "data": {
+          "entity_id": "Load sensor",
+          "history_days": "History days"
+        },
+        "data_description": {
+          "entity_id": "Sensor that represents current/observed load in kWh. This sensor should update regularly.",
+          "history_days": "How many days of past data to use. More days are smoother; fewer days react faster to recent changes."
+        }
+      },
+      "source_usage_template": {
+        "title": "Usage source template",
+        "description": "Provide a template that returns usage forecast data.\n\nReturn either:\n- a list of objects with `start` and `value`\n- or a list of numeric values\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
+        "data": {
+          "template": "Template",
+          "fixup_profile": "Fixup profile"
+        },
+        "data_description": {
+          "template": "Return a native Python-style list from Jinja, not a JSON string.",
+          "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+            }
+          }
+        }
+      },
+      "source_usage_adapter": {
+        "title": "Usage source entity attribute",
+        "description": "Use an entity attribute for usage forecast data.\n\nAdapter type formats:\n- **Attribute objects**: list of items with timestamp/value keys\n- **Attribute values**: list of numeric values\n\nModifiers below control aggregation, timestamp alignment, resampling, and edge filling.",
+        "data": {
+          "entity_id": "Entity",
+          "adapter_type": "Adapter type",
+          "name": "Attribute name",
+          "time_key": "Timestamp key",
+          "value_key": "Value key",
+          "fixup_profile": "Fixup profile"
+        },
+        "data_description": {
+          "entity_id": "Entity that exposes the forecast attribute.",
+          "adapter_type": "Select how values are structured in the attribute.",
+          "name": "Attribute that contains the forecast list.",
+          "time_key": "Object mode only: key containing the timestamp, usually `start`.",
+          "value_key": "Object mode only: key containing the numeric value, usually `value`.",
+          "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+            }
+          }
+        }
+      },
+      "source_pv": {
+        "title": "PV source",
+        "description": "**Choose how WattPlan reads your PV forecast**\n\n- **Template**: Use Jinja2 to build a forecast list from one or more entities.\n- **Entity attribute**: Read a forecast list directly from an entity attribute.\n- **Energy provider**: Use a Home Assistant integration that exposes an Energy solar forecast.\n- **Not used**: Skip PV forecasting for this setup.\n\nIf used, the source must produce enough forecast data for the planner window.",
+        "data": {
+          "source_mode": "Source mode"
+        },
+        "data_description": {
+          "source_mode": "Choose how to provide your PV forecast. Use Template to build or reshape data with Jinja2, Entity attribute when an entity already exposes a forecast list, Energy provider for integrations that publish Home Assistant Energy solar forecasts, or Not used to skip PV."
+        }
+      },
+      "source_pv_template": {
+        "title": "PV source template",
+        "description": "Provide a template that returns PV forecast data.\n\nReturn either:\n- a list of objects with `start` and `value`\n- or a list of numeric values\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
+        "data": {
+          "template": "Template",
+          "fixup_profile": "Fixup profile"
+        },
+        "data_description": {
+          "template": "Return a native Python-style list from Jinja, not a JSON string.",
+          "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+            }
+          }
+        }
+      },
+      "source_pv_adapter": {
+        "title": "PV source entity attribute",
+        "description": "Use an entity attribute for PV forecast data.\n\nAdapter type formats:\n- **Attribute objects**: list of items with timestamp/value keys\n- **Attribute values**: list of numeric values\n\nModifiers below control aggregation, timestamp alignment, resampling, and edge filling.",
+        "data": {
+          "entity_id": "Entity",
+          "adapter_type": "Adapter type",
+          "name": "Attribute name",
+          "time_key": "Timestamp key",
+          "value_key": "Value key",
+          "fixup_profile": "Fixup profile"
+        },
+        "data_description": {
+          "entity_id": "Entity that exposes the forecast attribute.",
+          "adapter_type": "Select how values are structured in the attribute.",
+          "name": "Attribute that contains the forecast list.",
+          "time_key": "Object mode only: key containing the timestamp, usually `start`.",
+          "value_key": "Object mode only: key containing the numeric value, usually `value`.",
+          "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+            }
+          }
+        }
+      },
+      "source_pv_energy_provider": {
+        "title": "PV source Energy provider",
+        "description": "Use a Home Assistant Energy solar forecast provider for PV data.\n\nSelect a loaded integration that exposes Energy solar forecast data. WattPlan converts the provider's hourly Wh forecast into kWh planner intervals and extends the horizon by repeating the value from 24 hours earlier.\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
+        "data": {
+          "config_entry_id": "Energy provider",
+          "fixup_profile": "Tail fill model"
+        },
+        "data_description": {
+          "config_entry_id": "Choose the Home Assistant integration entry that should provide the solar forecast.",
+          "fixup_profile": "Energy provider mode always extends the horizon by repeating the value from 24 hours earlier."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge stays enabled in Energy provider mode so the initial daily forecast can always be expanded to the full horizon."
+            }
+          }
+        }
+      },
+      "source_review": {
+        "title": "Review source coverage",
+        "description": "**Coverage summary**\n\n- The source provided **{coverage_summary}**\n- Coverage starts at **{coverage_start}**\n- Coverage ends at **{coverage_end}**\n\n**Review**\n\n{review_text}\n\n{accept_note}",
+        "submit": "Update",
+        "data": {
+          "accept_source_summary": "I accept this source setup"
+        },
+        "data_description": {
+          "accept_source_summary": "Enable this to continue. Leave it off to return to the source input page and adjust the provider or fixup settings."
+        }
+      },
+      "planner_timers": {
+        "title": "Planner timers",
+        "description": "When enabled, planning and action publishing run every {slot_minutes} minutes.",
+        "data": {
+          "planning_enabled": "Planning enabled",
+          "action_emission_enabled": "Action emission enabled"
+        },
+        "data_description": {
+          "planning_enabled": "When enabled, optimization runs every {slot_minutes} minutes and publishes the new plan to WattPlan entities.",
+          "action_emission_enabled": "When enabled, action states like charge/discharge/hold are published every {slot_minutes} minutes."
+        }
+      },
+      "battery_entities": {
+        "title": "Battery entities",
+        "description": "Edit or remove configured batteries.",
+        "menu_options": {
+          "battery_edit_select": "Edit battery",
+          "battery_remove_select": "Remove battery",
+          "init": "Back to main menu"
+        }
+      },
+      "battery_edit_select": {
+        "title": "Select battery",
+        "data": {
+          "item_id": "Battery"
+        },
+        "data_description": {
+          "item_id": "Select the battery configuration you want to edit."
+        }
+      },
+      "battery_edit": {
+        "title": "Edit battery",
+        "description": "Update one battery configuration.",
+        "data": {
+          "name": "Name",
+          "soc_source": "SoC source",
+          "capacity_kwh": "Capacity (kWh)",
+          "minimum_kwh": "Minimum (kWh)",
+          "max_charge_kw": "Max charge power (kW)",
+          "max_discharge_kw": "Max discharge power (kW)",
+          "can_charge_from_grid": "Can charge from grid",
+          "can_charge_from_pv": "Can charge from PV"
+        },
+        "data_description": {
+          "name": "A friendly name for this battery in WattPlan entities and services.",
+          "soc_source": "Entity that reports current battery state of charge.",
+          "capacity_kwh": "Total usable battery capacity in kilowatt-hours.",
+          "minimum_kwh": "Lowest allowed energy level for planning.",
+          "max_charge_kw": "Maximum charging power the battery can accept.",
+          "max_discharge_kw": "Maximum discharging power the battery can provide.",
+          "can_charge_from_grid": "Enable if this battery can charge from grid energy prices.",
+          "can_charge_from_pv": "Enable if this battery can be charged from PV production."
+        }
+      },
+      "battery_remove_select": {
+        "title": "Remove battery",
+        "description": "Select which battery to remove.",
+        "data": {
+          "item_id": "Battery"
+        },
+        "data_description": {
+          "item_id": "Select the battery configuration you want to remove."
+        }
+      },
+      "comfort_entities": {
+        "title": "Comfort entities",
+        "description": "Edit or remove configured comfort loads.",
+        "menu_options": {
+          "comfort_edit_select": "Edit comfort load",
+          "comfort_remove_select": "Remove comfort load",
+          "init": "Back to main menu"
+        }
+      },
+      "comfort_edit_select": {
+        "title": "Select comfort load",
+        "data": {
+          "item_id": "Comfort load"
+        },
+        "data_description": {
+          "item_id": "Select the comfort load configuration you want to edit."
+        }
+      },
+      "comfort_edit": {
+        "title": "Edit comfort load",
+        "description": "Update one comfort load configuration.",
+        "data": {
+          "name": "Name",
+          "rolling_window_hours": "Window duration (hours)",
+          "target_on_hours_per_window": "Target on-time in window (hours)",
+          "min_consecutive_on_minutes": "Minimum on-time once started (minutes)",
+          "min_consecutive_off_minutes": "Minimum off-time once stopped (minutes)",
+          "max_consecutive_off_minutes": "Maximum off-time before force-on (minutes)",
+          "on_off_source": "On/off state source",
+          "expected_power_kw": "Power usage when on (kW)",
+          "measured_power_source": "Measured power source (optional)"
+        },
+        "data_description": {
+          "rolling_window_hours": "The rolling period used for on-time accounting. Example: 24 means target on-time is evaluated over the latest 24 hours.",
+          "target_on_hours_per_window": "How many hours this load should be on within each rolling window. This must be less than or equal to window duration.",
+          "min_consecutive_on_minutes": "Once turned on, keep it on for at least this long. Values are rounded to the nearest {slot_minutes}-minute interval.",
+          "min_consecutive_off_minutes": "Once turned off, keep it off for at least this long. Values are rounded to the nearest {slot_minutes}-minute interval.",
+          "max_consecutive_off_minutes": "If off for longer than this, planning will force the load back on. Values are rounded to the nearest {slot_minutes}-minute interval.",
+          "on_off_source": "Binary sensor used to determine whether the load is currently on or off. WattPlan also uses its history to synthesize runtime context.",
+          "expected_power_kw": "Nominal power usage while this load is on.",
+          "measured_power_source": "Optional sensor for actual power draw. If provided, future planning can adapt using measured behavior.",
+          "name": "A friendly name for this comfort load in WattPlan entities and services."
+        }
+      },
+      "comfort_remove_select": {
+        "title": "Remove comfort load",
+        "description": "Select which comfort load to remove.",
+        "data": {
+          "item_id": "Comfort load"
+        },
+        "data_description": {
+          "item_id": "Select the comfort load configuration you want to remove."
+        }
+      },
+      "optional_entities": {
+        "title": "Optional entities",
+        "description": "Edit or remove configured optional loads.",
+        "menu_options": {
+          "optional_edit_select": "Edit optional load",
+          "optional_remove_select": "Remove optional load",
+          "init": "Back to main menu"
+        }
+      },
+      "optional_edit_select": {
+        "title": "Select optional load",
+        "data": {
+          "item_id": "Optional load"
+        },
+        "data_description": {
+          "item_id": "Select the optional load configuration you want to edit."
+        }
+      },
+      "optional_edit": {
+        "title": "Edit optional load",
+        "description": "Update one optional load configuration.",
+        "data": {
+          "name": "Name",
+          "duration_minutes": "Duration (minutes)",
+          "run_within_hours": "Run within (hours)",
+          "energy_kwh": "Energy (kWh)",
+          "options": "Options to return",
+          "min_option_gap_minutes": "Minimum option gap (minutes)"
+        },
+        "data_description": {
+          "duration_minutes": "How long one run lasts.",
+          "run_within_hours": "The planner schedules starts between now and this many hours ahead.",
+          "energy_kwh": "Total energy needed for one run.",
+          "options": "How many start-time options to return. Each option uses a full duration block and options cannot overlap.",
+          "min_option_gap_minutes": "Minimum time between option start times. Larger gaps reduce how many non-overlapping options can fit.",
+          "name": "A friendly name for this optional load in WattPlan entities and services."
+        }
+      },
+      "optional_remove_select": {
+        "title": "Remove optional load",
+        "description": "Select which optional load to remove.",
+        "data": {
+          "item_id": "Optional load"
+        },
+        "data_description": {
+          "item_id": "Select the optional load configuration you want to remove."
+        }
+      }
+    },
+    "error": {
+      "text_required": "Please enter a value.",
+      "text_too_long": "That is too long. Please shorten it.",
+      "template_required": "A template is required for template mode.",
+      "template_invalid_json": "Template output is not valid JSON. Render a JSON list of forecast entries before submitting.",
+      "adapter_config_required": "Entity and adapter type are required for adapter mode.",
+      "entity_not_found": "The selected entity was not found.",
+      "built_in_requires_energy_kwh": "Select an energy sensor with unit `kWh` for the built-in usage forecast.",
+      "attribute_name_required": "An attribute name is required for this adapter.",
+      "invalid_payload": "Source output must be a list of numeric values or a list of objects containing timestamp and value fields.",
+      "built_in_no_numeric_history": "No usable numeric history was found for the selected load sensor in the configured lookback period.",
+      "invalid_start": "One or more entries has an invalid timestamp. Check the configured time key and use ISO format with timezone.",
+      "invalid_value": "One or more entries has a non-numeric value. Check the configured value key and output numeric values.",
+      "not_enough_values": "The source produced {available_count} usable values for {slot_minutes}-minute intervals, but {required_count} are needed. Try enabling timestamp alignment, aggregation, resampling, or edge fill to produce enough values for the selected horizon.",
+      "invalid_source_mode": "Invalid source mode selected.",
+      "template_invalid_structure": "Template returned text. Return a native list of objects or numeric values.",
+      "source_fetch_error": "Source data could not be fetched. Check entity/template settings and try again.",
+      "name_not_unique": "That name is already in use. Please choose a different one.",
+      "battery_minimum_exceeds_capacity": "Set the minimum battery energy below the battery capacity.",
+      "comfort_target_on_hours_invalid": "Set target on-time to be less than or equal to the window duration.",
+      "comfort_duration_exceeds_window": "Set this duration to be less than or equal to the window duration.",
+      "comfort_expected_power_invalid": "Set expected power above 0 kW.",
+      "energy_kwh_required": "Please enter the energy needed in kWh.",
+      "optional_energy_must_be_positive": "Set energy above 0 kWh.",
+      "optional_duration_exceeds_window": "This run does not fit in the selected run-within window. Set a shorter duration or a longer window.",
+      "optional_options_exceed_window": "These options would overlap in time. Reduce options, shorten duration, lower the minimum gap, or increase the run-within window."
+    },
+    "abort": {
+      "nothing_configured": "There is nothing configured in this section yet."
+    }
+  },
+  "config_subentries": {
+    "battery": {
+      "entry_type": "Battery",
+      "initiate_flow": {
+        "user": "Add battery"
+      },
+      "step": {
+        "user": {
+          "title": "Add battery",
+          "description": "Create a controllable battery entity for planning. Batteries are assumed to be dispatchable and can be used to shift energy across time, reduce cost, and balance your home profile.",
+          "data": {
+            "name": "Name",
+            "soc_source": "SoC source",
+            "capacity_kwh": "Capacity (kWh)",
+            "minimum_kwh": "Minimum (kWh)",
+            "max_charge_kw": "Max charge power (kW)",
+            "max_discharge_kw": "Max discharge power (kW)",
+            "can_charge_from_grid": "Can charge from grid",
+            "can_charge_from_pv": "Can charge from PV"
+          },
+          "data_description": {
+            "soc_source": "Entity reporting the current state of charge for this battery.",
+            "capacity_kwh": "Total usable battery capacity.",
+            "minimum_kwh": "Minimum energy that should remain in the battery.",
+            "max_charge_kw": "Maximum charging power used by the planner.",
+            "max_discharge_kw": "Maximum discharging power used by the planner.",
+            "can_charge_from_grid": "Enable if this battery can charge from the power grid.",
+            "can_charge_from_pv": "Enable if this battery can be charged from PV production."
+          },
+          "sections": {
+            "advanced": {
+              "name": "Advanced battery behavior",
+              "data": {
+                "charge_efficiency": "Charge efficiency",
+                "discharge_efficiency": "Discharge efficiency"
+              },
+              "data_description": {
+                "charge_efficiency": "Fraction of charging energy that ends up stored in the battery.",
+                "discharge_efficiency": "Fraction of stored energy that can be delivered when discharging."
+              }
+            }
+          }
+        },
+        "reconfigure": {
+          "title": "Edit battery",
+          "description": "Update one battery configuration.",
+          "data": {
+            "name": "Name",
+            "soc_source": "SoC source",
+            "capacity_kwh": "Capacity (kWh)",
+            "minimum_kwh": "Minimum (kWh)",
+            "max_charge_kw": "Max charge power (kW)",
+            "max_discharge_kw": "Max discharge power (kW)",
+            "can_charge_from_grid": "Can charge from grid",
+            "can_charge_from_pv": "Can charge from PV"
+          },
+          "data_description": {
+            "soc_source": "Entity reporting the current state of charge for this battery.",
+            "capacity_kwh": "Total usable battery capacity.",
+            "minimum_kwh": "Minimum energy that should remain in the battery.",
+            "max_charge_kw": "Maximum charging power used by the planner.",
+            "max_discharge_kw": "Maximum discharging power used by the planner.",
+            "can_charge_from_grid": "Enable if this battery can charge from the power grid.",
+            "can_charge_from_pv": "Enable if this battery can be charged from PV production."
+          },
+          "sections": {
+            "advanced": {
+              "name": "Advanced battery behavior",
+              "data": {
+                "charge_efficiency": "Charge efficiency",
+                "discharge_efficiency": "Discharge efficiency"
+              },
+              "data_description": {
+                "charge_efficiency": "Fraction of charging energy that ends up stored in the battery.",
+                "discharge_efficiency": "Fraction of stored energy that can be delivered when discharging."
+              }
+            }
+          }
+        }
+      },
+      "error": {
+        "name_not_unique": "That name is already in use. Please choose a different one.",
+        "text_required": "Please enter a value.",
+        "text_too_long": "That is too long. Please shorten it.",
+        "battery_minimum_exceeds_capacity": "Set the minimum battery energy below the battery capacity.",
+        "battery_efficiency_invalid": "Set battery efficiencies to a value greater than 0 and at most 1."
+      },
+      "abort": {
+        "reconfigure_successful": "Changes saved"
+      }
+    },
+    "comfort": {
+      "entry_type": "Comfort load",
+      "initiate_flow": {
+        "user": "Add comfort load"
+      },
+      "step": {
+        "user": {
+          "title": "Add comfort load",
+          "description": "Create a comfort load entity for always-needed systems such as HVAC or pumps. These loads can be deferred, but must still run regularly.",
+          "data": {
+            "name": "Name",
+            "rolling_window_hours": "Window duration (hours)",
+            "target_on_hours_per_window": "Target on-time in window (hours)",
+            "min_consecutive_on_minutes": "Minimum on-time once started (minutes)",
+            "min_consecutive_off_minutes": "Minimum off-time once stopped (minutes)",
+            "max_consecutive_off_minutes": "Maximum off-time before force-on (minutes)",
+            "on_off_source": "On/off state source",
+            "expected_power_kw": "Power usage when on (kW)",
+            "measured_power_source": "Measured power source (optional)"
+          },
+          "data_description": {
+            "rolling_window_hours": "The rolling period used for on-time accounting. Example: 24 means target on-time is evaluated over the latest 24 hours.",
+            "target_on_hours_per_window": "How many hours this load should be on within each rolling window. This must be less than or equal to window duration.",
+            "min_consecutive_on_minutes": "Once turned on, keep it on for at least this long. Values are rounded to the nearest {slot_minutes}-minute interval.",
+            "min_consecutive_off_minutes": "Once turned off, keep it off for at least this long. Values are rounded to the nearest {slot_minutes}-minute interval.",
+            "max_consecutive_off_minutes": "If off for longer than this, planning will force the load back on. Values are rounded to the nearest {slot_minutes}-minute interval.",
+            "on_off_source": "Binary sensor used to determine whether the load is currently on or off. WattPlan also uses its history to synthesize runtime context.",
+            "expected_power_kw": "Nominal power usage while this load is on.",
+            "measured_power_source": "Optional sensor for actual power draw. If provided, future planning can adapt using measured behavior."
+          }
+        },
+        "reconfigure": {
+          "title": "Edit comfort load",
+          "description": "Update one comfort load configuration.",
+          "data": {
+            "name": "Name",
+            "rolling_window_hours": "Window duration (hours)",
+            "target_on_hours_per_window": "Target on-time in window (hours)",
+            "min_consecutive_on_minutes": "Minimum on-time once started (minutes)",
+            "min_consecutive_off_minutes": "Minimum off-time once stopped (minutes)",
+            "max_consecutive_off_minutes": "Maximum off-time before force-on (minutes)",
+            "on_off_source": "On/off state source",
+            "expected_power_kw": "Power usage when on (kW)",
+            "measured_power_source": "Measured power source (optional)"
+          },
+          "data_description": {
+            "rolling_window_hours": "The rolling period used for on-time accounting. Example: 24 means target on-time is evaluated over the latest 24 hours.",
+            "target_on_hours_per_window": "How many hours this load should be on within each rolling window. This must be less than or equal to window duration.",
+            "min_consecutive_on_minutes": "Once turned on, keep it on for at least this long. Values are rounded to the nearest {slot_minutes}-minute interval.",
+            "min_consecutive_off_minutes": "Once turned off, keep it off for at least this long. Values are rounded to the nearest {slot_minutes}-minute interval.",
+            "max_consecutive_off_minutes": "If off for longer than this, planning will force the load back on. Values are rounded to the nearest {slot_minutes}-minute interval.",
+            "on_off_source": "Binary sensor used to determine whether the load is currently on or off. WattPlan also uses its history to synthesize runtime context.",
+            "expected_power_kw": "Nominal power usage while this load is on.",
+            "measured_power_source": "Optional sensor for actual power draw. If provided, future planning can adapt using measured behavior."
+          }
+        }
+      },
+      "error": {
+        "name_not_unique": "That name is already in use. Please choose a different one.",
+        "text_required": "Please enter a value.",
+        "text_too_long": "That is too long. Please shorten it.",
+        "comfort_target_on_hours_invalid": "Set target on-time to be less than or equal to the window duration.",
+        "comfort_duration_exceeds_window": "Set this duration to be less than or equal to the window duration.",
+        "comfort_expected_power_invalid": "Set expected power above 0 kW."
+      },
+      "abort": {
+        "reconfigure_successful": "Changes saved"
+      }
+    },
+    "optional": {
+      "entry_type": "Optional load",
+      "initiate_flow": {
+        "user": "Add optional load"
+      },
+      "step": {
+        "user": {
+          "title": "Add optional load",
+          "description": "Create an optional load entity for flexible runs such as washers or dryers. The planner returns N start-time options that you can choose from.",
+          "data": {
+            "name": "Name",
+            "duration_minutes": "Duration (minutes)",
+            "run_within_hours": "Run within (hours)",
+            "energy_kwh": "Energy (kWh)",
+            "options": "Options to return",
+            "min_option_gap_minutes": "Minimum option gap (minutes)"
+          },
+          "data_description": {
+            "duration_minutes": "How long one run lasts.",
+            "run_within_hours": "The planner schedules starts between now and this many hours ahead.",
+            "energy_kwh": "Total energy needed for one run.",
+            "options": "How many start-time options to return. Each option uses a full duration block and options cannot overlap.",
+            "min_option_gap_minutes": "Minimum time between option start times. Larger gaps reduce how many non-overlapping options can fit."
+          }
+        },
+        "reconfigure": {
+          "title": "Edit optional load",
+          "description": "Update one optional load configuration.",
+          "data": {
+            "name": "Name",
+            "duration_minutes": "Duration (minutes)",
+            "run_within_hours": "Run within (hours)",
+            "energy_kwh": "Energy (kWh)",
+            "options": "Options to return",
+            "min_option_gap_minutes": "Minimum option gap (minutes)"
+          },
+          "data_description": {
+            "duration_minutes": "How long one run lasts.",
+            "run_within_hours": "The planner schedules starts between now and this many hours ahead.",
+            "energy_kwh": "Total energy needed for one run.",
+            "options": "How many start-time options to return. Each option uses a full duration block and options cannot overlap.",
+            "min_option_gap_minutes": "Minimum time between option start times. Larger gaps reduce how many non-overlapping options can fit."
+          }
+        }
+      },
+      "error": {
+        "name_not_unique": "That name is already in use. Please choose a different one.",
+        "text_required": "Please enter a value.",
+        "text_too_long": "That is too long. Please shorten it.",
+        "energy_kwh_required": "Please enter the energy needed in kWh.",
+        "optional_energy_must_be_positive": "Set energy above 0 kWh.",
+        "optional_duration_exceeds_window": "This run does not fit in the selected run-within window. Set a shorter duration or a longer window.",
+        "optional_options_exceed_window": "These options would overlap in time. Reduce options, shorten duration, lower the minimum gap, or increase the run-within window."
+      },
+      "abort": {
+        "reconfigure_successful": "Changes saved"
+      }
+    }
+  }
+}

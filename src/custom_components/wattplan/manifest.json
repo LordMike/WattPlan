@@ -1,0 +1,19 @@
+{
+  "domain": "wattplan",
+  "name": "WattPlan",
+  "version": "0.1.0",
+  "integration_type": "service",
+  "codeowners": [
+    "@lordmike"
+  ],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/LordMike/WattPlan/blob/main/README.md",
+  "iot_class": "calculated",
+  "quality_scale": "bronze",
+  "requirements": [
+    "numpy",
+    "pydantic>=2",
+    "highspy"
+  ]
+}
