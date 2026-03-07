@@ -53,7 +53,7 @@ from homeassistant.const import CONF_NAME, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
-from tests.common import MockConfigEntry
+from tests.common import MockConfigEntry, make_subentry_data
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
@@ -185,7 +185,7 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
             CONF_ACTION_EMISSION_ENABLED: False,
         },
         subentries_data=[
-            config_entries.ConfigSubentryData(
+            make_subentry_data(
                 subentry_id="battery_sub",
                 subentry_type=SUBENTRY_TYPE_BATTERY,
                 title="battery",
@@ -203,7 +203,7 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
                     CONF_CAN_CHARGE_FROM_PV: True,
                 },
             ),
-            config_entries.ConfigSubentryData(
+            make_subentry_data(
                 subentry_id="comfort_sub",
                 subentry_type=SUBENTRY_TYPE_COMFORT,
                 title="comfort",
@@ -219,7 +219,7 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
                     CONF_EXPECTED_POWER_KW: 1.2,
                 },
             ),
-            config_entries.ConfigSubentryData(
+            make_subentry_data(
                 subentry_id="optional_sub",
                 subentry_type=SUBENTRY_TYPE_OPTIONAL,
                 title="optional",
@@ -301,7 +301,7 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
             CONF_ACTION_EMISSION_ENABLED: False,
         },
         subentries_data=[
-            config_entries.ConfigSubentryData(
+            make_subentry_data(
                 subentry_id="optional_sub",
                 subentry_type=SUBENTRY_TYPE_OPTIONAL,
                 title="optional",
@@ -393,7 +393,7 @@ async def test_plan_details_sensor_exposes_horizon_length_arrays(
             CONF_ACTION_EMISSION_ENABLED: False,
         },
         subentries_data=[
-            config_entries.ConfigSubentryData(
+            make_subentry_data(
                 subentry_id="battery_sub",
                 subentry_type=SUBENTRY_TYPE_BATTERY,
                 title="battery",
@@ -411,7 +411,7 @@ async def test_plan_details_sensor_exposes_horizon_length_arrays(
                     CONF_CAN_CHARGE_FROM_PV: True,
                 },
             ),
-            config_entries.ConfigSubentryData(
+            make_subentry_data(
                 subentry_id="comfort_sub",
                 subentry_type=SUBENTRY_TYPE_COMFORT,
                 title="comfort",
@@ -427,7 +427,7 @@ async def test_plan_details_sensor_exposes_horizon_length_arrays(
                     CONF_EXPECTED_POWER_KW: 1.2,
                 },
             ),
-            config_entries.ConfigSubentryData(
+            make_subentry_data(
                 subentry_id="optional_sub",
                 subentry_type=SUBENTRY_TYPE_OPTIONAL,
                 title="optional",

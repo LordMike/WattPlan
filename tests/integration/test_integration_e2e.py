@@ -55,7 +55,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.util import dt as dt_util
 
-from tests.common import MockConfigEntry, async_fire_time_changed
+from tests.common import MockConfigEntry, async_fire_time_changed, make_subentry_data
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
@@ -172,9 +172,9 @@ def _base_sources() -> dict[str, dict[str, Any]]:
     }
 
 
-def _battery_subentry(*, subentry_id: str, name: str) -> config_entries.ConfigSubentryData:
+def _battery_subentry(*, subentry_id: str, name: str) -> Any:
     """Return battery subentry config."""
-    return config_entries.ConfigSubentryData(
+    return make_subentry_data(
         subentry_id=subentry_id,
         subentry_type=SUBENTRY_TYPE_BATTERY,
         title=name,
@@ -194,9 +194,9 @@ def _battery_subentry(*, subentry_id: str, name: str) -> config_entries.ConfigSu
     )
 
 
-def _comfort_subentry(*, subentry_id: str, name: str) -> config_entries.ConfigSubentryData:
+def _comfort_subentry(*, subentry_id: str, name: str) -> Any:
     """Return comfort subentry config."""
-    return config_entries.ConfigSubentryData(
+    return make_subentry_data(
         subentry_id=subentry_id,
         subentry_type=SUBENTRY_TYPE_COMFORT,
         title=name,
@@ -214,9 +214,9 @@ def _comfort_subentry(*, subentry_id: str, name: str) -> config_entries.ConfigSu
     )
 
 
-def _optional_subentry(*, subentry_id: str, name: str) -> config_entries.ConfigSubentryData:
+def _optional_subentry(*, subentry_id: str, name: str) -> Any:
     """Return optional subentry config."""
-    return config_entries.ConfigSubentryData(
+    return make_subentry_data(
         subentry_id=subentry_id,
         subentry_type=SUBENTRY_TYPE_OPTIONAL,
         title=name,
@@ -235,7 +235,7 @@ def _optional_subentry(*, subentry_id: str, name: str) -> config_entries.ConfigS
 def _entry(
     *,
     title: str,
-    subentries_data: list[config_entries.ConfigSubentryData],
+    subentries_data: list[Any],
     sources: dict[str, dict[str, Any]] | None = None,
     options: dict[str, Any] | None = None,
 ) -> MockConfigEntry:
