@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 from custom_components.wattplan.const import (
@@ -370,6 +371,7 @@ async def test_config_flow_persists_pv_energy_provider_source(
     hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """PV Energy provider mode should save provider and advanced settings."""
+    start_at = datetime.now(tz=UTC).replace(minute=0, second=0, microsecond=0)
     entry = MockConfigEntry(
         domain="forecast_solar",
         entry_id="solar-entry",
@@ -389,9 +391,7 @@ async def test_config_flow_persists_pv_energy_provider_source(
                 "forecast_solar": AsyncMock(
                     return_value={
                         "wh_hours": {
-                            (
-                                f"2026-01-{1 + (hour // 24):02d}T{hour % 24:02d}:00:00+00:00"
-                            ): hour * 1000.0
+                            (start_at + timedelta(hours=hour)).isoformat(): hour * 1000.0
                             for hour in range(48)
                         }
                     }
