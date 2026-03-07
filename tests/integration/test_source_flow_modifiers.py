@@ -378,6 +378,7 @@ async def test_config_flow_persists_pv_energy_provider_source(
         title="Solcast",
         state=ConfigEntryState.LOADED,
     )
+    entry.async_unload = AsyncMock(return_value=True)
     entry.add_to_hass(hass)
 
     monkeypatch.setattr(
