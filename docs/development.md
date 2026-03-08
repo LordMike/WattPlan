@@ -4,32 +4,21 @@
 
 Work from `WattPlan` as the source of truth.
 
-The local `hass-core` checkout is used as:
-
-- a Home Assistant runtime
-- a prepared virtualenv for integration tests
-
-The current development setup uses symlinks:
-
-- `../hass-core/config/custom_components/wattplan` -> `src/custom_components/wattplan`
-- `../hass-core/tests/custom_components/wattplan` -> `tests/integration`
-
-There are backup directories in `hass-core` from before the symlink switch. Do not edit those as part of normal work.
-
 ## Setup
 
-Install repo dependencies:
+Create a standalone test virtualenv:
 
 ```bash
-python -m pip install -e .[test]
+python3.14 -m venv .venv-test
+source .venv-test/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements-test.txt
 ```
 
-For Home Assistant-oriented test runs, the prepared `hass-core` virtualenv is also valid:
+Run tests directly from this repo:
 
 ```bash
-PYTHONPATH=src \
-  ../hass-core/.venv/bin/pytest \
-  tests
+PYTHONPATH=src pytest tests
 ```
 
 ## Testing
@@ -37,21 +26,19 @@ PYTHONPATH=src \
 Run the full suite from the repo:
 
 ```bash
-pytest
+PYTHONPATH=src pytest
 ```
 
 Run only optimizer tests:
 
 ```bash
-pytest tests/optimizer
+PYTHONPATH=src pytest tests/optimizer
 ```
 
-Run only integration tests through the `hass-core` virtualenv:
+Run only integration tests from the standalone virtualenv:
 
 ```bash
-PYTHONPATH=src \
-  ../hass-core/.venv/bin/pytest \
-  tests/integration
+PYTHONPATH=src pytest tests/integration
 ```
 
 ## Packaging
