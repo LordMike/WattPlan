@@ -263,7 +263,7 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
 
     savings = hass.states.get("sensor.home_projected_cost_savings")
     assert savings is not None
-    assert savings.state == "0.5"
+    assert float(savings.state) == 3.0
     assert "span_start" in savings.attributes
     assert "span_end" in savings.attributes
     assert savings.attributes["total"] == 3.0
@@ -271,7 +271,7 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
 
     savings_pct = hass.states.get("sensor.home_projected_savings_percentage")
     assert savings_pct is not None
-    assert savings_pct.state == "25.0"
+    assert float(savings_pct.state) == 24.0
     assert savings_pct.attributes["span_start"] == savings.attributes["span_start"]
     assert savings_pct.attributes["span_end"] == savings.attributes["span_end"]
     assert savings_pct.attributes["total"] == 24.0

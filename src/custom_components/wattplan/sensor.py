@@ -462,6 +462,7 @@ class ProjectionSensor(WattPlanCoordinatorSensor):
         coordinator: WattPlanCoordinator,
         *,
         projection_key: str,
+        aggregate_mode: str = "horizon",
         use_home_currency: bool = False,
         native_unit_of_measurement: str | None = None,
         **kwargs: Any,
@@ -469,6 +470,7 @@ class ProjectionSensor(WattPlanCoordinatorSensor):
         """Initialize projected savings sensor."""
         super().__init__(config_entry, coordinator, **kwargs)
         self._projection_key = projection_key
+        self._aggregate_mode = aggregate_mode
         if use_home_currency:
             self._attr_native_unit_of_measurement = coordinator.hass.config.currency
             self._attr_suggested_display_precision = 2
@@ -476,16 +478,23 @@ class ProjectionSensor(WattPlanCoordinatorSensor):
             self._attr_native_unit_of_measurement = native_unit_of_measurement
             if native_unit_of_measurement == "%":
                 self._attr_suggested_display_precision = 1
+        if aggregate_mode == "next_interval":
+            self._attr_entity_registry_enabled_default = False
 
     @property
     def native_value(self) -> float | None:
-        """Return the first timeslot projected optimizer metric."""
+        """Return the projected metric for the configured aggregation mode."""
         optimizer = self._optimizer_diagnostics()
         if optimizer is None:
             return None
         projections = optimizer.get("projections")
         if not isinstance(projections, dict):
             return None
+        if self._aggregate_mode == "horizon":
+            try:
+                return float(projections[self._projection_key])
+            except (KeyError, TypeError, ValueError):
+                return None
         per_slot = projections.get("per_slot")
         if not isinstance(per_slot, list) or not per_slot:
             return None
@@ -584,6 +593,7 @@ async def async_setup_entry(
             config_entry,
             coordinator,
             projection_key="projected_savings_cost",
+            aggregate_mode="horizon",
             use_home_currency=True,
             object_id=f"{entry_slug}_projected_cost_savings",
             unique_id=f"{config_entry.entry_id}:entry:projected_cost_savings",
@@ -592,8 +602,27 @@ async def async_setup_entry(
             config_entry,
             coordinator,
             projection_key="projected_savings_pct",
+            aggregate_mode="horizon",
             object_id=f"{entry_slug}_projected_savings_percentage",
             unique_id=f"{config_entry.entry_id}:entry:projected_savings_percentage",
+            native_unit_of_measurement="%",
+        ),
+        ProjectionSensor(
+            config_entry,
+            coordinator,
+            projection_key="projected_savings_cost",
+            aggregate_mode="next_interval",
+            use_home_currency=True,
+            object_id=f"{entry_slug}_projected_cost_savings_next_interval",
+            unique_id=f"{config_entry.entry_id}:entry:projected_cost_savings_next_interval",
+        ),
+        ProjectionSensor(
+            config_entry,
+            coordinator,
+            projection_key="projected_savings_pct",
+            aggregate_mode="next_interval",
+            object_id=f"{entry_slug}_projected_savings_percentage_next_interval",
+            unique_id=f"{config_entry.entry_id}:entry:projected_savings_percentage_next_interval",
             native_unit_of_measurement="%",
         ),
         PlanDetailsSensor(
