@@ -2220,6 +2220,10 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
         errors: dict[str, str] = {}
         sources = self._data.get(CONF_SOURCES, {})
         existing = sources.get(key, {})
+        include_energy_provider_option = await self._async_include_energy_provider_mode(
+            existing,
+            include_energy_provider=include_energy_provider,
+        )
 
         if user_input is not None:
             mode = user_input[CONF_SOURCE_MODE]
@@ -2268,12 +2272,17 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
                         key,
                         include_not_used=include_not_used,
                         include_built_in=include_built_in,
-                        include_energy_provider=include_energy_provider,
+                        include_energy_provider=include_energy_provider_option,
                     ),
-                ),
+                )
+                if (
+                    existing.get(CONF_SOURCE_MODE) != SOURCE_MODE_ENERGY_PROVIDER
+                    or include_energy_provider_option
+                )
+                else SOURCE_MODE_TEMPLATE,
                 include_not_used=include_not_used,
                 include_built_in=include_built_in,
-                include_energy_provider=include_energy_provider,
+                include_energy_provider=include_energy_provider_option,
             ),
             errors=errors,
             last_step=False,
@@ -2602,6 +2611,19 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
             selector.SelectOptionDict(value=entry.entry_id, label=entry.title)
             for entry in entries
         ]
+
+    async def _async_include_energy_provider_mode(
+        self,
+        existing: dict[str, Any],
+        *,
+        include_energy_provider: bool,
+    ) -> bool:
+        """Return whether Energy provider should be offered in source mode."""
+        if not include_energy_provider:
+            return False
+        if existing.get(CONF_SOURCE_MODE) == SOURCE_MODE_ENERGY_PROVIDER:
+            return True
+        return bool(await self._async_energy_provider_options())
 
     def _source_step_defaults(self, key: str) -> dict[str, Any]:
         """Return defaults for the active source input step."""

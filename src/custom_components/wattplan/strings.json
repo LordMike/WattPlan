@@ -23,7 +23,7 @@
       },
       "setup_complete": {
         "title": "Setup complete",
-        "description": "You have now set up the **{setup_name}** WattPlan planner.\n\nCurrent planner settings:\n- Resolution: **{slot_minutes} minutes**\n- Planning horizon: **{plan_hours} hours**\n- Price source: **{price_source}**\n- Usage source: **{usage_source}**\n- PV source: **{pv_source}**\n\nWattPlan will now begin producing plans on its schedule and after relevant setup changes.\n\nPlanning and optimization are only part of the setup. To really benefit, WattPlan needs something that can shift load away from expensive periods and into cheaper ones.\n\nGood next steps:\n- Add a **battery** if you want WattPlan to plan charging and discharging\n- Add **optional loads** such as a washing machine if you want WattPlan to suggest when people should start them\n- Add **comfort loads** if you want WattPlan to shift flexible always-needed loads\n- Create automations that translate WattPlan action entities into real device commands\n\nIn practice, batteries, optional loads, and comfort loads are the main ways to turn plans into savings.",
+        "description": "You have now set up the **{setup_name}** WattPlan planner.\n\nCurrent planner settings:\n- Resolution: **{slot_minutes} minutes**\n- Planning horizon: **{plan_hours} hours**\n- Price source: **{price_source}**\n- Usage source: **{usage_source}**\n- PV source: **{pv_source}**\n\nWattPlan will now begin producing plans on its schedule and after relevant setup changes.\n\nPlanning and optimization are only part of the setup. To really benefit, WattPlan needs something that can shift load away from expensive periods and into cheaper ones.\n\nGood next steps:\n- Add a **battery** if you want WattPlan to plan charging and discharging\n- Add **optional loads** such as a washing machine if you want WattPlan to suggest when people should start them\n- Add **comfort loads** if you want WattPlan to shift flexible always-needed loads\n- Create automations that translate WattPlan action entities into real device commands\n\nIn practice, batteries, optional loads, and comfort loads are the main ways to turn plans into savings.\n\nClick **Finish** to complete the integration setup and give the new planner device a name and/or area.",
         "submit": "Finish"
       },
       "source_price": {
@@ -49,19 +49,6 @@
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
-          "manual": {
-            "name": "If not Auto detect",
-            "data": {
-              "name": "Attribute name",
-              "time_key": "Timestamp key",
-              "value_key": "Value key"
-            },
-            "data_description": {
-              "name": "Attribute path that contains the forecast list. Used only when Auto detect is not selected.",
-              "time_key": "Key containing the timestamp. Used only when Auto detect is not selected.",
-              "value_key": "Key containing the numeric value. Used only when Auto detect is not selected."
-            }
-          },
           "advanced": {
             "name": "Advanced processing",
             "data": {
@@ -94,7 +81,8 @@
         },
         "sections": {
           "manual": {
-            "name": "If not Auto detect",
+            "name": "Manual mapping",
+            "description": "Only applies when \"Auto detect\" is not selected.",
             "data": {
               "name": "Attribute name",
               "time_key": "Timestamp key",
@@ -138,7 +126,8 @@
         },
         "sections": {
           "manual": {
-            "name": "If not Auto detect",
+            "name": "Manual mapping",
+            "description": "Only applies when \"Auto detect\" is not selected.",
             "data": {
               "name": "Root path",
               "time_key": "Timestamp key",
@@ -169,13 +158,13 @@
       },
       "source_usage": {
         "title": "Usage source",
-        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\n**Choose how WattPlan reads your usage forecast**\n\n1. **Built in** (preferred): Build a forecast from historical load in Home Assistant.\n2. **Entity attribute**: Read a forecast list directly from an entity attribute.\n3. **Service call**: Call a Home Assistant service that returns a forecast list.\n4. **Not used**: Skip usage forecasting for this setup.\n5. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n\nIf used, the source must produce enough forecast data for the planner window.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\n**Choose how WattPlan reads your usage forecast**\n\n1. **Built in** (preferred): Build a forecast from historical load in Home Assistant.\n2. **Entity attribute**: Read a forecast list directly from an entity attribute.\n3. **Service call**: Call a Home Assistant service that returns a forecast list.\n4. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n5. **Not used**: Skip usage forecasting for this setup.\n\nYou can set up this source later from the integration page. To **skip** this setup now, pick **Not used**.\n\nIf used, the source must produce enough forecast data for the planner window.",
         "submit": "Next",
         "data": {
           "source_mode": "Source mode"
         },
         "data_description": {
-          "source_mode": "Choose how to provide your usage forecast. Built in is the preferred setup path for load forecasting. Entity attribute and Service call can reuse existing forecast data. Not used skips usage. Template is the advanced fallback."
+          "source_mode": "Choose how to provide your usage forecast. Built in is the preferred setup path for load forecasting. Entity attribute and Service call can reuse existing forecast data. Template is the advanced fallback. Not used skips usage."
         }
       },
       "source_usage_built_in": {
@@ -203,7 +192,8 @@
         },
         "sections": {
           "manual": {
-            "name": "If not Auto detect",
+            "name": "Manual mapping",
+            "description": "Only applies when \"Auto detect\" is not selected.",
             "data": {
               "name": "Attribute name",
               "time_key": "Timestamp key",
@@ -247,7 +237,8 @@
         },
         "sections": {
           "manual": {
-            "name": "If not Auto detect",
+            "name": "Manual mapping",
+            "description": "Only applies when \"Auto detect\" is not selected.",
             "data": {
               "name": "Attribute name",
               "time_key": "Timestamp key",
@@ -291,7 +282,8 @@
         },
         "sections": {
           "manual": {
-            "name": "If not Auto detect",
+            "name": "Manual mapping",
+            "description": "Only applies when \"Auto detect\" is not selected.",
             "data": {
               "name": "Root path",
               "time_key": "Timestamp key",
@@ -322,13 +314,13 @@
       },
       "source_pv": {
         "title": "PV source",
-        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\n**Choose how WattPlan reads your PV forecast**\n\n1. **Energy provider** (preferred): Use a Home Assistant integration that exposes an Energy solar forecast.\n2. **Entity attribute**: Read a forecast list directly from an entity attribute.\n3. **Service call**: Call a Home Assistant service that returns a forecast list.\n4. **Not used**: Skip PV forecasting for this setup.\n5. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n\nIf used, the source must produce enough forecast data for the planner window.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\n**Choose how WattPlan reads your PV forecast**\n\n1. **Energy provider** (preferred when applicable): Use a Home Assistant integration that exposes an Energy solar forecast.\n2. **Entity attribute**: Read a forecast list directly from an entity attribute.\n3. **Service call**: Call a Home Assistant service that returns a forecast list.\n4. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n5. **Not used**: Skip PV forecasting for this setup.\n\nYou can set up this source later from the integration page. To **skip** this setup now, pick **Not used**.\n\nIf used, the source must produce enough forecast data for the planner window.",
         "submit": "Next",
         "data": {
           "source_mode": "Source mode"
         },
         "data_description": {
-          "source_mode": "Choose how to provide your PV forecast. Energy provider is the preferred setup path for solar forecasts. Entity attribute and Service call can reuse existing forecast data. Not used skips PV. Template is the advanced fallback."
+          "source_mode": "Choose how to provide your PV forecast. Energy provider is the preferred setup path for solar forecasts. Entity attribute and Service call can reuse existing forecast data. Template is the advanced fallback. Not used skips PV."
         }
       },
       "source_pv_template": {
@@ -344,7 +336,8 @@
         },
         "sections": {
           "manual": {
-            "name": "If not Auto detect",
+            "name": "Manual mapping",
+            "description": "Only applies when \"Auto detect\" is not selected.",
             "data": {
               "name": "Attribute name",
               "time_key": "Timestamp key",
@@ -388,7 +381,8 @@
         },
         "sections": {
           "manual": {
-            "name": "If not Auto detect",
+            "name": "Manual mapping",
+            "description": "Only applies when \"Auto detect\" is not selected.",
             "data": {
               "name": "Attribute name",
               "time_key": "Timestamp key",
@@ -432,7 +426,8 @@
         },
         "sections": {
           "manual": {
-            "name": "If not Auto detect",
+            "name": "Manual mapping",
+            "description": "Only applies when \"Auto detect\" is not selected.",
             "data": {
               "name": "Root path",
               "time_key": "Timestamp key",
@@ -473,6 +468,10 @@
           "fixup_profile": "Energy provider mode always extends the horizon by repeating the value from 24 hours earlier."
         },
         "sections": {
+          "manual": {
+            "name": "Manual mapping",
+            "description": "Only applies when \"Auto detect\" is not selected."
+          },
           "advanced": {
             "name": "Advanced processing",
             "data": {
@@ -583,6 +582,10 @@
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
+          "manual": {
+            "name": "Manual mapping",
+            "description": "Only applies when \"Auto detect\" is not selected."
+          },
           "advanced": {
             "name": "Advanced processing",
             "data": {
@@ -620,6 +623,10 @@
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
+          "manual": {
+            "name": "Manual mapping",
+            "description": "Only applies when \"Auto detect\" is not selected."
+          },
           "advanced": {
             "name": "Advanced processing",
             "data": {
@@ -639,13 +646,13 @@
       },
       "source_usage": {
         "title": "Usage source",
-        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\n**Choose how WattPlan reads your usage forecast**\n\n1. **Built in** (preferred): Build a forecast from historical load in Home Assistant.\n2. **Entity attribute**: Read a forecast list directly from an entity attribute.\n3. **Service call**: Call a Home Assistant service that returns a forecast list.\n4. **Not used**: Skip usage forecasting for this setup.\n5. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n\nIf used, the source must produce enough forecast data for the planner window.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\n**Choose how WattPlan reads your usage forecast**\n\n1. **Built in** (preferred): Build a forecast from historical load in Home Assistant.\n2. **Entity attribute**: Read a forecast list directly from an entity attribute.\n3. **Service call**: Call a Home Assistant service that returns a forecast list.\n4. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n5. **Not used**: Skip usage forecasting for this setup.\n\nYou can set up this source later from the integration page. To **skip** this setup now, pick **Not used**.\n\nIf used, the source must produce enough forecast data for the planner window.",
         "submit": "Next",
         "data": {
           "source_mode": "Source mode"
         },
         "data_description": {
-          "source_mode": "Choose how to provide your usage forecast. Built in is the preferred setup path for load forecasting. Entity attribute and Service call can reuse existing forecast data. Not used skips usage. Template is the advanced fallback."
+          "source_mode": "Choose how to provide your usage forecast. Built in is the preferred setup path for load forecasting. Entity attribute and Service call can reuse existing forecast data. Template is the advanced fallback. Not used skips usage."
         }
       },
       "source_usage_built_in": {
@@ -728,13 +735,13 @@
       },
       "source_pv": {
         "title": "PV source",
-        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\n**Choose how WattPlan reads your PV forecast**\n\n1. **Energy provider** (preferred): Use a Home Assistant integration that exposes an Energy solar forecast.\n2. **Entity attribute**: Read a forecast list directly from an entity attribute.\n3. **Service call**: Call a Home Assistant service that returns a forecast list.\n4. **Not used**: Skip PV forecasting for this setup.\n5. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n\nIf used, the source must produce enough forecast data for the planner window.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\n**Choose how WattPlan reads your PV forecast**\n\n1. **Energy provider** (preferred when applicable): Use a Home Assistant integration that exposes an Energy solar forecast.\n2. **Entity attribute**: Read a forecast list directly from an entity attribute.\n3. **Service call**: Call a Home Assistant service that returns a forecast list.\n4. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n5. **Not used**: Skip PV forecasting for this setup.\n\nYou can set up this source later from the integration page. To **skip** this setup now, pick **Not used**.\n\nIf used, the source must produce enough forecast data for the planner window.",
         "submit": "Next",
         "data": {
           "source_mode": "Source mode"
         },
         "data_description": {
-          "source_mode": "Choose how to provide your PV forecast. Energy provider is the preferred setup path for solar forecasts. Entity attribute and Service call can reuse existing forecast data. Not used skips PV. Template is the advanced fallback."
+          "source_mode": "Choose how to provide your PV forecast. Energy provider is the preferred setup path for solar forecasts. Entity attribute and Service call can reuse existing forecast data. Template is the advanced fallback. Not used skips PV."
         }
       },
       "source_pv_template": {
@@ -786,6 +793,10 @@
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
+          "manual": {
+            "name": "Manual mapping",
+            "description": "Only applies when \"Auto detect\" is not selected."
+          },
           "advanced": {
             "name": "Advanced processing",
             "data": {
@@ -1103,6 +1114,10 @@
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
+          "manual": {
+            "name": "Manual mapping",
+            "description": "Only applies when **Auto detect** is not selected."
+          },
           "advanced": {
             "name": "Advanced processing",
             "data": {
