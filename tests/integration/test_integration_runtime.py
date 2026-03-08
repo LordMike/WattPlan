@@ -277,6 +277,11 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
     assert savings_pct.attributes["total"] == 24.0
     assert savings_pct.attributes["values"] == [25.0, 33.333333, 25.0, 14.285714]
 
+    battery_action = hass.states.get("sensor.home_battery_action")
+    assert battery_action is not None
+    assert battery_action.attributes["next_action"] == "hold"
+    assert "next_action_timestamp" in battery_action.attributes
+
 
 async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
     """Restore the serialized coordinator snapshot so entities keep their last plan."""
