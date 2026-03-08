@@ -474,7 +474,7 @@ async def test_plan_details_sensor_exposes_horizon_length_arrays(
     assert len(state.attributes["projected_savings_cost"]) == 4
     assert len(state.attributes["projected_savings_pct"]) == 4
     assert len(state.attributes["battery_battery_action"]) == 4
-    assert len(state.attributes["battery_battery_level"]) == 4
+    assert len(state.attributes["battery_battery_level_kwh"]) == 4
     assert len(state.attributes["battery_battery_charge_source"]) == 4
     assert len(state.attributes["comfort_comfort_enabled"]) == 4
     assert len(state.attributes["optional_optional_enabled"]) == 4

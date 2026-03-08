@@ -65,6 +65,7 @@ from .const import (
     SUBENTRY_TYPE_OPTIONAL,
 )
 from .historical_on_off_provider import HistoricalOnOffProvider
+from .optimizer import OptimizationParams, optimize
 from .source_fixup import SourceFixupProvider, SourceHealthKind
 from .source_issues import (
     build_source_issue,
@@ -75,7 +76,6 @@ from .source_issues import (
 )
 from .source_pipeline import build_source_value_provider
 from .source_types import SourceProvider, SourceProviderError, SourceWindow
-from .optimizer import OptimizationParams, optimize
 
 _LOGGER = logging.getLogger(__name__)
 HEARTBEAT_OFFSET = timedelta(minutes=3)
@@ -1349,18 +1349,35 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                     ).isoformat(),
                 },
                 "source_health": request.get("source_health", {}),
-                "plan_details": (
-                    self._build_plan_details(request, result)
-                    if self._plan_details_enabled()
-                    else None
-                ),
+                **self._build_enabled_plan_details(request, result),
             },
         }
 
-    def _plan_details_enabled(self) -> bool:
-        """Return whether the disabled-by-default plan details entity is enabled."""
+    def _build_enabled_plan_details(
+        self, request: dict[str, Any], result: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Build only the plan detail payloads that are currently enabled."""
+        diagnostics: dict[str, Any] = {}
+        raw_details: dict[str, Any] | None = None
+
+        if self._plan_details_enabled("plan_details"):
+            raw_details = self._build_plan_details_payload(request, result)
+            diagnostics["plan_details"] = raw_details
+
+        if self._plan_details_enabled("plan_details_hourly"):
+            if raw_details is None:
+                raw_details = self._build_plan_details_payload(request, result)
+            diagnostics["plan_details_hourly"] = self._aggregate_plan_details(
+                raw_details,
+                target_slot_minutes=60,
+            )
+
+        return diagnostics
+
+    def _plan_details_enabled(self, details_key: str) -> bool:
+        """Return whether one disabled-by-default details entity is enabled."""
         entity_registry = er.async_get(self.hass)
-        unique_id = f"{self._entry_id}:entry:plan_details"
+        unique_id = f"{self._entry_id}:entry:{details_key}"
         entity_id = entity_registry.async_get_entity_id("sensor", DOMAIN, unique_id)
         if entity_id is None:
             return False
@@ -1368,7 +1385,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             return False
         return entry.disabled_by is None
 
-    def _build_plan_details(
+    def _build_plan_details_payload(
         self, request: dict[str, Any], result: dict[str, Any]
     ) -> dict[str, Any]:
         """Build a graph-friendly, flat plan payload for the current horizon."""
@@ -1411,7 +1428,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                         schedule, horizon_slots, "state", default="hold", stringify=True
                     )
                 ]
-                plan_details[f"{key_base}_level"] = self._rounded_series(
+                plan_details[f"{key_base}_level_kwh"] = self._rounded_series(
                     self._series_from_schedule(
                         schedule, horizon_slots, "level", default=0.0
                     )
@@ -1450,6 +1467,124 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             plan_details[key] = values
 
         return plan_details
+
+    def _aggregate_plan_details(
+        self,
+        plan_details: dict[str, Any],
+        *,
+        target_slot_minutes: int,
+    ) -> dict[str, Any]:
+        """Return a second plan details payload aggregated to another cadence.
+
+        We keep the same attribute names so consumers can switch entities
+        without rewriting attribute access. Numeric values are per-slot
+        absolutes like kWh or currency, so they aggregate by summing buckets.
+        Percentages are recomputed after their base series are aggregated.
+        """
+        slot_minutes = int(plan_details.get("slot_minutes", 0))
+        if (
+            slot_minutes <= 0
+            or slot_minutes >= target_slot_minutes
+            or target_slot_minutes % slot_minutes != 0
+        ):
+            return dict(plan_details)
+
+        slots_per_bucket = target_slot_minutes // slot_minutes
+        aggregated: dict[str, Any] = {
+            "start_at": plan_details["start_at"],
+            "slot_minutes": target_slot_minutes,
+            "slots": (int(plan_details["slots"]) + slots_per_bucket - 1)
+            // slots_per_bucket,
+        }
+
+        for key, value in plan_details.items():
+            if key in {"start_at", "slot_minutes", "slots"}:
+                continue
+            if not isinstance(value, list):
+                aggregated[key] = value
+                continue
+            aggregated[key] = self._aggregate_plan_details_series(
+                key, value, slots_per_bucket
+            )
+
+        if (
+            isinstance(aggregated.get("projected_cost"), list)
+            and isinstance(aggregated.get("projected_savings_cost"), list)
+            and len(aggregated["projected_cost"])
+            == len(aggregated["projected_savings_cost"])
+        ):
+            aggregated["projected_savings_pct"] = (
+                self._recompute_aggregated_percentages(
+                    aggregated["projected_cost"],
+                    aggregated["projected_savings_cost"],
+                )
+            )
+
+        return aggregated
+
+    def _aggregate_plan_details_series(
+        self, key: str, values: list[Any], slots_per_bucket: int
+    ) -> list[Any]:
+        """Aggregate one plan details series across fixed-size buckets."""
+        aggregated: list[Any] = []
+        for start in range(0, len(values), slots_per_bucket):
+            chunk = values[start : start + slots_per_bucket]
+            if not chunk:
+                continue
+            first = chunk[0]
+            if isinstance(first, bool):
+                aggregated.append(any(bool(value) for value in chunk))
+            elif isinstance(first, (int, float)) and not isinstance(first, bool):
+                if key.endswith("_pct"):
+                    aggregated.append(0.0)
+                elif key == "price_per_kwh":
+                    aggregated.append(
+                        round(
+                            sum(float(value) for value in chunk) / len(chunk),
+                            4,
+                        )
+                    )
+                elif key.endswith("_level_kwh"):
+                    aggregated.append(
+                        round(
+                            sum(float(value) for value in chunk) / len(chunk),
+                            2,
+                        )
+                    )
+                else:
+                    aggregated.append(round(sum(float(value) for value in chunk), 2))
+            elif key.endswith("_charge_source"):
+                sources = {str(value) for value in chunk if isinstance(value, str)}
+                active_sources = sorted(source for source in sources if source != "n")
+                aggregated.append("".join(active_sources) if active_sources else "n")
+            elif key.endswith("_action"):
+                actions = {str(value) for value in chunk if isinstance(value, str)}
+                active_actions = sorted(action for action in actions if action != "h")
+                aggregated.append("".join(active_actions) if active_actions else "h")
+            else:
+                aggregated.append(chunk[-1])
+        return aggregated
+
+    def _recompute_aggregated_percentages(
+        self,
+        costs: list[Any],
+        savings: list[Any],
+    ) -> list[float]:
+        """Recompute percentages from aggregated absolute cost series."""
+        percentages: list[float] = []
+        for cost, saving in zip(costs, savings, strict=False):
+            try:
+                cost_value = float(cost)
+                saving_value = float(saving)
+            except (TypeError, ValueError):
+                percentages.append(0.0)
+                continue
+            baseline_value = cost_value + saving_value
+            if baseline_value == 0:
+                percentages.append(0.0)
+                continue
+            percentages.append(round((saving_value / baseline_value) * 100.0, 2))
+        return percentages
 
     def _projection_series(
         self, per_slot: list[Any], key: str

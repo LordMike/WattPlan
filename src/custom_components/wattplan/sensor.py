@@ -422,6 +422,18 @@ class PlanDetailsSensor(WattPlanCoordinatorSensor):
     # Keep the large graph payload out of recorder; the card reads live state.
     _unrecorded_attributes = frozenset({MATCH_ALL})
 
+    def __init__(
+        self,
+        config_entry: ConfigEntry,
+        coordinator: WattPlanCoordinator,
+        *,
+        details_key: str,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize one plan details sensor variant."""
+        super().__init__(config_entry, coordinator, **kwargs)
+        self._details_key = details_key
+
     @property
     def native_value(self) -> datetime | None:
         """Return the snapshot timestamp so state changes on each new plan."""
@@ -435,7 +447,7 @@ class PlanDetailsSensor(WattPlanCoordinatorSensor):
         if not self.snapshot:
             return None
         diagnostics = self.snapshot.diagnostics or {}
-        plan_details = diagnostics.get("plan_details")
+        plan_details = diagnostics.get(self._details_key)
         if not isinstance(plan_details, dict):
             return None
         return plan_details
@@ -587,8 +599,16 @@ async def async_setup_entry(
         PlanDetailsSensor(
             config_entry,
             coordinator,
+            details_key="plan_details",
             object_id=f"{entry_slug}_plan_details",
             unique_id=f"{config_entry.entry_id}:entry:plan_details",
+        ),
+        PlanDetailsSensor(
+            config_entry,
+            coordinator,
+            details_key="plan_details_hourly",
+            object_id=f"{entry_slug}_plan_details_hourly",
+            unique_id=f"{config_entry.entry_id}:entry:plan_details_hourly",
         ),
     ]
 
