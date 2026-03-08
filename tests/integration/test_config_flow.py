@@ -1,6 +1,7 @@
 """Test the WattPlan config flow."""
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import AsyncMock
 
 from custom_components.wattplan.const import (
@@ -13,7 +14,6 @@ from custom_components.wattplan.const import (
     CONF_DURATION_MINUTES,
     CONF_ENERGY_KWH,
     CONF_EXPECTED_POWER_KW,
-    CONF_HAS_SOLAR,
     CONF_HOURS_TO_PLAN,
     CONF_MAX_CHARGE_KW,
     CONF_MAX_CONSECUTIVE_OFF_MINUTES,
@@ -61,6 +61,13 @@ def _series_template(hours: int) -> str:
         for idx in range(hours)
     ]
     return f"{{{{ {payload!r} }}}}"
+
+
+def _default_source_mode(result: dict[str, Any]) -> str:
+    """Extract the default source-mode value from a flow form schema."""
+    schema = result["data_schema"].schema
+    marker = next(key for key in schema if getattr(key, "schema", None) == CONF_SOURCE_MODE)
+    return marker.default()
 
 
 async def _create_basic_entry(hass: HomeAssistant) -> config_entries.ConfigEntry:
@@ -135,6 +142,7 @@ async def test_form(hass: HomeAssistant, mock_setup_entry: AsyncMock) -> None:
     )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "source_price"
+    assert _default_source_mode(result) == "entity_adapter"
 
     template = _series_template(12)
     result = await hass.config_entries.flow.async_configure(
@@ -157,6 +165,7 @@ async def test_form(hass: HomeAssistant, mock_setup_entry: AsyncMock) -> None:
     )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "source_usage"
+    assert _default_source_mode(result) == "built_in"
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
@@ -175,6 +184,7 @@ async def test_form(hass: HomeAssistant, mock_setup_entry: AsyncMock) -> None:
     )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "source_pv"
+    assert _default_source_mode(result) == "energy_provider"
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],

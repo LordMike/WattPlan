@@ -968,7 +968,6 @@ def _score_schedule(
                 total_usage += float(entity.power_usage_kwh)
 
         for i, entity in enumerate(battery_entities):
-            current_level = float(battery_levels[i, t])
             next_level = float(battery_levels[i, t + 1])
             total_usage += float(battery_charge[i, t]) - float(battery_discharge[i, t])
 

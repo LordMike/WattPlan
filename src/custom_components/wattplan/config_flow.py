@@ -114,6 +114,7 @@ MAX_NAME_LENGTH = 64
 MAX_SOURCE_KEY_LENGTH = 64
 DEFAULT_SOURCE_TEMPLATE = "{{ [{'start': now().isoformat(), 'value': 0.25}] }}"
 SECTION_SOURCE_ADVANCED = "advanced"
+SECTION_SOURCE_MANUAL = "manual"
 SECTION_BATTERY_ADVANCED = "advanced"
 CONF_REVIEW_ACTION = "review_action"
 REVIEW_ACTION_CONFIRM = "confirm"
@@ -277,6 +278,36 @@ def _source_base_defaults(source: dict[str, Any]) -> dict[str, Any]:
     return dict(source)
 
 
+def _preferred_source_mode(
+    key: str,
+    *,
+    include_not_used: bool,
+    include_built_in: bool = False,
+    include_energy_provider: bool = False,
+) -> str:
+    """Return the recommended default mode for the requested source step.
+
+    The mode selection step already tells users which path is preferred. This helper keeps
+    the form default aligned with that guidance instead of falling back based only on
+    whether "Not used" happens to be allowed on the step.
+    """
+    if key == CONF_SOURCE_PRICE:
+        return SOURCE_MODE_ENTITY_ADAPTER
+    if key == CONF_SOURCE_USAGE:
+        if include_built_in:
+            return SOURCE_MODE_BUILT_IN
+        if include_not_used:
+            return SOURCE_MODE_NOT_USED
+        return SOURCE_MODE_ENTITY_ADAPTER
+    if key == CONF_SOURCE_PV:
+        if include_energy_provider:
+            return SOURCE_MODE_ENERGY_PROVIDER
+        if include_not_used:
+            return SOURCE_MODE_NOT_USED
+        return SOURCE_MODE_ENTITY_ADAPTER
+    return SOURCE_MODE_NOT_USED if include_not_used else SOURCE_MODE_TEMPLATE
+
+
 def _auto_detect_step_defaults(
     user_input: dict[str, Any],
     resolved_source: dict[str, Any],
@@ -360,6 +391,11 @@ def _source_review_schema(
             )
         ] = selector.BooleanSelector()
     return vol.Schema(schema)
+
+
+def _final_setup_schema() -> vol.Schema:
+    """Build schema for the final setup summary step."""
+    return vol.Schema({})
 
 
 async def _async_validate_source_values(
@@ -516,6 +552,39 @@ def _invalid_key_from_source_error(err: SourceProviderError) -> str:
     return "not_enough_values"
 
 
+def _source_mode_summary(source: dict[str, Any] | None) -> str:
+    """Return a short human-readable summary of the selected source mode."""
+    if not isinstance(source, dict):
+        return "Not configured"
+
+    mode = source.get(CONF_SOURCE_MODE)
+    if mode == SOURCE_MODE_ENTITY_ADAPTER:
+        entity_ids = source.get(CONF_WATTPLAN_ENTITY_ID)
+        if isinstance(entity_ids, list) and entity_ids:
+            return f"Entity attribute: {', '.join(str(entity_id) for entity_id in entity_ids)}"
+        if isinstance(entity_ids, str) and entity_ids:
+            return f"Entity attribute: {entity_ids}"
+        return "Entity attribute"
+    if mode == SOURCE_MODE_SERVICE_ADAPTER:
+        service = source.get(CONF_SERVICE)
+        return f"Service call: {service}" if service else "Service call"
+    if mode == SOURCE_MODE_TEMPLATE:
+        return "Template"
+    if mode == SOURCE_MODE_BUILT_IN:
+        entity_id = source.get(CONF_WATTPLAN_ENTITY_ID)
+        return f"Built in: {entity_id}" if entity_id else "Built in"
+    if mode == SOURCE_MODE_ENERGY_PROVIDER:
+        config_entry_id = source.get(CONF_CONFIG_ENTRY_ID)
+        return (
+            f"Energy provider: {config_entry_id}"
+            if config_entry_id
+            else "Energy provider"
+        )
+    if mode == SOURCE_MODE_NOT_USED:
+        return "Not used"
+    return "Not configured"
+
+
 async def _async_source_summary(
     hass: HomeAssistant,
     *,
@@ -553,7 +622,9 @@ async def _async_source_summary(
                     slots=expected_slots,
                 )
             )
-            available_count = len(debug["forecast_values"])
+            # Built-in usage review should still summarize the forward forecast window, not the
+            # historical rows used to build it. The historical span is only used for the
+            # limited-history warning text below.
             coverage_start, coverage_end, history_coverage_days = (
                 _built_in_history_coverage(debug, start_at)
             )
@@ -571,12 +642,11 @@ async def _async_source_summary(
             validate_built_in_entity=validate_built_in_entity,
         )
         is_valid = True
-        if mode != SOURCE_MODE_BUILT_IN:
-            coverage_start, coverage_end = _coverage_from_available_count(
-                start_at,
-                slot_minutes=slot_minutes,
-                available_count=available_count,
-            )
+        coverage_start, coverage_end = _coverage_from_available_count(
+            start_at,
+            slot_minutes=slot_minutes,
+            available_count=available_count,
+        )
     except SourceProviderError as err:
         error_key = _invalid_key_from_source_error(err)
         is_valid = False
@@ -779,14 +849,31 @@ def _source_adapter_schema(defaults: dict[str, Any] | None = None) -> vol.Schema
                     mode=selector.SelectSelectorMode.DROPDOWN,
                 )
             ),
-            vol.Required(CONF_NAME, default=defaults.get(CONF_NAME, "forecast")): (
-                selector.TextSelector()
-            ),
-            vol.Required(CONF_TIME_KEY, default=defaults.get(CONF_TIME_KEY, "start")): (
-                selector.TextSelector()
-            ),
-            vol.Required(CONF_VALUE_KEY, default=defaults.get(CONF_VALUE_KEY, "value")): (
-                selector.TextSelector()
+            vol.Optional(
+                SECTION_SOURCE_MANUAL,
+                default={
+                    CONF_NAME: defaults.get(CONF_NAME, "forecast"),
+                    CONF_TIME_KEY: defaults.get(CONF_TIME_KEY, "start"),
+                    CONF_VALUE_KEY: defaults.get(CONF_VALUE_KEY, "value"),
+                },
+            ): section(
+                vol.Schema(
+                    {
+                        vol.Required(
+                            CONF_NAME,
+                            default=defaults.get(CONF_NAME, "forecast"),
+                        ): selector.TextSelector(),
+                        vol.Required(
+                            CONF_TIME_KEY,
+                            default=defaults.get(CONF_TIME_KEY, "start"),
+                        ): selector.TextSelector(),
+                        vol.Required(
+                            CONF_VALUE_KEY,
+                            default=defaults.get(CONF_VALUE_KEY, "value"),
+                        ): selector.TextSelector(),
+                    }
+                ),
+                {"collapsed": True},
             ),
             **_source_fixup_fields(defaults, include_advanced=True),
         }
@@ -822,14 +909,31 @@ def _source_service_schema(defaults: dict[str, Any] | None = None) -> vol.Schema
                     mode=selector.SelectSelectorMode.DROPDOWN,
                 )
             ),
-            vol.Required(CONF_NAME, default=defaults.get(CONF_NAME, "")): (
-                selector.TextSelector()
-            ),
-            vol.Required(CONF_TIME_KEY, default=defaults.get(CONF_TIME_KEY, "start")): (
-                selector.TextSelector()
-            ),
-            vol.Required(CONF_VALUE_KEY, default=defaults.get(CONF_VALUE_KEY, "value")): (
-                selector.TextSelector()
+            vol.Optional(
+                SECTION_SOURCE_MANUAL,
+                default={
+                    CONF_NAME: defaults.get(CONF_NAME, ""),
+                    CONF_TIME_KEY: defaults.get(CONF_TIME_KEY, "start"),
+                    CONF_VALUE_KEY: defaults.get(CONF_VALUE_KEY, "value"),
+                },
+            ): section(
+                vol.Schema(
+                    {
+                        vol.Required(
+                            CONF_NAME,
+                            default=defaults.get(CONF_NAME, ""),
+                        ): selector.TextSelector(),
+                        vol.Required(
+                            CONF_TIME_KEY,
+                            default=defaults.get(CONF_TIME_KEY, "start"),
+                        ): selector.TextSelector(),
+                        vol.Required(
+                            CONF_VALUE_KEY,
+                            default=defaults.get(CONF_VALUE_KEY, "value"),
+                        ): selector.TextSelector(),
+                    }
+                ),
+                {"collapsed": True},
             ),
             **_source_fixup_fields(defaults, include_advanced=True),
         }
@@ -905,22 +1009,22 @@ def _battery_schema() -> vol.Schema:
                     domain=["sensor"], device_class=["battery"]
                 )
             ),
-            vol.Required(CONF_CAPACITY_KWH): selector.NumberSelector(
+            vol.Required(CONF_CAPACITY_KWH, default=10): selector.NumberSelector(
                 selector.NumberSelectorConfig(
                     min=0.1, max=1000, step=0.1, mode=selector.NumberSelectorMode.BOX
                 )
             ),
-            vol.Required(CONF_MINIMUM_KWH): selector.NumberSelector(
+            vol.Required(CONF_MINIMUM_KWH, default=1): selector.NumberSelector(
                 selector.NumberSelectorConfig(
                     min=0, max=1000, step=0.1, mode=selector.NumberSelectorMode.BOX
                 )
             ),
-            vol.Required(CONF_MAX_CHARGE_KW): selector.NumberSelector(
+            vol.Required(CONF_MAX_CHARGE_KW, default=5): selector.NumberSelector(
                 selector.NumberSelectorConfig(
                     min=0, max=500, step=0.1, mode=selector.NumberSelectorMode.BOX
                 )
             ),
-            vol.Required(CONF_MAX_DISCHARGE_KW): selector.NumberSelector(
+            vol.Required(CONF_MAX_DISCHARGE_KW, default=5): selector.NumberSelector(
                 selector.NumberSelectorConfig(
                     min=0, max=500, step=0.1, mode=selector.NumberSelectorMode.BOX
                 )
@@ -1028,24 +1132,24 @@ def _optional_schema() -> vol.Schema:
     return vol.Schema(
         {
             vol.Required(CONF_NAME): selector.TextSelector(),
-            vol.Required(CONF_DURATION_MINUTES): selector.NumberSelector(
+            vol.Required(CONF_DURATION_MINUTES, default=120): selector.NumberSelector(
                 selector.NumberSelectorConfig(
                     min=1, max=1440, step=15, mode=selector.NumberSelectorMode.BOX
+                )
+            ),
+            vol.Required(CONF_ENERGY_KWH, default=2): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0, max=100, step=0.1, mode=selector.NumberSelectorMode.BOX
+                )
+            ),
+            vol.Required(CONF_OPTIONS_COUNT, default=2): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=1, max=10, step=1, mode=selector.NumberSelectorMode.BOX
                 )
             ),
             vol.Required(CONF_RUN_WITHIN_HOURS, default=24): selector.NumberSelector(
                 selector.NumberSelectorConfig(
                     min=1, max=168, step=1, mode=selector.NumberSelectorMode.BOX
-                )
-            ),
-            vol.Required(CONF_ENERGY_KWH): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0, max=100, step=0.1, mode=selector.NumberSelectorMode.BOX
-                )
-            ),
-            vol.Required(CONF_OPTIONS_COUNT, default=3): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=1, max=10, step=1, mode=selector.NumberSelectorMode.BOX
                 )
             ),
             vol.Required(CONF_MIN_OPTION_GAP_MINUTES, default=60): selector.NumberSelector(
@@ -1384,7 +1488,12 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
 
         default_mode = existing.get(
             CONF_SOURCE_MODE,
-            SOURCE_MODE_NOT_USED if include_not_used else SOURCE_MODE_TEMPLATE,
+            _preferred_source_mode(
+                key,
+                include_not_used=include_not_used,
+                include_built_in=include_built_in,
+                include_energy_provider=include_energy_provider,
+            ),
         )
         if default_mode == SOURCE_MODE_NOT_USED and not include_not_used:
             default_mode = SOURCE_MODE_TEMPLATE
@@ -1838,21 +1947,46 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
             return await self.async_step_source_usage()
         if key == CONF_SOURCE_USAGE:
             return await self.async_step_source_pv()
-        return self.async_create_entry(
-            title=self._core[CONF_NAME],
-            data={
-                **{key: value for key, value in self._core.items() if key != CONF_NAME},
-                CONF_SOURCES: self._sources,
-            },
-            options={
-                CONF_PLANNING_ENABLED: True,
-                CONF_ACTION_EMISSION_ENABLED: True,
-            },
-        )
+        return await self.async_step_setup_complete()
 
     def _is_final_source_step(self, key: str) -> bool:
         """Return if the source config step is the last one before create."""
         return key == CONF_SOURCE_PV
+
+    async def async_step_setup_complete(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Show one final setup summary and next actions before entry creation."""
+        if user_input is not None:
+            return self.async_create_entry(
+                title=self._core[CONF_NAME],
+                data={
+                    **{key: value for key, value in self._core.items() if key != CONF_NAME},
+                    CONF_SOURCES: self._sources,
+                },
+                options={
+                    CONF_PLANNING_ENABLED: True,
+                    CONF_ACTION_EMISSION_ENABLED: True,
+                },
+            )
+
+        return self.async_show_form(
+            step_id="setup_complete",
+            data_schema=_final_setup_schema(),
+            description_placeholders={
+                "setup_name": str(self._core[CONF_NAME]),
+                "slot_minutes": str(self._core[CONF_SLOT_MINUTES]),
+                "plan_hours": str(self._core[CONF_HOURS_TO_PLAN]),
+                "price_source": _source_mode_summary(
+                    self._sources.get(CONF_SOURCE_PRICE)
+                ),
+                "usage_source": _source_mode_summary(
+                    self._sources.get(CONF_SOURCE_USAGE)
+                ),
+                "pv_source": _source_mode_summary(self._sources.get(CONF_SOURCE_PV)),
+            },
+            last_step=True,
+        )
 
     async def _async_validate_source(self, key: str, source: dict[str, Any]) -> None:
         """Validate source config against the current horizon."""
@@ -2108,7 +2242,12 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
             data_schema=_source_mode_schema(
                 existing.get(
                     CONF_SOURCE_MODE,
-                    SOURCE_MODE_NOT_USED if include_not_used else SOURCE_MODE_TEMPLATE,
+                    _preferred_source_mode(
+                        key,
+                        include_not_used=include_not_used,
+                        include_built_in=include_built_in,
+                        include_energy_provider=include_energy_provider,
+                    ),
                 ),
                 include_not_used=include_not_used,
                 include_built_in=include_built_in,
@@ -2935,6 +3074,8 @@ def _validate_optional_data(data: dict[str, Any]) -> dict[str, str]:
 class BatterySubentryFlowHandler(ConfigSubentryFlow):
     """Handle battery subentry flow."""
 
+    _pending_input: dict[str, Any] | None = None
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
@@ -2947,16 +3088,8 @@ class BatterySubentryFlowHandler(ConfigSubentryFlow):
             else:
                 errors.update(_validate_battery_data(normalized_input))
             if not errors:
-                return self.async_create_entry(
-                    title=_subentry_display_title(
-                        SUBENTRY_TYPE_BATTERY, normalized_input
-                    ),
-                    data=normalized_input,
-                    unique_id=(
-                        f"{SUBENTRY_TYPE_BATTERY}:"
-                        f"{_normalize_name(normalized_input[CONF_NAME])}"
-                    ),
-                )
+                self._pending_input = normalized_input
+                return await self.async_step_complete()
 
         return self.async_show_form(
             step_id="user",
@@ -2964,6 +3097,27 @@ class BatterySubentryFlowHandler(ConfigSubentryFlow):
                 _battery_schema(), _battery_form_defaults(user_input or {})
             ),
             errors=errors,
+        )
+
+    async def async_step_complete(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Show next actions after creating a battery."""
+        if self._pending_input is None:
+            return await self.async_step_user()
+        if user_input is not None:
+            pending = self._pending_input
+            self._pending_input = None
+            return self.async_create_entry(
+                title=_subentry_display_title(SUBENTRY_TYPE_BATTERY, pending),
+                data=pending,
+                unique_id=f"{SUBENTRY_TYPE_BATTERY}:{_normalize_name(pending[CONF_NAME])}",
+            )
+        return self.async_show_form(
+            step_id="complete",
+            data_schema=_final_setup_schema(),
+            description_placeholders={"name": str(self._pending_input[CONF_NAME])},
+            last_step=True,
         )
 
     async def async_step_reconfigure(
@@ -2984,18 +3138,8 @@ class BatterySubentryFlowHandler(ConfigSubentryFlow):
                 errors.update(_validate_battery_data(normalized_input))
 
             if not errors:
-                return self.async_update_reload_and_abort(
-                    self._get_entry(),
-                    subentry,
-                    data=normalized_input,
-                    title=_subentry_display_title(
-                        SUBENTRY_TYPE_BATTERY, normalized_input
-                    ),
-                    unique_id=(
-                        f"{SUBENTRY_TYPE_BATTERY}:"
-                        f"{_normalize_name(normalized_input[CONF_NAME])}"
-                    ),
-                )
+                self._pending_input = normalized_input
+                return await self.async_step_reconfigure_complete()
             defaults = user_input
 
         return self.async_show_form(
@@ -3006,9 +3150,35 @@ class BatterySubentryFlowHandler(ConfigSubentryFlow):
             errors=errors,
         )
 
+    async def async_step_reconfigure_complete(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Show next actions after editing a battery."""
+        if self._pending_input is None:
+            return await self.async_step_reconfigure()
+        if user_input is not None:
+            subentry = self._get_reconfigure_subentry()
+            pending = self._pending_input
+            self._pending_input = None
+            return self.async_update_reload_and_abort(
+                self._get_entry(),
+                subentry,
+                data=pending,
+                title=_subentry_display_title(SUBENTRY_TYPE_BATTERY, pending),
+                unique_id=f"{SUBENTRY_TYPE_BATTERY}:{_normalize_name(pending[CONF_NAME])}",
+            )
+        return self.async_show_form(
+            step_id="reconfigure_complete",
+            data_schema=_final_setup_schema(),
+            description_placeholders={"name": str(self._pending_input[CONF_NAME])},
+            last_step=True,
+        )
+
 
 class ComfortSubentryFlowHandler(ConfigSubentryFlow):
     """Handle comfort subentry flow."""
+
+    _pending_input: dict[str, Any] | None = None
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -3021,11 +3191,8 @@ class ComfortSubentryFlowHandler(ConfigSubentryFlow):
             else:
                 errors.update(_validate_comfort_data(user_input))
             if not errors:
-                return self.async_create_entry(
-                    title=_subentry_display_title(SUBENTRY_TYPE_COMFORT, user_input),
-                    data=user_input,
-                    unique_id=f"{SUBENTRY_TYPE_COMFORT}:{_normalize_name(user_input[CONF_NAME])}",
-                )
+                self._pending_input = dict(user_input)
+                return await self.async_step_complete()
 
         return self.async_show_form(
             step_id="user",
@@ -3036,6 +3203,27 @@ class ComfortSubentryFlowHandler(ConfigSubentryFlow):
             description_placeholders={
                 "slot_minutes": str(self._get_entry().data[CONF_SLOT_MINUTES])
             },
+        )
+
+    async def async_step_complete(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Show next actions after creating a comfort load."""
+        if self._pending_input is None:
+            return await self.async_step_user()
+        if user_input is not None:
+            pending = self._pending_input
+            self._pending_input = None
+            return self.async_create_entry(
+                title=_subentry_display_title(SUBENTRY_TYPE_COMFORT, pending),
+                data=pending,
+                unique_id=f"{SUBENTRY_TYPE_COMFORT}:{_normalize_name(pending[CONF_NAME])}",
+            )
+        return self.async_show_form(
+            step_id="complete",
+            data_schema=_final_setup_schema(),
+            description_placeholders={"name": str(self._pending_input[CONF_NAME])},
+            last_step=True,
         )
 
     async def async_step_reconfigure(
@@ -3055,13 +3243,8 @@ class ComfortSubentryFlowHandler(ConfigSubentryFlow):
                 errors.update(_validate_comfort_data(user_input))
 
             if not errors:
-                return self.async_update_reload_and_abort(
-                    self._get_entry(),
-                    subentry,
-                    data=user_input,
-                    title=_subentry_display_title(SUBENTRY_TYPE_COMFORT, user_input),
-                    unique_id=f"{SUBENTRY_TYPE_COMFORT}:{_normalize_name(user_input[CONF_NAME])}",
-                )
+                self._pending_input = dict(user_input)
+                return await self.async_step_reconfigure_complete()
             defaults = user_input
 
         return self.async_show_form(
@@ -3073,9 +3256,35 @@ class ComfortSubentryFlowHandler(ConfigSubentryFlow):
             },
         )
 
+    async def async_step_reconfigure_complete(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Show next actions after editing a comfort load."""
+        if self._pending_input is None:
+            return await self.async_step_reconfigure()
+        if user_input is not None:
+            subentry = self._get_reconfigure_subentry()
+            pending = self._pending_input
+            self._pending_input = None
+            return self.async_update_reload_and_abort(
+                self._get_entry(),
+                subentry,
+                data=pending,
+                title=_subentry_display_title(SUBENTRY_TYPE_COMFORT, pending),
+                unique_id=f"{SUBENTRY_TYPE_COMFORT}:{_normalize_name(pending[CONF_NAME])}",
+            )
+        return self.async_show_form(
+            step_id="reconfigure_complete",
+            data_schema=_final_setup_schema(),
+            description_placeholders={"name": str(self._pending_input[CONF_NAME])},
+            last_step=True,
+        )
+
 
 class OptionalSubentryFlowHandler(ConfigSubentryFlow):
     """Handle optional load subentry flow."""
+
+    _pending_input: dict[str, Any] | None = None
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -3088,11 +3297,8 @@ class OptionalSubentryFlowHandler(ConfigSubentryFlow):
             else:
                 errors.update(_validate_optional_data(user_input))
             if not errors:
-                return self.async_create_entry(
-                    title=_subentry_display_title(SUBENTRY_TYPE_OPTIONAL, user_input),
-                    data=user_input,
-                    unique_id=f"{SUBENTRY_TYPE_OPTIONAL}:{_normalize_name(user_input[CONF_NAME])}",
-                )
+                self._pending_input = dict(user_input)
+                return await self.async_step_complete()
 
         return self.async_show_form(
             step_id="user",
@@ -3100,6 +3306,27 @@ class OptionalSubentryFlowHandler(ConfigSubentryFlow):
                 _optional_schema(), user_input or {}
             ),
             errors=errors,
+        )
+
+    async def async_step_complete(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Show next actions after creating an optional load."""
+        if self._pending_input is None:
+            return await self.async_step_user()
+        if user_input is not None:
+            pending = self._pending_input
+            self._pending_input = None
+            return self.async_create_entry(
+                title=_subentry_display_title(SUBENTRY_TYPE_OPTIONAL, pending),
+                data=pending,
+                unique_id=f"{SUBENTRY_TYPE_OPTIONAL}:{_normalize_name(pending[CONF_NAME])}",
+            )
+        return self.async_show_form(
+            step_id="complete",
+            data_schema=_final_setup_schema(),
+            description_placeholders={"name": str(self._pending_input[CONF_NAME])},
+            last_step=True,
         )
 
     async def async_step_reconfigure(
@@ -3119,17 +3346,36 @@ class OptionalSubentryFlowHandler(ConfigSubentryFlow):
                 errors.update(_validate_optional_data(user_input))
 
             if not errors:
-                return self.async_update_reload_and_abort(
-                    self._get_entry(),
-                    subentry,
-                    data=user_input,
-                    title=_subentry_display_title(SUBENTRY_TYPE_OPTIONAL, user_input),
-                    unique_id=f"{SUBENTRY_TYPE_OPTIONAL}:{_normalize_name(user_input[CONF_NAME])}",
-                )
+                self._pending_input = dict(user_input)
+                return await self.async_step_reconfigure_complete()
             defaults = user_input
 
         return self.async_show_form(
             step_id="reconfigure",
             data_schema=self.add_suggested_values_to_schema(_optional_schema(), defaults),
             errors=errors,
+        )
+
+    async def async_step_reconfigure_complete(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Show next actions after editing an optional load."""
+        if self._pending_input is None:
+            return await self.async_step_reconfigure()
+        if user_input is not None:
+            subentry = self._get_reconfigure_subentry()
+            pending = self._pending_input
+            self._pending_input = None
+            return self.async_update_reload_and_abort(
+                self._get_entry(),
+                subentry,
+                data=pending,
+                title=_subentry_display_title(SUBENTRY_TYPE_OPTIONAL, pending),
+                unique_id=f"{SUBENTRY_TYPE_OPTIONAL}:{_normalize_name(pending[CONF_NAME])}",
+            )
+        return self.async_show_form(
+            step_id="reconfigure_complete",
+            data_schema=_final_setup_schema(),
+            description_placeholders={"name": str(self._pending_input[CONF_NAME])},
+            last_step=True,
         )

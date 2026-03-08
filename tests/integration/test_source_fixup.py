@@ -27,6 +27,7 @@ from custom_components.wattplan.source_fixup import (
     SourceHealthKind,
     effective_provider_config,
 )
+from custom_components.wattplan.source_pipeline import build_source_base_provider
 from custom_components.wattplan.source_provider import TemplateAdapterSourceProvider
 from custom_components.wattplan.source_types import (
     SourceProvider,
@@ -225,9 +226,11 @@ async def test_adapter_pipeline_keeps_advanced_provider_settings(
         "ok",
         {"prices": [1, 3, 5, 7, 9, 11, 13, 15]},
     )
-    provider = TemplateAdapterSourceProvider(
+    # Route through the shared pipeline so multi-entity list config is composed
+    # the same way in tests as it is in runtime planning and flow review.
+    provider = build_source_base_provider(
         hass,
-        source_name="price",
+        source_key="price",
         source_config={
             CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
             "entity_id": ["sensor.forecast"],

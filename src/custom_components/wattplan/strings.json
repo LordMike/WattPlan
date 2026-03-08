@@ -3,7 +3,7 @@
     "step": {
       "requirements": {
         "title": "Before you start",
-        "description": "**Required before setup**\n\n- A **price forecast** source that covers the full plan period\n- Forecast values as timestamp/value pairs (`start`, `value`)\n\n**Optional**\n\n- A usage forecast source\n- A PV forecast source\n\nYou can either reference an existing entity that already exposes forecast data in its attributes, or write a Jinja2 template that returns the expected timestamp/value list.",
+        "description": "**Required before setup**\n\n- A **price forecast** source that covers the full plan period\n- Forecast values as timestamp/value pairs (`start`, `value`)\n\n**Optional**\n\n- A usage forecast source\n- A PV forecast source\n\nYou can either reference an existing entity that already exposes forecast data in its attributes, or write a Jinja2 template that returns the expected timestamp/value list.\n\n**Unsure what to do?**\nSee the example walkthrough for a complete setup path using Strømligning, Deye, and Solcast:\n[Open the example guide on GitHub](https://github.com/LordMike/WattPlan/blob/main/docs/example-deye-solcast-stromligning.md).",
         "submit": "Start"
       },
       "planner_setup": {
@@ -21,9 +21,14 @@
           "hours_to_plan": "WattPlan needs forecasts that cover the full selected period."
         }
       },
+      "setup_complete": {
+        "title": "Setup complete",
+        "description": "You have now set up the **{setup_name}** WattPlan planner.\n\nCurrent planner settings:\n- Resolution: **{slot_minutes} minutes**\n- Planning horizon: **{plan_hours} hours**\n- Price source: **{price_source}**\n- Usage source: **{usage_source}**\n- PV source: **{pv_source}**\n\nWattPlan will now begin producing plans on its schedule and after relevant setup changes.\n\nPlanning and optimization are only part of the setup. To really benefit, WattPlan needs something that can shift load away from expensive periods and into cheaper ones.\n\nGood next steps:\n- Add a **battery** if you want WattPlan to plan charging and discharging\n- Add **optional loads** such as a washing machine if you want WattPlan to suggest when people should start them\n- Add **comfort loads** if you want WattPlan to shift flexible always-needed loads\n- Create automations that translate WattPlan action entities into real device commands\n\nIn practice, batteries, optional loads, and comfort loads are the main ways to turn plans into savings.",
+        "submit": "Finish"
+      },
       "source_price": {
         "title": "Price source",
-        "description": "**Choose how WattPlan reads your price forecast**\n\n1. **Entity attribute** (preferred): Read a forecast list directly from an entity attribute.\n2. **Service call** (preferred): Call a Home Assistant service that returns a forecast list.\n3. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n\nEach source type must produce enough forecast data for the planner window.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\n**Choose how WattPlan reads your price forecast**\n\n1. **Entity attribute** (preferred): Read a forecast list directly from an entity attribute.\n2. **Service call** (preferred): Call a Home Assistant service that returns a forecast list.\n3. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n\nEach source type must produce enough forecast data for the planner window.",
         "submit": "Next",
         "data": {
           "source_mode": "Source mode"
@@ -34,7 +39,7 @@
       },
       "source_price_template": {
         "title": "Price source template",
-        "description": "Provide a template that returns price forecast data.\n\nReturn either:\n- a list of objects with `start` and `value`\n- or a list of numeric values\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nProvide a template that returns price forecast data.\n\nReturn either:\n- a list of objects with `start` and `value`\n- or a list of numeric values\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
         "data": {
           "template": "Template",
           "fixup_profile": "Fixup profile"
@@ -44,6 +49,19 @@
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
+          "manual": {
+            "name": "If not Auto detect",
+            "data": {
+              "name": "Attribute name",
+              "time_key": "Timestamp key",
+              "value_key": "Value key"
+            },
+            "data_description": {
+              "name": "Attribute path that contains the forecast list. Used only when Auto detect is not selected.",
+              "time_key": "Key containing the timestamp. Used only when Auto detect is not selected.",
+              "value_key": "Key containing the numeric value. Used only when Auto detect is not selected."
+            }
+          },
           "advanced": {
             "name": "Advanced processing",
             "data": {
@@ -63,24 +81,31 @@
       },
       "source_price_adapter": {
         "title": "Price source entity attribute",
-        "description": "Use an entity attribute for price forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect one or more entities and infer the list path plus timestamp/value keys\n- **Attribute objects**: use an explicit list of objects with timestamp/value keys\n- **Attribute values**: use an explicit list of numeric values",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse an entity attribute for price forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect one or more entities and infer the list path plus timestamp/value keys\n- **Attribute objects**: use an explicit list of objects with timestamp/value keys\n- **Attribute values**: use an explicit list of numeric values",
         "data": {
           "entity_id": "Entity",
           "adapter_type": "Adapter type",
-          "name": "Attribute name",
-          "time_key": "Timestamp key",
-          "value_key": "Value key",
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
           "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
           "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
-          "name": "Attribute path that contains the forecast list. Ignored in auto detect mode.",
-          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
-          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
+          "manual": {
+            "name": "If not Auto detect",
+            "data": {
+              "name": "Attribute name",
+              "time_key": "Timestamp key",
+              "value_key": "Value key"
+            },
+            "data_description": {
+              "name": "Attribute path that contains the forecast list. Used only when Auto detect is not selected.",
+              "time_key": "Key containing the timestamp. Used only when Auto detect is not selected.",
+              "value_key": "Key containing the numeric value. Used only when Auto detect is not selected."
+            }
+          },
           "advanced": {
             "name": "Advanced processing",
             "data": {
@@ -100,24 +125,31 @@
       },
       "source_price_service": {
         "title": "Price source service call",
-        "description": "Use a Home Assistant service call for price forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect the returned payload and infer the list path plus timestamp/value keys\n- **Service call**: use an explicit response path and key mapping\n\nServices must not require input arguments.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse a Home Assistant service call for price forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect the returned payload and infer the list path plus timestamp/value keys\n- **Service call**: use an explicit response path and key mapping\n\nServices must not require input arguments.",
         "data": {
           "service": "Service call",
           "adapter_type": "Adapter type",
-          "name": "Root path",
-          "time_key": "Timestamp key",
-          "value_key": "Value key",
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
           "service": "Service to call in `domain.service` format. WattPlan calls it without arguments and reads the returned response.",
           "adapter_type": "Choose Auto detect for the recommended setup path, or Service call to enter the fields yourself.",
-          "name": "Root path containing the forecast list in the service response. Ignored in auto detect mode.",
-          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
-          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
+          "manual": {
+            "name": "If not Auto detect",
+            "data": {
+              "name": "Root path",
+              "time_key": "Timestamp key",
+              "value_key": "Value key"
+            },
+            "data_description": {
+              "name": "Root path containing the forecast list in the service response. Used only when Auto detect is not selected.",
+              "time_key": "Key containing the timestamp. Used only when Auto detect is not selected.",
+              "value_key": "Key containing the numeric value. Used only when Auto detect is not selected."
+            }
+          },
           "advanced": {
             "name": "Advanced processing",
             "data": {
@@ -137,7 +169,7 @@
       },
       "source_usage": {
         "title": "Usage source",
-        "description": "**Choose how WattPlan reads your usage forecast**\n\n1. **Built in** (preferred): Build a forecast from historical load in Home Assistant.\n2. **Entity attribute**: Read a forecast list directly from an entity attribute.\n3. **Service call**: Call a Home Assistant service that returns a forecast list.\n4. **Not used**: Skip usage forecasting for this setup.\n5. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n\nIf used, the source must produce enough forecast data for the planner window.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\n**Choose how WattPlan reads your usage forecast**\n\n1. **Built in** (preferred): Build a forecast from historical load in Home Assistant.\n2. **Entity attribute**: Read a forecast list directly from an entity attribute.\n3. **Service call**: Call a Home Assistant service that returns a forecast list.\n4. **Not used**: Skip usage forecasting for this setup.\n5. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n\nIf used, the source must produce enough forecast data for the planner window.",
         "submit": "Next",
         "data": {
           "source_mode": "Source mode"
@@ -148,7 +180,7 @@
       },
       "source_usage_built_in": {
         "title": "Usage source built in forecast",
-        "description": "Use Home Assistant history to forecast usage for the next planner window.\n\nProvide a sensor with your running usage in kWh. WattPlan uses recorder history and long-term statistics from the last N days, with weekday weighting, to build enough values for your selected {slot_minutes}-minute interval.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse Home Assistant history to forecast usage for the next planner window.\n\nProvide a sensor with your running usage in kWh. WattPlan uses recorder history and long-term statistics from the last N days, with weekday weighting, to build enough values for your selected {slot_minutes}-minute interval.",
         "data": {
           "entity_id": "Load sensor",
           "history_days": "History days"
@@ -160,7 +192,7 @@
       },
       "source_usage_template": {
         "title": "Usage source template",
-        "description": "Provide a template that returns usage forecast data.\n\nReturn either:\n- a list of objects with `start` and `value`\n- or a list of numeric values\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nProvide a template that returns usage forecast data.\n\nReturn either:\n- a list of objects with `start` and `value`\n- or a list of numeric values\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
         "data": {
           "template": "Template",
           "fixup_profile": "Fixup profile"
@@ -170,6 +202,19 @@
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
+          "manual": {
+            "name": "If not Auto detect",
+            "data": {
+              "name": "Attribute name",
+              "time_key": "Timestamp key",
+              "value_key": "Value key"
+            },
+            "data_description": {
+              "name": "Attribute path that contains the forecast list. Used only when Auto detect is not selected.",
+              "time_key": "Key containing the timestamp. Used only when Auto detect is not selected.",
+              "value_key": "Key containing the numeric value. Used only when Auto detect is not selected."
+            }
+          },
           "advanced": {
             "name": "Advanced processing",
             "data": {
@@ -189,24 +234,31 @@
       },
       "source_usage_adapter": {
         "title": "Usage source entity attribute",
-        "description": "Use an entity attribute for usage forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect one or more entities and infer the list path plus timestamp/value keys\n- **Attribute objects**: use an explicit list of objects with timestamp/value keys\n- **Attribute values**: use an explicit list of numeric values",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse an entity attribute for usage forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect one or more entities and infer the list path plus timestamp/value keys\n- **Attribute objects**: use an explicit list of objects with timestamp/value keys\n- **Attribute values**: use an explicit list of numeric values",
         "data": {
           "entity_id": "Entity",
           "adapter_type": "Adapter type",
-          "name": "Attribute name",
-          "time_key": "Timestamp key",
-          "value_key": "Value key",
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
           "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
           "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
-          "name": "Attribute path that contains the forecast list. Ignored in auto detect mode.",
-          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
-          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
+          "manual": {
+            "name": "If not Auto detect",
+            "data": {
+              "name": "Attribute name",
+              "time_key": "Timestamp key",
+              "value_key": "Value key"
+            },
+            "data_description": {
+              "name": "Attribute path that contains the forecast list. Used only when Auto detect is not selected.",
+              "time_key": "Key containing the timestamp. Used only when Auto detect is not selected.",
+              "value_key": "Key containing the numeric value. Used only when Auto detect is not selected."
+            }
+          },
           "advanced": {
             "name": "Advanced processing",
             "data": {
@@ -226,24 +278,31 @@
       },
       "source_usage_service": {
         "title": "Usage source service call",
-        "description": "Use a Home Assistant service call for usage forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect the returned payload and infer the list path plus timestamp/value keys\n- **Service call**: use an explicit response path and key mapping\n\nServices must not require input arguments.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse a Home Assistant service call for usage forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect the returned payload and infer the list path plus timestamp/value keys\n- **Service call**: use an explicit response path and key mapping\n\nServices must not require input arguments.",
         "data": {
           "service": "Service call",
           "adapter_type": "Adapter type",
-          "name": "Root path",
-          "time_key": "Timestamp key",
-          "value_key": "Value key",
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
           "service": "Service to call in `domain.service` format. WattPlan calls it without arguments and reads the returned response.",
           "adapter_type": "Choose Auto detect for the recommended setup path, or Service call to enter the fields yourself.",
-          "name": "Root path containing the forecast list in the service response. Ignored in auto detect mode.",
-          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
-          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
+          "manual": {
+            "name": "If not Auto detect",
+            "data": {
+              "name": "Root path",
+              "time_key": "Timestamp key",
+              "value_key": "Value key"
+            },
+            "data_description": {
+              "name": "Root path containing the forecast list in the service response. Used only when Auto detect is not selected.",
+              "time_key": "Key containing the timestamp. Used only when Auto detect is not selected.",
+              "value_key": "Key containing the numeric value. Used only when Auto detect is not selected."
+            }
+          },
           "advanced": {
             "name": "Advanced processing",
             "data": {
@@ -263,7 +322,7 @@
       },
       "source_pv": {
         "title": "PV source",
-        "description": "**Choose how WattPlan reads your PV forecast**\n\n1. **Energy provider** (preferred): Use a Home Assistant integration that exposes an Energy solar forecast.\n2. **Entity attribute**: Read a forecast list directly from an entity attribute.\n3. **Service call**: Call a Home Assistant service that returns a forecast list.\n4. **Not used**: Skip PV forecasting for this setup.\n5. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n\nIf used, the source must produce enough forecast data for the planner window.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\n**Choose how WattPlan reads your PV forecast**\n\n1. **Energy provider** (preferred): Use a Home Assistant integration that exposes an Energy solar forecast.\n2. **Entity attribute**: Read a forecast list directly from an entity attribute.\n3. **Service call**: Call a Home Assistant service that returns a forecast list.\n4. **Not used**: Skip PV forecasting for this setup.\n5. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n\nIf used, the source must produce enough forecast data for the planner window.",
         "submit": "Next",
         "data": {
           "source_mode": "Source mode"
@@ -274,7 +333,7 @@
       },
       "source_pv_template": {
         "title": "PV source template",
-        "description": "Provide a template that returns PV forecast data.\n\nReturn either:\n- a list of objects with `start` and `value`\n- or a list of numeric values\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nProvide a template that returns PV forecast data.\n\nReturn either:\n- a list of objects with `start` and `value`\n- or a list of numeric values\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
         "data": {
           "template": "Template",
           "fixup_profile": "Fixup profile"
@@ -284,6 +343,19 @@
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
+          "manual": {
+            "name": "If not Auto detect",
+            "data": {
+              "name": "Attribute name",
+              "time_key": "Timestamp key",
+              "value_key": "Value key"
+            },
+            "data_description": {
+              "name": "Attribute path that contains the forecast list. Used only when Auto detect is not selected.",
+              "time_key": "Key containing the timestamp. Used only when Auto detect is not selected.",
+              "value_key": "Key containing the numeric value. Used only when Auto detect is not selected."
+            }
+          },
           "advanced": {
             "name": "Advanced processing",
             "data": {
@@ -303,24 +375,31 @@
       },
       "source_pv_adapter": {
         "title": "PV source entity attribute",
-        "description": "Use an entity attribute for PV forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect one or more entities and infer the list path plus timestamp/value keys\n- **Attribute objects**: use an explicit list of objects with timestamp/value keys\n- **Attribute values**: use an explicit list of numeric values",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse an entity attribute for PV forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect one or more entities and infer the list path plus timestamp/value keys\n- **Attribute objects**: use an explicit list of objects with timestamp/value keys\n- **Attribute values**: use an explicit list of numeric values",
         "data": {
           "entity_id": "Entity",
           "adapter_type": "Adapter type",
-          "name": "Attribute name",
-          "time_key": "Timestamp key",
-          "value_key": "Value key",
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
           "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
           "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
-          "name": "Attribute path that contains the forecast list. Ignored in auto detect mode.",
-          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
-          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
+          "manual": {
+            "name": "If not Auto detect",
+            "data": {
+              "name": "Attribute name",
+              "time_key": "Timestamp key",
+              "value_key": "Value key"
+            },
+            "data_description": {
+              "name": "Attribute path that contains the forecast list. Used only when Auto detect is not selected.",
+              "time_key": "Key containing the timestamp. Used only when Auto detect is not selected.",
+              "value_key": "Key containing the numeric value. Used only when Auto detect is not selected."
+            }
+          },
           "advanced": {
             "name": "Advanced processing",
             "data": {
@@ -340,24 +419,31 @@
       },
       "source_pv_service": {
         "title": "PV source service call",
-        "description": "Use a Home Assistant service call for PV forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect the returned payload and infer the list path plus timestamp/value keys\n- **Service call**: use an explicit response path and key mapping\n\nServices must not require input arguments.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse a Home Assistant service call for PV forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect the returned payload and infer the list path plus timestamp/value keys\n- **Service call**: use an explicit response path and key mapping\n\nServices must not require input arguments.",
         "data": {
           "service": "Service call",
           "adapter_type": "Adapter type",
-          "name": "Root path",
-          "time_key": "Timestamp key",
-          "value_key": "Value key",
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
           "service": "Service to call in `domain.service` format. WattPlan calls it without arguments and reads the returned response.",
           "adapter_type": "Choose Auto detect for the recommended setup path, or Service call to enter the fields yourself.",
-          "name": "Root path containing the forecast list in the service response. Ignored in auto detect mode.",
-          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
-          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
+          "manual": {
+            "name": "If not Auto detect",
+            "data": {
+              "name": "Root path",
+              "time_key": "Timestamp key",
+              "value_key": "Value key"
+            },
+            "data_description": {
+              "name": "Root path containing the forecast list in the service response. Used only when Auto detect is not selected.",
+              "time_key": "Key containing the timestamp. Used only when Auto detect is not selected.",
+              "value_key": "Key containing the numeric value. Used only when Auto detect is not selected."
+            }
+          },
           "advanced": {
             "name": "Advanced processing",
             "data": {
@@ -377,7 +463,7 @@
       },
       "source_pv_energy_provider": {
         "title": "PV source Energy provider",
-        "description": "Use a Home Assistant Energy solar forecast provider for PV data.\n\nSelect a loaded integration that exposes Energy solar forecast data. WattPlan converts the provider's hourly Wh forecast into kWh planner intervals and extends the horizon by repeating the value from 24 hours earlier.\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse a Home Assistant Energy solar forecast provider for PV data.\n\nSelect a loaded integration that exposes Energy solar forecast data. WattPlan converts the provider's hourly Wh forecast into kWh planner intervals and extends the horizon by repeating the value from 24 hours earlier.\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
         "data": {
           "config_entry_id": "Energy provider",
           "fixup_profile": "Tail fill model"
@@ -476,7 +562,7 @@
       },
       "source_price": {
         "title": "Price source",
-        "description": "**Choose how WattPlan reads your price forecast**\n\n1. **Entity attribute** (preferred): Read a forecast list directly from an entity attribute.\n2. **Service call** (preferred): Call a Home Assistant service that returns a forecast list.\n3. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n\nEach source type must produce enough forecast data for the planner window.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\n**Choose how WattPlan reads your price forecast**\n\n1. **Entity attribute** (preferred): Read a forecast list directly from an entity attribute.\n2. **Service call** (preferred): Call a Home Assistant service that returns a forecast list.\n3. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n\nEach source type must produce enough forecast data for the planner window.",
         "submit": "Next",
         "data": {
           "source_mode": "Source mode"
@@ -487,7 +573,7 @@
       },
       "source_price_template": {
         "title": "Price source template",
-        "description": "Provide a template that returns price forecast data.\n\nReturn either:\n- a list of objects with `start` and `value`\n- or a list of numeric values\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nProvide a template that returns price forecast data.\n\nReturn either:\n- a list of objects with `start` and `value`\n- or a list of numeric values\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
         "data": {
           "template": "Template",
           "fixup_profile": "Fixup profile"
@@ -516,7 +602,7 @@
       },
       "source_price_adapter": {
         "title": "Price source entity attribute",
-        "description": "Use an entity attribute for price forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect one or more entities and infer the list path plus timestamp/value keys\n- **Attribute objects**: use an explicit list of objects with timestamp/value keys\n- **Attribute values**: use an explicit list of numeric values",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse an entity attribute for price forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect one or more entities and infer the list path plus timestamp/value keys\n- **Attribute objects**: use an explicit list of objects with timestamp/value keys\n- **Attribute values**: use an explicit list of numeric values",
         "data": {
           "entity_id": "Entity",
           "adapter_type": "Adapter type",
@@ -553,7 +639,7 @@
       },
       "source_usage": {
         "title": "Usage source",
-        "description": "**Choose how WattPlan reads your usage forecast**\n\n1. **Built in** (preferred): Build a forecast from historical load in Home Assistant.\n2. **Entity attribute**: Read a forecast list directly from an entity attribute.\n3. **Service call**: Call a Home Assistant service that returns a forecast list.\n4. **Not used**: Skip usage forecasting for this setup.\n5. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n\nIf used, the source must produce enough forecast data for the planner window.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\n**Choose how WattPlan reads your usage forecast**\n\n1. **Built in** (preferred): Build a forecast from historical load in Home Assistant.\n2. **Entity attribute**: Read a forecast list directly from an entity attribute.\n3. **Service call**: Call a Home Assistant service that returns a forecast list.\n4. **Not used**: Skip usage forecasting for this setup.\n5. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n\nIf used, the source must produce enough forecast data for the planner window.",
         "submit": "Next",
         "data": {
           "source_mode": "Source mode"
@@ -576,7 +662,7 @@
       },
       "source_usage_template": {
         "title": "Usage source template",
-        "description": "Provide a template that returns usage forecast data.\n\nReturn either:\n- a list of objects with `start` and `value`\n- or a list of numeric values\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nProvide a template that returns usage forecast data.\n\nReturn either:\n- a list of objects with `start` and `value`\n- or a list of numeric values\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
         "data": {
           "template": "Template",
           "fixup_profile": "Fixup profile"
@@ -605,7 +691,7 @@
       },
       "source_usage_adapter": {
         "title": "Usage source entity attribute",
-        "description": "Use an entity attribute for usage forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect one or more entities and infer the list path plus timestamp/value keys\n- **Attribute objects**: use an explicit list of objects with timestamp/value keys\n- **Attribute values**: use an explicit list of numeric values",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse an entity attribute for usage forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect one or more entities and infer the list path plus timestamp/value keys\n- **Attribute objects**: use an explicit list of objects with timestamp/value keys\n- **Attribute values**: use an explicit list of numeric values",
         "data": {
           "entity_id": "Entity",
           "adapter_type": "Adapter type",
@@ -642,7 +728,7 @@
       },
       "source_pv": {
         "title": "PV source",
-        "description": "**Choose how WattPlan reads your PV forecast**\n\n1. **Energy provider** (preferred): Use a Home Assistant integration that exposes an Energy solar forecast.\n2. **Entity attribute**: Read a forecast list directly from an entity attribute.\n3. **Service call**: Call a Home Assistant service that returns a forecast list.\n4. **Not used**: Skip PV forecasting for this setup.\n5. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n\nIf used, the source must produce enough forecast data for the planner window.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\n**Choose how WattPlan reads your PV forecast**\n\n1. **Energy provider** (preferred): Use a Home Assistant integration that exposes an Energy solar forecast.\n2. **Entity attribute**: Read a forecast list directly from an entity attribute.\n3. **Service call**: Call a Home Assistant service that returns a forecast list.\n4. **Not used**: Skip PV forecasting for this setup.\n5. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n\nIf used, the source must produce enough forecast data for the planner window.",
         "submit": "Next",
         "data": {
           "source_mode": "Source mode"
@@ -653,7 +739,7 @@
       },
       "source_pv_template": {
         "title": "PV source template",
-        "description": "Provide a template that returns PV forecast data.\n\nReturn either:\n- a list of objects with `start` and `value`\n- or a list of numeric values\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nProvide a template that returns PV forecast data.\n\nReturn either:\n- a list of objects with `start` and `value`\n- or a list of numeric values\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
         "data": {
           "template": "Template",
           "fixup_profile": "Fixup profile"
@@ -682,7 +768,7 @@
       },
       "source_pv_adapter": {
         "title": "PV source entity attribute",
-        "description": "Use an entity attribute for PV forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect one or more entities and infer the list path plus timestamp/value keys\n- **Attribute objects**: use an explicit list of objects with timestamp/value keys\n- **Attribute values**: use an explicit list of numeric values",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse an entity attribute for PV forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect one or more entities and infer the list path plus timestamp/value keys\n- **Attribute objects**: use an explicit list of objects with timestamp/value keys\n- **Attribute values**: use an explicit list of numeric values",
         "data": {
           "entity_id": "Entity",
           "adapter_type": "Adapter type",
@@ -719,7 +805,7 @@
       },
       "source_pv_energy_provider": {
         "title": "PV source Energy provider",
-        "description": "Use a Home Assistant Energy solar forecast provider for PV data.\n\nSelect a loaded integration that exposes Energy solar forecast data. WattPlan converts the provider's hourly Wh forecast into kWh planner intervals and extends the horizon by repeating the value from 24 hours earlier.\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse a Home Assistant Energy solar forecast provider for PV data.\n\nSelect a loaded integration that exposes Energy solar forecast data. WattPlan converts the provider's hourly Wh forecast into kWh planner intervals and extends the horizon by repeating the value from 24 hours earlier.\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
         "data": {
           "config_entry_id": "Energy provider",
           "fixup_profile": "Tail fill model"
@@ -804,9 +890,9 @@
           "name": "A friendly name for this battery in WattPlan entities and services.",
           "soc_source": "Entity that reports current battery state of charge.",
           "capacity_kwh": "Total usable battery capacity in kilowatt-hours.",
-          "minimum_kwh": "Lowest allowed energy level for planning.",
-          "max_charge_kw": "Maximum charging power the battery can accept.",
-          "max_discharge_kw": "Maximum discharging power the battery can provide.",
+          "minimum_kwh": "Lowest allowed energy level for planning. For lithium batteries, a good starting point is about 10% of capacity, for example 1 kWh on a 10 kWh battery.",
+          "max_charge_kw": "Maximum charging power the battery can accept. A reasonable starting point is about half the battery capacity in kW, for example 5 kW on a 10 kWh battery.",
+          "max_discharge_kw": "Maximum discharging power the battery can provide. A reasonable starting point is about half the battery capacity in kW, for example 5 kW on a 10 kWh battery.",
           "can_charge_from_grid": "Enable if this battery can charge from grid energy prices.",
           "can_charge_from_pv": "Enable if this battery can be charged from PV production."
         }
@@ -925,7 +1011,7 @@
       },
       "source_price_service": {
         "title": "Price source service call",
-        "description": "Use a Home Assistant service call for price forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect the returned payload and infer the list path plus timestamp/value keys\n- **Service call**: use an explicit response path and key mapping\n\nServices must not require input arguments.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse a Home Assistant service call for price forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect the returned payload and infer the list path plus timestamp/value keys\n- **Service call**: use an explicit response path and key mapping\n\nServices must not require input arguments.",
         "data": {
           "service": "Service call",
           "adapter_type": "Adapter type",
@@ -962,7 +1048,7 @@
       },
       "source_usage_service": {
         "title": "Usage source service call",
-        "description": "Use a Home Assistant service call for usage forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect the returned payload and infer the list path plus timestamp/value keys\n- **Service call**: use an explicit response path and key mapping\n\nServices must not require input arguments.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse a Home Assistant service call for usage forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect the returned payload and infer the list path plus timestamp/value keys\n- **Service call**: use an explicit response path and key mapping\n\nServices must not require input arguments.",
         "data": {
           "service": "Service call",
           "adapter_type": "Adapter type",
@@ -999,7 +1085,7 @@
       },
       "source_pv_service": {
         "title": "PV source service call",
-        "description": "Use a Home Assistant service call for PV forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect the returned payload and infer the list path plus timestamp/value keys\n- **Service call**: use an explicit response path and key mapping\n\nServices must not require input arguments.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse a Home Assistant service call for PV forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect the returned payload and infer the list path plus timestamp/value keys\n- **Service call**: use an explicit response path and key mapping\n\nServices must not require input arguments.",
         "data": {
           "service": "Service call",
           "adapter_type": "Adapter type",
@@ -1089,9 +1175,9 @@
           "data_description": {
             "soc_source": "Entity reporting the current state of charge for this battery.",
             "capacity_kwh": "Total usable battery capacity.",
-            "minimum_kwh": "Minimum energy that should remain in the battery.",
-            "max_charge_kw": "Maximum charging power used by the planner.",
-            "max_discharge_kw": "Maximum discharging power used by the planner.",
+            "minimum_kwh": "Minimum energy that should remain in the battery. For lithium batteries, a good starting point is about 10% of capacity, for example 1 kWh on a 10 kWh battery.",
+            "max_charge_kw": "Maximum charging power used by the planner. A reasonable starting point is about half the battery capacity in kW, for example 5 kW on a 10 kWh battery.",
+            "max_discharge_kw": "Maximum discharging power used by the planner. A reasonable starting point is about half the battery capacity in kW, for example 5 kW on a 10 kWh battery.",
             "can_charge_from_grid": "Enable if this battery can charge from the power grid.",
             "can_charge_from_pv": "Enable if this battery can be charged from PV production."
           },
@@ -1125,9 +1211,9 @@
           "data_description": {
             "soc_source": "Entity reporting the current state of charge for this battery.",
             "capacity_kwh": "Total usable battery capacity.",
-            "minimum_kwh": "Minimum energy that should remain in the battery.",
-            "max_charge_kw": "Maximum charging power used by the planner.",
-            "max_discharge_kw": "Maximum discharging power used by the planner.",
+            "minimum_kwh": "Minimum energy that should remain in the battery. For lithium batteries, a good starting point is about 10% of capacity, for example 1 kWh on a 10 kWh battery.",
+            "max_charge_kw": "Maximum charging power used by the planner. A reasonable starting point is about half the battery capacity in kW, for example 5 kW on a 10 kWh battery.",
+            "max_discharge_kw": "Maximum discharging power used by the planner. A reasonable starting point is about half the battery capacity in kW, for example 5 kW on a 10 kWh battery.",
             "can_charge_from_grid": "Enable if this battery can charge from the power grid.",
             "can_charge_from_pv": "Enable if this battery can be charged from PV production."
           },
@@ -1144,6 +1230,14 @@
               }
             }
           }
+        },
+        "complete": {
+          "title": "Battery added",
+          "description": "**{name}** is now part of this WattPlan setup.\n\nWhat to do next:\n- Create an automation that reads WattPlan's battery action entities and turns them into real battery commands\n- Review whether charging from grid and charging from PV match how your battery is wired\n- Let WattPlan run so the battery action entities populate with a plan"
+        },
+        "reconfigure_complete": {
+          "title": "Battery updated",
+          "description": "**{name}** has been updated.\n\nWhat to do next:\n- Check that your automation still translates the battery action entities into the right real-world commands\n- Let WattPlan run again so the updated battery settings are reflected in the next plan"
         }
       },
       "error": {
@@ -1212,6 +1306,14 @@
             "expected_power_kw": "Nominal power usage while this load is on.",
             "measured_power_source": "Optional sensor for actual power draw. If provided, future planning can adapt using measured behavior."
           }
+        },
+        "complete": {
+          "title": "Comfort load added",
+          "description": "**{name}** is now part of this WattPlan setup.\n\nWhat to do next:\n- Create automations or timers that use WattPlan's comfort action entities to start the load at beneficial times\n- Make sure the controlled device can safely be deferred within the window you configured\n- Let WattPlan run so the comfort action entities populate with a plan"
+        },
+        "reconfigure_complete": {
+          "title": "Comfort load updated",
+          "description": "**{name}** has been updated.\n\nWhat to do next:\n- Check that your timers or automations still match the updated comfort-load behavior\n- Let WattPlan run again so the new timing rules are reflected in the next plan"
         }
       },
       "error": {
@@ -1269,6 +1371,14 @@
             "options": "How many start-time options to return. Each option uses a full duration block and options cannot overlap.",
             "min_option_gap_minutes": "Minimum time between option start times. Larger gaps reduce how many non-overlapping options can fit."
           }
+        },
+        "complete": {
+          "title": "Optional load added",
+          "description": "**{name}** is now part of this WattPlan setup.\n\nWhat to do next:\n- Show the suggested start times to the people who use this load, for example a washing machine or dryer\n- Use WattPlan's optional-load entities to surface the best start windows in a dashboard, notification, or automation\n- Let WattPlan run so the start-time options populate with a plan"
+        },
+        "reconfigure_complete": {
+          "title": "Optional load updated",
+          "description": "**{name}** has been updated.\n\nWhat to do next:\n- Check that the way you present the suggested start times still makes sense for the updated timing and energy settings\n- Let WattPlan run again so the refreshed options appear in the next plan"
         }
       },
       "error": {

@@ -14,7 +14,7 @@ def enable_custom_integrations() -> None:
     does not need Home Assistant's source checkout just to satisfy this common
     fixture name.
     """
-    yield
+    return
 
 
 @pytest.fixture

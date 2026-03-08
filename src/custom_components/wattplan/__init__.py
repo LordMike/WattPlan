@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from functools import partial
 import json
+import logging
 from typing import Any
 
 import voluptuous as vol
@@ -122,6 +123,8 @@ EXPORT_USAGE_FORECAST_DEBUG_SERVICE_SCHEMA = vol.Schema(
         vol.Optional("as_json", default=False): cv.boolean,
     }
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _subentry_name(subentry: Any) -> str:
@@ -424,6 +427,27 @@ def _async_mark_runtime_updated(runtime_data: WattPlanRuntimeData) -> None:
         listener()
 
 
+async def _async_try_initial_plan(entry: WattPlanConfigEntry) -> None:
+    """Run one immediate planning cycle after setup or reload.
+
+    Newly created or edited entities often read as unknown until the first plan exists. We try
+    one non-blocking planning run here so the entity set reflects the new configuration as soon
+    as the entry is loaded, without waiting for the next scheduled cycle.
+    """
+    try:
+        await entry.runtime_data.coordinator.async_plan(trigger=CycleTrigger.SERVICE)
+    except Exception as err:  # noqa: BLE001
+        # Configuration should still load even if the first immediate plan fails.
+        # The coordinator keeps normal scheduled retries and exposes the failure state.
+        _LOGGER.warning(
+            "Initial planner run failed after setup/reload (entry_id=%s): %s",
+            entry.entry_id,
+            err,
+        )
+    finally:
+        _async_mark_runtime_updated(entry.runtime_data)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) -> bool:
     """Set up WattPlan from a config entry."""
     domain_data = hass.data.setdefault(DOMAIN, {})
@@ -483,9 +507,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) -> 
         last_run_at=datetime.now(tz=UTC),
     )
     await coordinator.async_restore_snapshot()
-    _async_mark_runtime_updated(entry.runtime_data)
     entry.async_on_unload(entry.add_update_listener(async_update_listener))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    await _async_try_initial_plan(entry)
     return True
 
 
