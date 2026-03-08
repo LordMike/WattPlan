@@ -2,37 +2,25 @@
 
 This document describes the direct Python API for the optimizer packaged inside this repository.
 
-- Package: `custom_components.wattplan.optimizer`
-- Primary module: `custom_components.wattplan.optimizer.mpc_power_optimizer`
-- Primary function: `optimize(params: OptimizationParams) -> dict`
+- **Package:** `custom_components.wattplan.optimizer`
+- **Primary Module:** `custom_components.wattplan.optimizer.mpc_power_optimizer`
+- **Primary Function:** `optimize(params: OptimizationParams) -> dict`
 
 The optimizer is model-predictive-control (MPC) based.
 
-## Time resolution (timeslots)
-
+## Time Resolution (Timeslots)
 All time-indexed fields use **timeslots**.
-
 - A timeslot is one fixed slice of time at your chosen resolution (for example, 15 minutes).
 - Every array index corresponds to one timeslot.
 - The API does not enforce a specific minutes-per-timeslot value; the caller is responsible for consistent input resolution.
 
-## Conceptual model
-
+## Conceptual Model
 The solve combines three kinds of entities:
+- **Battery Entities:** Controllable storage that can charge, discharge, or hold. They can absorb PV surplus when economically/physically allowed.
+- **Comfort Entities:** Postponable-but-required comfort loads, such as heating or hot water that can be shifted, but should not violate minimum comfort.
+- **Optional Entities:** User suggestions for "might run" appliances, such as dishwashers or dryers. They are advisory only and do **not** affect the main optimized schedule. The output is a list of best candidate start timeslots.
 
-- `battery_entities`: controllable storage.
-  - Can charge, discharge, or hold.
-  - Can absorb PV surplus when economically/physically allowed.
-- `comfort_entities`: postponable-but-required comfort loads.
-  - Think: heating/hot water that can be shifted, but should not violate minimum comfort.
-  - They are modeled with gain/loss dynamics and minimum comfort constraints.
-- `optional_entities`: user suggestions for "might run" appliances.
-  - Think: dishwasher, dryer, washer.
-  - They are advisory only and do **not** affect the main optimized schedule.
-  - Output is a list of best candidate start timeslots.
-
-## Core usage
-
+## Core Usage
 ```python
 from custom_components.wattplan.optimizer import OptimizationParams, optimize
 
@@ -40,8 +28,7 @@ params = OptimizationParams(**payload)
 result = optimize(params)
 ```
 
-## Request model (`OptimizationParams`)
-
+## Request Model (`OptimizationParams`)
 | Field | Type | Required | Default | Constraints | Notes |
 |---|---|---:|---|---|---|
 | `price_per_kwh` | `list[float]` | Yes | - | Length `4..672`, finite values | Horizon driver (timeslot count). |
@@ -55,13 +42,11 @@ result = optimize(params)
 
 \* `solar_input_kwh` and `usage_kwh` have defaults in the model definition, but are effectively required because validation enforces exact length match to `price_per_kwh`.
 
-Additional global constraints:
-
+**Additional Global Constraints:**
 - Unknown fields are rejected (`extra="forbid"`).
 - Entity names must be unique across battery + comfort + optional groups (case-insensitive).
 
-## Battery entity model (`BatteryEntityParams`)
-
+## Battery Entity Model (`BatteryEntityParams`)
 | Field | Type | Required | Default | Constraints | Notes |
 |---|---|---:|---|---|---|
 | `name` | `str` | Yes | - | Non-empty | Unique globally. |
@@ -75,16 +60,14 @@ Additional global constraints:
 | `discharge_efficiency` | `float` | No | `1.0` | Finite, `(0, 1]` | Fraction of discharged SoC energy delivered to load. |
 | `can_charge_from` | `int` | No | `2` | `0`, `1`, `2`, `3` | Charge-source flags (`1=GRID`, `2=PV`, `3=GRID|PV`; `0` means charging disabled). |
 
-Curve unit note:
-
+**Curve Unit Note:**
 - `charge_curve_kwh` and `discharge_curve_kwh` are **kWh per slot**, not kW.
 - Example: a `2 kW` unit can move at most `0.5 kWh` in a `15-minute` slot (`2 * 0.25 = 0.5`).
-- Efficiency semantics:
-  - charging: `SoC gain = charged_energy * charge_efficiency`
-  - discharging: `SoC drop = delivered_energy / discharge_efficiency`
+- **Efficiency Semantics:**
+  - Charging: `SoC gain = charged_energy * charge_efficiency`
+  - Discharging: `SoC drop = delivered_energy / discharge_efficiency`
 
-### Battery target model (`BatteryTargetParams`)
-
+### Battery Target Model (`BatteryTargetParams`)
 | Field | Type | Required | Default | Constraints | Notes |
 |---|---|---:|---|---|---|
 | `timeslot` | `int` | Yes | - | `>= 0`, `< horizon` | Deadline timeslot, interpreted as **by end of timeslot**. |
@@ -92,8 +75,7 @@ Curve unit note:
 | `mode` | `str` | No | `"at_least"` | `at_least`, `at_most`, `exact` | `at_least`: charge (if needed) to be at/above target by deadline. `at_most`: discharge (if needed) to be at/below target. `exact`: charge and discharge as needed to land on target (within tolerance). |
 | `tolerance_kwh` | `float` | No | `0.0` | `>= 0` | Allowed kWh tolerance around the target level. |
 
-## Comfort entity model (`ComfortEntityParams`)
-
+## Comfort Entity Model (`ComfortEntityParams`)
 | Field | Type | Required | Default | Constraints | Notes |
 |---|---|---:|---|---|---|
 | `name` | `str` | Yes | - | Non-empty | Unique globally. |
@@ -108,43 +90,28 @@ Curve unit note:
 | `measured_power_source` | `str \| null` | No | `null` | - | Optional source of observed power telemetry. |
 | `recent_avg_on_power_kw` | `float \| null` | No | `null` | Finite, `> 0` | Optional observed ON power average. |
 
-## Optional entity model (`OptionalEntityParams`)
-
+## Optional Entity Model (`OptionalEntityParams`)
 Optional entities provide advisory start-time suggestions and do not change the optimized battery/comfort schedule.
-
 | Field | Type | Required | Default | Constraints | Notes |
 |---|---|---:|---|---|---|
 | `name` | `str` | Yes | - | Non-empty | Unique globally. |
-| `duration_timeslots` | `int` | Yes | - | `> 0`, `<= horizon` | Duration of this optional run. |
+| `duration_timeslots` | `int` | Yes | - | Duration of this optional run. |
 | `start_after_timeslot` | `int` | No | `0` | `>= 0`, `< start_before_timeslot` | Earliest allowed start (inclusive). |
-| `start_before_timeslot` | `int` | Yes | - | `>= 1`, `<= horizon` | Latest boundary (exclusive). |
-| `energy_kwh` | `float \| list[float]` | Yes | - | finite, `>= 0`; list non-empty and `len <= duration_timeslots` | Scalar is spread uniformly. List is spread step-wise to full duration. |
+| `start_before_timeslot` | `int` | Yes | - | Latest boundary (exclusive). |
+| `energy_kwh` | `float \| list[float]` | Yes | - | Finite, `>= 0`; list non-empty and `len <= duration_timeslots` | Scalar is spread uniformly. List is spread step-wise to full duration. |
 | `options` | `int` | No | `3` | `> 0`, feasible within window/gap rules | Exact number of options returned. |
 | `min_option_gap_timeslots` | `int` | No | `0` | `>= 0` | Minimum spacing between suggested starts. |
 | `allow_overlapping_options` | `bool` | No | `false` | - | If false, effective spacing is at least `duration_timeslots`. |
 
-Feasibility is validated up front. If requested `options` cannot fit the search window under spacing rules, validation fails.
+**Feasibility is validated up front.** If requested `options` cannot fit the search window under spacing rules, validation fails.
 
-## `energy_kwh` normalization behavior
-
-Before optimization starts, optional entity energy is normalized:
-
-- Scalar: `energy_kwh = 4.0` and `duration_timeslots = 8` becomes `[0.5, ..., 0.5]` (8 timeslots).
-- List shorter than duration: values are spread over the duration in contiguous segments.
-  - Example: `[1, 2]` over `10` timeslots -> first 5 timeslots use `1`, next 5 use `2`.
-
-This means calculation code always receives a full per-timeslot profile.
-
-## Opaque state contract
-
+## Opaque State Contract
 `state` is an opaque base64 blob returned by one solve and accepted in the next.
-
 - You should store and pass it back as-is.
 - Do not parse or mutate it in client code.
 - The optimizer may reuse overlap from prior solve data when it is compatible.
 
-## Full request example (small)
-
+## Full Request Example (Small)
 ```jsonc
 {
   // 8 timeslots (for docs brevity). Real integrations usually use more.
@@ -220,10 +187,8 @@ This means calculation code always receives a full per-timeslot profile.
 }
 ```
 
-## Response shape (summary)
-
+## Response Shape (Summary)
 `optimize(...)` returns a dict with these top-level fields:
-
 | Field | Type | Meaning |
 |---|---|---|
 | `execution_time` | `float` | Solve wall time in seconds. |
@@ -240,37 +205,31 @@ This means calculation code always receives a full per-timeslot profile.
 | `state` | `str` | Opaque base64 state for next call. |
 
 ### Notes on `entities` and `optional_entity_options`
-
 - `entities` is the actual optimized schedule.
 - Battery schedule points include `charge_source` flags (`0=none`, `1=GRID`, `2=PV`, `3=GRID|PV`) alongside `state` and `level`.
 - `optional_entity_options` is advisory and computed on top of that baseline.
 - Optional entities do not affect each other and do not modify `entities`.
 
-### `projections` fields
-
+### `projections` Fields
 - `baseline_cost`: `sum(price_per_kwh[t] * usage_kwh[t])` across the horizon.
-- `projected_cost`: projected import cost for the optimized schedule.
+- `projected_cost`: Projected import cost for the optimized schedule.
 - `projected_savings_cost`: `baseline_cost - projected_cost`.
 - `projected_savings_pct`: `(projected_savings_cost / baseline_cost) * 100`, or `0` when baseline is `0`.
-- `per_slot`: list with one object per timeslot (same index/order as input arrays), each containing:
+- `per_slot`: List with one object per timeslot (same index/order as input arrays), each containing:
   - `baseline_cost`
   - `projected_cost`
   - `projected_savings_cost`
   - `projected_savings_pct`
 
-### `suboptimal_reasons` keys
-
+### `suboptimal_reasons` Keys
 Current machine-readable keys include:
+- `battery_min_unmet`: At least one battery dropped below its configured `minimum_kwh` in the solved schedule.
+- `battery_target_unmet`: A battery `target` constraint (`at_least`/`at_most`/`exact`) was not met at its target timeslot.
+- `comfort_target_unmet`: A comfort entity did not achieve its required ON slots within the rolling window.
+- `comfort_max_off_unmet`: A comfort entity exceeded its configured `max_consecutive_off_slots`.
 
-- `battery_min_unmet`: at least one battery dropped below its configured `minimum_kwh` in the solved schedule.
-- `battery_target_unmet`: a battery `target` constraint (`at_least`/`at_most`/`exact`) was not met at its target timeslot.
-- `comfort_target_unmet`: a comfort entity did not achieve its required ON slots within the rolling window.
-- `comfort_max_off_unmet`: a comfort entity exceeded its configured `max_consecutive_off_slots`.
-
-## Validation behavior
-
+## Validation Behavior
 Validation happens before optimization starts.
-
 - Invalid input raises an exception immediately (Pydantic validation error).
 - Error messages identify the offending field and why it failed.
 - Unknown fields are rejected.
