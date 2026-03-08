@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
+import voluptuous as vol
+
 from custom_components.wattplan.const import (
     ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
     ADAPTER_TYPE_ATTRIBUTE_VALUES,
@@ -511,16 +513,14 @@ async def test_built_in_usage_source_shows_sensor_validation_error(
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_BUILT_IN}
     )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {
-            "entity_id": "sensor.bad_load_source",
-            CONF_HISTORY_DAYS: 14,
-        },
-    )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"]["base"] == "built_in_requires_energy_kwh"
+    with pytest.raises(vol.Invalid, match="built_in_requires_energy_kwh"):
+        await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                "entity_id": "sensor.bad_load_source",
+                CONF_HISTORY_DAYS: 14,
+            },
+        )
 
 
 async def test_config_flow_persists_pv_energy_provider_source(
@@ -536,6 +536,7 @@ async def test_config_flow_persists_pv_energy_provider_source(
         title="Solcast",
         state=ConfigEntryState.LOADED,
     )
+    entry.async_unload = AsyncMock(return_value=True)
     entry.add_to_hass(hass)
 
     monkeypatch.setattr(

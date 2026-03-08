@@ -418,7 +418,7 @@ async def test_scheduler_runs_at_interval(hass: HomeAssistant) -> None:
 
 
 @pytest.mark.parametrize(
-    ("source_override", "patch_optimize", "expected_error_entity"),
+    ("source_override", "patch_optimize", "expected_error_entity", "expect_raise"),
     [
         (
             {
@@ -429,6 +429,7 @@ async def test_scheduler_runs_at_interval(hass: HomeAssistant) -> None:
             },
             None,
             "binary_sensor.home_source_price_error",
+            True,
         ),
         (
             {
@@ -439,6 +440,7 @@ async def test_scheduler_runs_at_interval(hass: HomeAssistant) -> None:
             },
             None,
             "binary_sensor.home_source_usage_error",
+            True,
         ),
         (
             {
@@ -449,11 +451,13 @@ async def test_scheduler_runs_at_interval(hass: HomeAssistant) -> None:
             },
             None,
             "binary_sensor.home_source_pv_error",
+            False,
         ),
         (
             {},
             RuntimeError("optimizer failed"),
             "binary_sensor.home_optimize_error",
+            True,
         ),
     ],
 )
@@ -463,6 +467,7 @@ async def test_error_sensors_can_turn_on_for_failures(
     source_override: dict[str, dict[str, Any]],
     patch_optimize: Exception | None,
     expected_error_entity: str,
+    expect_raise: bool,
 ) -> None:
     """Each specialized error sensor should represent its own failure class."""
     # Purpose: verify the integration exposes all error scopes through entities.
@@ -485,8 +490,12 @@ async def test_error_sensors_can_turn_on_for_failures(
             side_effect=_fake_optimize,
         )
     )
-    with optimize_patch, pytest.raises(PlanningStageError):
-        await _run_optimize(hass)
+    if expect_raise:
+        with optimize_patch, pytest.raises(PlanningStageError):
+            await _run_optimize(hass)
+    else:
+        with optimize_patch:
+            await _run_optimize(hass)
 
     assert hass.states.get(expected_error_entity) is not None
     assert hass.states.get(expected_error_entity).state == STATE_ON

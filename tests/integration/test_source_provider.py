@@ -553,6 +553,7 @@ async def test_energy_provider_extends_horizon_from_previous_day(
         title="Solcast",
         state=ConfigEntryState.LOADED,
     )
+    entry.async_unload = AsyncMock(return_value=True)
     entry.add_to_hass(hass)
 
     wh_hours = {
