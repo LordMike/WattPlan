@@ -55,7 +55,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.util import dt as dt_util
 
-from tests.common import MockConfigEntry, async_fire_time_changed, make_subentry_data
+from tests.common import MockConfigEntry, async_fire_time_changed
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
@@ -172,9 +172,9 @@ def _base_sources() -> dict[str, dict[str, Any]]:
     }
 
 
-def _battery_subentry(*, subentry_id: str, name: str) -> Any:
+def _battery_subentry(*, subentry_id: str, name: str) -> config_entries.ConfigSubentryData:
     """Return battery subentry config."""
-    return make_subentry_data(
+    return config_entries.ConfigSubentryData(
         subentry_id=subentry_id,
         subentry_type=SUBENTRY_TYPE_BATTERY,
         title=name,
@@ -194,9 +194,9 @@ def _battery_subentry(*, subentry_id: str, name: str) -> Any:
     )
 
 
-def _comfort_subentry(*, subentry_id: str, name: str) -> Any:
+def _comfort_subentry(*, subentry_id: str, name: str) -> config_entries.ConfigSubentryData:
     """Return comfort subentry config."""
-    return make_subentry_data(
+    return config_entries.ConfigSubentryData(
         subentry_id=subentry_id,
         subentry_type=SUBENTRY_TYPE_COMFORT,
         title=name,
@@ -214,9 +214,9 @@ def _comfort_subentry(*, subentry_id: str, name: str) -> Any:
     )
 
 
-def _optional_subentry(*, subentry_id: str, name: str) -> Any:
+def _optional_subentry(*, subentry_id: str, name: str) -> config_entries.ConfigSubentryData:
     """Return optional subentry config."""
-    return make_subentry_data(
+    return config_entries.ConfigSubentryData(
         subentry_id=subentry_id,
         subentry_type=SUBENTRY_TYPE_OPTIONAL,
         title=name,
@@ -235,7 +235,7 @@ def _optional_subentry(*, subentry_id: str, name: str) -> Any:
 def _entry(
     *,
     title: str,
-    subentries_data: list[Any],
+    subentries_data: list[config_entries.ConfigSubentryData],
     sources: dict[str, dict[str, Any]] | None = None,
     options: dict[str, Any] | None = None,
 ) -> MockConfigEntry:

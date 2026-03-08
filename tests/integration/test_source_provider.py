@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock
 
+from custom_components.wattplan.adapter_auto import (
+    auto_detect_mapping,
+    resolve_nested_value,
+)
 from custom_components.wattplan.const import (
     ADAPTER_TYPE_ATTRIBUTE_VALUES,
+    ADAPTER_TYPE_SERVICE_RESPONSE,
     AGGREGATION_MODE_MAX,
     AGGREGATION_MODE_MEAN,
     CLAMP_MODE_NEAREST,
@@ -16,6 +22,7 @@ from custom_components.wattplan.const import (
     CONF_CONFIG_ENTRY_ID,
     CONF_EDGE_FILL_MODE,
     CONF_RESAMPLE_MODE,
+    CONF_SERVICE,
     CONF_SOURCE_MODE,
     CONF_TEMPLATE,
     EDGE_FILL_MODE_HOLD,
@@ -23,19 +30,22 @@ from custom_components.wattplan.const import (
     RESAMPLE_MODE_LINEAR,
     SOURCE_MODE_ENERGY_PROVIDER,
     SOURCE_MODE_ENTITY_ADAPTER,
+    SOURCE_MODE_SERVICE_ADAPTER,
     SOURCE_MODE_TEMPLATE,
 )
 from custom_components.wattplan.source_provider import (
     EnergySolarForecastSourceProvider,
-    SourceProviderError,
-    SourceWindow,
     TemplateAdapterSourceProvider,
+    async_auto_detect_entity_adapter,
+    async_auto_detect_service_adapter,
 )
+from custom_components.wattplan.source_types import SourceProviderError, SourceWindow
 import pytest
 
-from homeassistant.const import CONF_NAME
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.core import HomeAssistant
+from homeassistant.const import CONF_NAME
+from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
+
 from tests.common import MockConfigEntry
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
@@ -57,6 +67,72 @@ def _template_config(payload: list[dict[str, object]], **extra: object) -> dict[
         CONF_TEMPLATE: f"{{{{ {payload!r} }}}}",
         **extra,
     }
+
+
+def test_auto_detect_mapping_prefers_largest_compatible_list() -> None:
+    """Auto detection should choose the candidate list with the most usable rows."""
+    payload = {
+        "prices": {
+            "small": [{"start": "2026-01-01T00:00:00+00:00", "value": 1.0}],
+            "home": [
+                {"start_time": "2026-01-01T00:00:00+00:00", "price": 1.0},
+                {"start_time": "2026-01-01T01:00:00+00:00", "price": 2.0},
+            ],
+        }
+    }
+
+    detected = auto_detect_mapping(payload)
+
+    assert detected is not None
+    assert detected.root_key == "prices.home"
+    assert detected.time_key == "start_time"
+    assert detected.value_key == "price"
+
+
+def test_auto_detect_mapping_rejects_three_timestamps() -> None:
+    """Auto detection should reject rows with more than two timestamps."""
+    payload = [
+        {
+            "anfang": "2026-01-01T00:00:00+00:00",
+            "mitte": "2026-01-01T00:15:00+00:00",
+            "ende": "2026-01-01T00:30:00+00:00",
+            "preis": 1.2,
+        }
+    ]
+
+    detected = auto_detect_mapping(payload)
+
+    assert detected is None
+
+
+def test_auto_detect_mapping_rejects_two_numeric_fields() -> None:
+    """Auto detection should reject rows with more than one numeric field."""
+    payload = [
+        {
+            "anfang": "2026-01-01T00:00:00+00:00",
+            "preis": 1.2,
+            "wert": 2.4,
+        }
+    ]
+
+    detected = auto_detect_mapping(payload)
+
+    assert detected is None
+
+
+def test_resolve_nested_value_supports_root_a_and_a_b() -> None:
+    """Nested value resolution should support root, one level, and two levels."""
+    payload = {
+        "a": {
+            "b": [
+                {"anfang": "2026-01-01T00:00:00+00:00", "preis": 1.0},
+            ]
+        }
+    }
+
+    assert resolve_nested_value(payload["a"]["b"], "") == payload["a"]["b"]
+    assert resolve_nested_value(payload, "a") == payload["a"]
+    assert resolve_nested_value(payload, "a.b") == payload["a"]["b"]
 
 
 async def test_template_provider_returns_values(hass: HomeAssistant) -> None:
@@ -95,6 +171,255 @@ async def test_entity_adapter_provider_returns_values(hass: HomeAssistant) -> No
     values = await provider.async_values(_window())
 
     assert values == [1.0, 2.0, 3.0, 4.0]
+
+
+async def test_entity_adapter_auto_detects_nested_attribute(
+    hass: HomeAssistant,
+) -> None:
+    """Auto detect should resolve a nested attribute list mapping."""
+    hass.states.async_set("sensor.first", "ok", {"junk": [{"name": "x"}]})
+    hass.states.async_set(
+        "sensor.second",
+        "ok",
+        {
+            "prices": {
+                "home": [
+                    {
+                        "starts_at": "2026-01-01T00:00:00+00:00",
+                        "total": 1.0,
+                    }
+                ]
+            }
+        },
+    )
+
+    entity_id, detected = await async_auto_detect_entity_adapter(
+        hass,
+        ["sensor.first", "sensor.second"],
+    )
+
+    assert entity_id == "sensor.second"
+    assert detected.root_key == "prices.home"
+    assert detected.time_key == "starts_at"
+    assert detected.value_key == "total"
+
+
+async def test_service_adapter_provider_returns_values(hass: HomeAssistant) -> None:
+    """Service adapter should return nested service response values."""
+
+    async def _handle_prices(call: ServiceCall) -> dict[str, Any]:
+        return {
+            "prices": {
+                "home": [
+                    {"start": "2026-01-01T00:00:00+00:00", "price": 1.0},
+                    {"start": "2026-01-01T00:15:00+00:00", "price": 2.0},
+                    {"start": "2026-01-01T00:30:00+00:00", "price": 3.0},
+                    {"start": "2026-01-01T00:45:00+00:00", "price": 4.0},
+                ]
+            }
+        }
+
+    hass.services.async_register(
+        "test",
+        "prices",
+        _handle_prices,
+        supports_response=SupportsResponse.ONLY,
+    )
+    provider = TemplateAdapterSourceProvider(
+        hass,
+        source_name="price",
+        source_config={
+            CONF_SOURCE_MODE: SOURCE_MODE_SERVICE_ADAPTER,
+            CONF_SERVICE: "test.prices",
+            CONF_ADAPTER_TYPE: ADAPTER_TYPE_SERVICE_RESPONSE,
+            CONF_NAME: "prices.home",
+            "time_key": "start",
+            "value_key": "price",
+        },
+    )
+
+    values = await provider.async_values(_window())
+
+    assert values == [1.0, 2.0, 3.0, 4.0]
+
+
+async def test_service_adapter_provider_returns_values_from_root_key_a(
+    hass: HomeAssistant,
+) -> None:
+    """Explicit service adapter should support a single-segment root key."""
+
+    async def _handle_prices(call: ServiceCall) -> dict[str, Any]:
+        return {
+            "a": [
+                {"anfang": "2026-01-01T00:00:00+00:00", "preis": 1.0},
+                {"anfang": "2026-01-01T00:15:00+00:00", "preis": 2.0},
+                {"anfang": "2026-01-01T00:30:00+00:00", "preis": 3.0},
+                {"anfang": "2026-01-01T00:45:00+00:00", "preis": 4.0},
+            ]
+        }
+
+    hass.services.async_register(
+        "test",
+        "a_prices",
+        _handle_prices,
+        supports_response=SupportsResponse.ONLY,
+    )
+    provider = TemplateAdapterSourceProvider(
+        hass,
+        source_name="price",
+        source_config={
+            CONF_SOURCE_MODE: SOURCE_MODE_SERVICE_ADAPTER,
+            CONF_SERVICE: "test.a_prices",
+            CONF_ADAPTER_TYPE: ADAPTER_TYPE_SERVICE_RESPONSE,
+            CONF_NAME: "a",
+            "time_key": "anfang",
+            "value_key": "preis",
+        },
+    )
+
+    values = await provider.async_values(_window())
+
+    assert values == [1.0, 2.0, 3.0, 4.0]
+
+
+async def test_service_adapter_provider_returns_values_from_root_key_a_b(
+    hass: HomeAssistant,
+) -> None:
+    """Explicit service adapter should support a dotted root key."""
+
+    async def _handle_prices(call: ServiceCall) -> dict[str, Any]:
+        return {
+            "a": {
+                "b": [
+                    {"anfang": "2026-01-01T00:00:00+00:00", "preis": 1.0},
+                    {"anfang": "2026-01-01T00:15:00+00:00", "preis": 2.0},
+                    {"anfang": "2026-01-01T00:30:00+00:00", "preis": 3.0},
+                    {"anfang": "2026-01-01T00:45:00+00:00", "preis": 4.0},
+                ]
+            }
+        }
+
+    hass.services.async_register(
+        "test",
+        "ab_prices",
+        _handle_prices,
+        supports_response=SupportsResponse.ONLY,
+    )
+    provider = TemplateAdapterSourceProvider(
+        hass,
+        source_name="price",
+        source_config={
+            CONF_SOURCE_MODE: SOURCE_MODE_SERVICE_ADAPTER,
+            CONF_SERVICE: "test.ab_prices",
+            CONF_ADAPTER_TYPE: ADAPTER_TYPE_SERVICE_RESPONSE,
+            CONF_NAME: "a.b",
+            "time_key": "anfang",
+            "value_key": "preis",
+        },
+    )
+
+    values = await provider.async_values(_window())
+
+    assert values == [1.0, 2.0, 3.0, 4.0]
+
+
+async def test_service_adapter_auto_detects_nested_response(
+    hass: HomeAssistant,
+) -> None:
+    """Auto detect should resolve nested service response mappings."""
+
+    async def _handle_prices(call: ServiceCall) -> dict[str, Any]:
+        return {
+            "prices": {
+                "Home": [
+                    {
+                        "start_time": "2026-01-01T00:00:00+00:00",
+                        "end_time": "2026-01-01T00:15:00+00:00",
+                        "price": 1.0,
+                    }
+                ]
+            }
+        }
+
+    hass.services.async_register(
+        "test",
+        "nested_prices",
+        _handle_prices,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    detected = await async_auto_detect_service_adapter(hass, "test.nested_prices")
+
+    assert detected.root_key == "prices.Home"
+    assert detected.time_key == "start_time"
+    assert detected.value_key == "price"
+
+
+async def test_service_adapter_auto_detects_later_valid_array(
+    hass: HomeAssistant,
+) -> None:
+    """Auto detect should skip invalid arrays and keep scanning later candidates."""
+
+    async def _handle_prices(call: ServiceCall) -> dict[str, Any]:
+        return {
+            "a": [{"titel": "irrelevant"}],
+            "b": [
+                {"anfang": "2026-01-01T00:00:00+00:00", "preis": 1.0},
+                {"anfang": "2026-01-01T00:15:00+00:00", "preis": 2.0},
+            ],
+        }
+
+    hass.services.async_register(
+        "test",
+        "later_valid_prices",
+        _handle_prices,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    detected = await async_auto_detect_service_adapter(hass, "test.later_valid_prices")
+
+    assert detected.root_key == "b"
+    assert detected.time_key == "anfang"
+    assert detected.value_key == "preis"
+
+
+async def test_service_adapter_auto_detects_dotted_root_with_foreign_names(
+    hass: HomeAssistant,
+) -> None:
+    """Auto detect should support nested roots without relying on English keys."""
+
+    async def _handle_prices(call: ServiceCall) -> dict[str, Any]:
+        return {
+            "a": {
+                "b": [
+                    {
+                        "anfang": "2026-01-01T00:00:00+00:00",
+                        "ende": "2026-01-01T00:15:00+00:00",
+                        "preis": 1.0,
+                    },
+                    {
+                        "anfang": "2026-01-01T00:15:00+00:00",
+                        "ende": "2026-01-01T00:30:00+00:00",
+                        "preis": 2.0,
+                    },
+                ]
+            }
+        }
+
+    hass.services.async_register(
+        "test",
+        "foreign_nested_prices",
+        _handle_prices,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    detected = await async_auto_detect_service_adapter(
+        hass, "test.foreign_nested_prices"
+    )
+
+    assert detected.root_key == "a.b"
+    assert detected.time_key == "anfang"
+    assert detected.value_key == "preis"
 
 
 async def test_aggregation_mode_groups_values(hass: HomeAssistant) -> None:
@@ -228,7 +553,6 @@ async def test_energy_provider_extends_horizon_from_previous_day(
         title="Solcast",
         state=ConfigEntryState.LOADED,
     )
-    entry.async_unload = AsyncMock(return_value=True)
     entry.add_to_hass(hass)
 
     wh_hours = {

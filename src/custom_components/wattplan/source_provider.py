@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 import json
@@ -13,12 +13,20 @@ from homeassistant.components.energy.types import GetSolarForecastType
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.integration_platform import async_process_integration_platforms
+from homeassistant.helpers.integration_platform import (
+    async_process_integration_platforms,
+)
 from homeassistant.helpers.template import Template
 
+from .adapter_auto import (
+    AdapterAutoDetectResult,
+    auto_detect_mapping,
+    resolve_nested_value,
+)
 from .const import (
     ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
     ADAPTER_TYPE_ATTRIBUTE_VALUES,
+    ADAPTER_TYPE_SERVICE_RESPONSE,
     AGGREGATION_MODE_FIRST,
     AGGREGATION_MODE_LAST,
     AGGREGATION_MODE_MAX,
@@ -32,6 +40,7 @@ from .const import (
     CONF_CONFIG_ENTRY_ID,
     CONF_EDGE_FILL_MODE,
     CONF_RESAMPLE_MODE,
+    CONF_SERVICE,
     CONF_SOURCE_MODE,
     CONF_TEMPLATE,
     CONF_TIME_KEY,
@@ -43,8 +52,10 @@ from .const import (
     RESAMPLE_MODE_NONE,
     SOURCE_MODE_ENERGY_PROVIDER,
     SOURCE_MODE_ENTITY_ADAPTER,
+    SOURCE_MODE_SERVICE_ADAPTER,
     SOURCE_MODE_TEMPLATE,
 )
+from .source_types import SourceProvider, SourceProviderError, SourceWindow
 
 CONF_WATTPLAN_ENTITY_ID = "entity_id"
 VALID_AGGREGATION_MODES = {
@@ -104,39 +115,6 @@ async def async_get_energy_solar_forecast_entries(
     ]
 
 
-class SourceProviderError(Exception):
-    """Raised when a source provider cannot resolve valid values."""
-
-    def __init__(
-        self,
-        code: str,
-        message: str,
-        *,
-        details: dict[str, Any] | None = None,
-    ) -> None:
-        """Initialize source provider error."""
-        super().__init__(message)
-        self.code = code
-        self.details = details or {}
-
-
-@dataclass(frozen=True, slots=True)
-class SourceWindow:
-    """Requested planner window for one source provider call."""
-
-    start_at: datetime
-    slot_minutes: int
-    slots: int
-
-
-class SourceProvider(ABC):
-    """Interface for providers that resolve one numeric value per interval."""
-
-    @abstractmethod
-    async def async_values(self, window: SourceWindow) -> list[float]:
-        """Return exactly `window.slots` values for the requested interval window."""
-
-
 class BasePayloadProvider(ABC):
     """Base provider for raw payload acquisition."""
 
@@ -154,7 +132,6 @@ class BasePayloadProvider(ABC):
     @abstractmethod
     async def async_fetch_payload(self) -> Any:
         """Fetch source payload before normalization."""
-
 
 class TemplatePayloadProvider(BasePayloadProvider):
     """Resolve payload from a Jinja template."""
@@ -200,9 +177,9 @@ class EntityAdapterPayloadProvider(BasePayloadProvider):
         """Load payload from configured entity adapter."""
         entity_id = self._source_config.get(CONF_WATTPLAN_ENTITY_ID)
         adapter_type = self._source_config.get(CONF_ADAPTER_TYPE)
-        attribute_name = self._source_config.get(CONF_NAME)
+        root_key = self._source_config.get(CONF_NAME)
 
-        if not entity_id or not adapter_type or not attribute_name:
+        if not entity_id or not adapter_type or root_key is None:
             raise SourceProviderError(
                 "source_validation",
                 f"{self._source_name} entity adapter configuration is incomplete",
@@ -227,35 +204,138 @@ class EntityAdapterPayloadProvider(BasePayloadProvider):
                 details={"source": self._source_name, "entity_id": entity_id},
             )
 
-        payload = state.attributes.get(attribute_name)
-        if payload is None and attribute_name == "state_json":
-            try:
-                payload = json.loads(state.state)
-            except json.JSONDecodeError as err:
-                raise SourceProviderError(
-                    "source_parse",
-                    (
-                        f"{self._source_name} state_json for `{entity_id}` "
-                        "is not valid JSON"
-                    ),
-                    details={"source": self._source_name, "entity_id": entity_id},
-                ) from err
+        root = dict(state.attributes)
+        with suppress(json.JSONDecodeError):
+            root["state_json"] = json.loads(state.state)
 
+        payload = resolve_nested_value(root, str(root_key))
         if payload is None:
             raise SourceProviderError(
                 "source_fetch",
                 (
-                    f"{self._source_name} attribute `{attribute_name}` was not found "
+                    f"{self._source_name} attribute `{root_key}` was not found "
                     f"on `{entity_id}`"
                 ),
                 details={
                     "source": self._source_name,
                     "entity_id": entity_id,
-                    "attribute": attribute_name,
+                    "attribute": str(root_key),
                 },
             )
 
         return payload
+
+
+class ServiceResponsePayloadProvider(BasePayloadProvider):
+    """Resolve payload from a no-argument service response."""
+
+    async def async_fetch_payload(self) -> Any:
+        """Call service and return configured root payload."""
+        service_name = self._source_config.get(CONF_SERVICE)
+        root_key = self._source_config.get(CONF_NAME, "")
+        adapter_type = self._source_config.get(CONF_ADAPTER_TYPE)
+
+        if not service_name or not adapter_type or root_key is None:
+            raise SourceProviderError(
+                "source_validation",
+                f"{self._source_name} service adapter configuration is incomplete",
+                details={"source": self._source_name},
+            )
+
+        if adapter_type != ADAPTER_TYPE_SERVICE_RESPONSE:
+            raise SourceProviderError(
+                "source_validation",
+                f"{self._source_name} service adapter type `{adapter_type}` is not supported",
+                details={"source": self._source_name, "adapter_type": adapter_type},
+            )
+
+        try:
+            domain, service = str(service_name).split(".", 1)
+        except ValueError as err:
+            raise SourceProviderError(
+                "source_validation",
+                f"{self._source_name} service `{service_name}` is invalid",
+                details={"source": self._source_name, "service": str(service_name)},
+            ) from err
+
+        response = await self._hass.services.async_call(
+            domain,
+            service,
+            {},
+            blocking=True,
+            return_response=True,
+        )
+        payload = resolve_nested_value(response, str(root_key))
+        if payload is None:
+            raise SourceProviderError(
+                "source_fetch",
+                (
+                    f"{self._source_name} root key `{root_key}` was not found "
+                    f"in service `{service_name}` response"
+                ),
+                details={
+                    "source": self._source_name,
+                    "service": str(service_name),
+                    "attribute": str(root_key),
+                },
+            )
+        return payload
+
+
+async def async_auto_detect_entity_adapter(
+    hass: HomeAssistant,
+    entity_ids: list[str],
+) -> tuple[str, AdapterAutoDetectResult]:
+    """Return entity and mapping inferred from one of the selected entities."""
+    for entity_id in entity_ids:
+        state = hass.states.get(entity_id)
+        if state is None:
+            continue
+
+        root = dict(state.attributes)
+        with suppress(json.JSONDecodeError):
+            root["state_json"] = json.loads(state.state)
+
+        detected = auto_detect_mapping(root)
+        if detected is not None:
+            return entity_id, detected
+
+    raise SourceProviderError(
+        "source_validation",
+        "No compatible forecast list was found in the selected entities",
+        details={"entity_ids": entity_ids},
+    )
+
+
+async def async_auto_detect_service_adapter(
+    hass: HomeAssistant,
+    service_name: str,
+) -> AdapterAutoDetectResult:
+    """Return mapping inferred from a no-argument service response."""
+    try:
+        domain, service = service_name.split(".", 1)
+    except ValueError as err:
+        raise SourceProviderError(
+            "source_validation",
+            f"Service `{service_name}` is invalid",
+            details={"service": service_name},
+        ) from err
+
+    response = await hass.services.async_call(
+        domain,
+        service,
+        {},
+        blocking=True,
+        return_response=True,
+    )
+    detected = auto_detect_mapping(response)
+    if detected is None:
+        raise SourceProviderError(
+            "source_validation",
+            f"Service `{service_name}` returned no compatible forecast list",
+            details={"service": service_name},
+        )
+    return detected
 
 
 class EnergySolarForecastPayloadProvider(BasePayloadProvider):
@@ -360,6 +440,10 @@ class TemplateAdapterSourceProvider(SourceProvider):
             self._payload_provider = EntityAdapterPayloadProvider(
                 hass, source_name, source_config
             )
+        elif mode == SOURCE_MODE_SERVICE_ADAPTER:
+            self._payload_provider = ServiceResponsePayloadProvider(
+                hass, source_name, source_config
+            )
         elif mode == SOURCE_MODE_ENERGY_PROVIDER:
             self._payload_provider = EnergySolarForecastPayloadProvider(
                 hass, source_name, source_config
@@ -373,7 +457,7 @@ class TemplateAdapterSourceProvider(SourceProvider):
 
     async def async_values(self, window: SourceWindow) -> list[float]:
         """Return exactly `window.slots` values or raise error."""
-        payload = await self._payload_provider.async_fetch_payload()
+        payload = await self.async_fetch_payload()
         if not isinstance(payload, list):
             raise SourceProviderError(
                 "source_parse",
@@ -387,6 +471,11 @@ class TemplateAdapterSourceProvider(SourceProvider):
         if payload and isinstance(payload[0], dict):
             return self._object_values(payload, window)
         return self._numeric_values(payload, window)
+
+    async def async_fetch_payload(self) -> Any:
+        """Return raw payload before fixup for review and debug paths."""
+
+        return await self._payload_provider.async_fetch_payload()
 
     def _object_values(self, payload: list[Any], window: SourceWindow) -> list[float]:
         """Resolve object payload into one value per requested slot."""

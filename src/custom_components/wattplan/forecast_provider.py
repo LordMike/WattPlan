@@ -13,7 +13,7 @@ from homeassistant.components.recorder import get_instance, history
 from homeassistant.components.recorder.statistics import statistics_during_period
 from homeassistant.core import HomeAssistant
 
-from .source_provider import SourceProvider, SourceProviderError, SourceWindow
+from .source_types import SourceProvider, SourceProviderError, SourceWindow
 
 _LOGGER = logging.getLogger(__name__)
 MAX_IMPLIED_POWER_KW = 50.0

@@ -24,20 +24,19 @@ from custom_components.wattplan.const import (
 )
 from custom_components.wattplan.source_fixup import (
     SourceFixupProvider,
+    SourceHealthKind,
     effective_provider_config,
 )
-from custom_components.wattplan.source_provider import (
+from custom_components.wattplan.source_provider import TemplateAdapterSourceProvider
+from custom_components.wattplan.source_types import (
     SourceProvider,
     SourceProviderError,
     SourceWindow,
-    TemplateAdapterSourceProvider,
 )
 import pytest
 
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
-
-pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
 
 def _window(*, slots: int) -> SourceWindow:
@@ -83,7 +82,6 @@ class _PartialThenBaseDayProvider(SourceProvider):
             details={"available_count": 24},
         )
 
-
 async def test_strict_fixup_re_raises_provider_error() -> None:
     """Strict fixup should not try to invent missing tail values."""
     error = SourceProviderError(
@@ -111,6 +109,8 @@ async def test_extend_fixup_repeats_t_minus_24h() -> None:
     assert len(values) == 48
     assert values[:24] == [float(index) for index in range(24)]
     assert values[24:] == [float(index) for index in range(24)]
+    assert provider.last_health.kind is SourceHealthKind.OK
+    assert provider.last_health.using_stale is False
 
 
 async def test_extend_fixup_requires_full_day_of_base_values() -> None:
@@ -130,6 +130,52 @@ async def test_extend_fixup_requires_full_day_of_base_values() -> None:
 
     with pytest.raises(SourceProviderError, match="not enough values"):
         await provider.async_values(_window(slots=48))
+
+
+async def test_fixup_marks_unavailable_when_stale_cache_covers_failure() -> None:
+    """A transient fetch failure should be classified as unavailable with grace."""
+
+    class _FlakyProvider(SourceProvider):
+        def __init__(self) -> None:
+            self._calls = 0
+
+        async def async_values(self, window: SourceWindow) -> list[float]:
+            self._calls += 1
+            if self._calls == 1:
+                return [float(index) for index in range(window.slots)]
+            raise SourceProviderError("source_fetch", "fetch failed")
+
+    provider = SourceFixupProvider(_FlakyProvider(), profile=FIXUP_PROFILE_EXTEND)
+
+    await provider.async_values(_window(slots=24))
+    values = await provider.async_values(_window(slots=12))
+
+    assert len(values) == 12
+    assert provider.last_health.kind is SourceHealthKind.UNAVAILABLE
+    assert provider.last_health.using_stale is True
+    assert provider.last_health.expires_at == datetime(2026, 1, 2, 0, 0, tzinfo=UTC)
+
+
+async def test_fixup_marks_incomplete_when_some_intervals_are_missing() -> None:
+    """A short source should be classified as incomplete when repair fails."""
+
+    provider = SourceFixupProvider(
+        _StaticProvider(
+            error=SourceProviderError(
+                "source_validation",
+                "not enough values",
+                details={"available_count": 6, "required_count": 24},
+            )
+        ),
+        profile=FIXUP_PROFILE_STRICT,
+    )
+
+    with pytest.raises(SourceProviderError, match="not enough values"):
+        await provider.async_values(_window(slots=24))
+
+    assert provider.last_health.kind is SourceHealthKind.INCOMPLETE
+    assert provider.last_health.available_count == 6
+    assert provider.last_health.required_count == 24
 
 
 def test_effective_provider_config_disables_fill_in_strict_profile() -> None:

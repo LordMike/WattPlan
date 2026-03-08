@@ -23,13 +23,13 @@
       },
       "source_price": {
         "title": "Price source",
-        "description": "**Choose how WattPlan reads your price forecast**\n\n- **Template**: Use Jinja2 to build a forecast list from one or more entities.\n- **Entity attribute**: Read a forecast list directly from an entity attribute.\n\nBoth source types must produce enough forecast data for the planner window.",
+        "description": "**Choose how WattPlan reads your price forecast**\n\n1. **Entity attribute** (preferred): Read a forecast list directly from an entity attribute.\n2. **Service call** (preferred): Call a Home Assistant service that returns a forecast list.\n3. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n\nEach source type must produce enough forecast data for the planner window.",
         "submit": "Next",
         "data": {
           "source_mode": "Source mode"
         },
         "data_description": {
-          "source_mode": "Choose how to provide your price forecast. Use Template to build or reshape data with Jinja2. Use Entity attribute when an entity already exposes a forecast list."
+          "source_mode": "Choose how to provide your price forecast. Entity attribute and Service call are the preferred setup paths for price sources. Template is the advanced fallback when you need to reshape data yourself."
         }
       },
       "source_price_template": {
@@ -63,7 +63,7 @@
       },
       "source_price_adapter": {
         "title": "Price source entity attribute",
-        "description": "Use an entity attribute for price forecast data.\n\nAdapter type formats:\n- **Attribute objects**: list of items with timestamp/value keys\n- **Attribute values**: list of numeric values",
+        "description": "Use an entity attribute for price forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect one or more entities and infer the list path plus timestamp/value keys\n- **Attribute objects**: use an explicit list of objects with timestamp/value keys\n- **Attribute values**: use an explicit list of numeric values",
         "data": {
           "entity_id": "Entity",
           "adapter_type": "Adapter type",
@@ -73,11 +73,48 @@
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
-          "entity_id": "Entity that exposes the forecast attribute.",
-          "adapter_type": "Select how values are structured in the attribute.",
-          "name": "Attribute that contains the forecast list.",
-          "time_key": "Object mode only: key containing the timestamp, usually `start`.",
-          "value_key": "Object mode only: key containing the numeric value, usually `value`.",
+          "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
+          "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
+          "name": "Attribute path that contains the forecast list. Ignored in auto detect mode.",
+          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
+          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
+          "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+            }
+          }
+        }
+      },
+      "source_price_service": {
+        "title": "Price source service call",
+        "description": "Use a Home Assistant service call for price forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect the returned payload and infer the list path plus timestamp/value keys\n- **Service call**: use an explicit response path and key mapping\n\nServices must not require input arguments.",
+        "data": {
+          "service": "Service call",
+          "adapter_type": "Adapter type",
+          "name": "Root path",
+          "time_key": "Timestamp key",
+          "value_key": "Value key",
+          "fixup_profile": "Fixup profile"
+        },
+        "data_description": {
+          "service": "Service to call in `domain.service` format. WattPlan calls it without arguments and reads the returned response.",
+          "adapter_type": "Choose Auto detect for the recommended setup path, or Service call to enter the fields yourself.",
+          "name": "Root path containing the forecast list in the service response. Ignored in auto detect mode.",
+          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
+          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
@@ -100,13 +137,13 @@
       },
       "source_usage": {
         "title": "Usage source",
-        "description": "**Choose how WattPlan reads your usage forecast**\n\n- **Built in**: Build a forecast from historical load in Home Assistant.\n- **Template**: Use Jinja2 to build a forecast list from one or more entities.\n- **Entity attribute**: Read a forecast list directly from an entity attribute.\n- **Not used**: Skip usage forecasting for this setup.\n\nIf used, the source must produce enough forecast data for the planner window.",
+        "description": "**Choose how WattPlan reads your usage forecast**\n\n1. **Built in** (preferred): Build a forecast from historical load in Home Assistant.\n2. **Entity attribute**: Read a forecast list directly from an entity attribute.\n3. **Service call**: Call a Home Assistant service that returns a forecast list.\n4. **Not used**: Skip usage forecasting for this setup.\n5. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n\nIf used, the source must produce enough forecast data for the planner window.",
         "submit": "Next",
         "data": {
           "source_mode": "Source mode"
         },
         "data_description": {
-          "source_mode": "Choose how to provide your usage forecast. Use Built in to forecast from load history, Template to build or reshape data with Jinja2, Entity attribute when an entity already exposes a forecast list, or Not used to skip usage."
+          "source_mode": "Choose how to provide your usage forecast. Built in is the preferred setup path for load forecasting. Entity attribute and Service call can reuse existing forecast data. Not used skips usage. Template is the advanced fallback."
         }
       },
       "source_usage_built_in": {
@@ -152,7 +189,7 @@
       },
       "source_usage_adapter": {
         "title": "Usage source entity attribute",
-        "description": "Use an entity attribute for usage forecast data.\n\nAdapter type formats:\n- **Attribute objects**: list of items with timestamp/value keys\n- **Attribute values**: list of numeric values",
+        "description": "Use an entity attribute for usage forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect one or more entities and infer the list path plus timestamp/value keys\n- **Attribute objects**: use an explicit list of objects with timestamp/value keys\n- **Attribute values**: use an explicit list of numeric values",
         "data": {
           "entity_id": "Entity",
           "adapter_type": "Adapter type",
@@ -162,11 +199,48 @@
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
-          "entity_id": "Entity that exposes the forecast attribute.",
-          "adapter_type": "Select how values are structured in the attribute.",
-          "name": "Attribute that contains the forecast list.",
-          "time_key": "Object mode only: key containing the timestamp, usually `start`.",
-          "value_key": "Object mode only: key containing the numeric value, usually `value`.",
+          "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
+          "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
+          "name": "Attribute path that contains the forecast list. Ignored in auto detect mode.",
+          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
+          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
+          "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+            }
+          }
+        }
+      },
+      "source_usage_service": {
+        "title": "Usage source service call",
+        "description": "Use a Home Assistant service call for usage forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect the returned payload and infer the list path plus timestamp/value keys\n- **Service call**: use an explicit response path and key mapping\n\nServices must not require input arguments.",
+        "data": {
+          "service": "Service call",
+          "adapter_type": "Adapter type",
+          "name": "Root path",
+          "time_key": "Timestamp key",
+          "value_key": "Value key",
+          "fixup_profile": "Fixup profile"
+        },
+        "data_description": {
+          "service": "Service to call in `domain.service` format. WattPlan calls it without arguments and reads the returned response.",
+          "adapter_type": "Choose Auto detect for the recommended setup path, or Service call to enter the fields yourself.",
+          "name": "Root path containing the forecast list in the service response. Ignored in auto detect mode.",
+          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
+          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
@@ -189,13 +263,13 @@
       },
       "source_pv": {
         "title": "PV source",
-        "description": "**Choose how WattPlan reads your PV forecast**\n\n- **Template**: Use Jinja2 to build a forecast list from one or more entities.\n- **Entity attribute**: Read a forecast list directly from an entity attribute.\n- **Energy provider**: Use a Home Assistant integration that exposes an Energy solar forecast.\n- **Not used**: Skip PV forecasting for this setup.\n\nIf used, the source must produce enough forecast data for the planner window.",
+        "description": "**Choose how WattPlan reads your PV forecast**\n\n1. **Energy provider** (preferred): Use a Home Assistant integration that exposes an Energy solar forecast.\n2. **Entity attribute**: Read a forecast list directly from an entity attribute.\n3. **Service call**: Call a Home Assistant service that returns a forecast list.\n4. **Not used**: Skip PV forecasting for this setup.\n5. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n\nIf used, the source must produce enough forecast data for the planner window.",
         "submit": "Next",
         "data": {
           "source_mode": "Source mode"
         },
         "data_description": {
-          "source_mode": "Choose how to provide your PV forecast. Use Template to build or reshape data with Jinja2, Entity attribute when an entity already exposes a forecast list, Energy provider for integrations that publish Home Assistant Energy solar forecasts, or Not used to skip PV."
+          "source_mode": "Choose how to provide your PV forecast. Energy provider is the preferred setup path for solar forecasts. Entity attribute and Service call can reuse existing forecast data. Not used skips PV. Template is the advanced fallback."
         }
       },
       "source_pv_template": {
@@ -229,7 +303,7 @@
       },
       "source_pv_adapter": {
         "title": "PV source entity attribute",
-        "description": "Use an entity attribute for PV forecast data.\n\nAdapter type formats:\n- **Attribute objects**: list of items with timestamp/value keys\n- **Attribute values**: list of numeric values",
+        "description": "Use an entity attribute for PV forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect one or more entities and infer the list path plus timestamp/value keys\n- **Attribute objects**: use an explicit list of objects with timestamp/value keys\n- **Attribute values**: use an explicit list of numeric values",
         "data": {
           "entity_id": "Entity",
           "adapter_type": "Adapter type",
@@ -239,11 +313,48 @@
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
-          "entity_id": "Entity that exposes the forecast attribute.",
-          "adapter_type": "Select how values are structured in the attribute.",
-          "name": "Attribute that contains the forecast list.",
-          "time_key": "Object mode only: key containing the timestamp, usually `start`.",
-          "value_key": "Object mode only: key containing the numeric value, usually `value`.",
+          "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
+          "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
+          "name": "Attribute path that contains the forecast list. Ignored in auto detect mode.",
+          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
+          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
+          "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+            }
+          }
+        }
+      },
+      "source_pv_service": {
+        "title": "PV source service call",
+        "description": "Use a Home Assistant service call for PV forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect the returned payload and infer the list path plus timestamp/value keys\n- **Service call**: use an explicit response path and key mapping\n\nServices must not require input arguments.",
+        "data": {
+          "service": "Service call",
+          "adapter_type": "Adapter type",
+          "name": "Root path",
+          "time_key": "Timestamp key",
+          "value_key": "Value key",
+          "fixup_profile": "Fixup profile"
+        },
+        "data_description": {
+          "service": "Service to call in `domain.service` format. WattPlan calls it without arguments and reads the returned response.",
+          "adapter_type": "Choose Auto detect for the recommended setup path, or Service call to enter the fields yourself.",
+          "name": "Root path containing the forecast list in the service response. Ignored in auto detect mode.",
+          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
+          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
@@ -316,13 +427,19 @@
       "attribute_name_required": "An attribute name is required for this adapter.",
       "invalid_payload": "Source output must be a list of numeric values or a list of objects containing timestamp and value fields.",
       "built_in_no_numeric_history": "No usable numeric history was found for the selected load sensor in the configured lookback period.",
+      "review_ready": "This source is **ready** for the selected horizon. ✅",
+      "review_limited_history": "This source is usable, but only {history_days} days of history were found. Forecast quality may be poor.",
+      "review_invalid": "",
+      "review_incomplete": "This source does not cover the full planning horizon. ❌ Choose a fixup profile to repair gaps or extend the tail.",
+      "review_has_gaps": "This source has gaps between known samples. ❌ A fixup profile is recommended.",
+      "review_accept_note_valid": "Acceptance is already enabled because this source meets the current requirements. Disable it to return and adjust the input.",
+      "review_accept_note_invalid": "Next will bring you back to the source input page so you can adjust the provider or fixup settings.",
       "invalid_start": "One or more entries has an invalid timestamp. Check the configured time key and use ISO format with timezone.",
       "invalid_value": "One or more entries has a non-numeric value. Check the configured value key and output numeric values.",
       "not_enough_values": "The source produced {available_count} usable values for {slot_minutes}-minute intervals, but {required_count} are needed. Try enabling timestamp alignment, aggregation, resampling, or edge fill to produce enough values for the selected horizon.",
       "invalid_source_mode": "Invalid source mode selected.",
       "template_invalid_structure": "Template returned text. Return a native list of objects or numeric values.",
-      "source_fetch_error": "Source data could not be fetched. Check entity/template settings and try again."
-      ,
+      "source_fetch_error": "Source data could not be fetched. Check entity/template settings and try again.",
       "energy_provider_none_available": "No loaded Home Assistant Energy solar forecast providers were found.",
       "energy_provider_unavailable": "The selected Energy solar forecast provider is unavailable or returned no forecast data."
     }
@@ -358,12 +475,13 @@
       },
       "source_price": {
         "title": "Price source",
-        "description": "**Choose how WattPlan reads your price forecast**\n\n- **Template**: Use Jinja2 to build a forecast list from one or more entities.\n- **Entity attribute**: Read a forecast list directly from an entity attribute.\n\nBoth source types must produce enough forecast data for the planner window.",
+        "description": "**Choose how WattPlan reads your price forecast**\n\n1. **Entity attribute** (preferred): Read a forecast list directly from an entity attribute.\n2. **Service call** (preferred): Call a Home Assistant service that returns a forecast list.\n3. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n\nEach source type must produce enough forecast data for the planner window.",
+        "submit": "Next",
         "data": {
           "source_mode": "Source mode"
         },
         "data_description": {
-          "source_mode": "Choose how to provide your price forecast. Use Template to build or reshape data with Jinja2. Use Entity attribute when an entity already exposes a forecast list."
+          "source_mode": "Choose how to provide your price forecast. Entity attribute and Service call are the preferred setup paths for price sources. Template is the advanced fallback when you need to reshape data yourself."
         }
       },
       "source_price_template": {
@@ -397,7 +515,7 @@
       },
       "source_price_adapter": {
         "title": "Price source entity attribute",
-        "description": "Use an entity attribute for price forecast data.\n\nAdapter type formats:\n- **Attribute objects**: list of items with timestamp/value keys\n- **Attribute values**: list of numeric values\n\nModifiers below control aggregation, timestamp alignment, resampling, and edge filling.",
+        "description": "Use an entity attribute for price forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect one or more entities and infer the list path plus timestamp/value keys\n- **Attribute objects**: use an explicit list of objects with timestamp/value keys\n- **Attribute values**: use an explicit list of numeric values",
         "data": {
           "entity_id": "Entity",
           "adapter_type": "Adapter type",
@@ -407,11 +525,11 @@
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
-          "entity_id": "Entity that exposes the forecast attribute.",
-          "adapter_type": "Select how values are structured in the attribute.",
-          "name": "Attribute that contains the forecast list.",
-          "time_key": "Object mode only: key containing the timestamp, usually `start`.",
-          "value_key": "Object mode only: key containing the numeric value, usually `value`.",
+          "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
+          "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
+          "name": "Attribute path that contains the forecast list. Ignored in auto detect mode.",
+          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
+          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
@@ -434,12 +552,13 @@
       },
       "source_usage": {
         "title": "Usage source",
-        "description": "**Choose how WattPlan reads your usage forecast**\n\n- **Built in**: Build a forecast from historical load in Home Assistant.\n- **Template**: Use Jinja2 to build a forecast list from one or more entities.\n- **Entity attribute**: Read a forecast list directly from an entity attribute.\n- **Not used**: Skip usage forecasting for this setup.\n\nIf used, the source must produce enough forecast data for the planner window.",
+        "description": "**Choose how WattPlan reads your usage forecast**\n\n1. **Built in** (preferred): Build a forecast from historical load in Home Assistant.\n2. **Entity attribute**: Read a forecast list directly from an entity attribute.\n3. **Service call**: Call a Home Assistant service that returns a forecast list.\n4. **Not used**: Skip usage forecasting for this setup.\n5. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n\nIf used, the source must produce enough forecast data for the planner window.",
+        "submit": "Next",
         "data": {
           "source_mode": "Source mode"
         },
         "data_description": {
-          "source_mode": "Choose how to provide your usage forecast. Use Built in to forecast from load history, Template to build or reshape data with Jinja2, Entity attribute when an entity already exposes a forecast list, or Not used to skip usage."
+          "source_mode": "Choose how to provide your usage forecast. Built in is the preferred setup path for load forecasting. Entity attribute and Service call can reuse existing forecast data. Not used skips usage. Template is the advanced fallback."
         }
       },
       "source_usage_built_in": {
@@ -485,7 +604,7 @@
       },
       "source_usage_adapter": {
         "title": "Usage source entity attribute",
-        "description": "Use an entity attribute for usage forecast data.\n\nAdapter type formats:\n- **Attribute objects**: list of items with timestamp/value keys\n- **Attribute values**: list of numeric values\n\nModifiers below control aggregation, timestamp alignment, resampling, and edge filling.",
+        "description": "Use an entity attribute for usage forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect one or more entities and infer the list path plus timestamp/value keys\n- **Attribute objects**: use an explicit list of objects with timestamp/value keys\n- **Attribute values**: use an explicit list of numeric values",
         "data": {
           "entity_id": "Entity",
           "adapter_type": "Adapter type",
@@ -495,11 +614,11 @@
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
-          "entity_id": "Entity that exposes the forecast attribute.",
-          "adapter_type": "Select how values are structured in the attribute.",
-          "name": "Attribute that contains the forecast list.",
-          "time_key": "Object mode only: key containing the timestamp, usually `start`.",
-          "value_key": "Object mode only: key containing the numeric value, usually `value`.",
+          "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
+          "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
+          "name": "Attribute path that contains the forecast list. Ignored in auto detect mode.",
+          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
+          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
@@ -522,12 +641,13 @@
       },
       "source_pv": {
         "title": "PV source",
-        "description": "**Choose how WattPlan reads your PV forecast**\n\n- **Template**: Use Jinja2 to build a forecast list from one or more entities.\n- **Entity attribute**: Read a forecast list directly from an entity attribute.\n- **Energy provider**: Use a Home Assistant integration that exposes an Energy solar forecast.\n- **Not used**: Skip PV forecasting for this setup.\n\nIf used, the source must produce enough forecast data for the planner window.",
+        "description": "**Choose how WattPlan reads your PV forecast**\n\n1. **Energy provider** (preferred): Use a Home Assistant integration that exposes an Energy solar forecast.\n2. **Entity attribute**: Read a forecast list directly from an entity attribute.\n3. **Service call**: Call a Home Assistant service that returns a forecast list.\n4. **Not used**: Skip PV forecasting for this setup.\n5. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n\nIf used, the source must produce enough forecast data for the planner window.",
+        "submit": "Next",
         "data": {
           "source_mode": "Source mode"
         },
         "data_description": {
-          "source_mode": "Choose how to provide your PV forecast. Use Template to build or reshape data with Jinja2, Entity attribute when an entity already exposes a forecast list, Energy provider for integrations that publish Home Assistant Energy solar forecasts, or Not used to skip PV."
+          "source_mode": "Choose how to provide your PV forecast. Energy provider is the preferred setup path for solar forecasts. Entity attribute and Service call can reuse existing forecast data. Not used skips PV. Template is the advanced fallback."
         }
       },
       "source_pv_template": {
@@ -561,7 +681,7 @@
       },
       "source_pv_adapter": {
         "title": "PV source entity attribute",
-        "description": "Use an entity attribute for PV forecast data.\n\nAdapter type formats:\n- **Attribute objects**: list of items with timestamp/value keys\n- **Attribute values**: list of numeric values\n\nModifiers below control aggregation, timestamp alignment, resampling, and edge filling.",
+        "description": "Use an entity attribute for PV forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect one or more entities and infer the list path plus timestamp/value keys\n- **Attribute objects**: use an explicit list of objects with timestamp/value keys\n- **Attribute values**: use an explicit list of numeric values",
         "data": {
           "entity_id": "Entity",
           "adapter_type": "Adapter type",
@@ -571,11 +691,11 @@
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
-          "entity_id": "Entity that exposes the forecast attribute.",
-          "adapter_type": "Select how values are structured in the attribute.",
-          "name": "Attribute that contains the forecast list.",
-          "time_key": "Object mode only: key containing the timestamp, usually `start`.",
-          "value_key": "Object mode only: key containing the numeric value, usually `value`.",
+          "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
+          "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
+          "name": "Attribute path that contains the forecast list. Ignored in auto detect mode.",
+          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
+          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
@@ -628,7 +748,7 @@
       "source_review": {
         "title": "Review source coverage",
         "description": "**Coverage summary**\n\n- The source provided **{coverage_summary}**\n- Coverage starts at **{coverage_start}**\n- Coverage ends at **{coverage_end}**\n\n**Review**\n\n{review_text}\n\n{accept_note}",
-        "submit": "Update",
+        "submit": "Next",
         "data": {
           "accept_source_summary": "I accept this source setup"
         },
@@ -800,6 +920,117 @@
         },
         "data_description": {
           "item_id": "Select the optional load configuration you want to remove."
+        }
+      },
+      "source_price_service": {
+        "title": "Price source service call",
+        "description": "Use a Home Assistant service call for price forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect the returned payload and infer the list path plus timestamp/value keys\n- **Service call**: use an explicit response path and key mapping\n\nServices must not require input arguments.",
+        "data": {
+          "service": "Service call",
+          "adapter_type": "Adapter type",
+          "name": "Root path",
+          "time_key": "Timestamp key",
+          "value_key": "Value key",
+          "fixup_profile": "Fixup profile"
+        },
+        "data_description": {
+          "service": "Service to call in `domain.service` format. WattPlan calls it without arguments and reads the returned response.",
+          "adapter_type": "Choose Auto detect for the recommended setup path, or Service call to enter the fields yourself.",
+          "name": "Root path containing the forecast list in the service response. Ignored in auto detect mode.",
+          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
+          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
+          "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+            }
+          }
+        }
+      },
+      "source_usage_service": {
+        "title": "Usage source service call",
+        "description": "Use a Home Assistant service call for usage forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect the returned payload and infer the list path plus timestamp/value keys\n- **Service call**: use an explicit response path and key mapping\n\nServices must not require input arguments.",
+        "data": {
+          "service": "Service call",
+          "adapter_type": "Adapter type",
+          "name": "Root path",
+          "time_key": "Timestamp key",
+          "value_key": "Value key",
+          "fixup_profile": "Fixup profile"
+        },
+        "data_description": {
+          "service": "Service to call in `domain.service` format. WattPlan calls it without arguments and reads the returned response.",
+          "adapter_type": "Choose Auto detect for the recommended setup path, or Service call to enter the fields yourself.",
+          "name": "Root path containing the forecast list in the service response. Ignored in auto detect mode.",
+          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
+          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
+          "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+            }
+          }
+        }
+      },
+      "source_pv_service": {
+        "title": "PV source service call",
+        "description": "Use a Home Assistant service call for PV forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect the returned payload and infer the list path plus timestamp/value keys\n- **Service call**: use an explicit response path and key mapping\n\nServices must not require input arguments.",
+        "data": {
+          "service": "Service call",
+          "adapter_type": "Adapter type",
+          "name": "Root path",
+          "time_key": "Timestamp key",
+          "value_key": "Value key",
+          "fixup_profile": "Fixup profile"
+        },
+        "data_description": {
+          "service": "Service to call in `domain.service` format. WattPlan calls it without arguments and reads the returned response.",
+          "adapter_type": "Choose Auto detect for the recommended setup path, or Service call to enter the fields yourself.",
+          "name": "Root path containing the forecast list in the service response. Ignored in auto detect mode.",
+          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
+          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
+          "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+            }
+          }
         }
       }
     },
@@ -1050,6 +1281,27 @@
       },
       "abort": {
         "reconfigure_successful": "Changes saved"
+      }
+    }
+  },
+  "issues": {
+    "source_unavailable": {
+      "title": "{source_title} issue for {entry_title}",
+      "description": "WattPlan could not read any fresh data from the configured {source_name}, and {grace_note}\n\n**After that, {consequence}**\n\nWhat you can do:\n- {action}\n- Open the WattPlan setup and check the selected source\n- Wait for the next refresh if the source is only temporarily unavailable"
+    },
+    "source_incomplete": {
+      "title": "{source_title} does not cover the horizon for {entry_title}",
+      "description": "The configured {source_name} only covers about {covered_hours} hours, but WattPlan needs {required_hours} hours for this setup. This may mean the selected provider is not returning enough forecast data to cover the full planning period.\n\n{grace_note}\n\n**After that, {consequence}**\n\nWhat you can do:\n- {action}\n- Open the WattPlan setup and inspect the selected source",
+      "fix_flow": {
+        "abort": {
+          "entry_removed": "The WattPlan setup has been removed"
+        },
+        "step": {
+          "confirm": {
+            "title": "{source_title} does not cover the horizon for {entry_title}",
+            "description": "The configured {source_name} only covers about {covered_hours} hours, but WattPlan needs {required_hours} hours for this setup. This may mean the selected provider is not returning enough forecast data to cover the full planning period.\n\n{grace_note}\n\n**After that, {consequence}**\n\nSubmit this repair only if the configured source is expected to contain the right forecast values, but the current setup is too strict. WattPlan will enable these horizon-filling defaults:\n- Extend daily pattern\n- Nearest timestamp alignment\n- Linear gap repair\n- Hold edge"
+          }
+        }
       }
     }
   }

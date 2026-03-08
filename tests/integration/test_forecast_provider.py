@@ -8,7 +8,7 @@ from typing import Any
 
 import custom_components.wattplan.forecast_provider as provider_module
 from custom_components.wattplan.forecast_provider import ForecastProvider
-from custom_components.wattplan.source_provider import SourceProviderError, SourceWindow
+from custom_components.wattplan.source_types import SourceProviderError, SourceWindow
 import pytest
 
 from homeassistant.core import HomeAssistant

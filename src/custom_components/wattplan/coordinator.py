@@ -36,7 +36,6 @@ from .const import (
     CONF_DURATION_MINUTES,
     CONF_ENERGY_KWH,
     CONF_EXPECTED_POWER_KW,
-    CONF_HISTORY_DAYS,
     CONF_HOURS_TO_PLAN,
     CONF_MAX_CHARGE_KW,
     CONF_MAX_CONSECUTIVE_OFF_MINUTES,
@@ -65,14 +64,17 @@ from .const import (
     SUBENTRY_TYPE_COMFORT,
     SUBENTRY_TYPE_OPTIONAL,
 )
-from .forecast_provider import ForecastProvider
 from .historical_on_off_provider import HistoricalOnOffProvider
-from .source_provider import (
-    SourceProvider,
-    SourceProviderError,
-    SourceWindow,
-    TemplateAdapterSourceProvider,
+from .source_fixup import SourceFixupProvider, SourceHealthKind
+from .source_issues import (
+    build_source_issue,
+    clear_entry_source_issues,
+    source_display_name,
+    source_fill_defaults_needed,
+    sync_source_issues,
 )
+from .source_pipeline import build_source_value_provider
+from .source_types import SourceProvider, SourceProviderError, SourceWindow
 from .optimizer import OptimizationParams, optimize
 
 _LOGGER = logging.getLogger(__name__)
@@ -274,6 +276,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         self._last_heartbeat_stale: bool | None = None
         self._on_off_providers: dict[str, HistoricalOnOffProvider] = {}
         self._source_providers: dict[str, SourceProvider] = {}
+        self._active_source_issues: dict[str, Any] = {}
         self._snapshot_store = Store[dict[str, Any]](
             hass,
             STORAGE_VERSION,
@@ -401,6 +404,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
     async def async_shutdown(self) -> None:
         """Stop coordinator background callbacks."""
         self._async_stop_heartbeat()
+        clear_entry_source_issues(self.hass, self._entry_id)
 
     async def _async_update_data(self) -> CoordinatorSnapshot | None:
         """Handle one scheduled tick."""
@@ -455,6 +459,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
 
         async with self._plan_lock:
             try:
+                self._active_source_issues = {}
                 entry = self._require_entry()
                 request = await self._async_build_planning_request(entry)
                 planner_result = await self._async_run_optimizer(request, entry.runtime_data)
@@ -465,9 +470,11 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 await self.async_persist_snapshot()
                 self._clear_stage_error(Stage.PLAN)
                 self._last_success_at = datetime.now(tz=UTC)
+                self._sync_source_issues(entry)
                 if trigger is CycleTrigger.SERVICE:
                     self.async_update_listeners()
             except PlanningStageError as err:
+                self._sync_source_issues(self._require_entry())
                 self._set_stage_error(
                     Stage.PLAN,
                     err.kind,
@@ -481,6 +488,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             except ServiceValidationError:
                 raise
             except Exception as err:
+                self._sync_source_issues(self._require_entry())
                 self._set_stage_error(
                     Stage.PLAN,
                     self._classify_plan_error(err),
@@ -593,19 +601,24 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             )
 
         price_values = await self._async_resolve_source(
+            entry=entry,
             source_key=CONF_SOURCE_PRICE,
             source_config=sources.get(CONF_SOURCE_PRICE, {}),
             window=window,
         )
         usage_values = await self._async_resolve_optional_source(
+            entry=entry,
             source_key=CONF_SOURCE_USAGE,
             source_config=sources.get(CONF_SOURCE_USAGE, {}),
             window=window,
+            blocks_planning=True,
         )
         pv_values = await self._async_resolve_optional_source(
+            entry=entry,
             source_key=CONF_SOURCE_PV,
             source_config=sources.get(CONF_SOURCE_PV, {}),
             window=window,
+            blocks_planning=False,
         )
 
         usage_forecast_points: list[dict[str, Any]] | None = None
@@ -835,6 +848,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 "optionals": optional_name_to_subentry,
             },
             "usage_forecast_points": usage_forecast_points,
+            "source_health": self._source_health_diagnostics(),
         }
 
     async def async_build_planner_input_export(self) -> dict[str, Any]:
@@ -845,6 +859,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
     async def _async_resolve_source(
         self,
         *,
+        entry: ConfigEntry,
         source_key: str,
         source_config: dict[str, Any],
         window: SourceWindow,
@@ -860,30 +875,52 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
 
         try:
             provider = self._source_provider(source_key, source_config)
-            return await provider.async_values(window)
+            values = await provider.async_values(window)
+            self._record_source_issue_if_needed(
+                entry=entry,
+                source_key=source_key,
+                source_config=source_config,
+                provider=provider,
+            )
         except SourceProviderError as err:
+            self._record_source_issue_if_needed(
+                entry=entry,
+                source_key=source_key,
+                source_config=source_config,
+                provider=self._source_provider(source_key, source_config),
+            )
             raise PlanningStageError(
                 self._source_kind_from_error_code(err.code),
                 str(err),
                 details=err.details,
             ) from err
+        else:
+            return values
 
     async def _async_resolve_optional_source(
         self,
         *,
+        entry: ConfigEntry,
         source_key: str,
         source_config: dict[str, Any],
         window: SourceWindow,
+        blocks_planning: bool,
     ) -> list[float] | None:
         """Resolve one optional source when explicitly configured."""
         mode = source_config.get(CONF_SOURCE_MODE)
         if not mode or mode == SOURCE_MODE_NOT_USED:
             return None
-        return await self._async_resolve_source(
-            source_key=source_key,
-            source_config=source_config,
-            window=window,
-        )
+        try:
+            return await self._async_resolve_source(
+                entry=entry,
+                source_key=source_key,
+                source_config=source_config,
+                window=window,
+            )
+        except PlanningStageError:
+            if blocks_planning:
+                raise
+            return None
 
     def _source_kind_from_error_code(self, code: str) -> StageErrorKind:
         """Map source provider error code to coordinator stage kind."""
@@ -901,21 +938,96 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         if provider := self._source_providers.get(provider_key):
             return provider
 
-        mode = source_config.get(CONF_SOURCE_MODE)
-        if mode == SOURCE_MODE_BUILT_IN:
-            provider = ForecastProvider(
-                self.hass,
-                entity_id=str(source_config["entity_id"]),
-                lookback_days=int(source_config.get(CONF_HISTORY_DAYS, 14)),
-            )
-        else:
-            provider = TemplateAdapterSourceProvider(
-                self.hass,
-                source_name=source_key,
-                source_config=source_config,
-            )
+        provider = build_source_value_provider(
+            self.hass,
+            source_key=source_key,
+            source_config=source_config,
+        )
         self._source_providers[provider_key] = provider
         return provider
+
+    def _source_health_diagnostics(self) -> dict[str, Any]:
+        """Return the current source issue state for diagnostics payloads."""
+        return {
+            source_key: {
+                "kind": issue.kind,
+                **issue.data,
+            }
+            for source_key, issue in self._active_source_issues.items()
+        }
+
+    def _record_source_issue_if_needed(
+        self,
+        *,
+        entry: ConfigEntry,
+        source_key: str,
+        source_config: dict[str, Any],
+        provider: SourceProvider,
+    ) -> None:
+        """Translate shared source health into one repair issue per source.
+
+        The fixup wrapper owns transient failure reuse for every source type.
+        That makes it the one place that knows whether a source is healthy,
+        temporarily covered by stale data, or still short after all repair.
+        """
+
+        if not isinstance(provider, SourceFixupProvider):
+            self._active_source_issues.pop(source_key, None)
+            return
+
+        health = provider.last_health
+        if health.kind is SourceHealthKind.OK:
+            self._active_source_issues.pop(source_key, None)
+            return
+
+        issue_kind = (
+            "source_unavailable"
+            if health.kind is SourceHealthKind.UNAVAILABLE
+            else "source_incomplete"
+        )
+        self._active_source_issues[source_key] = build_source_issue(
+            entry=entry,
+            source_key=source_key,
+            kind=issue_kind,
+            source_name=self._source_display_name(source_key),
+            consequence=self._source_consequence(source_key, health.kind),
+            expires_at=health.expires_at if health.using_stale else None,
+            available_count=health.available_count,
+            required_count=health.required_count,
+            is_fixable=(
+                health.kind is SourceHealthKind.INCOMPLETE
+                and self._source_fill_defaults_needed(source_config)
+            ),
+        )
+
+    def _sync_source_issues(self, entry: ConfigEntry) -> None:
+        """Publish the current source issue set to the repairs dashboard."""
+        sync_source_issues(
+            self.hass,
+            entry_id=entry.entry_id,
+            issues=list(self._active_source_issues.values()),
+        )
+
+    def _source_display_name(self, source_key: str) -> str:
+        """Return a user-facing source label for issue text."""
+        return source_display_name(source_key)
+
+    def _source_consequence(
+        self, source_key: str, health_kind: SourceHealthKind
+    ) -> str:
+        """Return source-specific planning consequences for repairs text."""
+        if source_key == CONF_SOURCE_PV:
+            if health_kind is SourceHealthKind.UNAVAILABLE:
+                return "WattPlan will continue, but it will plan without solar contribution."
+            return "WattPlan will continue, but it will plan without solar contribution for the missing period."
+
+        if health_kind is SourceHealthKind.UNAVAILABLE:
+            return "WattPlan will stop producing new plans."
+        return "WattPlan will stop producing new plans."
+
+    def _source_fill_defaults_needed(self, source_config: dict[str, Any]) -> bool:
+        """Return whether the incomplete-source repair can still change config."""
+        return source_fill_defaults_needed(source_config)
 
     def _values_to_points(
         self, values: list[float], window: SourceWindow
@@ -1236,6 +1348,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                         start_at + timedelta(minutes=horizon_slots * slot_minutes)
                     ).isoformat(),
                 },
+                "source_health": request.get("source_health", {}),
                 "plan_details": (
                     self._build_plan_details(request, result)
                     if self._plan_details_enabled()
@@ -1537,6 +1650,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             "plan_error_source": plan_details.get("source"),
             "plan_error_available_count": plan_details.get("available_count"),
             "plan_error_required_count": plan_details.get("required_count"),
+            "source_issues": self._source_health_diagnostics(),
             "plan_error_failures": self._plan_error.consecutive_failures,
             "plan_skipped_locked_count": self._plan_error.skipped_locked_count,
             "emit_error_kind": self._emit_error.kind,

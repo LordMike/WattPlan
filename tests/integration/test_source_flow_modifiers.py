@@ -6,7 +6,10 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 from custom_components.wattplan.const import (
+    ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
     ADAPTER_TYPE_ATTRIBUTE_VALUES,
+    ADAPTER_TYPE_AUTO_DETECT,
+    ADAPTER_TYPE_SERVICE_RESPONSE,
     AGGREGATION_MODE_MAX,
     AGGREGATION_MODE_MIN,
     CLAMP_MODE_NEAREST,
@@ -20,6 +23,7 @@ from custom_components.wattplan.const import (
     CONF_HISTORY_DAYS,
     CONF_HOURS_TO_PLAN,
     CONF_RESAMPLE_MODE,
+    CONF_SERVICE,
     CONF_SLOT_MINUTES,
     CONF_SOURCE_MODE,
     CONF_SOURCE_PRICE,
@@ -38,6 +42,7 @@ from custom_components.wattplan.const import (
     SOURCE_MODE_ENERGY_PROVIDER,
     SOURCE_MODE_ENTITY_ADAPTER,
     SOURCE_MODE_NOT_USED,
+    SOURCE_MODE_SERVICE_ADAPTER,
     SOURCE_MODE_TEMPLATE,
 )
 import pytest
@@ -45,8 +50,9 @@ import pytest
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_NAME
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.data_entry_flow import FlowResultType
+
 from tests.common import MockConfigEntry
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
@@ -162,7 +168,7 @@ async def test_options_flow_persists_price_adapter_modifiers(
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         {
-            "entity_id": "sensor.price_provider",
+            "entity_id": ["sensor.price_provider"],
             CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_VALUES,
             CONF_NAME: "prices",
             "time_key": "start",
@@ -199,6 +205,156 @@ async def test_options_flow_persists_price_adapter_modifiers(
     # Optional sources remain explicitly optional.
     assert updated.data[CONF_SOURCES][CONF_SOURCE_USAGE][CONF_SOURCE_MODE] == SOURCE_MODE_NOT_USED
     assert updated.data[CONF_SOURCES][CONF_SOURCE_PV][CONF_SOURCE_MODE] == SOURCE_MODE_NOT_USED
+
+
+async def test_config_flow_auto_detects_entity_adapter(
+    hass: HomeAssistant,
+) -> None:
+    """Entity adapter auto-detect should persist resolved explicit fields."""
+    start = datetime.now(tz=UTC).replace(minute=0, second=0, microsecond=0)
+    hass.states.async_set("sensor.first", "ok", {"junk": [{"name": "x"}]})
+    hass.states.async_set(
+        "sensor.second",
+        "ok",
+        {
+            "prices": {
+                "home": [
+                    {
+                        "starts_at": (start + timedelta(hours=hour)).isoformat(),
+                        "amount": float(hour + 1),
+                    }
+                    for hour in range(12)
+                ]
+            }
+        },
+    )
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_NAME: "Auto entity", CONF_SLOT_MINUTES: "60", CONF_HOURS_TO_PLAN: "12"},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+        },
+    )
+    assert result["step_id"] == "source_price_adapter"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            "entity_id": ["sensor.first", "sensor.second"],
+            CONF_ADAPTER_TYPE: ADAPTER_TYPE_AUTO_DETECT,
+            CONF_NAME: "",
+            "time_key": "",
+            "value_key": "",
+            CONF_FIXUP_PROFILE: FIXUP_PROFILE_REPAIR,
+            "advanced": {
+                CONF_AGGREGATION_MODE: AGGREGATION_MODE_MIN,
+                CONF_CLAMP_MODE: CLAMP_MODE_NEAREST,
+                CONF_RESAMPLE_MODE: RESAMPLE_MODE_FORWARD_FILL,
+                CONF_EDGE_FILL_MODE: EDGE_FILL_MODE_HOLD,
+            },
+        },
+    )
+    assert result["step_id"] == "source_review"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"accept_source_summary": True}
+    )
+    assert result["step_id"] == "source_usage"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED}
+    )
+    assert result["step_id"] == "source_pv"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    price = entry.data[CONF_SOURCES][CONF_SOURCE_PRICE]
+    assert price[CONF_SOURCE_MODE] == SOURCE_MODE_ENTITY_ADAPTER
+    assert price["entity_id"] == "sensor.second"
+    assert price[CONF_ADAPTER_TYPE] == ADAPTER_TYPE_ATTRIBUTE_OBJECTS
+    assert price[CONF_NAME] == "prices.home"
+    assert price["time_key"] == "starts_at"
+    assert price["value_key"] == "amount"
+
+
+async def test_options_flow_auto_detects_service_adapter(
+    hass: HomeAssistant,
+) -> None:
+    """Service adapter auto-detect should persist resolved explicit fields."""
+    start = datetime.now(tz=UTC).replace(minute=0, second=0, microsecond=0)
+
+    async def _handle_prices(call: ServiceCall) -> dict[str, object]:
+        return {
+            "prices": {
+                "home": [
+                    {
+                        "start_time": (start + timedelta(hours=hour)).isoformat(),
+                        "end_time": (start + timedelta(hours=hour + 1)).isoformat(),
+                        "price": float(hour + 1),
+                    }
+                    for hour in range(12)
+                ]
+            }
+        }
+
+    hass.services.async_register(
+        "test",
+        "prices",
+        _handle_prices,
+        supports_response=SupportsResponse.ONLY,
+    )
+    entry = await _create_entry_with_price_template(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "source_price"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_SERVICE_ADAPTER}
+    )
+    assert result["step_id"] == "source_price_service"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_SERVICE: "test.prices",
+            CONF_ADAPTER_TYPE: ADAPTER_TYPE_AUTO_DETECT,
+            CONF_NAME: "",
+            "time_key": "",
+            "value_key": "",
+            CONF_FIXUP_PROFILE: FIXUP_PROFILE_EXTEND,
+            "advanced": {
+                CONF_AGGREGATION_MODE: AGGREGATION_MODE_MAX,
+                CONF_CLAMP_MODE: CLAMP_MODE_NONE,
+                CONF_RESAMPLE_MODE: RESAMPLE_MODE_NONE,
+                CONF_EDGE_FILL_MODE: EDGE_FILL_MODE_NONE,
+            },
+        },
+    )
+    assert result["step_id"] == "source_review"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"accept_source_summary": True}
+    )
+    assert result["type"] is FlowResultType.MENU
+
+    updated = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated is not None
+    price = updated.data[CONF_SOURCES][CONF_SOURCE_PRICE]
+    assert price[CONF_SOURCE_MODE] == SOURCE_MODE_SERVICE_ADAPTER
+    assert price[CONF_SERVICE] == "test.prices"
+    assert price[CONF_ADAPTER_TYPE] == ADAPTER_TYPE_SERVICE_RESPONSE
+    assert price[CONF_NAME] == "prices.home"
+    assert price["time_key"] == "start_time"
+    assert price["value_key"] == "price"
 
 
 async def test_config_flow_persists_usage_built_in_source(
@@ -371,14 +527,15 @@ async def test_config_flow_persists_pv_energy_provider_source(
     hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """PV Energy provider mode should save provider and advanced settings."""
-    start_at = datetime.now(tz=UTC).replace(minute=0, second=0, microsecond=0)
+    forecast_start = datetime.now(tz=UTC).replace(
+        minute=0, second=0, microsecond=0
+    )
     entry = MockConfigEntry(
         domain="forecast_solar",
         entry_id="solar-entry",
         title="Solcast",
         state=ConfigEntryState.LOADED,
     )
-    entry.async_unload = AsyncMock(return_value=True)
     entry.add_to_hass(hass)
 
     monkeypatch.setattr(
@@ -392,8 +549,10 @@ async def test_config_flow_persists_pv_energy_provider_source(
                 "forecast_solar": AsyncMock(
                     return_value={
                         "wh_hours": {
-                            (start_at + timedelta(hours=hour)).isoformat(): hour * 1000.0
-                            for hour in range(48)
+                            (forecast_start + timedelta(hours=hour)).isoformat(): (
+                                hour * 1000.0
+                            )
+                            for hour in range(24)
                         }
                     }
                 )

@@ -1,18 +1,12 @@
 """Common fixtures for the WattPlan tests."""
 
 from collections.abc import Generator
+import sys
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from homeassistant import loader
-from homeassistant.core import HomeAssistant
-
-
-@pytest.fixture
-def enable_custom_integrations(hass: HomeAssistant) -> None:
-    """Enable custom integrations defined in the test dir."""
-    hass.data.pop(loader.DATA_CUSTOM_COMPONENTS, None)
+sys.path.insert(0, "/mnt/n/Personal/hass-core/tests/testing_config")
 
 
 @pytest.fixture

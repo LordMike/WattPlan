@@ -24,7 +24,6 @@ from .const import (
     ATTR_REACH_AT,
     ATTR_SOC_KWH,
     CONF_ACTION_EMISSION_ENABLED,
-    CONF_HISTORY_DAYS,
     CONF_PLANNING_ENABLED,
     CONF_SLOT_MINUTES,
     CONF_SOURCE_MODE,
@@ -41,6 +40,7 @@ from .const import (
 )
 from .coordinator import CycleTrigger, WattPlanCoordinator
 from .forecast_provider import ForecastProvider
+from .source_pipeline import build_source_base_provider
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
 
@@ -313,11 +313,13 @@ async def _async_handle_export_usage_forecast_debug_service(
     if usage_source.get(CONF_SOURCE_MODE) != SOURCE_MODE_BUILT_IN:
         raise ServiceValidationError("Usage source is not configured as built in")
 
-    provider = ForecastProvider(
+    provider = build_source_base_provider(
         hass,
-        entity_id=str(usage_source["entity_id"]),
-        lookback_days=int(usage_source.get(CONF_HISTORY_DAYS, 14)),
+        source_key=CONF_SOURCE_USAGE,
+        source_config=usage_source,
     )
+    if not isinstance(provider, ForecastProvider):
+        raise ServiceValidationError("Usage source is not configured as built in")
     request = await entry.runtime_data.coordinator.async_build_planner_input_export()
     debug_payload = await provider.async_debug_payload(request["window"])
     if call.data["as_json"]:

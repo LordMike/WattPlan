@@ -19,13 +19,15 @@ from homeassistant.config_entries import (
     SubentryFlowResult,
 )
 from homeassistant.const import CONF_NAME
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import section
-from homeassistant.helpers import selector
+from homeassistant.helpers import selector, translation
 
 from .const import (
     ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
     ADAPTER_TYPE_ATTRIBUTE_VALUES,
+    ADAPTER_TYPE_AUTO_DETECT,
+    ADAPTER_TYPE_SERVICE_RESPONSE,
     AGGREGATION_MODE_FIRST,
     AGGREGATION_MODE_LAST,
     AGGREGATION_MODE_MAX,
@@ -64,6 +66,7 @@ from .const import (
     CONF_RESAMPLE_MODE,
     CONF_ROLLING_WINDOW_HOURS,
     CONF_RUN_WITHIN_HOURS,
+    CONF_SERVICE,
     CONF_SLOT_MINUTES,
     CONF_SOC_SOURCE,
     CONF_SOURCE_MODE,
@@ -90,21 +93,24 @@ from .const import (
     SOURCE_MODE_ENERGY_PROVIDER,
     SOURCE_MODE_ENTITY_ADAPTER,
     SOURCE_MODE_NOT_USED,
+    SOURCE_MODE_SERVICE_ADAPTER,
     SOURCE_MODE_TEMPLATE,
     SUBENTRY_TYPE_BATTERY,
     SUBENTRY_TYPE_COMFORT,
     SUBENTRY_TYPE_OPTIONAL,
 )
 from .forecast_provider import ForecastProvider
-from .source_fixup import SourceFixupProvider, effective_provider_config
+from .source_pipeline import (
+    async_fetch_source_payload,
+    build_source_base_provider,
+    build_source_value_provider,
+)
 from .source_provider import (
-    EnergySolarForecastSourceProvider,
-    SourceProvider,
-    SourceProviderError,
-    SourceWindow,
-    TemplateAdapterSourceProvider,
+    async_auto_detect_entity_adapter,
+    async_auto_detect_service_adapter,
     async_get_energy_solar_forecast_entries,
 )
+from .source_types import SourceProviderError, SourceWindow
 
 CONF_WATTPLAN_ENTITY_ID = "entity_id"
 
@@ -275,6 +281,24 @@ def _source_base_defaults(source: dict[str, Any]) -> dict[str, Any]:
     return dict(source)
 
 
+def _auto_detect_step_defaults(
+    user_input: dict[str, Any],
+    resolved_source: dict[str, Any],
+) -> dict[str, Any]:
+    """Return input defaults that preserve auto mode while showing resolved keys.
+
+    The review step stores the resolved source so validation and persistence use
+    explicit fields. When the user goes back, we still want the form to reflect
+    that auto-detect was the chosen workflow, while showing what it found.
+    """
+    defaults = dict(user_input)
+    defaults[CONF_NAME] = resolved_source.get(CONF_NAME, "")
+    defaults[CONF_TIME_KEY] = resolved_source.get(CONF_TIME_KEY, "")
+    defaults[CONF_VALUE_KEY] = resolved_source.get(CONF_VALUE_KEY, "")
+    defaults[CONF_ADAPTER_TYPE] = ADAPTER_TYPE_AUTO_DETECT
+    return defaults
+
+
 def _source_fixup_fields(
     defaults: dict[str, Any],
     *,
@@ -342,6 +366,286 @@ def _source_review_schema(
     return vol.Schema(schema)
 
 
+async def _async_validate_source_values(
+    hass: HomeAssistant,
+    *,
+    core_data: dict[str, Any],
+    key: str,
+    source: dict[str, Any],
+    floor_to_slot,
+    validate_built_in_entity,
+) -> int:
+    """Validate one source against the current planner window.
+
+    Config flow and options flow both need the same runtime-equivalent source
+    validation. Keeping it here avoids another split between review-time and
+    persisted behavior.
+    """
+
+    expected_slots = _expected_slots(core_data)
+    slot_minutes = int(core_data[CONF_SLOT_MINUTES])
+    window = SourceWindow(
+        start_at=floor_to_slot(datetime.now(tz=UTC), slot_minutes),
+        slot_minutes=slot_minutes,
+        slots=expected_slots,
+    )
+    provider = build_source_value_provider(
+        hass,
+        source_key=key,
+        source_config=source,
+        validate_built_in_entity=(
+            validate_built_in_entity
+            if source.get(CONF_SOURCE_MODE) == SOURCE_MODE_BUILT_IN
+            else None
+        ),
+    )
+    values = await provider.async_values(window)
+    return len(values)
+
+
+def _built_in_history_coverage(
+    debug: dict[str, Any], start_at: datetime
+) -> tuple[datetime, datetime, float]:
+    """Return built-in history coverage range and length in days."""
+
+    rows: list[datetime] = []
+    for row in debug.get("raw_history_states", []):
+        last_changed = row.get("last_changed")
+        if isinstance(last_changed, str):
+            try:
+                rows.append(datetime.fromisoformat(last_changed))
+            except ValueError:
+                continue
+    if not rows:
+        for row in debug.get("raw_statistics_rows", []):
+            started = row.get("start")
+            if isinstance(started, str):
+                try:
+                    rows.append(datetime.fromisoformat(started))
+                except ValueError:
+                    continue
+    if not rows:
+        return start_at, start_at, 0.0
+    coverage_start = min(rows)
+    coverage_end = max(rows)
+    history_days = max(
+        0.0, (coverage_end - coverage_start).total_seconds() / 86400.0
+    )
+    return coverage_start, coverage_end, history_days
+
+
+def _summarize_payload_coverage(
+    payload: list[Any],
+    source: dict[str, Any],
+    *,
+    start_at: datetime,
+    slot_minutes: int,
+    floor_to_slot,
+) -> tuple[int, datetime, datetime, bool]:
+    """Summarize source coverage before fixups are applied."""
+
+    slot_delta = timedelta(minutes=slot_minutes)
+    if not payload:
+        return 0, start_at, start_at, False
+    if isinstance(payload[0], dict):
+        time_key = str(source.get(CONF_TIME_KEY, "start"))
+        slot_indexes: set[int] = set()
+        timestamps: list[datetime] = []
+        for point in payload:
+            if not isinstance(point, dict):
+                continue
+            stamp = point.get(time_key)
+            if not isinstance(stamp, str):
+                continue
+            try:
+                point_dt = datetime.fromisoformat(stamp)
+            except ValueError:
+                continue
+            point_dt = floor_to_slot(
+                point_dt.astimezone(UTC)
+                if point_dt.tzinfo
+                else point_dt.replace(tzinfo=UTC),
+                slot_minutes,
+            )
+            timestamps.append(point_dt)
+            slot_indexes.add(int((point_dt - start_at) // slot_delta))
+        if not timestamps:
+            return 0, start_at, start_at, False
+        first = min(timestamps)
+        last = max(timestamps) + slot_delta
+        available = len(slot_indexes)
+        expected_range = (
+            int((max(timestamps) - min(timestamps)) // slot_delta) + 1
+            if len(timestamps) > 1
+            else 1
+        )
+        return available, first, last, available < expected_range
+
+    available = len(payload)
+    return available, start_at, start_at + (available * slot_delta), False
+
+
+def _invalid_key_from_source_error(err: SourceProviderError) -> str:
+    """Map source provider errors to flow translation keys."""
+
+    built_in_reason = err.details.get("built_in_reason")
+    if err.code == "source_fetch":
+        if "config_entry_id" in err.details:
+            return "energy_provider_unavailable"
+        if "entity_id" in err.details and "attribute" in err.details:
+            return "attribute_name_required"
+        if "entity_id" in err.details:
+            return "entity_not_found"
+        return "source_fetch_error"
+    if err.code == "source_parse":
+        if built_in_reason == "no_numeric_history":
+            return "built_in_no_numeric_history"
+        if "rendered a string" in str(err):
+            return "template_invalid_structure"
+        return "invalid_payload"
+    if err.code == "source_validation" and (
+        "entity_ids" in err.details or "service" in err.details
+    ):
+        return "invalid_payload"
+    return "not_enough_values"
+
+
+async def _async_source_summary(
+    hass: HomeAssistant,
+    *,
+    core_data: dict[str, Any],
+    key: str,
+    source: dict[str, Any],
+    floor_to_slot,
+    validate_built_in_entity,
+) -> dict[str, Any]:
+    """Return one lightweight source summary for the review page."""
+
+    expected_slots = _expected_slots(core_data)
+    slot_minutes = int(core_data[CONF_SLOT_MINUTES])
+    start_at = floor_to_slot(datetime.now(tz=UTC), slot_minutes)
+    available_count = 0
+    coverage_start = start_at
+    coverage_end = start_at
+    has_gaps = False
+    history_coverage_days = 0.0
+    mode = source.get(CONF_SOURCE_MODE)
+
+    try:
+        if mode == SOURCE_MODE_BUILT_IN:
+            provider = build_source_base_provider(
+                hass,
+                source_key=key,
+                source_config=source,
+                validate_built_in_entity=validate_built_in_entity,
+            )
+            if not isinstance(provider, ForecastProvider):
+                raise AssertionError("Built-in usage source should use ForecastProvider")
+            debug = await provider.async_debug_payload(
+                SourceWindow(
+                    start_at=start_at,
+                    slot_minutes=slot_minutes,
+                    slots=expected_slots,
+                )
+            )
+            available_count = len(debug["forecast_values"])
+            coverage_start, coverage_end, history_coverage_days = (
+                _built_in_history_coverage(debug, start_at)
+            )
+        else:
+            payload = await async_fetch_source_payload(
+                hass,
+                source_key=key,
+                source_config=source,
+            )
+            available_count, coverage_start, coverage_end, has_gaps = (
+                _summarize_payload_coverage(
+                    payload,
+                    source,
+                    start_at=start_at,
+                    slot_minutes=slot_minutes,
+                    floor_to_slot=floor_to_slot,
+                )
+            )
+    except (SourceProviderError, vol.Invalid):
+        pass
+
+    error_key: str | None = None
+    try:
+        available_count = await _async_validate_source_values(
+            hass,
+            core_data=core_data,
+            key=key,
+            source=source,
+            floor_to_slot=floor_to_slot,
+            validate_built_in_entity=validate_built_in_entity,
+        )
+        is_valid = True
+    except SourceProviderError as err:
+        error_key = _invalid_key_from_source_error(err)
+        is_valid = False
+        if available_from_error := err.details.get("available_count"):
+            available_count = int(available_from_error)
+            coverage_end = start_at + (available_count * timedelta(minutes=slot_minutes))
+
+    history_warning = False
+    review_text_key = "review_ready"
+    review_text_placeholders: dict[str, str] | None = None
+    if mode == SOURCE_MODE_BUILT_IN and history_coverage_days < 7:
+        history_warning = True
+        review_text_key = "review_limited_history"
+        review_text_placeholders = {"history_days": f"{history_coverage_days:.1f}"}
+    if not is_valid:
+        review_text_key = "review_invalid"
+    elif available_count < expected_slots:
+        review_text_key = "review_incomplete"
+        review_text_placeholders = None
+    elif has_gaps:
+        review_text_key = "review_has_gaps"
+        review_text_placeholders = None
+
+    review_text = await _async_config_translation(
+        hass,
+        review_text_key,
+        placeholders=review_text_placeholders,
+    )
+
+    return {
+        "available_count": available_count,
+        "coverage_start": coverage_start.isoformat(),
+        "coverage_end": coverage_end.isoformat(),
+        "review_text": review_text,
+        "is_valid": is_valid,
+        "error_key": error_key,
+        "history_warning": history_warning,
+    }
+
+
+async def _async_config_translation(
+    hass: HomeAssistant,
+    key: str,
+    *,
+    placeholders: dict[str, str] | None = None,
+) -> str:
+    """Return one localized config string for WattPlan.
+
+    The review flow renders translated markdown text in placeholders, so these
+    strings need to come from the config translation catalog instead of being
+    hardcoded in Python.
+    """
+
+    translations = await translation.async_get_translations(
+        hass,
+        hass.config.language,
+        "config",
+        integrations=[DOMAIN],
+    )
+    message = translations.get(f"component.{DOMAIN}.config.error.{key}", key)
+    if placeholders:
+        message = message.format(**placeholders)
+    return message
+
+
 def _core_schema(
     defaults: dict[str, Any] | None = None, *, include_name: bool = False
 ) -> vol.Schema:
@@ -386,16 +690,19 @@ def _source_mode_schema(
     include_energy_provider: bool = False,
 ) -> vol.Schema:
     """Build source mode selection schema."""
-    options: list[selector.SelectOptionDict] = [
-        selector.SelectOptionDict(value=SOURCE_MODE_TEMPLATE, label="Template"),
-        selector.SelectOptionDict(
-            value=SOURCE_MODE_ENTITY_ADAPTER, label="Entity attribute"
-        ),
-    ]
+    options: list[selector.SelectOptionDict] = []
     if include_built_in:
-        options.append(
-            selector.SelectOptionDict(value=SOURCE_MODE_BUILT_IN, label="Built in")
-        )
+        options.append(selector.SelectOptionDict(value=SOURCE_MODE_BUILT_IN, label="Built in"))
+    options.extend(
+        [
+            selector.SelectOptionDict(
+                value=SOURCE_MODE_ENTITY_ADAPTER, label="Entity attribute"
+            ),
+            selector.SelectOptionDict(
+                value=SOURCE_MODE_SERVICE_ADAPTER, label="Service call"
+            ),
+        ]
+    )
     if include_energy_provider:
         options.append(
             selector.SelectOptionDict(
@@ -404,6 +711,7 @@ def _source_mode_schema(
         )
     if include_not_used:
         options.append(selector.SelectOptionDict(value=SOURCE_MODE_NOT_USED, label="Not used"))
+    options.append(selector.SelectOptionDict(value=SOURCE_MODE_TEMPLATE, label="Template"))
 
     return vol.Schema(
         {
@@ -439,6 +747,10 @@ def _source_adapter_schema(defaults: dict[str, Any] | None = None) -> vol.Schema
     defaults = defaults or {}
     adapter_options: list[selector.SelectOptionDict] = [
         selector.SelectOptionDict(
+            value=ADAPTER_TYPE_AUTO_DETECT,
+            label="Auto detect",
+        ),
+        selector.SelectOptionDict(
             value=ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
             label="Attribute objects",
         ),
@@ -448,17 +760,22 @@ def _source_adapter_schema(defaults: dict[str, Any] | None = None) -> vol.Schema
         ),
     ]
 
+    entity_default = defaults.get(CONF_WATTPLAN_ENTITY_ID)
+    if isinstance(entity_default, str):
+        entity_default = [entity_default]
     entity_key = (
-        vol.Required(CONF_WATTPLAN_ENTITY_ID, default=defaults[CONF_WATTPLAN_ENTITY_ID])
-        if CONF_WATTPLAN_ENTITY_ID in defaults
+        vol.Required(CONF_WATTPLAN_ENTITY_ID, default=entity_default)
+        if entity_default is not None
         else vol.Required(CONF_WATTPLAN_ENTITY_ID)
     )
     return vol.Schema(
         {
-            entity_key: selector.EntitySelector(),
+            entity_key: selector.EntitySelector(
+                selector.EntitySelectorConfig(multiple=True)
+            ),
             vol.Required(
                 CONF_ADAPTER_TYPE,
-                default=defaults.get(CONF_ADAPTER_TYPE, ADAPTER_TYPE_ATTRIBUTE_OBJECTS),
+                default=defaults.get(CONF_ADAPTER_TYPE, ADAPTER_TYPE_AUTO_DETECT),
             ): selector.SelectSelector(
                 selector.SelectSelectorConfig(
                     options=adapter_options,
@@ -466,6 +783,49 @@ def _source_adapter_schema(defaults: dict[str, Any] | None = None) -> vol.Schema
                 )
             ),
             vol.Required(CONF_NAME, default=defaults.get(CONF_NAME, "forecast")): (
+                selector.TextSelector()
+            ),
+            vol.Required(CONF_TIME_KEY, default=defaults.get(CONF_TIME_KEY, "start")): (
+                selector.TextSelector()
+            ),
+            vol.Required(CONF_VALUE_KEY, default=defaults.get(CONF_VALUE_KEY, "value")): (
+                selector.TextSelector()
+            ),
+            **_source_fixup_fields(defaults, include_advanced=True),
+        }
+    )
+
+
+def _source_service_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
+    """Build service adapter source schema."""
+    defaults = defaults or {}
+    adapter_options: list[selector.SelectOptionDict] = [
+        selector.SelectOptionDict(
+            value=ADAPTER_TYPE_AUTO_DETECT,
+            label="Auto detect",
+        ),
+        selector.SelectOptionDict(
+            value=ADAPTER_TYPE_SERVICE_RESPONSE,
+            label="Service call",
+        ),
+    ]
+
+    return vol.Schema(
+        {
+            vol.Required(
+                CONF_SERVICE,
+                default=defaults.get(CONF_SERVICE, ""),
+            ): selector.TextSelector(),
+            vol.Required(
+                CONF_ADAPTER_TYPE,
+                default=defaults.get(CONF_ADAPTER_TYPE, ADAPTER_TYPE_AUTO_DETECT),
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=adapter_options,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Required(CONF_NAME, default=defaults.get(CONF_NAME, "")): (
                 selector.TextSelector()
             ),
             vol.Required(CONF_TIME_KEY, default=defaults.get(CONF_TIME_KEY, "start")): (
@@ -743,6 +1103,8 @@ def _validate_core_data(
 def _validate_source_adapter_input(data: dict[str, Any]) -> dict[str, str]:
     """Validate adapter text fields before resolving entities/templates."""
     errors: dict[str, str] = {}
+    if data.get(CONF_ADAPTER_TYPE) == ADAPTER_TYPE_AUTO_DETECT:
+        return errors
     _validate_text_field(
         str(data.get(CONF_NAME, "")),
         CONF_NAME,
@@ -764,6 +1126,115 @@ def _validate_source_adapter_input(data: dict[str, Any]) -> dict[str, str]:
     return errors
 
 
+def _validate_service_adapter_input(data: dict[str, Any]) -> dict[str, str]:
+    """Validate service adapter fields before calling the service."""
+    errors: dict[str, str] = {}
+    _validate_text_field(
+        str(data.get(CONF_SERVICE, "")),
+        CONF_SERVICE,
+        errors,
+        max_length=MAX_SOURCE_KEY_LENGTH,
+    )
+    if data.get(CONF_ADAPTER_TYPE) == ADAPTER_TYPE_AUTO_DETECT:
+        return errors
+    _validate_text_field(
+        str(data.get(CONF_NAME, "")),
+        CONF_NAME,
+        errors,
+        max_length=MAX_SOURCE_KEY_LENGTH,
+    )
+    _validate_text_field(
+        str(data.get(CONF_TIME_KEY, "")),
+        CONF_TIME_KEY,
+        errors,
+        max_length=MAX_SOURCE_KEY_LENGTH,
+    )
+    _validate_text_field(
+        str(data.get(CONF_VALUE_KEY, "")),
+        CONF_VALUE_KEY,
+        errors,
+        max_length=MAX_SOURCE_KEY_LENGTH,
+    )
+    return errors
+
+
+async def _async_prepare_entity_source_input(
+    hass: HomeAssistant,
+    user_input: dict[str, Any],
+) -> dict[str, Any]:
+    """Return explicit entity adapter config, resolving auto-detect if needed."""
+    selected_entities = user_input[CONF_WATTPLAN_ENTITY_ID]
+    if isinstance(selected_entities, str):
+        entity_ids = [selected_entities]
+    else:
+        entity_ids = [str(entity_id) for entity_id in selected_entities]
+
+    adapter_type = str(user_input[CONF_ADAPTER_TYPE])
+    root_key = str(user_input.get(CONF_NAME, ""))
+    time_key = str(user_input.get(CONF_TIME_KEY, ""))
+    value_key = str(user_input.get(CONF_VALUE_KEY, ""))
+
+    entity_id = entity_ids[0] if entity_ids else ""
+    resolved_adapter = adapter_type
+
+    if adapter_type == ADAPTER_TYPE_AUTO_DETECT:
+        entity_id, detected = await async_auto_detect_entity_adapter(hass, entity_ids)
+        resolved_adapter = ADAPTER_TYPE_ATTRIBUTE_OBJECTS
+        root_key = detected.root_key
+        time_key = detected.time_key
+        value_key = detected.value_key
+    elif len(entity_ids) != 1:
+        raise SourceProviderError(
+            "source_validation",
+            "Select exactly one entity when auto detect is disabled",
+            details={"entity_ids": entity_ids},
+        )
+
+    source = {
+        CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+        CONF_WATTPLAN_ENTITY_ID: entity_id,
+        CONF_ADAPTER_TYPE: resolved_adapter,
+        CONF_NAME: root_key,
+        CONF_TIME_KEY: time_key,
+        CONF_VALUE_KEY: value_key,
+        CONF_FIXUP_PROFILE: user_input[CONF_FIXUP_PROFILE],
+    }
+    source.update(user_input.get(SECTION_SOURCE_ADVANCED, {}))
+    return source
+
+
+async def _async_prepare_service_source_input(
+    hass: HomeAssistant,
+    user_input: dict[str, Any],
+) -> dict[str, Any]:
+    """Return explicit service adapter config, resolving auto-detect if needed."""
+    adapter_type = str(user_input[CONF_ADAPTER_TYPE])
+    root_key = str(user_input.get(CONF_NAME, ""))
+    time_key = str(user_input.get(CONF_TIME_KEY, ""))
+    value_key = str(user_input.get(CONF_VALUE_KEY, ""))
+    service_name = str(user_input[CONF_SERVICE])
+    resolved_adapter = adapter_type
+
+    if adapter_type == ADAPTER_TYPE_AUTO_DETECT:
+        detected = await async_auto_detect_service_adapter(hass, service_name)
+        resolved_adapter = ADAPTER_TYPE_SERVICE_RESPONSE
+        root_key = detected.root_key
+        time_key = detected.time_key
+        value_key = detected.value_key
+
+    source = {
+        CONF_SOURCE_MODE: SOURCE_MODE_SERVICE_ADAPTER,
+        CONF_SERVICE: service_name,
+        CONF_ADAPTER_TYPE: resolved_adapter,
+        CONF_NAME: root_key,
+        CONF_TIME_KEY: time_key,
+        CONF_VALUE_KEY: value_key,
+        CONF_FIXUP_PROFILE: user_input[CONF_FIXUP_PROFILE],
+    }
+    source.update(user_input.get(SECTION_SOURCE_ADVANCED, {}))
+    return source
+
+
 class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for WattPlan."""
 
@@ -775,6 +1246,7 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
     _last_source_available_count: int | None = None
     _pending_source_key: str | None = None
     _pending_source: dict[str, Any] | None = None
+    _pending_source_input: dict[str, Any] | None = None
     _pending_source_step_id: str | None = None
     _pending_source_summary: dict[str, Any] | None = None
 
@@ -901,6 +1373,13 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
                     return await self.async_step_source_usage_adapter()
                 return await self.async_step_source_pv_adapter()
 
+            if mode == SOURCE_MODE_SERVICE_ADAPTER:
+                if key == CONF_SOURCE_PRICE:
+                    return await self.async_step_source_price_service()
+                if key == CONF_SOURCE_USAGE:
+                    return await self.async_step_source_usage_service()
+                return await self.async_step_source_pv_service()
+
             if include_energy_provider and mode == SOURCE_MODE_ENERGY_PROVIDER:
                 return await self.async_step_source_pv_energy_provider()
 
@@ -1014,6 +1493,30 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
             CONF_SOURCE_PV, user_input, step_id="source_pv_adapter"
         )
 
+    async def async_step_source_price_service(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Configure price source service adapter."""
+        return await self._async_step_source_service(
+            CONF_SOURCE_PRICE, user_input, step_id="source_price_service"
+        )
+
+    async def async_step_source_usage_service(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Configure usage source service adapter."""
+        return await self._async_step_source_service(
+            CONF_SOURCE_USAGE, user_input, step_id="source_usage_service"
+        )
+
+    async def async_step_source_pv_service(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Configure PV source service adapter."""
+        return await self._async_step_source_service(
+            CONF_SOURCE_PV, user_input, step_id="source_pv_service"
+        )
+
     async def async_step_source_pv_energy_provider(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -1069,26 +1572,82 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             defaults = user_input
-            source = {
-                CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
-                CONF_WATTPLAN_ENTITY_ID: user_input[CONF_WATTPLAN_ENTITY_ID],
-                CONF_ADAPTER_TYPE: user_input[CONF_ADAPTER_TYPE],
-                CONF_NAME: user_input[CONF_NAME],
-                CONF_TIME_KEY: user_input[CONF_TIME_KEY],
-                CONF_VALUE_KEY: user_input[CONF_VALUE_KEY],
-                CONF_FIXUP_PROFILE: user_input[CONF_FIXUP_PROFILE],
-            }
-            source.update(user_input.get(SECTION_SOURCE_ADVANCED, {}))
             errors.update(_validate_source_adapter_input(user_input))
             if not errors:
-                return await self._async_prepare_source_review(
-                    key, source, source_step_id=step_id
-                )
+                try:
+                    source = await self._async_prepare_entity_source(user_input)
+                    source_input = (
+                        _auto_detect_step_defaults(user_input, source)
+                        if user_input.get(CONF_ADAPTER_TYPE) == ADAPTER_TYPE_AUTO_DETECT
+                        else user_input
+                    )
+                    return await self._async_prepare_source_review(
+                        key,
+                        source,
+                        source_step_id=step_id,
+                        source_input=source_input,
+                    )
+                except SourceProviderError as err:
+                    errors["base"] = _invalid_key_from_source_error(err)
 
         return self.async_show_form(
             step_id=step_id,
             data_schema=self.add_suggested_values_to_schema(
                 _source_adapter_schema(existing), defaults
+            ),
+            errors=errors,
+            description_placeholders=self._source_description_placeholders(key),
+            last_step=False,
+        )
+
+    async def _async_prepare_entity_source(
+        self, user_input: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Return explicit entity adapter config, resolving auto-detect if needed."""
+        return await _async_prepare_entity_source_input(self.hass, user_input)
+
+    async def _async_prepare_service_source(
+        self, user_input: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Return explicit service adapter config, resolving auto-detect if needed."""
+        return await _async_prepare_service_source_input(self.hass, user_input)
+
+    async def _async_step_source_service(
+        self,
+        key: str,
+        user_input: dict[str, Any] | None,
+        *,
+        step_id: str,
+    ) -> ConfigFlowResult:
+        """Configure source using service adapter mode."""
+        errors: dict[str, str] = {}
+        existing = self._source_step_defaults(key)
+        defaults = existing
+
+        if user_input is not None:
+            defaults = user_input
+            errors.update(_validate_service_adapter_input(user_input))
+            if not errors:
+                try:
+                    source = await self._async_prepare_service_source(user_input)
+                    source_input = (
+                        _auto_detect_step_defaults(user_input, source)
+                        if user_input.get(CONF_ADAPTER_TYPE) == ADAPTER_TYPE_AUTO_DETECT
+                        else user_input
+                    )
+                    return await self._async_prepare_source_review(
+                        key,
+                        source,
+                        source_step_id=step_id,
+                        source_input=source_input,
+                    )
+                except SourceProviderError as err:
+                    errors["base"] = _invalid_key_from_source_error(err)
+
+        return self.async_show_form(
+            step_id=step_id,
+            data_schema=self.add_suggested_values_to_schema(
+                _source_service_schema(existing), defaults
             ),
             errors=errors,
             description_placeholders=self._source_description_placeholders(key),
@@ -1166,18 +1725,34 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
 
     def _source_step_defaults(self, key: str) -> dict[str, Any]:
         """Return defaults for the active source input step."""
-        if self._pending_source_key == key and self._pending_source is not None:
-            return _source_base_defaults(self._pending_source)
+        if self._pending_source_key == key:
+            if self._pending_source_input is not None:
+                return _source_base_defaults(self._pending_source_input)
+            if self._pending_source is not None:
+                return _source_base_defaults(self._pending_source)
         return _source_base_defaults(self._sources.get(key, {}))
 
     async def _async_prepare_source_review(
-        self, key: str, source: dict[str, Any], *, source_step_id: str
+        self,
+        key: str,
+        source: dict[str, Any],
+        *,
+        source_step_id: str,
+        source_input: dict[str, Any] | None = None,
     ) -> ConfigFlowResult:
         """Stage one source for review before saving it."""
         self._pending_source_key = key
         self._pending_source = source
+        self._pending_source_input = source_input
         self._pending_source_step_id = source_step_id
-        self._pending_source_summary = await self._async_source_summary(key, source)
+        self._pending_source_summary = await _async_source_summary(
+            self.hass,
+            core_data=self._core,
+            key=key,
+            source=source,
+            floor_to_slot=self._floor_to_slot,
+            validate_built_in_entity=self._validate_built_in_usage_entity,
+        )
         return await self.async_step_source_review()
 
     async def async_step_source_review(
@@ -1208,8 +1783,13 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
                 await self._async_validate_source(key, pending)
             except vol.Invalid as err:
                 errors["base"] = str(err)
-                self._pending_source_summary = await self._async_source_summary(
-                    key, pending
+                self._pending_source_summary = await _async_source_summary(
+                    self.hass,
+                    core_data=self._core,
+                    key=key,
+                    source=pending,
+                    floor_to_slot=self._floor_to_slot,
+                    validate_built_in_entity=self._validate_built_in_usage_entity,
                 )
                 summary = self._pending_source_summary or {}
                 is_valid = bool(summary.get("is_valid", False))
@@ -1218,9 +1798,15 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
                 self._sources[key] = pending
                 self._pending_source_key = None
                 self._pending_source = None
+                self._pending_source_input = None
                 self._pending_source_step_id = None
                 self._pending_source_summary = None
                 return await self._async_after_source_saved(key)
+
+        accept_note = await _async_config_translation(
+            self.hass,
+            "review_accept_note_valid" if is_valid else "review_accept_note_invalid",
+        )
 
         return self.async_show_form(
             step_id="source_review",
@@ -1245,12 +1831,7 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
                     f"{self._core[CONF_SLOT_MINUTES]}-minute resolution"
                 ),
                 "review_text": str(summary.get("review_text", "")),
-                "accept_note": (
-                    "Acceptance is already enabled because this source meets the current requirements. "
-                    "Disable it to return and adjust the input."
-                    if is_valid
-                    else "Next will bring you back to the source input page so you can adjust the provider or fixup settings."
-                ),
+                "accept_note": accept_note,
             },
             last_step=self._is_final_source_step(key),
         )
@@ -1279,263 +1860,25 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
             },
         )
 
-    async def _async_source_summary(
-        self, key: str, source: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Return a lightweight source summary for the review page."""
-        expected_slots = _expected_slots(self._core)
-        slot_minutes = int(self._core[CONF_SLOT_MINUTES])
-        start_at = self._floor_to_slot(datetime.now(tz=UTC), slot_minutes)
-        available_count = 0
-        coverage_start = start_at
-        coverage_end = start_at
-        has_gaps = False
-        history_coverage_days = 0.0
-        try:
-            mode = source.get(CONF_SOURCE_MODE)
-            if mode == SOURCE_MODE_BUILT_IN:
-                provider = ForecastProvider(
-                    self.hass,
-                    entity_id=str(source[CONF_WATTPLAN_ENTITY_ID]),
-                    lookback_days=int(source.get(CONF_HISTORY_DAYS, 14)),
-                )
-                debug = await provider.async_debug_payload(
-                    SourceWindow(
-                        start_at=start_at,
-                        slot_minutes=slot_minutes,
-                        slots=expected_slots,
-                    )
-                )
-                values = debug["forecast_values"]
-                available_count = len(values)
-                coverage_start, coverage_end, history_coverage_days = (
-                    self._built_in_history_coverage(debug, start_at)
-                )
-            elif mode == SOURCE_MODE_ENERGY_PROVIDER:
-                payload = await self._async_fetch_source_payload(key, source)
-                available_count, coverage_start, coverage_end, has_gaps = (
-                    self._summarize_payload_coverage(
-                        payload, source, start_at=start_at, slot_minutes=slot_minutes
-                    )
-                )
-            else:
-                payload = await self._async_fetch_source_payload(key, source)
-                available_count, coverage_start, coverage_end, has_gaps = (
-                    self._summarize_payload_coverage(
-                        payload, source, start_at=start_at, slot_minutes=slot_minutes
-                    )
-                )
-        except (SourceProviderError, vol.Invalid):
-            pass
-
-        error_key: str | None = None
-        try:
-            await self._async_validate_source(key, source)
-            is_valid = True
-        except vol.Invalid as err:
-            error_key = str(err)
-            is_valid = False
-            if self._last_source_available_count is not None:
-                available_count = self._last_source_available_count
-                coverage_end = start_at + (
-                    available_count * timedelta(minutes=slot_minutes)
-                )
-
-        history_warning = False
-        review_text = "This source is **ready** for the selected horizon. ✅"
-        if mode == SOURCE_MODE_BUILT_IN and history_coverage_days < 7:
-            history_warning = True
-            review_text = (
-                f"This source is usable, but only {history_coverage_days:.1f} days of "
-                "history were found. Forecast quality may be poor."
-            )
-        if not is_valid:
-            review_text = ""
-        elif available_count < expected_slots:
-            review_text = (
-                "This source does not cover the full planning horizon. ❌ "
-                "Choose a fixup profile to repair gaps or extend the tail."
-            )
-        elif has_gaps:
-            review_text = (
-                "This source has gaps between known samples. ❌ "
-                "A fixup profile is recommended."
-            )
-
-        return {
-            "available_count": available_count,
-            "coverage_start": coverage_start.isoformat(),
-            "coverage_end": coverage_end.isoformat(),
-            "review_text": review_text,
-            "is_valid": is_valid,
-            "error_key": error_key,
-            "history_warning": history_warning,
-        }
-
-    def _built_in_history_coverage(
-        self, debug: dict[str, Any], start_at: datetime
-    ) -> tuple[datetime, datetime, float]:
-        """Return built-in history coverage range and length in days."""
-        rows: list[datetime] = []
-        for row in debug.get("raw_history_states", []):
-            last_changed = row.get("last_changed")
-            if isinstance(last_changed, str):
-                try:
-                    rows.append(datetime.fromisoformat(last_changed))
-                except ValueError:
-                    continue
-        if not rows:
-            for row in debug.get("raw_statistics_rows", []):
-                started = row.get("start")
-                if isinstance(started, str):
-                    try:
-                        rows.append(datetime.fromisoformat(started))
-                    except ValueError:
-                        continue
-        if not rows:
-            return start_at, start_at, 0.0
-        coverage_start = min(rows)
-        coverage_end = max(rows)
-        history_days = max(
-            0.0, (coverage_end - coverage_start).total_seconds() / 86400.0
-        )
-        return coverage_start, coverage_end, history_days
-
     def _is_final_source_step(self, key: str) -> bool:
         """Return if the source config step is the last one before create."""
         return key == CONF_SOURCE_PV
 
     async def _async_validate_source(self, key: str, source: dict[str, Any]) -> None:
         """Validate source config against the current horizon."""
-        expected_slots = _expected_slots(self._core)
-        slot_minutes = int(self._core[CONF_SLOT_MINUTES])
-        window = SourceWindow(
-            start_at=self._floor_to_slot(datetime.now(tz=UTC), slot_minutes),
-            slot_minutes=slot_minutes,
-            slots=expected_slots,
-        )
-
         try:
-            mode = source.get(CONF_SOURCE_MODE)
-            if mode == SOURCE_MODE_BUILT_IN:
-                self._validate_built_in_usage_entity(str(source[CONF_WATTPLAN_ENTITY_ID]))
-                provider: SourceProvider = ForecastProvider(
-                    self.hass,
-                    entity_id=str(source[CONF_WATTPLAN_ENTITY_ID]),
-                    lookback_days=int(source.get(CONF_HISTORY_DAYS, 14)),
-                )
-            elif mode == SOURCE_MODE_ENERGY_PROVIDER:
-                provider = EnergySolarForecastSourceProvider(
-                    self.hass,
-                    source_name=key,
-                    source_config=effective_provider_config(source),
-                )
-            else:
-                provider = TemplateAdapterSourceProvider(
-                    self.hass,
-                    source_name=key,
-                    source_config=effective_provider_config(source),
-                )
-            if mode in {SOURCE_MODE_BUILT_IN, SOURCE_MODE_ENERGY_PROVIDER}:
-                values = await provider.async_values(window)
-            else:
-                values = await SourceFixupProvider(
-                    provider,
-                    profile=str(source.get(CONF_FIXUP_PROFILE, FIXUP_PROFILE_REPAIR)),
-                ).async_values(window)
+            self._last_source_available_count = await _async_validate_source_values(
+                self.hass,
+                core_data=self._core,
+                key=key,
+                source=source,
+                floor_to_slot=self._floor_to_slot,
+                validate_built_in_entity=self._validate_built_in_usage_entity,
+            )
         except SourceProviderError as err:
             if available_count := err.details.get("available_count"):
                 self._last_source_available_count = int(available_count)
-            raise vol.Invalid(self._invalid_key_from_source_error(err)) from err
-
-        self._last_source_available_count = len(values)
-
-    async def _async_fetch_source_payload(
-        self, key: str, source: dict[str, Any]
-    ) -> list[Any]:
-        """Fetch raw source payload for review without applying fixups."""
-        if source.get(CONF_SOURCE_MODE) == SOURCE_MODE_ENERGY_PROVIDER:
-            provider = EnergySolarForecastSourceProvider(
-                self.hass,
-                source_name=key,
-                source_config=effective_provider_config(source),
-            )
-            return await provider._payload_provider.async_fetch_payload()  # noqa: SLF001
-
-        provider = TemplateAdapterSourceProvider(
-            self.hass,
-            source_name=key,
-            source_config=effective_provider_config(
-                {**source, CONF_FIXUP_PROFILE: FIXUP_PROFILE_STRICT}
-            ),
-        )
-        return await provider._payload_provider.async_fetch_payload()  # noqa: SLF001
-
-    def _summarize_payload_coverage(
-        self,
-        payload: list[Any],
-        source: dict[str, Any],
-        *,
-        start_at: datetime,
-        slot_minutes: int,
-    ) -> tuple[int, datetime, datetime, bool]:
-        """Summarize source coverage before fixups are applied."""
-        slot_delta = timedelta(minutes=slot_minutes)
-        if not payload:
-            return 0, start_at, start_at, False
-        if isinstance(payload[0], dict):
-            time_key = str(source.get(CONF_TIME_KEY, "start"))
-            slot_indexes: set[int] = set()
-            timestamps: list[datetime] = []
-            for point in payload:
-                if not isinstance(point, dict):
-                    continue
-                stamp = point.get(time_key)
-                if not isinstance(stamp, str):
-                    continue
-                try:
-                    point_dt = datetime.fromisoformat(stamp)
-                except ValueError:
-                    continue
-                point_dt = self._floor_to_slot(
-                    point_dt.astimezone(UTC) if point_dt.tzinfo else point_dt.replace(tzinfo=UTC),
-                    slot_minutes,
-                )
-                timestamps.append(point_dt)
-                slot_indexes.add(int((point_dt - start_at) // slot_delta))
-            if not timestamps:
-                return 0, start_at, start_at, False
-            first = min(timestamps)
-            last = max(timestamps) + slot_delta
-            available = len(slot_indexes)
-            expected_range = (
-                int((max(timestamps) - min(timestamps)) // slot_delta) + 1
-                if len(timestamps) > 1
-                else 1
-            )
-            return available, first, last, available < expected_range
-
-        available = len(payload)
-        return available, start_at, start_at + (available * slot_delta), False
-
-    def _invalid_key_from_source_error(self, err: SourceProviderError) -> str:
-        """Map source provider errors to flow translation keys."""
-        built_in_reason = err.details.get("built_in_reason")
-        if err.code == "source_fetch":
-            if "config_entry_id" in err.details:
-                return "energy_provider_unavailable"
-            if "entity_id" in err.details and "attribute" in err.details:
-                return "attribute_name_required"
-            if "entity_id" in err.details:
-                return "entity_not_found"
-            return "source_fetch_error"
-        if err.code == "source_parse":
-            if built_in_reason == "no_numeric_history":
-                return "built_in_no_numeric_history"
-            if "rendered a string" in str(err):
-                return "template_invalid_structure"
-            return "invalid_payload"
-        return "not_enough_values"
+            raise vol.Invalid(_invalid_key_from_source_error(err)) from err
 
     def _validate_built_in_usage_entity(self, entity_id: str) -> None:
         """Validate built-in usage entity metadata before forecasting."""
@@ -1564,6 +1907,7 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
     _last_source_available_count: int | None
     _pending_source_key: str | None
     _pending_source: dict[str, Any] | None
+    _pending_source_input: dict[str, Any] | None
     _pending_source_step_id: str | None
     _pending_source_summary: dict[str, Any] | None
 
@@ -1577,6 +1921,7 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
         self._last_source_available_count = None
         self._pending_source_key = None
         self._pending_source = None
+        self._pending_source_input = None
         self._pending_source_step_id = None
         self._pending_source_summary = None
 
@@ -1747,6 +2092,13 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
                     return await self.async_step_source_usage_adapter()
                 return await self.async_step_source_pv_adapter()
 
+            if mode == SOURCE_MODE_SERVICE_ADAPTER:
+                if key == CONF_SOURCE_PRICE:
+                    return await self.async_step_source_price_service()
+                if key == CONF_SOURCE_USAGE:
+                    return await self.async_step_source_usage_service()
+                return await self.async_step_source_pv_service()
+
             if include_energy_provider and mode == SOURCE_MODE_ENERGY_PROVIDER:
                 return await self.async_step_source_pv_energy_provider()
 
@@ -1870,6 +2222,36 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
             step_id="source_pv_adapter",
         )
 
+    async def async_step_source_price_service(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Edit price source service adapter in options."""
+        return await self._async_step_source_service_options(
+            CONF_SOURCE_PRICE,
+            user_input,
+            step_id="source_price_service",
+        )
+
+    async def async_step_source_usage_service(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Edit usage source service adapter in options."""
+        return await self._async_step_source_service_options(
+            CONF_SOURCE_USAGE,
+            user_input,
+            step_id="source_usage_service",
+        )
+
+    async def async_step_source_pv_service(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Edit PV source service adapter in options."""
+        return await self._async_step_source_service_options(
+            CONF_SOURCE_PV,
+            user_input,
+            step_id="source_pv_service",
+        )
+
     async def async_step_source_pv_energy_provider(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -1927,26 +2309,74 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
 
         if user_input is not None:
             defaults = user_input
-            source = {
-                CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
-                CONF_WATTPLAN_ENTITY_ID: user_input[CONF_WATTPLAN_ENTITY_ID],
-                CONF_ADAPTER_TYPE: user_input[CONF_ADAPTER_TYPE],
-                CONF_NAME: user_input[CONF_NAME],
-                CONF_TIME_KEY: user_input[CONF_TIME_KEY],
-                CONF_VALUE_KEY: user_input[CONF_VALUE_KEY],
-                CONF_FIXUP_PROFILE: user_input[CONF_FIXUP_PROFILE],
-            }
-            source.update(user_input.get(SECTION_SOURCE_ADVANCED, {}))
             errors.update(_validate_source_adapter_input(user_input))
             if not errors:
-                return await self._async_prepare_source_review(
-                    key, source, source_step_id=step_id
-                )
+                try:
+                    source = await _async_prepare_entity_source_input(
+                        self.hass, user_input
+                    )
+                    source_input = (
+                        _auto_detect_step_defaults(user_input, source)
+                        if user_input.get(CONF_ADAPTER_TYPE) == ADAPTER_TYPE_AUTO_DETECT
+                        else user_input
+                    )
+                    return await self._async_prepare_source_review(
+                        key,
+                        source,
+                        source_step_id=step_id,
+                        source_input=source_input,
+                    )
+                except SourceProviderError as err:
+                    errors["base"] = _invalid_key_from_source_error(err)
 
         return self.async_show_form(
             step_id=step_id,
             data_schema=self.add_suggested_values_to_schema(
                 _source_adapter_schema(existing), defaults
+            ),
+            errors=errors,
+            description_placeholders=self._source_description_placeholders(key),
+            last_step=False,
+        )
+
+    async def _async_step_source_service_options(
+        self,
+        key: str,
+        user_input: dict[str, Any] | None,
+        *,
+        step_id: str,
+    ) -> ConfigFlowResult:
+        """Edit one source in service adapter mode from options."""
+        errors: dict[str, str] = {}
+        existing = self._source_step_defaults(key)
+        defaults = existing
+
+        if user_input is not None:
+            defaults = user_input
+            errors.update(_validate_service_adapter_input(user_input))
+            if not errors:
+                try:
+                    source = await _async_prepare_service_source_input(
+                        self.hass, user_input
+                    )
+                    source_input = (
+                        _auto_detect_step_defaults(user_input, source)
+                        if user_input.get(CONF_ADAPTER_TYPE) == ADAPTER_TYPE_AUTO_DETECT
+                        else user_input
+                    )
+                    return await self._async_prepare_source_review(
+                        key,
+                        source,
+                        source_step_id=step_id,
+                        source_input=source_input,
+                    )
+                except SourceProviderError as err:
+                    errors["base"] = _invalid_key_from_source_error(err)
+
+        return self.async_show_form(
+            step_id=step_id,
+            data_schema=self.add_suggested_values_to_schema(
+                _source_service_schema(existing), defaults
             ),
             errors=errors,
             description_placeholders=self._source_description_placeholders(key),
@@ -2024,18 +2454,34 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
 
     def _source_step_defaults(self, key: str) -> dict[str, Any]:
         """Return defaults for the active source input step."""
-        if self._pending_source_key == key and self._pending_source is not None:
-            return _source_base_defaults(self._pending_source)
+        if self._pending_source_key == key:
+            if self._pending_source_input is not None:
+                return _source_base_defaults(self._pending_source_input)
+            if self._pending_source is not None:
+                return _source_base_defaults(self._pending_source)
         return _source_base_defaults(self._data.get(CONF_SOURCES, {}).get(key, {}))
 
     async def _async_prepare_source_review(
-        self, key: str, source: dict[str, Any], *, source_step_id: str
+        self,
+        key: str,
+        source: dict[str, Any],
+        *,
+        source_step_id: str,
+        source_input: dict[str, Any] | None = None,
     ) -> ConfigFlowResult:
         """Stage one source for review before saving it."""
         self._pending_source_key = key
         self._pending_source = source
+        self._pending_source_input = source_input
         self._pending_source_step_id = source_step_id
-        self._pending_source_summary = await self._async_source_summary(key, source)
+        self._pending_source_summary = await _async_source_summary(
+            self.hass,
+            core_data=self._data,
+            key=key,
+            source=source,
+            floor_to_slot=self._floor_to_slot,
+            validate_built_in_entity=self._validate_built_in_usage_entity,
+        )
         return await self.async_step_source_review()
 
     async def async_step_source_review(
@@ -2066,8 +2512,13 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
                 await self._async_validate_source(key, pending)
             except vol.Invalid as err:
                 errors["base"] = str(err)
-                self._pending_source_summary = await self._async_source_summary(
-                    key, pending
+                self._pending_source_summary = await _async_source_summary(
+                    self.hass,
+                    core_data=self._data,
+                    key=key,
+                    source=pending,
+                    floor_to_slot=self._floor_to_slot,
+                    validate_built_in_entity=self._validate_built_in_usage_entity,
                 )
                 summary = self._pending_source_summary or {}
                 is_valid = bool(summary.get("is_valid", False))
@@ -2081,9 +2532,15 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
                 )
                 self._pending_source_key = None
                 self._pending_source = None
+                self._pending_source_input = None
                 self._pending_source_step_id = None
                 self._pending_source_summary = None
                 return await self.async_step_init()
+
+        accept_note = await _async_config_translation(
+            self.hass,
+            "review_accept_note_valid" if is_valid else "review_accept_note_invalid",
+        )
 
         return self.async_show_form(
             step_id="source_review",
@@ -2108,12 +2565,7 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
                     f"{self._data[CONF_SLOT_MINUTES]}-minute resolution"
                 ),
                 "review_text": str(summary.get("review_text", "")),
-                "accept_note": (
-                    "Acceptance is already enabled because this source meets the current requirements. "
-                    "Disable it to return and adjust the input."
-                    if is_valid
-                    else "Next will bring you back to the source input page so you can adjust the provider or fixup settings."
-                ),
+                "accept_note": accept_note,
             },
         )
 
@@ -2122,169 +2574,6 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
         if self._pending_source_step_id is None:
             return await self.async_step_init()
         return await getattr(self, f"async_step_{self._pending_source_step_id}")()
-
-    async def _async_source_summary(
-        self, key: str, source: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Return a lightweight source summary for the review page."""
-        expected_slots = _expected_slots(self._data)
-        slot_minutes = int(self._data[CONF_SLOT_MINUTES])
-        start_at = self._floor_to_slot(datetime.now(tz=UTC), slot_minutes)
-        available_count = 0
-        coverage_start = start_at
-        coverage_end = start_at
-        has_gaps = False
-        history_coverage_days = 0.0
-        try:
-            mode = source.get(CONF_SOURCE_MODE)
-            if mode == SOURCE_MODE_BUILT_IN:
-                provider = ForecastProvider(
-                    self.hass,
-                    entity_id=str(source[CONF_WATTPLAN_ENTITY_ID]),
-                    lookback_days=int(source.get(CONF_HISTORY_DAYS, 14)),
-                )
-                debug = await provider.async_debug_payload(
-                    SourceWindow(
-                        start_at=start_at,
-                        slot_minutes=slot_minutes,
-                        slots=expected_slots,
-                    )
-                )
-                values = debug["forecast_values"]
-                available_count = len(values)
-                coverage_start, coverage_end, history_coverage_days = (
-                    self._built_in_history_coverage(debug, start_at)
-                )
-            elif mode == SOURCE_MODE_ENERGY_PROVIDER:
-                payload = await self._async_fetch_source_payload(key, source)
-                available_count, coverage_start, coverage_end, has_gaps = (
-                    self._summarize_payload_coverage(
-                        payload, source, start_at=start_at, slot_minutes=slot_minutes
-                    )
-                )
-            else:
-                payload = await self._async_fetch_source_payload(key, source)
-                available_count, coverage_start, coverage_end, has_gaps = (
-                    self._summarize_payload_coverage(
-                        payload, source, start_at=start_at, slot_minutes=slot_minutes
-                    )
-                )
-        except (SourceProviderError, vol.Invalid):
-            pass
-
-        error_key: str | None = None
-        try:
-            await self._async_validate_source(key, source)
-            is_valid = True
-        except vol.Invalid as err:
-            error_key = str(err)
-            is_valid = False
-            if self._last_source_available_count is not None:
-                available_count = self._last_source_available_count
-                coverage_end = start_at + (
-                    available_count * timedelta(minutes=slot_minutes)
-                )
-
-        history_warning = False
-        review_text = "This source is **ready** for the selected horizon. ✅"
-        if mode == SOURCE_MODE_BUILT_IN and history_coverage_days < 7:
-            history_warning = True
-            review_text = (
-                f"This source is usable, but only {history_coverage_days:.1f} days of "
-                "history were found. Forecast quality may be poor."
-            )
-        if not is_valid:
-            review_text = ""
-        elif available_count < expected_slots:
-            review_text = (
-                "This source does not cover the full planning horizon. ❌ "
-                "Choose a fixup profile to repair gaps or extend the tail."
-            )
-        elif has_gaps:
-            review_text = (
-                "This source has gaps between known samples. ❌ "
-                "A fixup profile is recommended."
-            )
-
-        return {
-            "available_count": available_count,
-            "coverage_start": coverage_start.isoformat(),
-            "coverage_end": coverage_end.isoformat(),
-            "review_text": review_text,
-            "is_valid": is_valid,
-            "error_key": error_key,
-            "history_warning": history_warning,
-        }
-
-    async def _async_fetch_source_payload(
-        self, key: str, source: dict[str, Any]
-    ) -> list[Any]:
-        """Fetch raw source payload for review without applying fixups."""
-        if source.get(CONF_SOURCE_MODE) == SOURCE_MODE_ENERGY_PROVIDER:
-            provider = EnergySolarForecastSourceProvider(
-                self.hass,
-                source_name=key,
-                source_config=effective_provider_config(source),
-            )
-            return await provider._payload_provider.async_fetch_payload()  # noqa: SLF001
-
-        provider = TemplateAdapterSourceProvider(
-            self.hass,
-            source_name=key,
-            source_config=effective_provider_config(
-                {**source, CONF_FIXUP_PROFILE: FIXUP_PROFILE_STRICT}
-            ),
-        )
-        return await provider._payload_provider.async_fetch_payload()  # noqa: SLF001
-
-    def _summarize_payload_coverage(
-        self,
-        payload: list[Any],
-        source: dict[str, Any],
-        *,
-        start_at: datetime,
-        slot_minutes: int,
-    ) -> tuple[int, datetime, datetime, bool]:
-        """Summarize source coverage before fixups are applied."""
-        slot_delta = timedelta(minutes=slot_minutes)
-        if not payload:
-            return 0, start_at, start_at, False
-        if isinstance(payload[0], dict):
-            time_key = str(source.get(CONF_TIME_KEY, "start"))
-            slot_indexes: set[int] = set()
-            timestamps: list[datetime] = []
-            for point in payload:
-                if not isinstance(point, dict):
-                    continue
-                stamp = point.get(time_key)
-                if not isinstance(stamp, str):
-                    continue
-                try:
-                    point_dt = datetime.fromisoformat(stamp)
-                except ValueError:
-                    continue
-                point_dt = self._floor_to_slot(
-                    point_dt.astimezone(UTC)
-                    if point_dt.tzinfo
-                    else point_dt.replace(tzinfo=UTC),
-                    slot_minutes,
-                )
-                timestamps.append(point_dt)
-                slot_indexes.add(int((point_dt - start_at) // slot_delta))
-            if not timestamps:
-                return 0, start_at, start_at, False
-            first = min(timestamps)
-            last = max(timestamps) + slot_delta
-            available = len(slot_indexes)
-            expected_range = (
-                int((max(timestamps) - min(timestamps)) // slot_delta) + 1
-                if len(timestamps) > 1
-                else 1
-            )
-            return available, first, last, available < expected_range
-
-        available = len(payload)
-        return available, start_at, start_at + (available * slot_delta), False
 
     async def async_step_battery_edit_select(
         self, user_input: dict[str, Any] | None = None
@@ -2515,96 +2804,19 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
 
     async def _async_validate_source(self, key: str, source: dict[str, Any]) -> None:
         """Validate source config against updated option state."""
-        expected_slots = _expected_slots(self._data)
-        slot_minutes = int(self._data[CONF_SLOT_MINUTES])
-        window = SourceWindow(
-            start_at=self._floor_to_slot(datetime.now(tz=UTC), slot_minutes),
-            slot_minutes=slot_minutes,
-            slots=expected_slots,
-        )
-
         try:
-            mode = source.get(CONF_SOURCE_MODE)
-            if mode == SOURCE_MODE_BUILT_IN:
-                self._validate_built_in_usage_entity(str(source[CONF_WATTPLAN_ENTITY_ID]))
-                provider: SourceProvider = ForecastProvider(
-                    self.hass,
-                    entity_id=str(source[CONF_WATTPLAN_ENTITY_ID]),
-                    lookback_days=int(source.get(CONF_HISTORY_DAYS, 14)),
-                )
-            elif mode == SOURCE_MODE_ENERGY_PROVIDER:
-                provider = EnergySolarForecastSourceProvider(
-                    self.hass,
-                    source_name=key,
-                    source_config=effective_provider_config(source),
-                )
-            else:
-                provider = TemplateAdapterSourceProvider(
-                    self.hass,
-                    source_name=key,
-                    source_config=effective_provider_config(source),
-                )
-            if mode in {SOURCE_MODE_BUILT_IN, SOURCE_MODE_ENERGY_PROVIDER}:
-                values = await provider.async_values(window)
-            else:
-                values = await SourceFixupProvider(
-                    provider,
-                    profile=str(source.get(CONF_FIXUP_PROFILE, FIXUP_PROFILE_REPAIR)),
-                ).async_values(window)
+            self._last_source_available_count = await _async_validate_source_values(
+                self.hass,
+                core_data=self._data,
+                key=key,
+                source=source,
+                floor_to_slot=self._floor_to_slot,
+                validate_built_in_entity=self._validate_built_in_usage_entity,
+            )
         except SourceProviderError as err:
             if available_count := err.details.get("available_count"):
                 self._last_source_available_count = int(available_count)
-            raise vol.Invalid(self._invalid_key_from_source_error(err)) from err
-
-        self._last_source_available_count = len(values)
-
-    def _built_in_history_coverage(
-        self, debug: dict[str, Any], start_at: datetime
-    ) -> tuple[datetime, datetime, float]:
-        """Return built-in history coverage range and length in days."""
-        rows: list[datetime] = []
-        for row in debug.get("raw_history_states", []):
-            last_changed = row.get("last_changed")
-            if isinstance(last_changed, str):
-                try:
-                    rows.append(datetime.fromisoformat(last_changed))
-                except ValueError:
-                    continue
-        if not rows:
-            for row in debug.get("raw_statistics_rows", []):
-                started = row.get("start")
-                if isinstance(started, str):
-                    try:
-                        rows.append(datetime.fromisoformat(started))
-                    except ValueError:
-                        continue
-        if not rows:
-            return start_at, start_at, 0.0
-        coverage_start = min(rows)
-        coverage_end = max(rows)
-        history_days = max(
-            0.0, (coverage_end - coverage_start).total_seconds() / 86400.0
-        )
-        return coverage_start, coverage_end, history_days
-
-    def _invalid_key_from_source_error(self, err: SourceProviderError) -> str:
-        """Map source provider errors to flow translation keys."""
-        built_in_reason = err.details.get("built_in_reason")
-        if err.code == "source_fetch":
-            if "config_entry_id" in err.details:
-                return "energy_provider_unavailable"
-            if "entity_id" in err.details and "attribute" in err.details:
-                return "attribute_name_required"
-            if "entity_id" in err.details:
-                return "entity_not_found"
-            return "source_fetch_error"
-        if err.code == "source_parse":
-            if built_in_reason == "no_numeric_history":
-                return "built_in_no_numeric_history"
-            if "rendered a string" in str(err):
-                return "template_invalid_structure"
-            return "invalid_payload"
-        return "not_enough_values"
+            raise vol.Invalid(_invalid_key_from_source_error(err)) from err
 
     def _validate_built_in_usage_entity(self, entity_id: str) -> None:
         """Validate built-in usage entity metadata before forecasting."""
