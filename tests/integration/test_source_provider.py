@@ -140,6 +140,42 @@ def test_auto_detect_mapping_rejects_two_numeric_fields() -> None:
     assert detected is None
 
 
+def test_auto_detect_mapping_prefers_unsuffixed_numeric_base_key() -> None:
+    """Auto detection should accept one primary numeric field plus band variants."""
+    payload = [
+        {
+            "period_start": "2026-01-01T00:00:00+00:00",
+            "pv_estimate": 1.2,
+            "pv_estimate10": 0.6,
+            "pv_estimate_90": 1.8,
+        }
+    ]
+
+    detected = auto_detect_mapping(payload)
+
+    assert detected is not None
+    assert detected.time_key == "period_start"
+    assert detected.value_key == "pv_estimate"
+
+
+def test_auto_detect_mapping_prefers_unsuffixed_numeric_base_key() -> None:
+    """Auto detection should accept one primary numeric field plus band variants."""
+    payload = [
+        {
+            "period_start": "2026-01-01T00:00:00+00:00",
+            "pv_estimate": 1.2,
+            "pv_estimate10": 0.6,
+            "pv_estimate_90": 1.8,
+        }
+    ]
+
+    detected = auto_detect_mapping(payload)
+
+    assert detected is not None
+    assert detected.time_key == "period_start"
+    assert detected.value_key == "pv_estimate"
+
+
 def test_resolve_nested_value_supports_root_a_and_a_b() -> None:
     """Nested value resolution should support root, one level, and two levels."""
     payload = {

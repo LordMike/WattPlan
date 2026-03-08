@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from numbers import Number
+import re
 from typing import Any
 
 
@@ -75,6 +76,32 @@ def _coerce_decimal(value: Any) -> float | None:
     return None
 
 
+def _select_numeric_value_key(row_values: set[str]) -> str | None:
+    """Return one numeric key when the row has one clear primary value.
+
+    Example:
+    - `pv_estimate`
+    - `pv_estimate10`
+    - `pv_estimate90`
+
+    Solcast-style payloads expose one central estimate plus percentile bands.
+    We still want auto-detect to pick `pv_estimate`, but only when the other
+    numeric keys are obvious suffix variants of that same base field.
+    """
+    if len(row_values) == 1:
+        return next(iter(row_values))
+
+    for candidate in row_values:
+        siblings = row_values - {candidate}
+        if siblings and all(
+            re.fullmatch(rf"{re.escape(candidate)}[_0-9A-Za-z]+", sibling)
+            for sibling in siblings
+        ):
+            return candidate
+
+    return None
+
+
 def detect_object_list_mapping(payload: list[Any]) -> tuple[str, str] | None:
     """Return detected time/value keys for a list of objects.
 
@@ -97,11 +124,12 @@ def detect_object_list_mapping(payload: list[Any]) -> tuple[str, str] | None:
             if (parsed := _coerce_timestamp(value)) is not None
         }
         row_timestamps = set(parsed_timestamps)
-        row_values = {
+        raw_value_keys = {
             key for key, value in item.items() if _coerce_decimal(value) is not None
         }
+        value_key = _select_numeric_value_key(raw_value_keys)
 
-        if len(row_timestamps) not in {1, 2} or len(row_values) != 1:
+        if len(row_timestamps) not in {1, 2} or value_key is None:
             continue
 
         # When a row carries both start and end timestamps, we keep a vote for
@@ -118,7 +146,8 @@ def detect_object_list_mapping(payload: list[Any]) -> tuple[str, str] | None:
         timestamp_keys = (
             row_timestamps if timestamp_keys is None else timestamp_keys & row_timestamps
         )
-        value_keys = row_values if value_keys is None else value_keys & row_values
+        value_key_set = {value_key}
+        value_keys = value_key_set if value_keys is None else value_keys & value_key_set
 
     if matching_rows == 0 or not timestamp_keys or len(value_keys or ()) != 1:
         return None
