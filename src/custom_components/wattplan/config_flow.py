@@ -100,11 +100,7 @@ from .const import (
     SUBENTRY_TYPE_OPTIONAL,
 )
 from .forecast_provider import ForecastProvider
-from .source_pipeline import (
-    async_fetch_source_payload,
-    build_source_base_provider,
-    build_source_value_provider,
-)
+from .source_pipeline import build_source_base_provider, build_source_value_provider
 from .source_provider import (
     async_auto_detect_entity_adapter,
     async_auto_detect_service_adapter,
@@ -485,6 +481,16 @@ def _summarize_payload_coverage(
     return available, start_at, start_at + (available * slot_delta), False
 
 
+def _coverage_from_available_count(
+    start_at: datetime,
+    *,
+    slot_minutes: int,
+    available_count: int,
+) -> tuple[datetime, datetime]:
+    """Return coverage range for runtime-equivalent resolved values."""
+    return start_at, start_at + (available_count * timedelta(minutes=slot_minutes))
+
+
 def _invalid_key_from_source_error(err: SourceProviderError) -> str:
     """Map source provider errors to flow translation keys."""
 
@@ -527,7 +533,6 @@ async def _async_source_summary(
     available_count = 0
     coverage_start = start_at
     coverage_end = start_at
-    has_gaps = False
     history_coverage_days = 0.0
     mode = source.get(CONF_SOURCE_MODE)
 
@@ -552,21 +557,6 @@ async def _async_source_summary(
             coverage_start, coverage_end, history_coverage_days = (
                 _built_in_history_coverage(debug, start_at)
             )
-        else:
-            payload = await async_fetch_source_payload(
-                hass,
-                source_key=key,
-                source_config=source,
-            )
-            available_count, coverage_start, coverage_end, has_gaps = (
-                _summarize_payload_coverage(
-                    payload,
-                    source,
-                    start_at=start_at,
-                    slot_minutes=slot_minutes,
-                    floor_to_slot=floor_to_slot,
-                )
-            )
     except (SourceProviderError, vol.Invalid):
         pass
 
@@ -581,12 +571,22 @@ async def _async_source_summary(
             validate_built_in_entity=validate_built_in_entity,
         )
         is_valid = True
+        if mode != SOURCE_MODE_BUILT_IN:
+            coverage_start, coverage_end = _coverage_from_available_count(
+                start_at,
+                slot_minutes=slot_minutes,
+                available_count=available_count,
+            )
     except SourceProviderError as err:
         error_key = _invalid_key_from_source_error(err)
         is_valid = False
         if available_from_error := err.details.get("available_count"):
             available_count = int(available_from_error)
-            coverage_end = start_at + (available_count * timedelta(minutes=slot_minutes))
+            coverage_start, coverage_end = _coverage_from_available_count(
+                start_at,
+                slot_minutes=slot_minutes,
+                available_count=available_count,
+            )
 
     history_warning = False
     review_text_key = "review_ready"
@@ -599,9 +599,6 @@ async def _async_source_summary(
         review_text_key = "review_invalid"
     elif available_count < expected_slots:
         review_text_key = "review_incomplete"
-        review_text_placeholders = None
-    elif has_gaps:
-        review_text_key = "review_has_gaps"
         review_text_placeholders = None
 
     review_text = await _async_config_translation(

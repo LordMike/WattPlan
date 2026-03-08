@@ -432,6 +432,7 @@
       "review_invalid": "",
       "review_incomplete": "This source does not cover the full planning horizon. ❌ Choose a fixup profile to repair gaps or extend the tail.",
       "review_has_gaps": "This source has gaps between known samples. ❌ A fixup profile is recommended.",
+      "review_has_gaps_repaired": "This source has gaps between known samples, but the selected fixup profile will repair them for planning. ✅",
       "review_accept_note_valid": "Acceptance is already enabled because this source meets the current requirements. Disable it to return and adjust the input.",
       "review_accept_note_invalid": "Next will bring you back to the source input page so you can adjust the provider or fixup settings.",
       "invalid_start": "One or more entries has an invalid timestamp. Check the configured time key and use ISO format with timezone.",
