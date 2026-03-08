@@ -21,17 +21,18 @@ This documentation is intended for Home Assistant users, energy enthusiasts, and
 3. Search for `WattPlan` in HACS and install it.
 4. Restart Home Assistant.
 5. Go to `Settings` -> `Devices & Services` -> `Add Integration`, then add `WattPlan`.
-6. Configure a price source and a load/usage source.
-7. Configure a PV source if you have solar and want WattPlan to plan around it.
-8. Add [batteries, comfort loads, or optional loads](docs/extras.md) if you want WattPlan to control more than just forecasting.
-9. Make automations to apply the WattPlan actions, to your devices - such as setting batteries to charge, or starting your HVAC
+6. Configure a price source. This is the only required forecast source.
+7. Optionally configure a load/usage source if you want WattPlan to plan against expected household consumption.
+8. Optionally configure a PV source if you have solar and want WattPlan to plan around it.
+9. Add [batteries, comfort loads, or optional loads](docs/extras.md) if you want WattPlan to control more than just forecasting.
+10. Make automations to apply the WattPlan actions, to your devices - such as setting batteries to charge, or starting your HVAC
 
 ## Configuration Steps
-After installing WattPlan via HACS, you need to configure the following settings:
-- **Price Source**: Specify the source of your energy price data. This can be done using an entity adapter, service adapter, or template.
-- **Usage Source**: Define how WattPlan will gather usage data, using similar methods as the price source.
-- **PV Source**: If applicable, set up your solar production data source.
-- **Optional Loads**: Configure any additional loads you wish to manage, such as batteries or comfort loads.
+After installing WattPlan via HACS, configure the following:
+- **Price Source**: Required. Specify the source of your energy price data. This can be done using an entity adapter, service adapter, or template.
+- **Usage Source**: Optional. Define how WattPlan should gather usage data if you want consumption-aware planning.
+- **PV Source**: Optional. Set up your solar production data source if applicable.
+- **Optional Loads**: Optional. Configure any additional loads you wish to manage, such as batteries or comfort loads.
 
 ## Features
 - Home Assistant custom integration with HACS-ready release artifacts
@@ -43,6 +44,7 @@ After installing WattPlan via HACS, you need to configure the following settings
 
 ## Documentation
 - [docs/source-data.md](docs/source-data.md) - Source modes, data model, and how to feed WattPlan price, usage, and PV data
+- [docs/example-deye-solcast-stromligning.md](docs/example-deye-solcast-stromligning.md) - Concrete end-to-end example using Strømligning, Deye, and Solcast
 - [docs/extras.md](docs/extras.md) - Batteries, comfort loads, optional loads, and how to wire WattPlan actions into your own automations
 - [docs/entities-and-services.md](docs/entities-and-services.md) - All exposed entities and services, including battery targets
 - [docs/development.md](docs/development.md) - Local setup, standalone test env, optional symlink workflow, packaging

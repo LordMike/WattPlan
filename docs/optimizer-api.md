@@ -40,7 +40,7 @@ result = optimize(params)
 | `optional_entities` | `list[OptionalEntityParams]` | No | `[]` | Fully validated for feasibility | Advisory start-time options only. |
 | `state` | `str \| None` | No | `None` | Valid base64 JSON object, version `v=1` | Opaque carry-over state from previous call. |
 
-\* `solar_input_kwh` and `usage_kwh` have defaults in the model definition, but are effectively required because validation enforces exact length match to `price_per_kwh`.
+\* For direct optimizer API use, `solar_input_kwh` and `usage_kwh` must still match the length of `price_per_kwh` when supplied. The Home Assistant integration can synthesize or omit these sources before calling the optimizer.
 
 **Additional Global Constraints:**
 - Unknown fields are rejected (`extra="forbid"`).

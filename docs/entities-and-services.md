@@ -33,7 +33,7 @@ These exist once per configured battery:
 
 | Entity | Purpose |
 | --- | --- |
-| `sensor.<setup_slug>_<battery_name>_action` | Current planned action: `charge`, `discharge`, or `hold`. WattPlan updates this entity on its planning schedule so your own automation can translate the planned action into a real inverter or battery command. Includes attributes such as `next_action` and `next_action_timestamp`. |
+| `sensor.<setup_slug>_<battery_name>_action` | Current planned action: `charge`, `discharge`, or `hold`. WattPlan updates this entity on its planning schedule so **your own automation can translate the planned action into a real inverter or battery command**. Includes attributes such as `next_action` and `next_action_timestamp`. |
 | `sensor.<setup_slug>_<battery_name>_target` | User-supplied target SoC in kWh. Includes a `by` attribute with the requested deadline and returns `unknown` when no active target is set. |
 
 ## Comfort Load Entities
@@ -42,7 +42,7 @@ These exist once per configured comfort load:
 
 | Entity | Purpose |
 | --- | --- |
-| `sensor.<setup_slug>_<comfort_name>_action` | Current planned action: `on` or `off`. WattPlan updates this entity on its planning schedule so your own automation can translate the planned action into the real device command. Includes attributes describing the next action change. |
+| `sensor.<setup_slug>_<comfort_name>_action` | Current planned action: `on` or `off`. WattPlan updates this entity on its planning schedule so **your own automation can translate the planned action into the real device command**. Includes attributes describing the next action change. |
 
 ## Optional Load Entities
 

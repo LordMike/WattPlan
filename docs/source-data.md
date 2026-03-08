@@ -5,7 +5,7 @@ WattPlan plans around three source groups:
 - **Usage**
 - **PV**
 
-Price and usage are the core planner inputs. PV is optional, but it allows WattPlan to recognize solar surplus and plan around self-consumption or charging opportunities.
+Price is the only required source. Usage and PV are optional, but they let WattPlan plan against expected consumption and solar surplus instead of price alone.
 
 ## What WattPlan Needs
 At planning time, WattPlan needs one numeric value per time slot for each configured source:
@@ -30,7 +30,7 @@ Price is fundamental.
 3. Template
 
 ### Usage
-Usage is fundamental.
+Usage is optional.
 
 **Supported Provider Styles:**
 - **Built-in:** Preferred when you already have a proper `kWh` energy sensor and want WattPlan to build a forecast from recorded history/statistics.
