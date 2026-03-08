@@ -14,7 +14,7 @@ The repository contains the integration under `src/custom_components/wattplan`, 
 5. Go to `Settings` -> `Devices & Services` -> `Add Integration`, then add `WattPlan`.
 6. Configure a price source and a load/usage source.
 7. Configure a PV source if you have solar and want WattPlan to plan around it.
-8. Add batteries, comfort loads, or optional loads if you want WattPlan to control more than forecasting.
+8. Add [batteries, comfort loads, or optional loads](docs/extras.md) if you want WattPlan to control more than forecasting.
 
 ## Features
 - Home Assistant custom integration with HACS-ready release artifacts
@@ -25,6 +25,7 @@ The repository contains the integration under `src/custom_components/wattplan`, 
 
 ## Documentation
 - [docs/source-data.md](docs/source-data.md) — source modes, data model, and how to feed WattPlan price, usage, and PV data
+- [docs/extras.md](docs/extras.md) — batteries, comfort loads, optional loads, and how to wire WattPlan actions into your own automations
 - [docs/development.md](docs/development.md) — local setup, symlink workflow, tests, packaging
 - [docs/architecture.md](docs/architecture.md) — code layout, runtime boundaries, planning flow
 - [docs/release.md](docs/release.md) — tags, prereleases, GitHub release artifacts

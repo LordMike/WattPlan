@@ -6,7 +6,7 @@ WattPlan plans around three source groups:
 - usage
 - PV
 
-Price and usage are the core inputs for most installations. PV is optional, but it is what allows WattPlan to recognize solar surplus and plan around self-consumption or charging opportunities.
+Price and usage are the core planner inputs. PV is optional, but it is what allows WattPlan to recognize solar surplus and plan around self-consumption or charging opportunities.
 
 The source model is designed so users can get data into WattPlan in several different ways instead of forcing one specific upstream integration.
 
@@ -26,90 +26,89 @@ Internally, the integration normalizes different source formats into a common ti
 
 Price is fundamental.
 
-Use this for:
+Supported provider styles:
 
-- hourly or quarter-hourly spot pricing
-- import tariffs
-- dynamic retail pricing
+- Entity adapter
+  Preferred when your pricing integration exposes structured forecast data on an entity.
+- Service adapter
+  Preferred when your pricing integration exposes data through a service response instead of entities.
+- Template
+  Fallback when you need to reshape or build the price series yourself.
+
+Preferred order:
+
+1. Entity adapter
+2. Service adapter
+3. Template
 
 ## Usage
 
 Usage is fundamental.
 
-Use this for:
+Supported provider styles:
 
-- forecasted household load
-- expected consumption from a source entity or service
-- built-in history-based forecasting from an energy sensor
+- Built in
+  Preferred when you already have a proper `kWh` energy sensor and want WattPlan to build a forecast from recorded history/statistics.
+- Entity adapter
+  Preferred when another integration already exposes a structured usage forecast as entity data.
+- Service adapter
+  Preferred when usage forecast data is available through a service response.
+- Template
+  Fallback when you need to model or reshape usage data yourself.
+
+Preferred order:
+
+1. Built in
+2. Entity adapter
+3. Service adapter
+4. Template
 
 ## PV
 
 PV is optional.
 
-Use this for:
+Supported provider styles:
 
-- rooftop solar production forecasts
-- energy-provider forecasts exposed through Home Assistant Energy integrations
-- your own template, entity, or service-based forecast source
+- Energy provider
+  Preferred when your solar forecast already exists in Home Assistant Energy through a compatible forecast provider.
+- Entity adapter
+  Preferred when another integration exposes structured PV forecast data as entity data.
+- Service adapter
+  Preferred when PV forecast data is only available from a service response.
+- Template
+  Fallback when you need to reshape or construct the PV data yourself.
+- Not used
+  Valid when you do not have solar or want to get price/load planning working first.
+
+Preferred order:
+
+1. Energy provider
+2. Entity adapter
+3. Service adapter
+4. Template
+5. Not used
 
 If PV is unavailable or partially missing, WattPlan can still plan, but it may fall back to planning without solar contribution for the affected period.
 
-## Supported source modes
+## Source modes
 
-WattPlan supports several source modes so the same planner can work across very different Home Assistant setups.
+Choose the highest mode that naturally matches your data source. The further down the list you go, the more manual shaping you typically need to do.
 
-## Template
+- `Built in`
+  Use a Home Assistant `kWh` energy sensor and let WattPlan build the usage forecast from stored history/statistics.
+- `Energy provider`
+  Use a Home Assistant Energy solar forecast provider directly.
+- `Entity adapter`
+  Read structured forecast data from entity state/attributes.
+- `Service adapter`
+  Read structured forecast data from a service response.
+- `Template`
+  Last-resort escape hatch when you need full control over the payload.
+- `Not used`
+  Only relevant for PV when solar is not part of the setup.
 
-Template mode is the lowest-level escape hatch.
-
-Use it when:
-
-- you already know how to render the data you want in Jinja
-- you want full control over payload shape
-- there is no dedicated integration path for your data source
-
-The template is expected to render native structured data, not an opaque string blob.
-
-This mode is flexible, but it also puts more responsibility on the user to return the right shape.
-
-## Entity adapter
-
-Entity adapter mode reads structured forecast data from one or more entities.
-
-Use it when:
-
-- another integration already exposes forecast data as state attributes
-- your data is already stored in Home Assistant entities
-- you want WattPlan to adapt an existing entity payload without writing template logic
-
-This mode supports adapter-driven extraction from attribute-based payloads and can auto-detect some mappings.
-
-## Service adapter
-
-Service adapter mode gets forecast data from a Home Assistant service response.
-
-Use it when:
-
-- your upstream data is exposed via a service call
-- you want WattPlan to fetch fresh structured data on demand
-- the service returns a response payload rather than writing to entities first
-
-This is useful when the source integration is API-shaped rather than entity-shaped.
-
-## Energy provider
-
-Energy provider mode is currently relevant for PV.
-
-Use it when:
-
-- you already have a Home Assistant Energy solar forecast provider configured
-- you want WattPlan to consume that provider directly instead of re-modeling it yourself
-
-This path uses integrations that expose solar forecast data through the Home Assistant Energy platform.
-
-## Built in
-
-Built-in mode is currently relevant for usage.
+<details>
+<summary><code>Built in</code> (preferred for usage when you have a proper energy sensor)</summary>
 
 Use it when:
 
@@ -117,17 +116,103 @@ Use it when:
 - the sensor represents energy in `kWh`
 - you want WattPlan to build a usage forecast from stored history/statistics
 
-This mode validates the source entity before use. In practice, that means the entity must behave like an energy sensor, not just a generic numeric sensor.
+Notes:
 
-## Not used
+- this mode is currently relevant for usage
+- the source entity is validated before use
+- in practice, the entity must behave like a real energy sensor, not just a generic numeric sensor
 
-PV can be marked as not used.
+</details>
 
-That is useful when:
+<details>
+<summary><code>Energy provider</code> (preferred for PV when Home Assistant Energy already has the forecast)</summary>
+
+Use it when:
+
+- you already have a Home Assistant Energy solar forecast provider configured
+- you want WattPlan to consume that provider directly instead of rebuilding the same source yourself
+
+Notes:
+
+- this mode is currently relevant for PV
+- it uses integrations that expose solar forecast data through the Home Assistant Energy platform
+
+</details>
+
+<details>
+<summary><code>Entity adapter</code> (preferred when forecast data is already on an entity)</summary>
+
+Use it when:
+
+- another integration already exposes forecast data as state attributes
+- your data is already stored in Home Assistant entities
+- you want WattPlan to adapt an existing entity payload without writing template logic
+
+Notes:
+
+- this mode supports adapter-driven extraction from attribute-based payloads
+- WattPlan can auto-detect some mappings
+
+</details>
+
+<details>
+<summary><code>Service adapter</code> (preferred when forecast data comes from a service call)</summary>
+
+Use it when:
+
+- your upstream data is exposed through a Home Assistant service
+- you want WattPlan to fetch fresh structured data on demand
+- the service returns a response payload rather than writing to entities first
+
+Notes:
+
+- this is useful when the source integration is API-shaped rather than entity-shaped
+
+</details>
+
+<details>
+<summary><code>Template</code> (last resort, but always available)</summary>
+
+Use it when:
+
+- none of the higher-level modes fit
+- you already know how to render the data you want in Jinja
+- you want full control over payload shape
+
+Notes:
+
+- the template is expected to render native structured data, not an opaque string blob
+- this mode is flexible, but it puts more responsibility on the user to return the right shape
+
+Example template output shape:
+
+```jinja2
+[
+  {"start": "2026-03-08T12:00:00+00:00", "value": 0.25},
+  {"start": "2026-03-08T13:00:00+00:00", "value": 0.27},
+  {"start": "2026-03-08T14:00:00+00:00", "value": 0.24}
+]
+```
+
+Expected format:
+
+- a list
+- each item contains a timestamp and a numeric value
+- timestamps should be parseable datetimes
+- values should be numeric
+
+</details>
+
+<details>
+<summary><code>Not used</code> (PV only)</summary>
+
+Use it when:
 
 - you do not have solar
 - you are configuring the integration before the PV source exists
 - you want to get price/load planning working first
+
+</details>
 
 ## Data shape and normalization
 
@@ -170,19 +255,56 @@ That is useful when:
 
 This is especially important for making the integration practical across many different Home Assistant environments.
 
-## Practical guidance
+## FAQ
 
-If you are choosing a source mode for the first time:
+### My electricity price integration offers data through an entity with attributes
 
-- use `Built in` for usage if you already have a proper `kWh` energy sensor and want the easiest path
-- use `Energy provider` for PV if your solar forecast is already integrated with Home Assistant Energy
-- use `Entity adapter` when another integration already exposes structured forecast data in entity attributes
-- use `Service adapter` when the data naturally comes from a service response
-- use `Template` when you need full control or are adapting unusual data
+Use `Entity adapter`.
 
-## What to configure first
+That is the preferred path when the integration already exposes structured forecast data on an entity. Let WattPlan adapt that entity instead of rewriting the same data in a template.
 
-A practical setup order is:
+### My usage data is a normal Home Assistant energy sensor in `kWh`
+
+Use `Built in`.
+
+That is the preferred usage path when you already have a proper energy sensor and want WattPlan to derive the forecast from recorder history/statistics.
+
+### My solar forecast already shows up in Home Assistant Energy
+
+Use `Energy provider`.
+
+That is the preferred PV path when a compatible Energy forecast provider already exists.
+
+### My integration only gives me data through a service call
+
+Use `Service adapter`.
+
+That is the preferred path when there is no entity with structured forecast data, but there is a service response that returns it.
+
+### The other options don't work for me
+
+Use `Template`.
+
+That is the fallback when you need full control. Start by returning a list of timestamp/value pairs like this:
+
+```jinja2
+[
+  {"start": "2026-03-08T12:00:00+00:00", "value": 1.2},
+  {"start": "2026-03-08T13:00:00+00:00", "value": 1.0},
+  {"start": "2026-03-08T14:00:00+00:00", "value": 0.9}
+]
+```
+
+Make sure the rendered data is:
+
+- a native list structure
+- timestamped
+- numeric
+- long enough for the configured planning horizon after normalization/fixup
+
+### What should I configure first?
+
+Use this order:
 
 1. Get price working
 2. Get usage working
