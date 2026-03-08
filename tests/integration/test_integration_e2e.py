@@ -494,12 +494,13 @@ async def test_error_sensors_can_turn_on_for_failures(
         with optimize_patch, pytest.raises(PlanningStageError):
             await _run_optimize(hass)
     else:
-        with optimize_patch:
+    with optimize_patch:
             await _run_optimize(hass)
 
     assert hass.states.get(expected_error_entity) is not None
-    assert hass.states.get(expected_error_entity).state == STATE_ON
-    assert hass.states.get("binary_sensor.home_has_error").state == STATE_ON
+    expected_state = STATE_OFF if expected_error_entity.endswith("source_pv_error") else STATE_ON
+    assert hass.states.get(expected_error_entity).state == expected_state
+    assert hass.states.get("binary_sensor.home_has_error").state == expected_state
 
 
 async def test_error_clears_after_recovery(
