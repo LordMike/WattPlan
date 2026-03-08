@@ -37,6 +37,48 @@ Each source can use different modes depending on the integration path. The sourc
 
 That distinction matters for PV in particular: some PV failures degrade planning quality without stopping the planner entirely.
 
+## Planning Flow
+The high-level planning flow looks like this:
+
+```mermaid
+flowchart LR
+  subgraph Price[Price Source]
+    P1[Entity attributes]
+    P2[Service call]
+    P3[Template]
+  end
+
+  subgraph Load[Load Source]
+    L1[Model future loads<br/>from a load entity]
+    L2[Entity attributes]
+    L3[Service call]
+    L4[Template]
+  end
+
+  subgraph PV[PV Source]
+    V1[Energy Provider<br/>existing HA PV forecaster]
+    V2[Entity attributes]
+    V3[Service call]
+    V4[Template]
+  end
+
+  N[<b>Normalization</b><br/>Aggregation, alignment,<br/>resampling, fixups]
+  Loads[<b>Configured loads</b><br/>Batteries, washers/tumblers/dryers,<br/>HVACs/pumps/..]
+  Plan[Planning]
+  V[Plan Output<br/>Visualization entities]
+  A[Action Output<br/>Battery, optional-load,<br/>and comfort-load actions]
+
+  Price --> N
+  Load --> N
+  PV --> N
+
+  N --> Plan
+  Loads --> Plan
+
+  Plan --> V
+  Plan --> A
+```
+
 ## Optimizer Boundary
 The optimizer package is intentionally kept free of `homeassistant` imports. The integration translates Home Assistant state into optimizer inputs and translates optimizer results back into entities, services, and diagnostics.
 

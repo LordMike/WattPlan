@@ -41,12 +41,12 @@ After installing WattPlan via HACS, you need to configure the following settings
 - GitHub Actions for CI, tagged releases, and prereleases
 
 ## Documentation
-- [docs/source-data.md](docs/source-data.md)  Source modes, data model, and how to feed WattPlan price, usage, and PV data
-- [docs/extras.md](docs/extras.md)  Batteries, comfort loads, optional loads, and how to wire WattPlan actions into your own automations
-- [docs/development.md](docs/development.md)  Local setup, symlink workflow, tests, packaging
-- [docs/architecture.md](docs/architecture.md)  Code layout, runtime boundaries, planning flow
-- [docs/release.md](docs/release.md)  Tags, prereleases, GitHub release artifacts
-- [docs/optimizer-api.md](docs/optimizer-api.md)  Direct optimizer API notes
+- [docs/source-data.md](docs/source-data.md) - Source modes, data model, and how to feed WattPlan price, usage, and PV data
+- [docs/extras.md](docs/extras.md) - Batteries, comfort loads, optional loads, and how to wire WattPlan actions into your own automations
+- [docs/development.md](docs/development.md) - Local setup, symlink workflow, tests, packaging
+- [docs/architecture.md](docs/architecture.md) - Code layout, runtime boundaries, planning flow
+- [docs/release.md](docs/release.md) - Tags, prereleases, GitHub release artifacts
+- [docs/optimizer-api.md](docs/optimizer-api.md) - Direct optimizer API notes
 
 ## Limitations
 While WattPlan is designed to optimize energy usage effectively, there are scenarios where it may not be the best fit:
