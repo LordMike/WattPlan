@@ -905,6 +905,95 @@ def test_grid_flag_controls_charging_when_no_pv_surplus_exists():
     assert grid_allowed_result["suboptimal"] is False
 
 
+def test_warm_started_target_remains_reachable_when_horizon_extends_by_one_slot():
+    # Extending the warm-started horizon by one slot should not make a
+    # previously reachable target become unreachable.
+    base_payload = {
+        "price_per_kwh": [3.0] * 5,
+        "solar_input_kwh": [0.0] * 5,
+        "usage_kwh": [0.25] * 5,
+        "battery_entities": [
+            {
+                "name": "PVBattery",
+                "initial_kwh": 9.15,
+                "minimum_kwh": 1.0,
+                "capacity_kwh": 10.0,
+                "charge_efficiency": 0.9,
+                "discharge_efficiency": 0.9,
+                "charge_curve_kwh": [1.25],
+                "discharge_curve_kwh": [1.25],
+                "can_charge_from": 3,
+            }
+        ],
+        "comfort_entities": [],
+    }
+    warm_state = _run_optimizer(base_payload)["state"]
+
+    result = _run_optimizer(
+        {
+            **base_payload,
+            "battery_entities": [
+                {
+                    **base_payload["battery_entities"][0],
+                    "target": {"timeslot": 4, "soc_kwh": 8.0},
+                }
+            ],
+            "state": warm_state,
+        }
+    )
+
+    schedule = result["entities"][0]["schedule"]
+    assert result["suboptimal"] is False
+    assert "battery_target_unmet" not in result["suboptimal_reasons"]
+    assert float(schedule[4]["level"]) == pytest.approx(8.0, abs=1e-6)
+
+
+def test_warm_started_target_uses_early_low_cost_window_before_deadline():
+    # With a later deadline and a cheap early charging window, the optimizer
+    # should use the low-cost slots to build charge ahead of the target rather
+    # than defer into the later expensive period.
+    base_payload = {
+        "price_per_kwh": [0.10, 0.10, 0.80, 0.80, 0.80, 0.80],
+        "solar_input_kwh": [0.0] * 6,
+        "usage_kwh": [0.25] * 6,
+        "battery_entities": [
+            {
+                "name": "PVBattery",
+                "initial_kwh": 1.0,
+                "minimum_kwh": 1.0,
+                "capacity_kwh": 10.0,
+                "charge_efficiency": 0.9,
+                "discharge_efficiency": 0.9,
+                "charge_curve_kwh": [2.0],
+                "discharge_curve_kwh": [2.0],
+                "can_charge_from": 1,
+            }
+        ],
+        "comfort_entities": [],
+    }
+    warm_state = _run_optimizer(base_payload)["state"]
+
+    result = _run_optimizer(
+        {
+            **base_payload,
+            "battery_entities": [
+                {
+                    **base_payload["battery_entities"][0],
+                    "target": {"timeslot": 5, "soc_kwh": 4.5},
+                }
+            ],
+            "state": warm_state,
+        }
+    )
+
+    schedule = result["entities"][0]["schedule"]
+    assert result["suboptimal"] is False
+    assert schedule[0]["state"] == "charge"
+    assert float(schedule[1]["level"]) > float(schedule[0]["level"])
+    assert float(schedule[2]["level"]) >= 4.5
+    assert float(schedule[5]["level"]) >= 4.5
+
+
 def test_pv_flag_controls_charging_when_solar_surplus_exists():
     # With persistent PV surplus, a battery that allows PV should charge,
     # while charging-disabled should stay at its initial level.

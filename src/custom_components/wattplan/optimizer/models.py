@@ -511,6 +511,9 @@ class CalculationInput:
 
 
 def _entity_fingerprint(battery_entities, comfort_entities, rolling_window_slots):
+    # Reuse must only happen when the optimization problem is materially the
+    # same. Battery targets change feasible early-slot decisions, so they must
+    # participate in the fingerprint used to accept a previous state blob.
     payload = {
         "battery": [
             {
@@ -522,6 +525,16 @@ def _entity_fingerprint(battery_entities, comfort_entities, rolling_window_slots
                 "charge_efficiency": float(e.charge_efficiency),
                 "discharge_efficiency": float(e.discharge_efficiency),
                 "can_charge_from": int(e.can_charge_from),
+                "target": (
+                    {
+                        "timeslot": int(e.target.timeslot),
+                        "soc_kwh": float(e.target.soc_kwh),
+                        "mode": str(e.target.mode),
+                        "tolerance_kwh": float(e.target.tolerance_kwh),
+                    }
+                    if e.target is not None
+                    else None
+                ),
             }
             for e in battery_entities
         ],
