@@ -776,9 +776,9 @@ def _source_mode_schema(
                 value=SOURCE_MODE_ENERGY_PROVIDER, label="Energy provider"
             )
         )
+    options.append(selector.SelectOptionDict(value=SOURCE_MODE_TEMPLATE, label="Template"))
     if include_not_used:
         options.append(selector.SelectOptionDict(value=SOURCE_MODE_NOT_USED, label="Not used"))
-    options.append(selector.SelectOptionDict(value=SOURCE_MODE_TEMPLATE, label="Template"))
 
     return vol.Schema(
         {
@@ -1449,6 +1449,10 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Select source mode and branch to mode specific step."""
         existing = self._sources.get(key, {})
+        include_energy_provider_option = await self._async_include_energy_provider_mode(
+            existing,
+            include_energy_provider=include_energy_provider,
+        )
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -1492,10 +1496,15 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
                 key,
                 include_not_used=include_not_used,
                 include_built_in=include_built_in,
-                include_energy_provider=include_energy_provider,
+                include_energy_provider=include_energy_provider_option,
             ),
         )
         if default_mode == SOURCE_MODE_NOT_USED and not include_not_used:
+            default_mode = SOURCE_MODE_TEMPLATE
+        if (
+            default_mode == SOURCE_MODE_ENERGY_PROVIDER
+            and not include_energy_provider_option
+        ):
             default_mode = SOURCE_MODE_TEMPLATE
 
         return self.async_show_form(
@@ -1504,7 +1513,7 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
                 default_mode,
                 include_not_used=include_not_used,
                 include_built_in=include_built_in,
-                include_energy_provider=include_energy_provider,
+                include_energy_provider=include_energy_provider_option,
             ),
             errors=errors,
             last_step=False,
@@ -1821,6 +1830,19 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
             selector.SelectOptionDict(value=entry.entry_id, label=entry.title)
             for entry in entries
         ]
+
+    async def _async_include_energy_provider_mode(
+        self,
+        existing: dict[str, Any],
+        *,
+        include_energy_provider: bool,
+    ) -> bool:
+        """Return whether Energy provider should be offered in source mode."""
+        if not include_energy_provider:
+            return False
+        if existing.get(CONF_SOURCE_MODE) == SOURCE_MODE_ENERGY_PROVIDER:
+            return True
+        return bool(await self._async_energy_provider_options())
 
     def _source_step_defaults(self, key: str) -> dict[str, Any]:
         """Return defaults for the active source input step."""
