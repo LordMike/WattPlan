@@ -1,0 +1,4 @@
+numpy
+pydantic>=2
+highspy
+pytest-homeassistant-custom-component==0.13.317

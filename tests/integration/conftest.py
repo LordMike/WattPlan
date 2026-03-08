@@ -1,12 +1,20 @@
 """Common fixtures for the WattPlan tests."""
 
 from collections.abc import Generator
-import sys
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-sys.path.insert(0, "/mnt/n/Personal/hass-core/tests/testing_config")
+
+@pytest.fixture
+def enable_custom_integrations() -> None:
+    """Compatibility fixture for custom-component tests outside hass-core.
+
+    WattPlan imports directly from `src/custom_components`, so the test suite
+    does not need Home Assistant's source checkout just to satisfy this common
+    fixture name.
+    """
+    yield
 
 
 @pytest.fixture
