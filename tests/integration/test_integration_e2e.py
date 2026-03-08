@@ -494,7 +494,7 @@ async def test_error_sensors_can_turn_on_for_failures(
         with optimize_patch, pytest.raises(PlanningStageError):
             await _run_optimize(hass)
     else:
-    with optimize_patch:
+        with optimize_patch:
             await _run_optimize(hass)
 
     assert hass.states.get(expected_error_entity) is not None
