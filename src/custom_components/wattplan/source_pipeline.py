@@ -11,6 +11,7 @@ from .const import (
     CONF_FIXUP_PROFILE,
     CONF_HISTORY_DAYS,
     CONF_SOURCE_MODE,
+    SOURCE_MODE_ENTITY_ADAPTER,
     FIXUP_PROFILE_REPAIR,
     FIXUP_PROFILE_STRICT,
     SOURCE_MODE_BUILT_IN,
@@ -20,6 +21,7 @@ from .forecast_provider import ForecastProvider
 from .source_fixup import SourceFixupProvider, effective_provider_config
 from .source_provider import (
     EnergySolarForecastSourceProvider,
+    MergedTemplateSourceProvider,
     TemplateAdapterSourceProvider,
 )
 from .source_types import SourceProvider
@@ -42,6 +44,33 @@ def build_source_base_provider(
 
     mode = source_config.get("source_mode")
     mode = source_config.get(CONF_SOURCE_MODE)
+    if mode == SOURCE_MODE_ENTITY_ADAPTER:
+        entity_ids = source_config.get("entity_id")
+        if isinstance(entity_ids, str):
+            # Older saved configs stored a single entity as a string. Normalize
+            # so the flow and runtime both work with the same list-based shape.
+            source_config = {**source_config, "entity_id": [entity_ids]}
+            entity_ids = source_config["entity_id"]
+
+        if isinstance(entity_ids, list) and len(entity_ids) == 1:
+            source_config = {**source_config, "entity_id": entity_ids[0]}
+        elif isinstance(entity_ids, list) and len(entity_ids) > 1:
+            # Merge multiple same-shaped entity sources before fixup so the
+            # existing alignment and fill logic sees one combined stream.
+            providers = [
+                TemplateAdapterSourceProvider(
+                    hass,
+                    source_name=source_key,
+                    source_config={**source_config, "entity_id": entity_id},
+                )
+                for entity_id in entity_ids
+            ]
+            return MergedTemplateSourceProvider(
+                providers,
+                hass=hass,
+                source_name=source_key,
+                source_config=source_config,
+            )
     if mode == SOURCE_MODE_BUILT_IN:
         entity_id = str(source_config["entity_id"])
         if validate_built_in_entity is not None:

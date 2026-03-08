@@ -133,6 +133,7 @@ class BasePayloadProvider(ABC):
     async def async_fetch_payload(self) -> Any:
         """Fetch source payload before normalization."""
 
+
 class TemplatePayloadProvider(BasePayloadProvider):
     """Resolve payload from a Jinja template."""
 
@@ -222,7 +223,6 @@ class EntityAdapterPayloadProvider(BasePayloadProvider):
                     "attribute": str(root_key),
                 },
             )
-
         return payload
 
 
@@ -285,26 +285,40 @@ class ServiceResponsePayloadProvider(BasePayloadProvider):
 async def async_auto_detect_entity_adapter(
     hass: HomeAssistant,
     entity_ids: list[str],
-) -> tuple[str, AdapterAutoDetectResult]:
-    """Return entity and mapping inferred from one of the selected entities."""
+) -> AdapterAutoDetectResult:
+    """Return one mapping that is compatible with all selected entities."""
+    detected_mappings: list[AdapterAutoDetectResult] = []
     for entity_id in entity_ids:
         state = hass.states.get(entity_id)
         if state is None:
-            continue
+            raise SourceProviderError(
+                "source_fetch",
+                f"Source entity `{entity_id}` was not found",
+                details={"entity_id": entity_id},
+            )
 
         root = dict(state.attributes)
         with suppress(json.JSONDecodeError):
             root["state_json"] = json.loads(state.state)
 
         detected = auto_detect_mapping(root)
-        if detected is not None:
-            return entity_id, detected
+        if detected is None:
+            raise SourceProviderError(
+                "source_validation",
+                "Selected entities do not share one compatible forecast structure",
+                details={"entity_ids": entity_ids},
+            )
+        detected_mappings.append(detected)
 
-    raise SourceProviderError(
-        "source_validation",
-        "No compatible forecast list was found in the selected entities",
-        details={"entity_ids": entity_ids},
-    )
+    first_detected = detected_mappings[0]
+    if any(detected != first_detected for detected in detected_mappings[1:]):
+        raise SourceProviderError(
+            "source_validation",
+            "Selected entities do not share one compatible forecast structure",
+            details={"entity_ids": entity_ids},
+        )
+
+    return first_detected
 
 
 async def async_auto_detect_service_adapter(
@@ -741,6 +755,39 @@ class TemplateAdapterSourceProvider(SourceProvider):
                 details={"source": self._source_name, "edge_fill_mode": mode},
             )
         return mode
+
+
+class MergedTemplateSourceProvider(TemplateAdapterSourceProvider):
+    """Merge multiple template-style providers before fixup is applied."""
+
+    def __init__(
+        self,
+        providers: list[TemplateAdapterSourceProvider],
+        *,
+        hass: HomeAssistant,
+        source_name: str,
+        source_config: dict[str, Any],
+    ) -> None:
+        """Initialize the merged provider."""
+        super().__init__(hass, source_name=source_name, source_config=source_config)
+        self._providers = providers
+
+    async def async_fetch_payload(self) -> Any:
+        """Return one merged list from all wrapped providers."""
+        merged_payload: list[Any] = []
+        for provider in self._providers:
+            payload = await provider.async_fetch_payload()
+            if not isinstance(payload, list):
+                raise SourceProviderError(
+                    "source_parse",
+                    (
+                        f"{self._source_name} source output from a merged provider "
+                        "must resolve to a list"
+                    ),
+                    details={"source": self._source_name},
+                )
+            merged_payload.extend(payload)
+        return merged_payload
 
 
 class EnergySolarForecastSourceProvider(TemplateAdapterSourceProvider):

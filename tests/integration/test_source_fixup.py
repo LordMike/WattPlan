@@ -230,7 +230,7 @@ async def test_adapter_pipeline_keeps_advanced_provider_settings(
         source_name="price",
         source_config={
             CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
-            "entity_id": "sensor.forecast",
+            "entity_id": ["sensor.forecast"],
             CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_VALUES,
             CONF_NAME: "prices",
             CONF_AGGREGATION_MODE: AGGREGATION_MODE_MEAN,

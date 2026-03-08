@@ -1174,25 +1174,18 @@ async def _async_prepare_entity_source_input(
     time_key = str(user_input.get(CONF_TIME_KEY, ""))
     value_key = str(user_input.get(CONF_VALUE_KEY, ""))
 
-    entity_id = entity_ids[0] if entity_ids else ""
     resolved_adapter = adapter_type
 
     if adapter_type == ADAPTER_TYPE_AUTO_DETECT:
-        entity_id, detected = await async_auto_detect_entity_adapter(hass, entity_ids)
+        detected = await async_auto_detect_entity_adapter(hass, entity_ids)
         resolved_adapter = ADAPTER_TYPE_ATTRIBUTE_OBJECTS
         root_key = detected.root_key
         time_key = detected.time_key
         value_key = detected.value_key
-    elif len(entity_ids) != 1:
-        raise SourceProviderError(
-            "source_validation",
-            "Select exactly one entity when auto detect is disabled",
-            details={"entity_ids": entity_ids},
-        )
 
     source = {
         CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
-        CONF_WATTPLAN_ENTITY_ID: entity_id,
+        CONF_WATTPLAN_ENTITY_ID: entity_ids,
         CONF_ADAPTER_TYPE: resolved_adapter,
         CONF_NAME: root_key,
         CONF_TIME_KEY: time_key,

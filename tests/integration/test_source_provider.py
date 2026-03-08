@@ -11,6 +11,7 @@ from custom_components.wattplan.adapter_auto import (
     resolve_nested_value,
 )
 from custom_components.wattplan.const import (
+    ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
     ADAPTER_TYPE_ATTRIBUTE_VALUES,
     ADAPTER_TYPE_SERVICE_RESPONSE,
     AGGREGATION_MODE_MAX,
@@ -33,6 +34,7 @@ from custom_components.wattplan.const import (
     SOURCE_MODE_SERVICE_ADAPTER,
     SOURCE_MODE_TEMPLATE,
 )
+from custom_components.wattplan.source_pipeline import build_source_base_provider
 from custom_components.wattplan.source_provider import (
     EnergySolarForecastSourceProvider,
     TemplateAdapterSourceProvider,
@@ -56,6 +58,24 @@ def _window() -> SourceWindow:
     return SourceWindow(
         start_at=datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
         slot_minutes=15,
+        slots=4,
+    )
+
+
+def _hour_window() -> SourceWindow:
+    """Return an hourly window for merged multi-entity series."""
+    return SourceWindow(
+        start_at=datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+        slot_minutes=60,
+        slots=4,
+    )
+
+
+def _hour_window() -> SourceWindow:
+    """Return an hourly window for merged multi-entity series."""
+    return SourceWindow(
+        start_at=datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+        slot_minutes=60,
         slots=4,
     )
 
@@ -176,8 +196,21 @@ async def test_entity_adapter_provider_returns_values(hass: HomeAssistant) -> No
 async def test_entity_adapter_auto_detects_nested_attribute(
     hass: HomeAssistant,
 ) -> None:
-    """Auto detect should resolve a nested attribute list mapping."""
-    hass.states.async_set("sensor.first", "ok", {"junk": [{"name": "x"}]})
+    """Auto detect should resolve one mapping shared by selected entities."""
+    hass.states.async_set(
+        "sensor.first",
+        "ok",
+        {
+            "prices": {
+                "home": [
+                    {
+                        "starts_at": "2026-01-01T00:00:00+00:00",
+                        "total": 1.0,
+                    }
+                ]
+            }
+        },
+    )
     hass.states.async_set(
         "sensor.second",
         "ok",
@@ -193,15 +226,65 @@ async def test_entity_adapter_auto_detects_nested_attribute(
         },
     )
 
-    entity_id, detected = await async_auto_detect_entity_adapter(
-        hass,
-        ["sensor.first", "sensor.second"],
-    )
+    detected = await async_auto_detect_entity_adapter(hass, ["sensor.first", "sensor.second"])
 
-    assert entity_id == "sensor.second"
     assert detected.root_key == "prices.home"
     assert detected.time_key == "starts_at"
     assert detected.value_key == "total"
+
+
+async def test_entity_adapter_provider_merges_multiple_entities(
+    hass: HomeAssistant,
+) -> None:
+    """Entity adapter should merge list payloads from multiple selected entities."""
+    hass.states.async_set(
+        "sensor.today",
+        "ok",
+        {
+            "detailedForecast": [
+                {
+                    "period_start": "2026-01-01T00:00:00+00:00",
+                    "pv_estimate": 1.0,
+                },
+                {
+                    "period_start": "2026-01-01T01:00:00+00:00",
+                    "pv_estimate": 2.0,
+                },
+            ]
+        },
+    )
+    hass.states.async_set(
+        "sensor.tomorrow",
+        "ok",
+        {
+            "detailedForecast": [
+                {
+                    "period_start": "2026-01-01T02:00:00+00:00",
+                    "pv_estimate": 3.0,
+                },
+                {
+                    "period_start": "2026-01-01T03:00:00+00:00",
+                    "pv_estimate": 4.0,
+                },
+            ]
+        },
+    )
+    provider = build_source_base_provider(
+        hass,
+        source_key="solar",
+        source_config={
+            CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+            "entity_id": ["sensor.today", "sensor.tomorrow"],
+            CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
+            CONF_NAME: "detailedForecast",
+            "time_key": "period_start",
+            "value_key": "pv_estimate",
+        },
+    )
+
+    values = await provider.async_values(_hour_window())
+
+    assert values == [1.0, 2.0, 3.0, 4.0]
 
 
 async def test_service_adapter_provider_returns_values(hass: HomeAssistant) -> None:
