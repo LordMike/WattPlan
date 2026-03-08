@@ -39,6 +39,29 @@ set_target:
       selector:
         text:
 
+clear_target:
+  name: Clear battery target
+  description: Remove the current target SoC intention for one or more batteries
+  target:
+    entity:
+      integration: wattplan
+    device:
+      integration: wattplan
+  fields:
+    battery:
+      name: Battery name
+      description: Optional battery subentry name filter
+      required: false
+      example: batt01
+      selector:
+        text:
+    entry_id:
+      name: Config entry ID
+      description: Optional filter for one WattPlan setup
+      required: false
+      selector:
+        text:
+
 run_optimize_now:
   name: Run optimize now
   description: Trigger optimization immediately for matching WattPlan setups

@@ -76,6 +76,7 @@ from .source_issues import (
 )
 from .source_pipeline import build_source_value_provider
 from .source_types import SourceProvider, SourceProviderError, SourceWindow
+from .target_runtime import clear_expired_battery_targets, get_active_battery_target
 
 _LOGGER = logging.getLogger(__name__)
 HEARTBEAT_OFFSET = timedelta(minutes=3)
@@ -639,6 +640,9 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         comfort_name_to_subentry: dict[str, str] = {}
         optional_name_to_subentry: dict[str, str] = {}
 
+        # Targets are time-bounded user intents. Remove expired ones here so the
+        # optimizer and target entities stop treating them as active at the same time.
+        clear_expired_battery_targets(runtime_data)
         rolling_window_slots_set: set[int] = set()
         for subentry in entry.subentries.values():
             if subentry.subentry_type == SUBENTRY_TYPE_BATTERY:
@@ -683,7 +687,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                     ],
                     "can_charge_from": can_charge_from,
                 }
-                if target := runtime_data.battery_targets.get(subentry_id):
+                if target := get_active_battery_target(runtime_data, subentry_id):
                     target_slot = self._target_timeslot_from_timestamp(
                         target.reach_at,
                         start_at=window.start_at,

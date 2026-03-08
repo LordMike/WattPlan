@@ -3,6 +3,7 @@
 DOMAIN = "wattplan"
 
 SERVICE_SET_TARGET = "set_target"
+SERVICE_CLEAR_TARGET = "clear_target"
 SERVICE_RUN_OPTIMIZE_NOW = "run_optimize_now"
 SERVICE_RUN_PLAN_NOW = "run_plan_now"
 SERVICE_EXPORT_PLANNER_INPUT = "export_planner_input"

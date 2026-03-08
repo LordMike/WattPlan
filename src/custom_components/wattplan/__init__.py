@@ -30,6 +30,7 @@ from .const import (
     CONF_SOURCE_USAGE,
     CONF_SOURCES,
     DOMAIN,
+    SERVICE_CLEAR_TARGET,
     SERVICE_EXPORT_PLANNER_INPUT,
     SERVICE_EXPORT_USAGE_FORECAST_DEBUG,
     SERVICE_RUN_OPTIMIZE_NOW,
@@ -41,6 +42,7 @@ from .const import (
 from .coordinator import CycleTrigger, WattPlanCoordinator
 from .forecast_provider import ForecastProvider
 from .source_pipeline import build_source_base_provider
+from .target_runtime import clear_battery_target, set_battery_target
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
 
@@ -80,6 +82,18 @@ SET_TARGET_SERVICE_SCHEMA = vol.Schema(
             vol.Optional(ATTR_DEVICE_ID): vol.All(cv.ensure_list, [cv.string]),
             vol.Required(ATTR_SOC_KWH): vol.All(vol.Coerce(float), vol.Range(min=0)),
             vol.Required(ATTR_REACH_AT): cv.datetime,
+            vol.Optional(ATTR_ENTRY_ID): cv.string,
+        },
+        cv.has_at_least_one_key(ATTR_BATTERY, ATTR_ENTITY_ID, ATTR_DEVICE_ID),
+    )
+)
+
+CLEAR_TARGET_SERVICE_SCHEMA = vol.Schema(
+    vol.All(
+        {
+            vol.Optional(ATTR_BATTERY): cv.string,
+            vol.Optional(ATTR_ENTITY_ID): cv.comp_entity_ids,
+            vol.Optional(ATTR_DEVICE_ID): vol.All(cv.ensure_list, [cv.string]),
             vol.Optional(ATTR_ENTRY_ID): cv.string,
         },
         cv.has_at_least_one_key(ATTR_BATTERY, ATTR_ENTITY_ID, ATTR_DEVICE_ID),
@@ -241,14 +255,88 @@ async def _async_handle_set_target_service(
         for match_entry_id, subentry_id in matches:
             if match_entry_id != entry.entry_id:
                 continue
-            runtime_data.battery_targets[subentry_id] = BatteryTarget(
+            set_battery_target(
+                runtime_data,
+                subentry_id,
+                BatteryTarget(
                 soc_kwh=target_soc,
                 reach_at=reach_at,
+                ),
             )
-            for listener in list(
-                runtime_data.battery_target_update_listeners.get(subentry_id, ())
-            ):
-                listener()
+
+
+async def _async_handle_clear_target_service(
+    hass: HomeAssistant, call: ServiceCall
+) -> None:
+    """Clear a user target for one or more batteries."""
+    battery_name = call.data.get(ATTR_BATTERY, "").strip()
+    if ATTR_BATTERY in call.data and not battery_name:
+        raise ServiceValidationError("`battery` must not be empty")
+
+    entry_id_filter = call.data.get(ATTR_ENTRY_ID)
+    matched_entries = _loaded_entries(hass, entry_id_filter)
+    if not matched_entries:
+        raise ServiceValidationError("No loaded WattPlan entries matched the filters")
+    loaded_entries: dict[str, WattPlanConfigEntry] = {
+        entry.entry_id: entry for entry in matched_entries
+    }
+
+    matches: set[tuple[str, str]] = set()
+    if battery_name:
+        for entry in loaded_entries.values():
+            for subentry in entry.subentries.values():
+                if subentry.subentry_type != SUBENTRY_TYPE_BATTERY:
+                    continue
+                if _subentry_name(subentry).casefold() != battery_name.casefold():
+                    continue
+                matches.add((entry.entry_id, subentry.subentry_id))
+
+    entity_registry = er.async_get(hass)
+    for entity_id in call.data.get(ATTR_ENTITY_ID, []):
+        entity_entry = entity_registry.async_get(entity_id)
+        if entity_entry is None:
+            raise ServiceValidationError(f"Entity `{entity_id}` was not found")
+        entry = loaded_entries.get(entity_entry.config_entry_id)
+        if entry is None:
+            continue
+        subentry_id = _subentry_id_from_entity_unique_id(entity_entry.unique_id)
+        if subentry_id is None:
+            continue
+        subentry = entry.subentries.get(subentry_id)
+        if subentry is None or subentry.subentry_type != SUBENTRY_TYPE_BATTERY:
+            continue
+        matches.add((entry.entry_id, subentry_id))
+
+    for device_id in call.data.get(ATTR_DEVICE_ID, []):
+        for entity_entry in er.async_entries_for_device(
+            entity_registry, device_id, include_disabled_entities=True
+        ):
+            entry = loaded_entries.get(entity_entry.config_entry_id)
+            if entry is None:
+                continue
+            subentry_id = _subentry_id_from_entity_unique_id(entity_entry.unique_id)
+            if subentry_id is None:
+                continue
+            subentry = entry.subentries.get(subentry_id)
+            if subentry is None or subentry.subentry_type != SUBENTRY_TYPE_BATTERY:
+                continue
+            matches.add((entry.entry_id, subentry_id))
+
+    if not matches:
+        raise ServiceValidationError("No battery targets matched the provided selectors")
+
+    cleared_any = False
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        if entry.entry_id not in loaded_entries:
+            continue
+        runtime_data = entry.runtime_data
+        for match_entry_id, subentry_id in matches:
+            if match_entry_id != entry.entry_id:
+                continue
+            cleared_any = clear_battery_target(runtime_data, subentry_id) or cleared_any
+
+    if not cleared_any:
+        raise ServiceValidationError("No active battery targets matched the provided selectors")
 
 
 async def _async_handle_run_optimize_now_service(
@@ -345,6 +433,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) -> 
             SERVICE_SET_TARGET,
             partial(_async_handle_set_target_service, hass),
             schema=SET_TARGET_SERVICE_SCHEMA,
+        )
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_CLEAR_TARGET,
+            partial(_async_handle_clear_target_service, hass),
+            schema=CLEAR_TARGET_SERVICE_SCHEMA,
         )
         hass.services.async_register(
             DOMAIN,

@@ -2,6 +2,8 @@
 
 WattPlan can do more than forecast price, usage, and PV. You can also add extra controllable assets so the planner can produce actions and suggestions for them.
 
+See [entities-and-services.md](entities-and-services.md) for the full list of exposed entities and services, including battery target services.
+
 The three extra asset types are:
 - **Batteries**
 - **Comfort Loads**

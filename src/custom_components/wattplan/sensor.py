@@ -14,6 +14,8 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
 
+from .target_runtime import get_active_battery_target
+
 from .const import (
     CONF_OPTIONS_COUNT,
     CONF_SLOT_MINUTES,
@@ -278,14 +280,14 @@ class BatteryTargetSocSensor(SensorEntity):
     @property
     def native_value(self) -> float | None:
         """Return target SoC, or unknown when no user intent is set."""
-        if target := self._runtime_data.battery_targets.get(self._subentry_id):
+        if target := get_active_battery_target(self._runtime_data, self._subentry_id):
             return target.soc_kwh
         return None
 
     @property
     def extra_state_attributes(self) -> dict[str, str] | None:
         """Return timing metadata for the current user intent."""
-        if target := self._runtime_data.battery_targets.get(self._subentry_id):
+        if target := get_active_battery_target(self._runtime_data, self._subentry_id):
             return {"by": target.reach_at.isoformat()}
         return {"by": "not_set"}
 

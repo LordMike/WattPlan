@@ -38,11 +38,13 @@ After installing WattPlan via HACS, you need to configure the following settings
 - Config-flow driven source setup for price, usage, and PV inputs
 - Battery, comfort-load, and optional-load planning
 - Planned actions are exposed as entities, so you can easily use the results to do automations
+- Battery targets can be set and cleared through WattPlan services
 - GitHub Actions for CI, tagged releases, and prereleases
 
 ## Documentation
 - [docs/source-data.md](docs/source-data.md) - Source modes, data model, and how to feed WattPlan price, usage, and PV data
 - [docs/extras.md](docs/extras.md) - Batteries, comfort loads, optional loads, and how to wire WattPlan actions into your own automations
+- [docs/entities-and-services.md](docs/entities-and-services.md) - All exposed entities and services, including battery targets
 - [docs/development.md](docs/development.md) - Local setup, standalone test env, optional symlink workflow, packaging
 - [docs/architecture.md](docs/architecture.md) - Code layout, runtime boundaries, planning flow
 - [docs/release.md](docs/release.md) - Tags, prereleases, GitHub release artifacts

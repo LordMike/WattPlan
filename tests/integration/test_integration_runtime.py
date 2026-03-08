@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from unittest.mock import patch
 
 from custom_components.wattplan.const import (
@@ -37,8 +38,10 @@ from custom_components.wattplan.const import (
     CONF_TARGET_ON_HOURS_PER_WINDOW,
     CONF_TEMPLATE,
     DOMAIN,
+    SERVICE_CLEAR_TARGET,
     SERVICE_RUN_OPTIMIZE_NOW,
     SERVICE_RUN_PLAN_NOW,
+    SERVICE_SET_TARGET,
     SOURCE_MODE_NOT_USED,
     SOURCE_MODE_TEMPLATE,
     SUBENTRY_TYPE_BATTERY,
@@ -52,8 +55,9 @@ from homeassistant import config_entries
 from homeassistant.const import CONF_NAME, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
+from homeassistant.util import dt as dt_util
 
-from tests.common import MockConfigEntry
+from tests.common import MockConfigEntry, async_fire_time_changed
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
@@ -144,6 +148,56 @@ def _fake_optimize(_params: object) -> dict[str, object]:
         ],
         "state": None,
     }
+
+
+def _fake_optimize_with_target_behavior(params: object) -> dict[str, object]:
+    """Return a deterministic plan that changes when a target is active."""
+    battery = params.battery_entities[0]
+    battery_schedule = (
+        [
+            {"state": "charge", "charge_source": 1, "level": 6.5},
+            {"state": "charge", "charge_source": 1, "level": 8.0},
+            {"state": "hold", "charge_source": 0, "level": 8.0},
+            {"state": "hold", "charge_source": 0, "level": 8.0},
+        ]
+        if battery.target is not None
+        else [
+            {"state": "hold", "charge_source": 0, "level": 5.0},
+            {"state": "hold", "charge_source": 0, "level": 5.0},
+            {"state": "hold", "charge_source": 0, "level": 5.0},
+            {"state": "hold", "charge_source": 0, "level": 5.0},
+        ]
+    )
+    return {
+        "execution_time": 0.01,
+        "fitness": 1.0,
+        "avg_price": 0.25,
+        "projections": {
+            "baseline_cost": 1.0,
+            "projected_cost": 1.0,
+            "projected_savings_cost": 0.0,
+            "projected_savings_pct": 0.0,
+            "per_slot": [
+                {
+                    "baseline_cost": 0.25,
+                    "projected_cost": 0.25,
+                    "projected_savings_cost": 0.0,
+                    "projected_savings_pct": 0.0,
+                }
+                for _ in range(4)
+            ],
+        },
+        "suboptimal": False,
+        "suboptimal_reasons": [],
+        "problems": [],
+        "successful_solves": 1,
+        "reused_steps": 0,
+        "entities": [{"name": "battery", "type": "battery", "schedule": battery_schedule}],
+        "optional_entity_options": [],
+        "state": None,
+    }
+
+
 
 
 def _assert_valid_state(hass: HomeAssistant, entity_id: str) -> None:
@@ -487,3 +541,183 @@ async def test_plan_details_sensor_exposes_horizon_length_arrays(
     assert state.attributes["battery_battery_charge_source"] == ["g", "n", "n", "n"]
     assert state.attributes["comfort_comfort_enabled"] == [True, False, False, True]
     assert state.attributes["optional_optional_enabled"] == [False, True, True, False]
+
+
+async def test_battery_target_changes_plan_and_expires_after_deadline(
+    hass: HomeAssistant,
+) -> None:
+    """Targets should affect planning until their deadline, then disappear."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: 60,
+            CONF_HOURS_TO_PLAN: 4,
+            CONF_SOURCES: {
+                CONF_SOURCE_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [0.2, 0.2, 0.2, 0.2] }}",
+                },
+                CONF_SOURCE_USAGE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [0.0, 0.0, 0.0, 0.0] }}",
+                },
+                CONF_SOURCE_PV: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
+            },
+        },
+        options={
+            CONF_PLANNING_ENABLED: False,
+            CONF_ACTION_EMISSION_ENABLED: False,
+        },
+        subentries_data=[
+            config_entries.ConfigSubentryData(
+                subentry_id="battery_sub",
+                subentry_type=SUBENTRY_TYPE_BATTERY,
+                title="battery",
+                unique_id="battery:battery",
+                data={
+                    CONF_NAME: "battery",
+                    CONF_SOC_SOURCE: "sensor.battery_soc",
+                    CONF_CAPACITY_KWH: 10.0,
+                    CONF_MINIMUM_KWH: 1.0,
+                    CONF_MAX_CHARGE_KW: 3.0,
+                    CONF_MAX_DISCHARGE_KW: 3.0,
+                    CONF_CHARGE_EFFICIENCY: 0.9,
+                    CONF_DISCHARGE_EFFICIENCY: 0.9,
+                    CONF_CAN_CHARGE_FROM_GRID: True,
+                    CONF_CAN_CHARGE_FROM_PV: False,
+                },
+            )
+        ],
+    )
+    entry.add_to_hass(hass)
+    hass.states.async_set("sensor.battery_soc", "5.0")
+
+    with patch(
+        "custom_components.wattplan.coordinator.optimize",
+        side_effect=_fake_optimize_with_target_behavior,
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        await hass.services.async_call(DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True)
+        await hass.async_block_till_done()
+
+        plan_details = hass.states.get("sensor.home_plan_details")
+        assert plan_details is not None
+        assert plan_details.attributes["battery_battery_action"] == ["h", "h", "h", "h"]
+
+        target_at = dt_util.utcnow() + timedelta(hours=2)
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_SET_TARGET,
+            {
+                "battery": "battery",
+                "soc_kwh": 8.0,
+                "reach_at": target_at,
+            },
+            blocking=True,
+        )
+        await hass.services.async_call(DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True)
+        await hass.async_block_till_done()
+
+        target_sensor = hass.states.get("sensor.home_battery_target")
+        assert target_sensor is not None
+        assert float(target_sensor.state) == 8.0
+
+        plan_details = hass.states.get("sensor.home_plan_details")
+        assert plan_details is not None
+        assert plan_details.attributes["battery_battery_action"] == ["c", "c", "h", "h"]
+
+        async_fire_time_changed(hass, target_at + timedelta(minutes=1))
+        await hass.async_block_till_done()
+
+        await hass.services.async_call(DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True)
+        await hass.async_block_till_done()
+
+        target_sensor = hass.states.get("sensor.home_battery_target")
+        assert target_sensor is not None
+        assert target_sensor.state == STATE_UNKNOWN
+        assert target_sensor.attributes["by"] == "not_set"
+
+        plan_details = hass.states.get("sensor.home_plan_details")
+        assert plan_details is not None
+        assert plan_details.attributes["battery_battery_action"] == ["h", "h", "h", "h"]
+
+
+async def test_clear_target_service_removes_active_battery_target(
+    hass: HomeAssistant,
+) -> None:
+    """Clear target should immediately unset the target entity."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: 60,
+            CONF_HOURS_TO_PLAN: 4,
+            CONF_SOURCES: {
+                CONF_SOURCE_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [0.2, 0.2, 0.2, 0.2] }}",
+                },
+                CONF_SOURCE_USAGE: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
+                CONF_SOURCE_PV: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
+            },
+        },
+        options={
+            CONF_PLANNING_ENABLED: False,
+            CONF_ACTION_EMISSION_ENABLED: False,
+        },
+        subentries_data=[
+            config_entries.ConfigSubentryData(
+                subentry_id="battery_sub",
+                subentry_type=SUBENTRY_TYPE_BATTERY,
+                title="battery",
+                unique_id="battery:battery",
+                data={
+                    CONF_NAME: "battery",
+                    CONF_SOC_SOURCE: "sensor.battery_soc",
+                    CONF_CAPACITY_KWH: 10.0,
+                    CONF_MINIMUM_KWH: 1.0,
+                    CONF_MAX_CHARGE_KW: 3.0,
+                    CONF_MAX_DISCHARGE_KW: 3.0,
+                    CONF_CHARGE_EFFICIENCY: 0.9,
+                    CONF_DISCHARGE_EFFICIENCY: 0.9,
+                    CONF_CAN_CHARGE_FROM_GRID: True,
+                    CONF_CAN_CHARGE_FROM_PV: False,
+                },
+            )
+        ],
+    )
+    entry.add_to_hass(hass)
+    hass.states.async_set("sensor.battery_soc", "5.0")
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    await hass.services.async_call(
+        DOMAIN,
+        SERVICE_SET_TARGET,
+        {
+            "battery": "battery",
+            "soc_kwh": 8.0,
+            "reach_at": dt_util.utcnow() + timedelta(hours=2),
+        },
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+
+    await hass.services.async_call(
+        DOMAIN,
+        SERVICE_CLEAR_TARGET,
+        {"battery": "battery"},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+
+    target_sensor = hass.states.get("sensor.home_battery_target")
+    assert target_sensor is not None
+    assert target_sensor.state == STATE_UNKNOWN
+    assert target_sensor.attributes["by"] == "not_set"
