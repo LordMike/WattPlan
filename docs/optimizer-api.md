@@ -1,9 +1,9 @@
-# PowerOptim Library API
+# WattPlan Optimizer API
 
-This document describes the direct Python API for the optimizer in this repository.
+This document describes the direct Python API for the optimizer packaged inside this repository.
 
-- Package: `poweroptim`
-- Primary module: `poweroptim.mpc_power_optimizer`
+- Package: `custom_components.wattplan.optimizer`
+- Primary module: `custom_components.wattplan.optimizer.mpc_power_optimizer`
 - Primary function: `optimize(params: OptimizationParams) -> dict`
 
 The optimizer is model-predictive-control (MPC) based.
@@ -34,7 +34,7 @@ The solve combines three kinds of entities:
 ## Core usage
 
 ```python
-from poweroptim.mpc_power_optimizer import OptimizationParams, optimize
+from custom_components.wattplan.optimizer import OptimizationParams, optimize
 
 params = OptimizationParams(**payload)
 result = optimize(params)

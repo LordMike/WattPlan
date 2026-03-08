@@ -1,134 +1,41 @@
-# WattPlan Repository Guide
+## Purpose
+WattPlan is the source of truth for the WattPlan Home Assistant custom integration and its in-repo optimizer.
+Optimize for clean integration behavior, reliable Home Assistant tests, and release artifacts that stay HACS-compatible.
+Prefer updating the integration, tests, and docs together when behavior changes.
 
-This repository is the source of truth for the WattPlan Home Assistant custom
-integration.
+## Do / Don't
+- Do: treat `WattPlan` as the canonical repo and `hass-core` as the runtime/test harness via symlink.
+- Do: keep `src/custom_components/wattplan/optimizer/` free of `homeassistant` imports.
+- Do: update docs when workflows, release behavior, or architecture changes.
+- Don't: edit the backup copies under `hass-core/*/wattplan.pre-symlink-backup-*`.
+- Don't: reintroduce `vendor_poweroptim`; the optimizer lives under `optimizer/`.
+- Don't: assume `hass-core` is clean before changing symlinks or running migrations.
 
-## Intent
+## Pushback / quality bar
+- Before starting new projects or automation, evaluate whether the effort is justified and push back if build time exceeds the time it would save.
+- If a request would introduce hacks, unclear behavior, or long-term maintenance risk, push back and propose a safer alternative.
+- Avoid obvious performance pitfalls; call them out and offer a better approach.
+- Prefer clear, simple code over clever or verbose implementations.
 
-WattPlan combines two concerns in one repository:
+## Core workflows
+- Build: `python scripts/build_hacs_zip.py`
+- Test: `pytest`
+- Run: `PYTHONPATH=src pytest tests` or `PYTHONPATH=src ../hass-core/.venv/bin/pytest tests`
 
-- The Home Assistant integration under `src/custom_components/wattplan/`
-- The internal optimizer library under `src/custom_components/wattplan/optimizer/`
+## Repo conventions
+- Integration code lives in `src/custom_components/wattplan/`.
+- Optimizer code lives in `src/custom_components/wattplan/optimizer/`.
+- Home Assistant integration tests live in `tests/integration/`.
+- Optimizer-only tests live in `tests/optimizer/`.
+- `hass-core/config/custom_components/wattplan` and `hass-core/tests/custom_components/wattplan` are symlinks into this repo.
+- Keep release packaging focused on the integration tree under `src/custom_components/wattplan/`.
 
-The optimizer is intentionally kept as a pure Python subpackage with no Home
-Assistant dependencies so it can be extracted later if that becomes useful.
+## Documentation upkeep
+- `README.md` — keep quickstart, release flow, and repo purpose aligned with the current structure
+- `docs/development.md` — update when local workflow, symlink setup, or test commands change
+- `docs/architecture.md` — update when code boundaries or planning/runtime flow changes
+- `docs/release.md` — update when tag, prerelease, or artifact behavior changes
+- `docs/optimizer-api.md` — update when optimizer import paths or request/response models change
 
-## Repository Layout
-
-- `src/custom_components/wattplan/`
-  - The integration code that will be packaged for HACS releases
-- `src/custom_components/wattplan/optimizer/`
-  - Internal optimization engine and models
-- `tests/integration/`
-  - Home Assistant-facing tests
-- `tests/optimizer/`
-  - Pure optimizer tests
-- `docs/`
-  - Project and release documentation
-- `scripts/`
-  - Utility scripts, including HACS artifact packaging
-
-## Development Workflow
-
-Primary development should happen from this repository.
-
-For live Home Assistant development, symlink the integration into a
-`hass-core` checkout:
-
-```bash
-ln -s /mnt/n/Personal/WattPlan/src/custom_components/wattplan \
-  /mnt/n/Personal/hass-core/config/custom_components/wattplan
-```
-
-If a real directory already exists at the target path, move or remove it first.
-Do not blindly overwrite user changes in `hass-core`.
-
-## Commands
-
-### Build HACS Artifact
-
-Build a local release zip:
-
-```bash
-python scripts/build_hacs_zip.py
-```
-
-Build with an explicit label:
-
-```bash
-python scripts/build_hacs_zip.py --version-label local-dev
-```
-
-The generated artifact is written to `dist/`.
-
-### Optimizer Tests
-
-Run only the pure optimizer suite:
-
-```bash
-PYTHONPATH=src /mnt/n/Personal/hass-core/.venv/bin/pytest tests/optimizer
-```
-
-### Integration Tests
-
-The integration tests depend on the Home Assistant test harness. The most
-reliable way to run them is from a prepared `hass-core` environment:
-
-```bash
-PYTHONPATH=/mnt/n/Personal/WattPlan/src \
-  /mnt/n/Personal/hass-core/.venv/bin/pytest \
-  /mnt/n/Personal/WattPlan/tests/integration
-```
-
-If the repo-local test harness is expanded later, update this file.
-
-### Full Test Suite
-
-Run everything using the `hass-core` virtualenv:
-
-```bash
-PYTHONPATH=/mnt/n/Personal/WattPlan/src \
-  /mnt/n/Personal/hass-core/.venv/bin/pytest \
-  /mnt/n/Personal/WattPlan/tests
-```
-
-## GitHub Actions Intent
-
-- `CI`
-  - Run tests on pushes and pull requests
-  - Build a zip artifact for `main`
-- `Release`
-  - Build a HACS-ready zip on version tags
-  - Publish GitHub releases
-  - Mark tags containing `-` as prereleases
-
-## Documentation Maintenance
-
-The documentation set is intentionally small at the start. Keep it current as
-behavior stabilizes.
-
-Expected docs:
-
-- `docs/architecture.md`
-  - Placeholder: describe integration boundaries, optimizer boundaries, data
-    flow, and major runtime concepts
-- `docs/development.md`
-  - Placeholder: describe local setup, symlink workflow, test workflow, and
-    packaging workflow
-- `docs/release.md`
-  - Placeholder: describe versioning, tag format, prereleases, and release
-    artifact expectations
-- `docs/optimizer-api.md`
-  - Keep aligned with the optimizer input/output model when those interfaces
-    change
-
-When changing behavior, update docs in the same change if the behavior is
-user-facing, architectural, or operational.
-
-## Constraints
-
-- Keep `optimizer/` free of `homeassistant` imports.
-- Keep HACS packaging focused on `src/custom_components/wattplan/`.
-- Prefer updating tests alongside behavior changes.
-- Do not assume the `hass-core` checkout is clean; check before making symlink
-  or copy-based changes.
+## When to split
+If this file grows beyond a page, or if the repo has distinct task areas (for example docs/release vs integration/runtime), ask whether to split into `AGENTS.<TASK>.md` files.
