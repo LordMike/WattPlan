@@ -3,7 +3,7 @@
     "step": {
       "requirements": {
         "title": "Before you start",
-        "description": "**Required before setup**\n\n- A **price forecast** source that covers the full plan period\n- Forecast values as timestamp/value pairs (`start`, `value`)\n\n**Optional**\n\n- A usage forecast source\n- A PV forecast source\n\nYou can either reference an existing entity that already exposes forecast data in its attributes, or write a Jinja2 template that returns the expected timestamp/value list.\n\n**Unsure what to do?**\nSee the example walkthrough for a complete setup path using Strømligning, Deye, and Solcast:\n[Open the example guide on GitHub](https://github.com/LordMike/WattPlan/blob/main/docs/example-deye-solcast-stromligning.md).",
+        "description": "**Required before setup**\n\n- A **price forecast** source that covers the full plan period\n- Forecast values as timestamp/value pairs (`start`, `value`)\n\n**Optional**\n\n- A usage forecast source\n- A PV forecast source\n- An export price forecast source when PV is configured\n\nYou can either reference an existing entity that already exposes forecast data in its attributes, or write a Jinja2 template that returns the expected timestamp/value list.\n\n**Unsure what to do?**\nSee the example walkthrough for a complete setup path using Strømligning, Deye, and Solcast:\n[Open the example guide on GitHub](https://github.com/LordMike/WattPlan/blob/main/docs/example-deye-solcast-stromligning.md).",
         "submit": "Start"
       },
       "planner_setup": {
@@ -23,12 +23,12 @@
       },
       "setup_complete": {
         "title": "Setup complete",
-        "description": "You have now set up the **{setup_name}** WattPlan planner.\n\nCurrent planner settings:\n- Resolution: **{slot_minutes} minutes**\n- Planning horizon: **{plan_hours} hours**\n- Price source: **{price_source}**\n- Usage source: **{usage_source}**\n- PV source: **{pv_source}**\n\nWattPlan will now begin producing plans on its schedule and after relevant setup changes.\n\nPlanning and optimization are only part of the setup. To really benefit, WattPlan needs something that can shift load away from expensive periods and into cheaper ones.\n\nGood next steps:\n- Add a **battery** if you want WattPlan to plan charging and discharging\n- Add **optional loads** such as a washing machine if you want WattPlan to suggest when people should start them\n- Add **comfort loads** if you want WattPlan to shift flexible always-needed loads\n- Create automations that translate WattPlan action entities into real device commands\n\nIn practice, batteries, optional loads, and comfort loads are the main ways to turn plans into savings.\n\nClick **Finish** to complete the integration setup and give the new planner device a name and/or area.",
+        "description": "You have now set up the **{setup_name}** WattPlan planner.\n\nCurrent planner settings:\n- Resolution: **{slot_minutes} minutes**\n- Planning horizon: **{plan_hours} hours**\n- Price source: **{price_source}**\n- Usage source: **{usage_source}**\n- PV source: **{pv_source}**\n- Export price source: **{export_price_source}**\n\nWattPlan will now begin producing plans on its schedule and after relevant setup changes.\n\nPlanning and optimization are only part of the setup. To really benefit, WattPlan needs something that can shift load away from expensive periods and into cheaper ones.\n\nGood next steps:\n- Add a **battery** if you want WattPlan to plan charging and discharging\n- Add **optional loads** such as a washing machine if you want WattPlan to suggest when people should start them\n- Add **comfort loads** if you want WattPlan to shift flexible always-needed loads\n- Create automations that translate WattPlan action entities into real device commands\n\nIn practice, batteries, optional loads, and comfort loads are the main ways to turn plans into savings.\n\nClick **Finish** to complete the integration setup and give the new planner device a name and/or area.",
         "submit": "Finish"
       },
       "source_price": {
         "title": "Price source",
-        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\n**Choose how WattPlan reads your price forecast**\n\n1. **Entity attribute** (preferred): Read a forecast list directly from an entity attribute.\n2. **Service call** (preferred): Call a Home Assistant service that returns a forecast list.\n3. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n\nEach source type must produce enough forecast data for the planner window.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\n**Choose how WattPlan reads your price forecast**\n\nThis source is specifically the cost of buying power from the grid, so it should reflect your real import price.\n\n1. **Entity attribute** (preferred): Read a forecast list directly from an entity attribute.\n2. **Service call** (preferred): Call a Home Assistant service that returns a forecast list.\n3. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n\nEach source type must produce enough forecast data for the planner window.",
         "submit": "Next",
         "data": {
           "source_mode": "Source mode"
@@ -114,6 +114,173 @@
       "source_price_service": {
         "title": "Price source service call",
         "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse a Home Assistant service call for price forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect the returned payload and infer the list path plus timestamp/value keys\n- **Service call**: use an explicit response path and key mapping\n\nServices must not require input arguments.",
+        "data": {
+          "service": "Service call",
+          "adapter_type": "Adapter type",
+          "fixup_profile": "Fixup profile"
+        },
+        "data_description": {
+          "service": "Service to call in `domain.service` format. WattPlan calls it without arguments and reads the returned response.",
+          "adapter_type": "Choose Auto detect for the recommended setup path, or Service call to enter the fields yourself.",
+          "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
+        },
+        "sections": {
+          "manual": {
+            "name": "Manual mapping",
+            "description": "Only applies when \"Auto detect\" is not selected.",
+            "data": {
+              "name": "Root path",
+              "time_key": "Timestamp key",
+              "value_key": "Value key"
+            },
+            "data_description": {
+              "name": "Root path containing the forecast list in the service response. Used only when Auto detect is not selected.",
+              "time_key": "Key containing the timestamp. Used only when Auto detect is not selected.",
+              "value_key": "Key containing the numeric value. Used only when Auto detect is not selected."
+            }
+          },
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+            }
+          }
+        }
+      },
+      "source_export_price": {
+        "title": "Export price source",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\n**Choose how WattPlan reads your export price forecast**\n\n1. **Entity attribute** (preferred): Read a forecast list directly from an entity attribute.\n2. **Service call** (preferred): Call a Home Assistant service that returns a forecast list.\n3. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n4. **Not used**: Treat exported power as having zero value.\n\nYou can set up this source later from the integration page. To **skip** this setup now, pick **Not used**.\n\nIf used, the source must produce enough forecast data for the planner window.",
+        "submit": "Next",
+        "data": {
+          "source_mode": "Source mode"
+        },
+        "data_description": {
+          "source_mode": "Choose how to provide your export price forecast. Entity attribute and Service call are the preferred setup paths. Template is the advanced fallback. Not used values exported power at zero."
+        }
+      },
+      "source_export_price_template": {
+        "title": "Export price source template",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nProvide a template that returns export price forecast data.\n\nReturn either:\n- a list of objects with `start` and `value`\n- or a list of numeric values\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
+        "data": {
+          "template": "Template",
+          "fixup_profile": "Fixup profile"
+        },
+        "data_description": {
+          "template": "Return a native Python-style list from Jinja, not a JSON string.",
+          "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+            }
+          }
+        }
+      },
+      "source_export_price_adapter": {
+        "title": "Export price source entity attribute",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse an entity attribute for export price forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect one or more entities and infer the list path plus timestamp/value keys\n- **Attribute objects**: use an explicit list of objects with timestamp/value keys\n- **Attribute values**: use an explicit list of numeric values",
+        "data": {
+          "entity_id": "Entity",
+          "adapter_type": "Adapter type",
+          "fixup_profile": "Fixup profile"
+        },
+        "data_description": {
+          "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
+          "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
+          "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
+        },
+        "sections": {
+          "manual": {
+            "name": "Manual mapping",
+            "description": "Only applies when \"Auto detect\" is not selected.",
+            "data": {
+              "name": "Attribute name",
+              "time_key": "Timestamp key",
+              "value_key": "Value key"
+            },
+            "data_description": {
+              "name": "Attribute path that contains the forecast list. Used only when Auto detect is not selected.",
+              "time_key": "Key containing the timestamp. Used only when Auto detect is not selected.",
+              "value_key": "Key containing the numeric value. Used only when Auto detect is not selected."
+            }
+          },
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+            }
+          }
+        }
+      },
+      "source_export_price_service": {
+        "title": "Export price source service call",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse a Home Assistant service call for export price forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect the returned payload and infer the list path plus timestamp/value keys\n- **Service call**: use an explicit response path and key mapping\n\nServices must not require input arguments.",
+        "data": {
+          "service": "Service call",
+          "adapter_type": "Adapter type",
+          "name": "Root path",
+          "time_key": "Timestamp key",
+          "value_key": "Value key",
+          "fixup_profile": "Fixup profile"
+        },
+        "data_description": {
+          "service": "Service to call in `domain.service` format. WattPlan calls it without arguments and reads the returned response.",
+          "adapter_type": "Choose Auto detect for the recommended setup path, or Service call to enter the fields yourself.",
+          "name": "Root path containing the forecast list in the service response. Ignored in auto detect mode.",
+          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
+          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
+          "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+            }
+          }
+        }
+      },
+      "source_export_price_service": {
+        "title": "Export price source service call",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse a Home Assistant service call for export price forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect the returned payload and infer the list path plus timestamp/value keys\n- **Service call**: use an explicit response path and key mapping\n\nServices must not require input arguments.",
         "data": {
           "service": "Service call",
           "adapter_type": "Adapter type",
@@ -538,6 +705,7 @@
         "menu_options": {
           "planner_core": "Core planner settings",
           "source_price": "Price source",
+          "source_export_price": "Export price source",
           "source_usage": "Usage source",
           "source_pv": "Solar source",
           "planner_timers": "Planner timer settings",
@@ -561,7 +729,7 @@
       },
       "source_price": {
         "title": "Price source",
-        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\n**Choose how WattPlan reads your price forecast**\n\n1. **Entity attribute** (preferred): Read a forecast list directly from an entity attribute.\n2. **Service call** (preferred): Call a Home Assistant service that returns a forecast list.\n3. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n\nEach source type must produce enough forecast data for the planner window.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\n**Choose how WattPlan reads your price forecast**\n\nThis source is specifically the cost of buying power from the grid, so it should reflect your real import price.\n\n1. **Entity attribute** (preferred): Read a forecast list directly from an entity attribute.\n2. **Service call** (preferred): Call a Home Assistant service that returns a forecast list.\n3. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n\nEach source type must produce enough forecast data for the planner window.",
         "submit": "Next",
         "data": {
           "source_mode": "Source mode"
@@ -606,6 +774,87 @@
       "source_price_adapter": {
         "title": "Price source entity attribute",
         "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse an entity attribute for price forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect one or more entities and infer the list path plus timestamp/value keys\n- **Attribute objects**: use an explicit list of objects with timestamp/value keys\n- **Attribute values**: use an explicit list of numeric values",
+        "data": {
+          "entity_id": "Entity",
+          "adapter_type": "Adapter type",
+          "name": "Attribute name",
+          "time_key": "Timestamp key",
+          "value_key": "Value key",
+          "fixup_profile": "Fixup profile"
+        },
+        "data_description": {
+          "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
+          "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
+          "name": "Attribute path that contains the forecast list. Ignored in auto detect mode.",
+          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
+          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
+          "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
+        },
+        "sections": {
+          "manual": {
+            "name": "Manual mapping",
+            "description": "Only applies when \"Auto detect\" is not selected."
+          },
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+            }
+          }
+        }
+      },
+      "source_export_price": {
+        "title": "Export price source",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\n**Choose how WattPlan reads your export price forecast**\n\n1. **Entity attribute** (preferred): Read a forecast list directly from an entity attribute.\n2. **Service call** (preferred): Call a Home Assistant service that returns a forecast list.\n3. **Template**: Use Jinja2 to build a forecast list from one or more entities.\n4. **Not used**: Treat exported power as having zero value.\n\nYou can set up this source later from the integration page. To **skip** this setup now, pick **Not used**.\n\nIf used, the source must produce enough forecast data for the planner window.",
+        "submit": "Next",
+        "data": {
+          "source_mode": "Source mode"
+        },
+        "data_description": {
+          "source_mode": "Choose how to provide your export price forecast. Entity attribute and Service call are the preferred setup paths. Template is the advanced fallback. Not used values exported power at zero."
+        }
+      },
+      "source_export_price_template": {
+        "title": "Export price source template",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nProvide a template that returns export price forecast data.\n\nReturn either:\n- a list of objects with `start` and `value`\n- or a list of numeric values\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
+        "data": {
+          "template": "Template",
+          "fixup_profile": "Fixup profile"
+        },
+        "data_description": {
+          "template": "Return a native Python-style list from Jinja, not a JSON string.",
+          "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+            }
+          }
+        }
+      },
+      "source_export_price_adapter": {
+        "title": "Export price source entity attribute",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse an entity attribute for export price forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect one or more entities and infer the list path plus timestamp/value keys\n- **Attribute objects**: use an explicit list of objects with timestamp/value keys\n- **Attribute values**: use an explicit list of numeric values",
         "data": {
           "entity_id": "Entity",
           "adapter_type": "Adapter type",

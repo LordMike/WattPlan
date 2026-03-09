@@ -1,15 +1,17 @@
 # Source Data
 
-WattPlan plans around three source groups:
+WattPlan plans around four source groups:
 - **Price**
+- **Export price**
 - **Usage**
 - **PV**
 
-Price is the only required source. Usage and PV are optional, but they let WattPlan plan against expected consumption and solar surplus instead of price alone.
+Price is the only required source. Usage and PV are optional, and export price is optional when PV is configured. These extra sources let WattPlan plan against expected consumption, solar surplus, and the value of exported energy instead of price alone.
 
 ## What WattPlan Needs
 At planning time, WattPlan needs one numeric value per time slot for each configured source:
-- **Price:** Forecasted price per kWh
+- **Price:** Forecasted import price per kWh
+- **Export price:** Forecasted export value per kWh
 - **Usage:** Forecasted consumption per slot
 - **PV:** Forecasted solar production per slot
 
@@ -18,6 +20,8 @@ Internally, the integration normalizes different source formats into a common ti
 ## Source Groups
 ### Price
 Price is fundamental.
+
+This is specifically the cost of buying power from the grid.
 
 **Supported Provider Styles:**
 - **Entity Adapter:** Preferred when your pricing integration exposes structured forecast data on an entity.
@@ -28,6 +32,23 @@ Price is fundamental.
 1. Entity Adapter
 2. Service Adapter
 3. Template
+
+### Export price
+Export price is optional and only matters when PV is configured.
+
+If this source is not configured, WattPlan values exported power at zero.
+
+**Supported Provider Styles:**
+- **Entity Adapter:** Preferred when your pricing integration exposes export forecast data on an entity.
+- **Service Adapter:** Preferred when your pricing integration exposes export forecast data through a service response.
+- **Template:** Fallback when you need to reshape or build the export price series yourself.
+- **Not used:** Keep exported power at zero value.
+
+**Preferred Order:**
+1. Entity Adapter
+2. Service Adapter
+3. Template
+4. Not used
 
 ### Usage
 Usage is optional.

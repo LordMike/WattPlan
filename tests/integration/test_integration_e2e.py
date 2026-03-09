@@ -32,7 +32,7 @@ from custom_components.wattplan.const import (
     CONF_SLOT_MINUTES,
     CONF_SOC_SOURCE,
     CONF_SOURCE_MODE,
-    CONF_SOURCE_PRICE,
+    CONF_SOURCE_IMPORT_PRICE,
     CONF_SOURCE_PV,
     CONF_SOURCE_USAGE,
     CONF_SOURCES,
@@ -157,7 +157,7 @@ def _fake_optimize_with_entities(params: Any) -> dict[str, object]:
 def _base_sources() -> dict[str, dict[str, Any]]:
     """Return valid source config with one template per source."""
     return {
-        CONF_SOURCE_PRICE: {
+        CONF_SOURCE_IMPORT_PRICE: {
             CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
             CONF_TEMPLATE: "{{ [0.2, 0.25, 0.3, 0.35] }}",
         },
@@ -422,13 +422,13 @@ async def test_scheduler_runs_at_interval(hass: HomeAssistant) -> None:
     [
         (
             {
-                CONF_SOURCE_PRICE: {
+                CONF_SOURCE_IMPORT_PRICE: {
                     CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
                     CONF_TEMPLATE: "{{ 'broken' }}",
                 },
             },
             None,
-            "binary_sensor.home_source_price_error",
+            "binary_sensor.home_source_import_price_error",
             True,
         ),
         (
@@ -510,7 +510,7 @@ async def test_error_clears_after_recovery(
     """A later successful run should clear previous coordinator error state."""
     # Purpose: ensure users can observe recovery without restarting HA.
     sources = _base_sources()
-    sources[CONF_SOURCE_PRICE] = {
+    sources[CONF_SOURCE_IMPORT_PRICE] = {
         CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
         CONF_TEMPLATE: "{{ 'broken' }}",
     }
@@ -525,7 +525,7 @@ async def test_error_clears_after_recovery(
     ), pytest.raises(PlanningStageError):
         await _run_optimize(hass)
 
-    assert hass.states.get("binary_sensor.home_source_price_error").state == STATE_ON
+    assert hass.states.get("binary_sensor.home_source_import_price_error").state == STATE_ON
     assert hass.states.get("binary_sensor.home_has_error").state == STATE_ON
 
     hass.config_entries.async_update_entry(
@@ -540,7 +540,7 @@ async def test_error_clears_after_recovery(
     with patch("custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize):
         await _run_optimize(hass)
 
-    assert hass.states.get("binary_sensor.home_source_price_error").state == STATE_OFF
+    assert hass.states.get("binary_sensor.home_source_import_price_error").state == STATE_OFF
     assert hass.states.get("binary_sensor.home_has_error").state == STATE_OFF
 
 

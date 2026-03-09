@@ -7,7 +7,7 @@ from custom_components.wattplan.const import (
     CONF_EDGE_FILL_MODE,
     CONF_FIXUP_PROFILE,
     CONF_RESAMPLE_MODE,
-    CONF_SOURCE_PRICE,
+    CONF_SOURCE_IMPORT_PRICE,
     CONF_SOURCES,
 )
 from custom_components.wattplan.repairs import async_create_fix_flow
@@ -28,7 +28,7 @@ def test_build_source_issue_includes_grace_note() -> None:
     entry = MockConfigEntry(domain="wattplan", title="Home", data={CONF_NAME: "Home"})
     issue = build_source_issue(
         entry=entry,
-        source_key=CONF_SOURCE_PRICE,
+        source_key=CONF_SOURCE_IMPORT_PRICE,
         kind="source_unavailable",
         source_name="price forecast",
         consequence="No new plan can be produced once the temporary coverage expires.",
@@ -52,7 +52,7 @@ async def test_incomplete_repair_updates_source_config(
         data={
             CONF_NAME: "Home",
             CONF_SOURCES: {
-                CONF_SOURCE_PRICE: {
+                CONF_SOURCE_IMPORT_PRICE: {
                     CONF_FIXUP_PROFILE: "strict_input",
                 }
             },
@@ -63,13 +63,13 @@ async def test_incomplete_repair_updates_source_config(
     changed = update_entry_source_with_fill_defaults(
         hass,
         entry,
-        source_key=CONF_SOURCE_PRICE,
+        source_key=CONF_SOURCE_IMPORT_PRICE,
     )
 
     assert changed is True
     updated_entry = hass.config_entries.async_get_entry(entry.entry_id)
     assert updated_entry is not None
-    source_config = updated_entry.data[CONF_SOURCES][CONF_SOURCE_PRICE]
+    source_config = updated_entry.data[CONF_SOURCES][CONF_SOURCE_IMPORT_PRICE]
     assert source_config[CONF_FIXUP_PROFILE] == "extend_daily_pattern"
     assert source_config[CONF_CLAMP_MODE] == "nearest"
     assert source_config[CONF_RESAMPLE_MODE] == "linear"
@@ -85,7 +85,7 @@ async def test_incomplete_repair_flow_completes_when_entry_exists(hass) -> None:
         data={
             CONF_NAME: "Home",
             CONF_SOURCES: {
-                CONF_SOURCE_PRICE: {
+                CONF_SOURCE_IMPORT_PRICE: {
                     CONF_FIXUP_PROFILE: "strict_input",
                 }
             },
@@ -94,10 +94,10 @@ async def test_incomplete_repair_flow_completes_when_entry_exists(hass) -> None:
     entry.add_to_hass(hass)
     flow = await async_create_fix_flow(
         hass,
-        source_issue_id(entry.entry_id, CONF_SOURCE_PRICE, "source_incomplete"),
+        source_issue_id(entry.entry_id, CONF_SOURCE_IMPORT_PRICE, "source_incomplete"),
         {
             "entry_id": entry.entry_id,
-            "source_key": CONF_SOURCE_PRICE,
+            "source_key": CONF_SOURCE_IMPORT_PRICE,
         },
     )
     flow.hass = hass

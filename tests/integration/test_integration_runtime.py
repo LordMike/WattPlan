@@ -31,7 +31,7 @@ from custom_components.wattplan.const import (
     CONF_SLOT_MINUTES,
     CONF_SOC_SOURCE,
     CONF_SOURCE_MODE,
-    CONF_SOURCE_PRICE,
+    CONF_SOURCE_IMPORT_PRICE,
     CONF_SOURCE_PV,
     CONF_SOURCE_USAGE,
     CONF_SOURCES,
@@ -220,7 +220,7 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
             CONF_SLOT_MINUTES: 60,
             CONF_HOURS_TO_PLAN: 4,
             CONF_SOURCES: {
-                CONF_SOURCE_PRICE: {
+                CONF_SOURCE_IMPORT_PRICE: {
                     CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
                     CONF_TEMPLATE: price_template,
                 },
@@ -347,7 +347,7 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
             CONF_SLOT_MINUTES: 60,
             CONF_HOURS_TO_PLAN: 4,
             CONF_SOURCES: {
-                CONF_SOURCE_PRICE: {
+                CONF_SOURCE_IMPORT_PRICE: {
                     CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
                     CONF_TEMPLATE: "{{ [0.2, 0.25, 0.3, 0.35] }}",
                 },
@@ -433,7 +433,7 @@ async def test_plan_details_sensor_exposes_horizon_length_arrays(
             CONF_SLOT_MINUTES: 60,
             CONF_HOURS_TO_PLAN: 4,
             CONF_SOURCES: {
-                CONF_SOURCE_PRICE: {
+                CONF_SOURCE_IMPORT_PRICE: {
                     CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
                     CONF_TEMPLATE: "{{ [0.2, 0.25, 0.3, 0.35] }}",
                 },
@@ -526,7 +526,9 @@ async def test_plan_details_sensor_exposes_horizon_length_arrays(
     assert "T" in state.state
     assert state.attributes["slot_minutes"] == 60
     assert state.attributes["slots"] == 4
-    assert len(state.attributes["price_per_kwh"]) == 4
+    assert len(state.attributes["grid_import_price_per_kwh"]) == 4
+    assert len(state.attributes["grid_export_price_per_kwh"]) == 4
+    assert state.attributes["grid_export_price_per_kwh"] == [0.0, 0.0, 0.0, 0.0]
     assert len(state.attributes["usage_kwh"]) == 4
     assert len(state.attributes["solar_input_kwh"]) == 4
     assert len(state.attributes["projected_cost"]) == 4
@@ -555,7 +557,7 @@ async def test_battery_target_changes_plan_and_expires_after_deadline(
             CONF_SLOT_MINUTES: 60,
             CONF_HOURS_TO_PLAN: 4,
             CONF_SOURCES: {
-                CONF_SOURCE_PRICE: {
+                CONF_SOURCE_IMPORT_PRICE: {
                     CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
                     CONF_TEMPLATE: "{{ [0.2, 0.2, 0.2, 0.2] }}",
                 },
@@ -658,7 +660,7 @@ async def test_clear_target_service_removes_active_battery_target(
             CONF_SLOT_MINUTES: 60,
             CONF_HOURS_TO_PLAN: 4,
             CONF_SOURCES: {
-                CONF_SOURCE_PRICE: {
+                CONF_SOURCE_IMPORT_PRICE: {
                     CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
                     CONF_TEMPLATE: "{{ [0.2, 0.2, 0.2, 0.2] }}",
                 },

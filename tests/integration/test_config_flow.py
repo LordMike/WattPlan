@@ -257,6 +257,61 @@ async def test_multiple_setups_allowed(
     assert result["step_id"] == "requirements"
 
 
+async def test_export_price_step_is_shown_only_when_pv_is_configured(
+    hass: HomeAssistant, mock_setup_entry: AsyncMock
+) -> None:
+    """Export price should only be offered when PV is configured."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: "60",
+            CONF_HOURS_TO_PLAN: "12",
+        },
+    )
+    template = _series_template(12)
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_TEMPLATE: template}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_ACCEPT_SOURCE_SUMMARY: True}
+    )
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "source_pv"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_TEMPLATE: template}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_ACCEPT_SOURCE_SUMMARY: True}
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "source_export_price"
+    assert _default_source_mode(result) == "not_used"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert len(mock_setup_entry.mock_calls) == 1
+
+
 async def test_options_flow_add_core_and_one_of_each_asset(
     hass: HomeAssistant, mock_setup_entry: AsyncMock
 ) -> None:
@@ -309,6 +364,7 @@ async def test_options_flow_add_core_and_one_of_each_asset(
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["type"] is FlowResultType.MENU
+    assert "source_export_price" in result["menu_options"]
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {"next_step_id": "planner_timers"}

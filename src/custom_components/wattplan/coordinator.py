@@ -52,7 +52,8 @@ from .const import (
     CONF_SLOT_MINUTES,
     CONF_SOC_SOURCE,
     CONF_SOURCE_MODE,
-    CONF_SOURCE_PRICE,
+    CONF_SOURCE_EXPORT_PRICE,
+    CONF_SOURCE_IMPORT_PRICE,
     CONF_SOURCE_PV,
     CONF_SOURCE_USAGE,
     CONF_SOURCES,
@@ -603,9 +604,16 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
 
         price_values = await self._async_resolve_source(
             entry=entry,
-            source_key=CONF_SOURCE_PRICE,
-            source_config=sources.get(CONF_SOURCE_PRICE, {}),
+            source_key=CONF_SOURCE_IMPORT_PRICE,
+            source_config=sources.get(CONF_SOURCE_IMPORT_PRICE, {}),
             window=window,
+        )
+        export_price_values = await self._async_resolve_optional_source(
+            entry=entry,
+            source_key=CONF_SOURCE_EXPORT_PRICE,
+            source_config=sources.get(CONF_SOURCE_EXPORT_PRICE, {}),
+            window=window,
+            blocks_planning=False,
         )
         usage_values = await self._async_resolve_optional_source(
             entry=entry,
@@ -835,7 +843,12 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             "hours_to_plan": hours_to_plan,
             "window": window,
             "optimizer_params": {
-                "price_per_kwh": price_values,
+                "grid_import_price_per_kwh": price_values,
+                "grid_export_price_per_kwh": (
+                    export_price_values
+                    if export_price_values is not None
+                    else [0.0] * expected_slots
+                ),
                 "solar_input_kwh": pv_values if pv_values is not None else [0.0] * expected_slots,
                 "usage_kwh": usage_values if usage_values is not None else [0.0] * expected_slots,
                 "rolling_window_slots": (
@@ -1025,6 +1038,11 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 return "WattPlan will continue, but it will plan without solar contribution."
             return "WattPlan will continue, but it will plan without solar contribution for the missing period."
 
+        if source_key == CONF_SOURCE_EXPORT_PRICE:
+            if health_kind is SourceHealthKind.UNAVAILABLE:
+                return "WattPlan will continue, but exported power will be valued at zero."
+            return "WattPlan will continue, but exported power will be valued at zero for the missing period."
+
         if health_kind is SourceHealthKind.UNAVAILABLE:
             return "WattPlan will stop producing new plans."
         return "WattPlan will stop producing new plans."
@@ -1141,14 +1159,16 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         _LOGGER.debug(
             (
                 "Running optimizer (entry_id=%s, start_at=%s, slot_minutes=%s, "
-                "hours_to_plan=%s, price_sample=%s, usage_sample=%s, pv_sample=%s, "
+                "hours_to_plan=%s, import_price_sample=%s, export_price_sample=%s, "
+                "usage_sample=%s, pv_sample=%s, "
                 "batteries=%s, comforts=%s, optionals=%s)"
             ),
             request["entry_id"],
             request["window"].start_at.isoformat(),
             request["slot_minutes"],
             request["hours_to_plan"],
-            self._sample_values(optimizer_params["price_per_kwh"]),
+            self._sample_values(optimizer_params["grid_import_price_per_kwh"]),
+            self._sample_values(optimizer_params["grid_export_price_per_kwh"]),
             self._sample_values(optimizer_params["usage_kwh"]),
             self._sample_values(optimizer_params["solar_input_kwh"]),
             len(optimizer_params["battery_entities"]),
@@ -1247,7 +1267,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         """Map poweroptim output to coordinator planner output shape."""
         start_at = request["window"].start_at
         slot_minutes = int(request["slot_minutes"])
-        horizon_slots = len(request["optimizer_params"]["price_per_kwh"])
+        horizon_slots = len(request["optimizer_params"]["grid_import_price_per_kwh"])
 
         batteries: dict[str, dict[str, Any]] = {}
         comforts: dict[str, dict[str, Any]] = {}
@@ -1411,12 +1431,17 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
     ) -> dict[str, Any]:
         """Build a graph-friendly, flat plan payload for the current horizon."""
         optimizer_params = request["optimizer_params"]
-        horizon_slots = len(optimizer_params["price_per_kwh"])
+        horizon_slots = len(optimizer_params["grid_import_price_per_kwh"])
         plan_details: dict[str, Any] = {
             "start_at": request["window"].start_at.isoformat(),
             "slot_minutes": int(request["slot_minutes"]),
             "slots": horizon_slots,
-            "price_per_kwh": self._rounded_series(optimizer_params["price_per_kwh"]),
+            "grid_import_price_per_kwh": self._rounded_series(
+                optimizer_params["grid_import_price_per_kwh"]
+            ),
+            "grid_export_price_per_kwh": self._rounded_series(
+                optimizer_params["grid_export_price_per_kwh"]
+            ),
             "usage_kwh": self._rounded_series(optimizer_params["usage_kwh"]),
             "solar_input_kwh": self._rounded_series(
                 optimizer_params["solar_input_kwh"]
@@ -1558,7 +1583,10 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             elif isinstance(first, (int, float)) and not isinstance(first, bool):
                 if key.endswith("_pct"):
                     aggregated.append(0.0)
-                elif key == "price_per_kwh":
+                elif key in {
+                    "grid_import_price_per_kwh",
+                    "grid_export_price_per_kwh",
+                }:
                     aggregated.append(
                         round(
                             sum(float(value) for value in chunk) / len(chunk),

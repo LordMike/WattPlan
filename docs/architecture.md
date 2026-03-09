@@ -24,8 +24,9 @@ The main runtime center is the coordinator:
 - `source_pipeline.py`, `source_provider.py`, `source_fixup.py`: Resolve raw source data and normalize it into planner-ready values.
 
 ## Source Handling
-WattPlan resolves three main source groups:
+WattPlan resolves four main source groups:
 - **Price**
+- **Export price**
 - **Usage**
 - **PV**
 
@@ -35,7 +36,7 @@ Each source can use different modes depending on the integration path. The sourc
 - Applying fixup/reuse behavior where supported
 - Distinguishing fatal planning failures from degraded-but-usable input states
 
-That distinction matters for PV in particular: some PV failures degrade planning quality without stopping the planner entirely.
+That distinction matters for PV and export price in particular: some failures degrade planning quality without stopping the planner entirely.
 
 ## Planning Flow
 The high-level planning flow looks like this:

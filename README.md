@@ -21,29 +21,31 @@ This documentation is intended for Home Assistant users, energy enthusiasts, and
 3. Search for `WattPlan` in HACS and install it.
 4. Restart Home Assistant.
 5. Go to `Settings` -> `Devices & Services` -> `Add Integration`, then add `WattPlan`.
-6. Configure a price source. This is the only required forecast source.
+6. Configure a price source. This is the only required forecast source and should reflect the real cost of buying from the grid.
 7. Optionally configure a load/usage source if you want WattPlan to plan against expected household consumption.
 8. Optionally configure a PV source if you have solar and want WattPlan to plan around it.
-9. Add [batteries, comfort loads, or optional loads](docs/extras.md) if you want WattPlan to control more than just forecasting.
-10. Make automations to apply the WattPlan actions, to your devices - such as setting batteries to charge, or starting your HVAC
+9. Optionally configure an export price source if you have PV and want exported power to carry a value instead of defaulting to zero.
+10. Add [batteries, comfort loads, or optional loads](docs/extras.md) if you want WattPlan to control more than just forecasting.
+11. Make automations to apply the WattPlan actions, to your devices - such as setting batteries to charge, or starting your HVAC
 
 ## Configuration Steps
 After installing WattPlan via HACS, configure the following:
 - **Price Source**: Required. Specify the source of your energy price data. This can be done using an entity adapter, service adapter, or template.
 - **Usage Source**: Optional. Define how WattPlan should gather usage data if you want consumption-aware planning.
 - **PV Source**: Optional. Set up your solar production data source if applicable.
+- **Export Price Source**: Optional. If PV is configured, you can provide a value for exported power. Otherwise WattPlan treats export value as zero.
 - **Optional Loads**: Optional. Configure any additional loads you wish to manage, such as batteries or comfort loads.
 
 ## Features
 - Home Assistant custom integration with HACS-ready release artifacts
-- Config-flow driven source setup for price, usage, and PV inputs
+- Config-flow driven source setup for import price, export price, usage, and PV inputs
 - Battery, comfort-load, and optional-load planning
 - Planned actions are exposed as entities, so you can easily use the results to do automations
 - Battery targets can be set and cleared through WattPlan services
 - GitHub Actions for CI, tagged releases, and prereleases
 
 ## Documentation
-- [docs/source-data.md](docs/source-data.md) - Source modes, data model, and how to feed WattPlan price, usage, and PV data
+- [docs/source-data.md](docs/source-data.md) - Source modes, data model, and how to feed WattPlan price, export price, usage, and PV data
 - [docs/example-deye-solcast-stromligning.md](docs/example-deye-solcast-stromligning.md) - Concrete end-to-end example using Strømligning, Deye, and Solcast
 - [docs/extras.md](docs/extras.md) - Batteries, comfort loads, optional loads, and how to wire WattPlan actions into your own automations
 - [docs/entities-and-services.md](docs/entities-and-services.md) - All exposed entities and services, including battery targets

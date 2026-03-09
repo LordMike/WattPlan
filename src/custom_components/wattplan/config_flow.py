@@ -70,7 +70,8 @@ from .const import (
     CONF_SLOT_MINUTES,
     CONF_SOC_SOURCE,
     CONF_SOURCE_MODE,
-    CONF_SOURCE_PRICE,
+    CONF_SOURCE_EXPORT_PRICE,
+    CONF_SOURCE_IMPORT_PRICE,
     CONF_SOURCE_PV,
     CONF_SOURCE_USAGE,
     CONF_SOURCES,
@@ -291,7 +292,11 @@ def _preferred_source_mode(
     the form default aligned with that guidance instead of falling back based only on
     whether "Not used" happens to be allowed on the step.
     """
-    if key == CONF_SOURCE_PRICE:
+    if key == CONF_SOURCE_IMPORT_PRICE:
+        return SOURCE_MODE_ENTITY_ADAPTER
+    if key == CONF_SOURCE_EXPORT_PRICE:
+        if include_not_used:
+            return SOURCE_MODE_NOT_USED
         return SOURCE_MODE_ENTITY_ADAPTER
     if key == CONF_SOURCE_USAGE:
         if include_built_in:
@@ -583,7 +588,6 @@ def _source_mode_summary(source: dict[str, Any] | None) -> str:
     if mode == SOURCE_MODE_NOT_USED:
         return "Not used"
     return "Not configured"
-
 
 async def _async_source_summary(
     hass: HomeAssistant,
@@ -1407,10 +1411,21 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Select the mode for the price source."""
         return await self._async_step_source_mode(
-            CONF_SOURCE_PRICE,
+            CONF_SOURCE_IMPORT_PRICE,
             user_input,
             include_not_used=False,
             step_id="source_price",
+        )
+
+    async def async_step_source_export_price(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Select the mode for the export price source."""
+        return await self._async_step_source_mode(
+            CONF_SOURCE_EXPORT_PRICE,
+            user_input,
+            include_not_used=True,
+            step_id="source_export_price",
         )
 
     async def async_step_source_usage(
@@ -1458,22 +1473,28 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             mode = user_input[CONF_SOURCE_MODE]
             if mode == SOURCE_MODE_TEMPLATE:
-                if key == CONF_SOURCE_PRICE:
+                if key == CONF_SOURCE_IMPORT_PRICE:
                     return await self.async_step_source_price_template()
+                if key == CONF_SOURCE_EXPORT_PRICE:
+                    return await self.async_step_source_export_price_template()
                 if key == CONF_SOURCE_USAGE:
                     return await self.async_step_source_usage_template()
                 return await self.async_step_source_pv_template()
 
             if mode == SOURCE_MODE_ENTITY_ADAPTER:
-                if key == CONF_SOURCE_PRICE:
+                if key == CONF_SOURCE_IMPORT_PRICE:
                     return await self.async_step_source_price_adapter()
+                if key == CONF_SOURCE_EXPORT_PRICE:
+                    return await self.async_step_source_export_price_adapter()
                 if key == CONF_SOURCE_USAGE:
                     return await self.async_step_source_usage_adapter()
                 return await self.async_step_source_pv_adapter()
 
             if mode == SOURCE_MODE_SERVICE_ADAPTER:
-                if key == CONF_SOURCE_PRICE:
+                if key == CONF_SOURCE_IMPORT_PRICE:
                     return await self.async_step_source_price_service()
+                if key == CONF_SOURCE_EXPORT_PRICE:
+                    return await self.async_step_source_export_price_service()
                 if key == CONF_SOURCE_USAGE:
                     return await self.async_step_source_usage_service()
                 return await self.async_step_source_pv_service()
@@ -1524,7 +1545,15 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Configure price source template."""
         return await self._async_step_source_template(
-            CONF_SOURCE_PRICE, user_input, step_id="source_price_template"
+            CONF_SOURCE_IMPORT_PRICE, user_input, step_id="source_price_template"
+        )
+
+    async def async_step_source_export_price_template(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Configure export price source template."""
+        return await self._async_step_source_template(
+            CONF_SOURCE_EXPORT_PRICE, user_input, step_id="source_export_price_template"
         )
 
     async def async_step_source_usage_template(
@@ -1582,7 +1611,15 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Configure price source adapter."""
         return await self._async_step_source_adapter(
-            CONF_SOURCE_PRICE, user_input, step_id="source_price_adapter"
+            CONF_SOURCE_IMPORT_PRICE, user_input, step_id="source_price_adapter"
+        )
+
+    async def async_step_source_export_price_adapter(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Configure export price source adapter."""
+        return await self._async_step_source_adapter(
+            CONF_SOURCE_EXPORT_PRICE, user_input, step_id="source_export_price_adapter"
         )
 
     async def async_step_source_usage_adapter(
@@ -1606,7 +1643,15 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Configure price source service adapter."""
         return await self._async_step_source_service(
-            CONF_SOURCE_PRICE, user_input, step_id="source_price_service"
+            CONF_SOURCE_IMPORT_PRICE, user_input, step_id="source_price_service"
+        )
+
+    async def async_step_source_export_price_service(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Configure export price source service adapter."""
+        return await self._async_step_source_service(
+            CONF_SOURCE_EXPORT_PRICE, user_input, step_id="source_export_price_service"
         )
 
     async def async_step_source_usage_service(
@@ -1811,7 +1856,9 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
     def _source_description_placeholders(self, key: str) -> dict[str, str]:
         """Return description placeholders for source steps."""
         source_label = "Price"
-        if key == CONF_SOURCE_USAGE:
+        if key == CONF_SOURCE_EXPORT_PRICE:
+            source_label = "Export price"
+        elif key == CONF_SOURCE_USAGE:
             source_label = "Usage"
         elif key == CONF_SOURCE_PV:
             source_label = "PV"
@@ -1965,15 +2012,23 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def _async_after_source_saved(self, key: str) -> ConfigFlowResult:
         """Continue to the next source or create the config entry."""
-        if key == CONF_SOURCE_PRICE:
+        if key == CONF_SOURCE_IMPORT_PRICE:
             return await self.async_step_source_usage()
         if key == CONF_SOURCE_USAGE:
             return await self.async_step_source_pv()
+        if key == CONF_SOURCE_PV:
+            pv_source = self._sources.get(CONF_SOURCE_PV, {})
+            if pv_source.get(CONF_SOURCE_MODE) == SOURCE_MODE_NOT_USED:
+                return await self.async_step_setup_complete()
+            return await self.async_step_source_export_price()
         return await self.async_step_setup_complete()
 
     def _is_final_source_step(self, key: str) -> bool:
         """Return if the source config step is the last one before create."""
-        return key == CONF_SOURCE_PV
+        if key == CONF_SOURCE_PV:
+            pv_source = self._sources.get(CONF_SOURCE_PV, {})
+            return pv_source.get(CONF_SOURCE_MODE) == SOURCE_MODE_NOT_USED
+        return key == CONF_SOURCE_EXPORT_PRICE
 
     async def async_step_setup_complete(
         self, user_input: dict[str, Any] | None = None
@@ -2000,7 +2055,10 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
                 "slot_minutes": str(self._core[CONF_SLOT_MINUTES]),
                 "plan_hours": str(self._core[CONF_HOURS_TO_PLAN]),
                 "price_source": _source_mode_summary(
-                    self._sources.get(CONF_SOURCE_PRICE)
+                    self._sources.get(CONF_SOURCE_IMPORT_PRICE)
+                ),
+                "export_price_source": _source_mode_summary(
+                    self._sources.get(CONF_SOURCE_EXPORT_PRICE)
                 ),
                 "usage_source": _source_mode_summary(
                     self._sources.get(CONF_SOURCE_USAGE)
@@ -2080,6 +2138,7 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
             "source_price",
             "source_usage",
             "source_pv",
+            "source_export_price",
         ]
         menu_options.append("planner_timers")
 
@@ -2176,10 +2235,21 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
     ) -> ConfigFlowResult:
         """Select mode for the price source in options."""
         return await self._async_step_source_options_mode(
-            CONF_SOURCE_PRICE,
+            CONF_SOURCE_IMPORT_PRICE,
             user_input,
             include_not_used=False,
             step_id="source_price",
+        )
+
+    async def async_step_source_export_price(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Select mode for the export price source in options."""
+        return await self._async_step_source_options_mode(
+            CONF_SOURCE_EXPORT_PRICE,
+            user_input,
+            include_not_used=True,
+            step_id="source_export_price",
         )
 
     async def async_step_source_usage(
@@ -2229,22 +2299,28 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
             mode = user_input[CONF_SOURCE_MODE]
 
             if mode == SOURCE_MODE_TEMPLATE:
-                if key == CONF_SOURCE_PRICE:
+                if key == CONF_SOURCE_IMPORT_PRICE:
                     return await self.async_step_source_price_template()
+                if key == CONF_SOURCE_EXPORT_PRICE:
+                    return await self.async_step_source_export_price_template()
                 if key == CONF_SOURCE_USAGE:
                     return await self.async_step_source_usage_template()
                 return await self.async_step_source_pv_template()
 
             if mode == SOURCE_MODE_ENTITY_ADAPTER:
-                if key == CONF_SOURCE_PRICE:
+                if key == CONF_SOURCE_IMPORT_PRICE:
                     return await self.async_step_source_price_adapter()
+                if key == CONF_SOURCE_EXPORT_PRICE:
+                    return await self.async_step_source_export_price_adapter()
                 if key == CONF_SOURCE_USAGE:
                     return await self.async_step_source_usage_adapter()
                 return await self.async_step_source_pv_adapter()
 
             if mode == SOURCE_MODE_SERVICE_ADAPTER:
-                if key == CONF_SOURCE_PRICE:
+                if key == CONF_SOURCE_IMPORT_PRICE:
                     return await self.async_step_source_price_service()
+                if key == CONF_SOURCE_EXPORT_PRICE:
+                    return await self.async_step_source_export_price_service()
                 if key == CONF_SOURCE_USAGE:
                     return await self.async_step_source_usage_service()
                 return await self.async_step_source_pv_service()
@@ -2293,9 +2369,19 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
     ) -> ConfigFlowResult:
         """Edit price source template in options."""
         return await self._async_step_source_template_options(
-            CONF_SOURCE_PRICE,
+            CONF_SOURCE_IMPORT_PRICE,
             user_input,
             step_id="source_price_template",
+        )
+
+    async def async_step_source_export_price_template(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Edit export price source template in options."""
+        return await self._async_step_source_template_options(
+            CONF_SOURCE_EXPORT_PRICE,
+            user_input,
+            step_id="source_export_price_template",
         )
 
     async def async_step_source_usage_template(
@@ -2357,9 +2443,19 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
     ) -> ConfigFlowResult:
         """Edit price source adapter in options."""
         return await self._async_step_source_adapter_options(
-            CONF_SOURCE_PRICE,
+            CONF_SOURCE_IMPORT_PRICE,
             user_input,
             step_id="source_price_adapter",
+        )
+
+    async def async_step_source_export_price_adapter(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Edit export price source adapter in options."""
+        return await self._async_step_source_adapter_options(
+            CONF_SOURCE_EXPORT_PRICE,
+            user_input,
+            step_id="source_export_price_adapter",
         )
 
     async def async_step_source_usage_adapter(
@@ -2387,9 +2483,19 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
     ) -> ConfigFlowResult:
         """Edit price source service adapter in options."""
         return await self._async_step_source_service_options(
-            CONF_SOURCE_PRICE,
+            CONF_SOURCE_IMPORT_PRICE,
             user_input,
             step_id="source_price_service",
+        )
+
+    async def async_step_source_export_price_service(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Edit export price source service adapter in options."""
+        return await self._async_step_source_service_options(
+            CONF_SOURCE_EXPORT_PRICE,
+            user_input,
+            step_id="source_export_price_service",
         )
 
     async def async_step_source_usage_service(
@@ -2592,7 +2698,9 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
     def _source_description_placeholders(self, key: str) -> dict[str, str]:
         """Return description placeholders for source steps."""
         source_label = "Price"
-        if key == CONF_SOURCE_USAGE:
+        if key == CONF_SOURCE_EXPORT_PRICE:
+            source_label = "Export price"
+        elif key == CONF_SOURCE_USAGE:
             source_label = "Usage"
         elif key == CONF_SOURCE_PV:
             source_label = "PV"

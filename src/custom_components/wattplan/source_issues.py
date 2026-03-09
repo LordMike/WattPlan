@@ -17,7 +17,8 @@ from .const import (
     CONF_EDGE_FILL_MODE,
     CONF_FIXUP_PROFILE,
     CONF_RESAMPLE_MODE,
-    CONF_SOURCE_PRICE,
+    CONF_SOURCE_EXPORT_PRICE,
+    CONF_SOURCE_IMPORT_PRICE,
     CONF_SOURCE_PV,
     CONF_SOURCE_USAGE,
     CONF_SOURCES,
@@ -45,7 +46,8 @@ def source_issue_id(entry_id: str, source_key: str, kind: str) -> str:
 def source_display_name(source_key: str) -> str:
     """Return a user-facing source label."""
     return {
-        CONF_SOURCE_PRICE: "price forecast",
+        CONF_SOURCE_IMPORT_PRICE: "price forecast",
+        CONF_SOURCE_EXPORT_PRICE: "export price forecast",
         CONF_SOURCE_USAGE: "load forecast",
         CONF_SOURCE_PV: "solar forecast",
     }.get(source_key, source_key)
@@ -54,7 +56,8 @@ def source_display_name(source_key: str) -> str:
 def source_display_title(source_key: str) -> str:
     """Return a title-cased source label for issue headings."""
     return {
-        CONF_SOURCE_PRICE: "Price forecast",
+        CONF_SOURCE_IMPORT_PRICE: "Price forecast",
+        CONF_SOURCE_EXPORT_PRICE: "Export price forecast",
         CONF_SOURCE_USAGE: "Load forecast",
         CONF_SOURCE_PV: "Solar forecast",
     }.get(source_key, source_key.title())
@@ -131,7 +134,12 @@ def sync_source_issues(
 ) -> None:
     """Replace the current set of source issues for one config entry."""
     keep = {source_issue_id(entry_id, issue.source_key, issue.kind) for issue in issues}
-    for source_key in (CONF_SOURCE_PRICE, CONF_SOURCE_USAGE, CONF_SOURCE_PV):
+    for source_key in (
+        CONF_SOURCE_IMPORT_PRICE,
+        CONF_SOURCE_EXPORT_PRICE,
+        CONF_SOURCE_USAGE,
+        CONF_SOURCE_PV,
+    ):
         for issue_id in source_issue_ids(entry_id, source_key):
             if issue_id not in keep:
                 ir.async_delete_issue(hass, DOMAIN, issue_id)

@@ -176,12 +176,13 @@ WattPlan can raise Home Assistant Repairs issues when a configured source is not
 
 | Issue shown in Repairs | When it appears | What it means |
 | --- | --- | --- |
-| `<Source> forecast is unavailable for <setup_name>` | A price, usage, or PV source throws an exception or returns no data at all. | WattPlan could not get fresh data from the configured source. |
+| `<Source> forecast is unavailable for <setup_name>` | A price, export price, usage, or PV source throws an exception or returns no data at all. | WattPlan could not get fresh data from the configured source. |
 | `<Source> forecast does not cover the horizon for <setup_name>` | A source returns some data, but after normal normalization and fill behavior it still does not cover the planning horizon. | WattPlan got data, but not enough to plan the full requested window. |
 
 These issues are emitted per source type:
 
 - price forecast
+- export price forecast
 - usage forecast
 - solar forecast
 
@@ -200,6 +201,8 @@ Planner consequence:
 
 - price or usage source unavailable:
   - planning will stop once any last successful source data is no longer usable
+- export price source unavailable:
+  - planning continues, but exported power is treated as having zero value
 - solar source unavailable:
   - planning can continue for a while using the last successful solar data, but later plans will lose solar input once that data is no longer usable
 
@@ -223,6 +226,8 @@ Planner consequence:
 
 - price or usage source incomplete:
   - planning will stop once the remaining usable data is exhausted
+- export price source incomplete:
+  - planning continues, but exported power is treated as having zero value for the missing period
 - solar source incomplete:
   - planning can continue for a while, but later parts of the plan will lose solar input once the remaining usable data runs out
 

@@ -17,6 +17,7 @@ from homeassistant.util import slugify
 
 from .const import (
     CONF_SOURCE_MODE,
+    CONF_SOURCE_EXPORT_PRICE,
     CONF_SOURCE_PV,
     CONF_SOURCES,
     DOMAIN,
@@ -112,7 +113,12 @@ class ErrorBinarySensor(WattPlanBinarySensor):
             StageErrorKind.LOCKED,
         }
 
-        if self._scope in {"source_price", "source_usage", "source_pv"}:
+        if self._scope in {
+            "source_import_price",
+            "source_export_price",
+            "source_usage",
+            "source_pv",
+        }:
             expected_source = self._scope.removeprefix("source_")
             return plan_kind in source_error_kinds and plan_source == expected_source
 
@@ -150,10 +156,10 @@ async def async_setup_entry(
         ErrorBinarySensor(
             config_entry,
             coordinator,
-            scope="source_price",
+            scope="source_import_price",
             enabled_default=False,
-            object_id=f"{entry_slug}_source_price_error",
-            unique_id=f"{config_entry.entry_id}:entry:source_price_error",
+            object_id=f"{entry_slug}_source_import_price_error",
+            unique_id=f"{config_entry.entry_id}:entry:source_import_price_error",
         ),
         ErrorBinarySensor(
             config_entry,
@@ -172,7 +178,21 @@ async def async_setup_entry(
             unique_id=f"{config_entry.entry_id}:entry:optimize_error",
         ),
     ]
-    pv_source = config_entry.data.get(CONF_SOURCES, {}).get(CONF_SOURCE_PV, {})
+    sources = config_entry.data.get(CONF_SOURCES, {})
+    export_source = sources.get(CONF_SOURCE_EXPORT_PRICE, {})
+    if export_source.get(CONF_SOURCE_MODE) != SOURCE_MODE_NOT_USED:
+        entities.append(
+            ErrorBinarySensor(
+                config_entry,
+                coordinator,
+                scope="source_export_price",
+                enabled_default=False,
+                object_id=f"{entry_slug}_source_export_price_error",
+                unique_id=f"{config_entry.entry_id}:entry:source_export_price_error",
+            )
+        )
+
+    pv_source = sources.get(CONF_SOURCE_PV, {})
     if pv_source.get(CONF_SOURCE_MODE) != SOURCE_MODE_NOT_USED:
         entities.append(
             ErrorBinarySensor(

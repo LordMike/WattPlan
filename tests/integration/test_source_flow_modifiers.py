@@ -26,7 +26,7 @@ from custom_components.wattplan.const import (
     CONF_SERVICE,
     CONF_SLOT_MINUTES,
     CONF_SOURCE_MODE,
-    CONF_SOURCE_PRICE,
+    CONF_SOURCE_IMPORT_PRICE,
     CONF_SOURCE_PV,
     CONF_SOURCE_USAGE,
     CONF_SOURCES,
@@ -136,7 +136,7 @@ async def test_config_flow_persists_price_template_modifiers(
     """Test that source modifiers persist from config flow template step."""
     entry = await _create_entry_with_price_template(hass)
 
-    price = entry.data[CONF_SOURCES][CONF_SOURCE_PRICE]
+    price = entry.data[CONF_SOURCES][CONF_SOURCE_IMPORT_PRICE]
     assert price[CONF_SOURCE_MODE] == SOURCE_MODE_TEMPLATE
     assert price[CONF_AGGREGATION_MODE] == AGGREGATION_MODE_MIN
     assert price[CONF_CLAMP_MODE] == CLAMP_MODE_NEAREST
@@ -193,7 +193,7 @@ async def test_options_flow_persists_price_adapter_modifiers(
 
     updated = hass.config_entries.async_get_entry(entry.entry_id)
     assert updated is not None
-    price = updated.data[CONF_SOURCES][CONF_SOURCE_PRICE]
+    price = updated.data[CONF_SOURCES][CONF_SOURCE_IMPORT_PRICE]
     assert price[CONF_SOURCE_MODE] == SOURCE_MODE_ENTITY_ADAPTER
     assert price[CONF_ADAPTER_TYPE] == ADAPTER_TYPE_ATTRIBUTE_VALUES
     assert price[CONF_NAME] == "prices"
@@ -292,7 +292,7 @@ async def test_config_flow_auto_detects_entity_adapter(
     assert result["type"] is FlowResultType.CREATE_ENTRY
 
     entry = hass.config_entries.async_entries(DOMAIN)[0]
-    price = entry.data[CONF_SOURCES][CONF_SOURCE_PRICE]
+    price = entry.data[CONF_SOURCES][CONF_SOURCE_IMPORT_PRICE]
     assert price[CONF_SOURCE_MODE] == SOURCE_MODE_ENTITY_ADAPTER
     assert price["entity_id"] == ["sensor.first", "sensor.second"]
     assert price[CONF_ADAPTER_TYPE] == ADAPTER_TYPE_ATTRIBUTE_OBJECTS
@@ -378,7 +378,7 @@ async def test_config_flow_persists_explicit_multi_entity_adapter(
     assert result["type"] is FlowResultType.CREATE_ENTRY
 
     entry = hass.config_entries.async_entries(DOMAIN)[0]
-    price = entry.data[CONF_SOURCES][CONF_SOURCE_PRICE]
+    price = entry.data[CONF_SOURCES][CONF_SOURCE_IMPORT_PRICE]
     assert price["entity_id"] == ["sensor.today", "sensor.tomorrow"]
     assert price[CONF_NAME] == "detailedForecast"
     assert price["time_key"] == "period_start"
@@ -447,7 +447,7 @@ async def test_options_flow_auto_detects_service_adapter(
 
     updated = hass.config_entries.async_get_entry(entry.entry_id)
     assert updated is not None
-    price = updated.data[CONF_SOURCES][CONF_SOURCE_PRICE]
+    price = updated.data[CONF_SOURCES][CONF_SOURCE_IMPORT_PRICE]
     assert price[CONF_SOURCE_MODE] == SOURCE_MODE_SERVICE_ADAPTER
     assert price[CONF_SERVICE] == "test.prices"
     assert price[CONF_ADAPTER_TYPE] == ADAPTER_TYPE_SERVICE_RESPONSE
