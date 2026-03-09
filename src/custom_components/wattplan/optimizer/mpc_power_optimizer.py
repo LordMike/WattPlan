@@ -101,7 +101,8 @@ def _charge_source_permissions(entity):
 
 def _build_reuse_plan(
     previous_state,
-    prices,
+    grid_import_prices,
+    grid_export_prices,
     solar_input,
     usage,
     total_steps,
@@ -116,7 +117,7 @@ def _build_reuse_plan(
         return None
 
     old_steps = previous_state.num_steps
-    old_prices = previous_state.prices
+    old_prices = previous_state.grid_import_prices
     old_solar = previous_state.solar_input
     old_usage = previous_state.usage
     battery_charge = previous_state.battery_charge
@@ -151,7 +152,16 @@ def _build_reuse_plan(
 
         if not np.allclose(
             old_prices[offset_steps : offset_steps + overlap_steps],
-            prices[:overlap_steps],
+            grid_import_prices[:overlap_steps],
+            atol=1e-9,
+            rtol=0.0,
+        ):
+            continue
+        if not np.allclose(
+            previous_state.grid_export_prices[
+                offset_steps : offset_steps + overlap_steps
+            ],
+            grid_export_prices[:overlap_steps],
             atol=1e-9,
             rtol=0.0,
         ):
@@ -319,6 +329,7 @@ class _IndexBuilder:
 def _solve_mpc_step(
     base_timeslot,
     prices_h,
+    grid_export_prices_h,
     usage_h,
     solar_h,
     battery_entities,
@@ -358,7 +369,8 @@ def _solve_mpc_step(
             }
         )
 
-    grid = idx.add(horizon)
+    grid_import = idx.add(horizon)
+    grid_export = idx.add(horizon)
     n_vars = idx.offset
 
     bounds = [(0.0, None) for _ in range(n_vars)]
@@ -366,7 +378,12 @@ def _solve_mpc_step(
     objective = np.zeros(n_vars, dtype=np.float64)
 
     for t in range(horizon):
-        objective[grid.start + t] = max(float(prices_h[t]), 0.0)
+        objective[grid_import.start + t] = max(float(prices_h[t]), 0.0)
+        objective[grid_export.start + t] = -max(float(grid_export_prices_h[t]), 0.0)
+        bounds[grid_export.start + t] = (
+            0.0,
+            max(float(solar_h[t]) - float(usage_h[t]), 0.0),
+        )
 
     penalty_battery_min = 0.0
     penalty_battery_target = 5000.0
@@ -535,7 +552,8 @@ def _solve_mpc_step(
 
     for t in range(horizon):
         row = np.zeros(n_vars, dtype=np.float64)
-        row[grid.start + t] = -1.0
+        row[grid_import.start + t] = -1.0
+        row[grid_export.start + t] = 1.0
 
         for b in range(num_battery):
             row[battery_vars[b]["charge_grid"].start + t] += 1.0
@@ -545,8 +563,8 @@ def _solve_mpc_step(
         for c, entity in enumerate(comfort_entities):
             row[comfort_vars[c]["on"].start + t] += float(entity.power_usage_kwh)
 
-        A_ub.append(row)
-        b_ub.append(float(solar_h[t]) - float(usage_h[t]))
+        A_eq.append(row)
+        b_eq.append(float(solar_h[t]) - float(usage_h[t]))
 
     for t in range(horizon):
         row = np.zeros(n_vars, dtype=np.float64)
@@ -599,6 +617,7 @@ def _apply_controls_step(
     t,
     controls,
     prices,
+    grid_export_prices,
     solar_input,
     usage,
     battery_entities,
@@ -728,11 +747,26 @@ def _apply_controls_step(
         charge_grid_amounts,
         charge_pv_amounts,
         discharge_amounts,
+        max(
+            float(solar_input[t])
+            - (
+                float(usage[t])
+                + comfort_energy
+                + float(np.sum(charge_pv_amounts))
+            ),
+            0.0,
+        ),
     )
 
 
 def _run_mpc(
-    prices, solar_input, usage, battery_entities, comfort_entities, reuse_plan
+    prices,
+    grid_export_prices,
+    solar_input,
+    usage,
+    battery_entities,
+    comfort_entities,
+    reuse_plan,
 ):
     num_battery = len(battery_entities)
     num_comfort = len(comfort_entities)
@@ -747,6 +781,7 @@ def _run_mpc(
     battery_charge_grid = np.zeros((num_battery, total_steps), dtype=np.float64)
     battery_charge_pv = np.zeros((num_battery, total_steps), dtype=np.float64)
     battery_discharge = np.zeros((num_battery, total_steps), dtype=np.float64)
+    grid_export = np.zeros(total_steps, dtype=np.float64)
     comfort_on = np.zeros((num_comfort, total_steps), dtype=np.float64)
     comfort_lock_mode_series = np.zeros((num_comfort, total_steps), dtype=np.float64)
     comfort_lock_remaining_series = np.zeros(
@@ -831,6 +866,7 @@ def _run_mpc(
             solve_result = _solve_mpc_step(
                 base_timeslot=t,
                 prices_h=prices[t : t + horizon],
+                grid_export_prices_h=grid_export_prices[t : t + horizon],
                 usage_h=usage_h,
                 solar_h=solar_input[t : t + horizon],
                 battery_entities=battery_entities,
@@ -880,10 +916,12 @@ def _run_mpc(
             battery_charge_grid[:, t],
             battery_charge_pv[:, t],
             battery_discharge[:, t],
+            grid_export[t],
         ) = _apply_controls_step(
             t=t,
             controls=controls,
             prices=prices,
+            grid_export_prices=grid_export_prices,
             solar_input=solar_input,
             usage=usage,
             battery_entities=battery_entities,
@@ -931,6 +969,7 @@ def _run_mpc(
         "battery_charge_grid": battery_charge_grid,
         "battery_charge_pv": battery_charge_pv,
         "battery_discharge": battery_discharge,
+        "grid_export": grid_export,
         "comfort_on": comfort_on,
         "comfort_lock_mode": comfort_lock_mode_series,
         "comfort_lock_remaining": comfort_lock_remaining_series,
@@ -941,6 +980,7 @@ def _run_mpc(
 
 def _score_schedule(
     prices,
+    grid_export_prices,
     solar_input,
     usage,
     battery_entities,
@@ -955,6 +995,7 @@ def _score_schedule(
     total_steps = len(prices)
     total_price = 0.0
     total_grid_kwh = 0.0
+    total_export_kwh = 0.0
     projected_cost_per_slot = []
     penalty = 0.0
     reasons = set()
@@ -982,9 +1023,14 @@ def _score_schedule(
                 reasons.add("battery_min_unmet")
 
         net_grid_import = max(total_usage - float(solar_input[t]), 0.0)
-        slot_projected_cost = float(prices[t]) * net_grid_import
+        net_grid_export = max(float(solar_input[t]) - total_usage, 0.0)
+        slot_projected_cost = (
+            float(prices[t]) * net_grid_import
+            - float(grid_export_prices[t]) * net_grid_export
+        )
         total_price += slot_projected_cost
         total_grid_kwh += net_grid_import
+        total_export_kwh += net_grid_export
         projected_cost_per_slot.append(float(slot_projected_cost))
 
     for i, entity in enumerate(battery_entities):
@@ -1068,14 +1114,20 @@ def _baseline_net_import(
     return baseline
 
 
-def _optional_entity_options(entity, prices, baseline_net_import):
+def _baseline_cost_per_slot(grid_import_prices, grid_export_prices, usage, solar_input):
+    net_import = np.maximum(usage - solar_input, 0.0)
+    net_export = np.maximum(solar_input - usage, 0.0)
+    return grid_import_prices * net_import - grid_export_prices * net_export
+
+
+def _optional_entity_options(entity, grid_import_prices, baseline_net_import):
     duration = entity.duration_timeslots
     profile = entity.energy_profile
     candidates = []
     for start_timeslot in range(entity.start_min, entity.start_max + 1):
         base_slice = baseline_net_import[start_timeslot : start_timeslot + duration]
         loaded_slice = base_slice + profile
-        price_slice = prices[start_timeslot : start_timeslot + duration]
+        price_slice = grid_import_prices[start_timeslot : start_timeslot + duration]
         base_cost = np.where(
             price_slice < 0.0,
             price_slice * base_slice,
@@ -1119,7 +1171,8 @@ def _optional_entity_options(entity, prices, baseline_net_import):
 
 def optimize_internal(normalized: CalculationInput):
     total_steps = normalized.total_steps
-    prices = normalized.prices
+    grid_import_prices = normalized.grid_import_prices
+    grid_export_prices = normalized.grid_export_prices
     solar_input = normalized.solar_input
     usage = normalized.usage
     battery_entities = normalized.battery_entities
@@ -1129,7 +1182,8 @@ def optimize_internal(normalized: CalculationInput):
     previous_state = normalized.state
     reuse_plan = _build_reuse_plan(
         previous_state=previous_state,
-        prices=prices,
+        grid_import_prices=grid_import_prices,
+        grid_export_prices=grid_export_prices,
         solar_input=solar_input,
         usage=usage,
         total_steps=total_steps,
@@ -1140,7 +1194,8 @@ def optimize_internal(normalized: CalculationInput):
 
     start_time = time.time()
     result = _run_mpc(
-        prices,
+        grid_import_prices,
+        grid_export_prices,
         solar_input,
         usage,
         battery_entities,
@@ -1151,7 +1206,8 @@ def optimize_internal(normalized: CalculationInput):
 
     fitness, avg_price, reasons, projected_cost, projected_cost_per_slot = (
         _score_schedule(
-            prices=prices,
+            prices=grid_import_prices,
+            grid_export_prices=grid_export_prices,
             solar_input=solar_input,
             usage=usage,
             battery_entities=battery_entities,
@@ -1164,8 +1220,14 @@ def optimize_internal(normalized: CalculationInput):
             comfort_enabled=result["comfort_enabled"],
         )
     )
-    baseline_cost = float(np.sum(prices * usage))
-    baseline_cost_per_slot = [float(v) for v in (prices * usage)]
+    baseline_cost_array = _baseline_cost_per_slot(
+        grid_import_prices=grid_import_prices,
+        grid_export_prices=grid_export_prices,
+        usage=usage,
+        solar_input=solar_input,
+    )
+    baseline_cost = float(np.sum(baseline_cost_array))
+    baseline_cost_per_slot = [float(v) for v in baseline_cost_array]
     per_slot = []
     for baseline_slot, projected_slot in zip(
         baseline_cost_per_slot, projected_cost_per_slot
@@ -1244,7 +1306,7 @@ def optimize_internal(normalized: CalculationInput):
                 "name": optional.name,
                 "options": _optional_entity_options(
                     entity=optional,
-                    prices=prices,
+                    grid_import_prices=grid_import_prices,
                     baseline_net_import=baseline_net_import,
                 ),
             }
@@ -1254,7 +1316,8 @@ def optimize_internal(normalized: CalculationInput):
         "v": 1,
         "num_steps": int(total_steps),
         "entity_fingerprint": fingerprint,
-        "price_per_kwh": prices.tolist(),
+        "grid_import_price_per_kwh": grid_import_prices.tolist(),
+        "grid_export_price_per_kwh": grid_export_prices.tolist(),
         "solar_input_kwh": solar_input.tolist(),
         "usage_kwh": usage.tolist(),
         "battery_charge": result["battery_charge"].tolist(),

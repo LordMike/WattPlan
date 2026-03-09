@@ -114,7 +114,7 @@ def convert_eos_request(payload: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("no battery entities found (expected pv_akku and/or eauto)")
 
     return {
-        "price_per_kwh": [value * 1000.0 for value in prices_eur_per_wh],
+        "grid_import_price_per_kwh": [value * 1000.0 for value in prices_eur_per_wh],
         "solar_input_kwh": [value / 1000.0 for value in solar_wh],
         "usage_kwh": [value / 1000.0 for value in usage_wh],
         "battery_entities": battery_entities,

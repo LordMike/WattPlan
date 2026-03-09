@@ -276,8 +276,16 @@ class OptionalEntityParams(BaseModel):
 class OptimizationParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    price_per_kwh: List[float] = Field(
-        ..., description="List of electricity prices (in currency per kWh)."
+    grid_import_price_per_kwh: List[float] = Field(
+        ...,
+        description="List of grid import prices (in currency per kWh).",
+    )
+    grid_export_price_per_kwh: List[float] = Field(
+        default_factory=list,
+        description=(
+            "Optional list of grid export prices (currency per kWh). "
+            "Defaults to all-zero values over the planning horizon."
+        ),
     )
     solar_input_kwh: List[float] = Field(
         default_factory=list, description="Expected solar input (in kWh)."
@@ -305,9 +313,11 @@ class OptimizationParams(BaseModel):
         description="Opaque optimizer state from a previous run (base64).",
     )
 
-    @field_validator("price_per_kwh")
+    @field_validator("grid_import_price_per_kwh", "grid_export_price_per_kwh")
     @classmethod
     def _validate_prices(cls, values):
+        if len(values) == 0:
+            return values
         if len(values) < 4 or len(values) > 672:
             raise ValueError("must contain between 4 and 672 timeslots")
         for value in values:
@@ -347,15 +357,24 @@ class OptimizationParams(BaseModel):
 
     @model_validator(mode="after")
     def _validate_cross_field_consistency(self):
-        horizon = len(self.price_per_kwh)
+        horizon = len(self.grid_import_price_per_kwh)
         solve_horizon = min(SOLVE_HORIZON_SLOTS, horizon)
+        if len(self.grid_export_price_per_kwh) == 0:
+            self.grid_export_price_per_kwh = [0.0] * horizon
+        elif len(self.grid_export_price_per_kwh) != horizon:
+            raise ValueError(
+                "grid_export_price_per_kwh length must match "
+                f"grid_import_price_per_kwh length ({horizon})"
+            )
         if len(self.solar_input_kwh) != horizon:
             raise ValueError(
-                f"solar_input_kwh length must match price_per_kwh length ({horizon})"
+                "solar_input_kwh length must match "
+                f"grid_import_price_per_kwh length ({horizon})"
             )
         if len(self.usage_kwh) != horizon:
             raise ValueError(
-                f"usage_kwh length must match price_per_kwh length ({horizon})"
+                "usage_kwh length must match "
+                f"grid_import_price_per_kwh length ({horizon})"
             )
 
         names = set()
@@ -484,7 +503,8 @@ class NormalizedOptionalEntity:
 class NormalizedState:
     num_steps: int
     entity_fingerprint: str
-    prices: np.ndarray
+    grid_import_prices: np.ndarray
+    grid_export_prices: np.ndarray
     solar_input: np.ndarray
     usage: np.ndarray
     battery_charge: np.ndarray
@@ -499,7 +519,8 @@ class NormalizedState:
 @dataclass(frozen=True)
 class CalculationInput:
     total_steps: int
-    prices: np.ndarray
+    grid_import_prices: np.ndarray
+    grid_export_prices: np.ndarray
     solar_input: np.ndarray
     usage: np.ndarray
     rolling_window_slots: int
@@ -571,7 +592,13 @@ def _parse_state_blob(state_blob):
 
     try:
         num_steps = int(obj["num_steps"])
-        prices = np.asarray(obj["price_per_kwh"], dtype=np.float64)
+        grid_import_prices = np.asarray(
+            obj["grid_import_price_per_kwh"], dtype=np.float64
+        )
+        grid_export_prices = np.asarray(
+            obj.get("grid_export_price_per_kwh", np.zeros(num_steps, dtype=np.float64)),
+            dtype=np.float64,
+        )
         solar_input = np.asarray(obj["solar_input_kwh"], dtype=np.float64)
         usage = np.asarray(obj["usage_kwh"], dtype=np.float64)
         battery_charge = np.asarray(obj["battery_charge"], dtype=np.float64)
@@ -604,8 +631,10 @@ def _parse_state_blob(state_blob):
     if comfort_lock_remaining.ndim == 1 and comfort_lock_remaining.size == 0:
         comfort_lock_remaining = comfort_lock_remaining.reshape(0, num_steps)
 
-    if prices.shape != (num_steps,):
-        raise ValueError("state.price_per_kwh shape mismatch")
+    if grid_import_prices.shape != (num_steps,):
+        raise ValueError("state.grid_import_price_per_kwh shape mismatch")
+    if grid_export_prices.shape != (num_steps,):
+        raise ValueError("state.grid_export_price_per_kwh shape mismatch")
     if solar_input.shape != (num_steps,):
         raise ValueError("state.solar_input_kwh shape mismatch")
     if usage.shape != (num_steps,):
@@ -626,7 +655,8 @@ def _parse_state_blob(state_blob):
         raise ValueError("state.comfort_lock_remaining shape mismatch")
 
     for series_name, series in (
-        ("price_per_kwh", prices),
+        ("grid_import_price_per_kwh", grid_import_prices),
+        ("grid_export_price_per_kwh", grid_export_prices),
         ("solar_input_kwh", solar_input),
         ("usage_kwh", usage),
         ("battery_charge", battery_charge),
@@ -643,7 +673,8 @@ def _parse_state_blob(state_blob):
     return NormalizedState(
         num_steps=num_steps,
         entity_fingerprint=str(obj["entity_fingerprint"]),
-        prices=prices,
+        grid_import_prices=grid_import_prices,
+        grid_export_prices=grid_export_prices,
         solar_input=solar_input,
         usage=usage,
         battery_charge=battery_charge,
@@ -657,8 +688,9 @@ def _parse_state_blob(state_blob):
 
 
 def normalize_calculation_input(params: OptimizationParams):
-    total_steps = len(params.price_per_kwh)
-    prices = np.asarray(params.price_per_kwh, dtype=np.float64)
+    total_steps = len(params.grid_import_price_per_kwh)
+    grid_import_prices = np.asarray(params.grid_import_price_per_kwh, dtype=np.float64)
+    grid_export_prices = np.asarray(params.grid_export_price_per_kwh, dtype=np.float64)
     solar_input = np.asarray(params.solar_input_kwh, dtype=np.float64)
     usage = np.asarray(params.usage_kwh, dtype=np.float64)
 
@@ -737,7 +769,8 @@ def normalize_calculation_input(params: OptimizationParams):
 
     return CalculationInput(
         total_steps=total_steps,
-        prices=prices,
+        grid_import_prices=grid_import_prices,
+        grid_export_prices=grid_export_prices,
         solar_input=solar_input,
         usage=usage,
         rolling_window_slots=int(params.rolling_window_slots),

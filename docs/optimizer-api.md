@@ -31,16 +31,17 @@ result = optimize(params)
 ## Request Model (`OptimizationParams`)
 | Field | Type | Required | Default | Constraints | Notes |
 |---|---|---:|---|---|---|
-| `price_per_kwh` | `list[float]` | Yes | - | Length `4..672`, finite values | Horizon driver (timeslot count). |
-| `solar_input_kwh` | `list[float]` | Yes* | `[]` | Must match `len(price_per_kwh)`, finite, `>= 0` | Per-timeslot PV forecast (kWh per timeslot). |
-| `usage_kwh` | `list[float]` | Yes* | `[]` | Must match `len(price_per_kwh)`, finite, `>= 0` | Per-timeslot base load forecast (kWh per timeslot). |
+| `grid_import_price_per_kwh` | `list[float]` | Yes | - | Length `4..672`, finite values | Horizon driver (timeslot count). |
+| `grid_export_price_per_kwh` | `list[float]` | No | `[]` -> all zeros | Empty or must match `len(grid_import_price_per_kwh)`, finite values | Per-timeslot grid export price. Zero means exported surplus has no monetary value. |
+| `solar_input_kwh` | `list[float]` | Yes* | `[]` | Must match `len(grid_import_price_per_kwh)`, finite, `>= 0` | Per-timeslot PV forecast (kWh per timeslot). |
+| `usage_kwh` | `list[float]` | Yes* | `[]` | Must match `len(grid_import_price_per_kwh)`, finite, `>= 0` | Per-timeslot base load forecast (kWh per timeslot). |
 | `rolling_window_slots` | `int` | No | `24` | `>= 1` | Slot count used for comfort rolling-window ON accounting. |
 | `battery_entities` | `list[BatteryEntityParams]` | Yes | - | May be empty | Main controllable storage entities. |
 | `comfort_entities` | `list[ComfortEntityParams]` | Yes | - | May be empty | Required-but-shiftable comfort entities. |
 | `optional_entities` | `list[OptionalEntityParams]` | No | `[]` | Fully validated for feasibility | Advisory start-time options only. |
 | `state` | `str \| None` | No | `None` | Valid base64 JSON object, version `v=1` | Opaque carry-over state from previous call. |
 
-\* For direct optimizer API use, `solar_input_kwh` and `usage_kwh` must still match the length of `price_per_kwh` when supplied. The Home Assistant integration can synthesize or omit these sources before calling the optimizer.
+\* For direct optimizer API use, `solar_input_kwh` and `usage_kwh` must still match the length of `grid_import_price_per_kwh` when supplied. The Home Assistant integration can synthesize or omit these sources before calling the optimizer.
 
 **Additional Global Constraints:**
 - Unknown fields are rejected (`extra="forbid"`).
@@ -115,9 +116,10 @@ Optional entities provide advisory start-time suggestions and do not change the 
 ```jsonc
 {
   // 8 timeslots (for docs brevity). Real integrations usually use more.
-  "price_per_kwh":      [0.34, 0.31, 0.28, 0.22, 0.18, 0.21, 0.30, 0.42],
-  "solar_input_kwh": [0.0,  0.1,  0.5,  1.0,  0.8,  0.3,  0.0,  0.0],
-  "usage_kwh":       [1.2,  1.1,  1.0,  0.9,  1.0,  1.2,  1.3,  1.4],
+  "grid_import_price_per_kwh": [0.34, 0.31, 0.28, 0.22, 0.18, 0.21, 0.30, 0.42],
+  "grid_export_price_per_kwh": [0.00, 0.00, 0.05, 0.08, 0.10, 0.08, 0.02, 0.00],
+  "solar_input_kwh":       [0.0,  0.1,  0.5,  1.0,  0.8,  0.3,  0.0,  0.0],
+  "usage_kwh":             [1.2,  1.1,  1.0,  0.9,  1.0,  1.2,  1.3,  1.4],
   "rolling_window_slots": 96,
 
   // Controllable storage: can charge/discharge/hold and absorb PV surplus.
@@ -211,8 +213,8 @@ Optional entities provide advisory start-time suggestions and do not change the 
 - Optional entities do not affect each other and do not modify `entities`.
 
 ### `projections` Fields
-- `baseline_cost`: `sum(price_per_kwh[t] * usage_kwh[t])` across the horizon.
-- `projected_cost`: Projected import cost for the optimized schedule.
+- `baseline_cost`: Baseline net energy cost across the horizon, including export revenue when `grid_export_price_per_kwh` is provided.
+- `projected_cost`: Projected net cost for the optimized schedule (`grid imports - grid export revenue`).
 - `projected_savings_cost`: `baseline_cost - projected_cost`.
 - `projected_savings_pct`: `(projected_savings_cost / baseline_cost) * 100`, or `0` when baseline is `0`.
 - `per_slot`: List with one object per timeslot (same index/order as input arrays), each containing:
@@ -235,3 +237,8 @@ Validation happens before optimization starts.
 - Unknown fields are rejected.
 
 This pre-validation/normalization design ensures the calculation phase operates on strictly shaped, trusted input.
+
+## Terminology
+- `grid import`: Energy bought from the grid.
+- `grid export`: Energy sent back to the grid. Also commonly called `feed-in`, `export`, or `export to grid`.
+- `grid_import_price_per_kwh` / `grid_export_price_per_kwh` are the optimizer terms because they are symmetric and match the physical energy flow direction.

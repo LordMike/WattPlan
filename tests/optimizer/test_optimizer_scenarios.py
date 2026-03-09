@@ -113,7 +113,7 @@ def _assert_common_result_shape(
 
 def test_simple_input_returns_valid_result():
     payload = {
-        "price_per_kwh": [0.4, 0.2, 0.3, 0.25],
+        "grid_import_price_per_kwh": [0.4, 0.2, 0.3, 0.25],
         "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
         "usage_kwh": [1.0, 1.0, 1.0, 1.0],
         "battery_entities": [
@@ -136,7 +136,7 @@ def test_simple_input_returns_valid_result():
 
 def test_projections_are_zero_when_baseline_is_zero():
     payload = {
-        "price_per_kwh": [0.4, 0.2, 0.3, 0.25],
+        "grid_import_price_per_kwh": [0.4, 0.2, 0.3, 0.25],
         "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
         "usage_kwh": [0.0, 0.0, 0.0, 0.0],
         "battery_entities": [
@@ -170,7 +170,7 @@ def test_projections_are_zero_when_baseline_is_zero():
 def test_complex_48h_input_returns_valid_result():
     intervals = 48
     payload = {
-        "price_per_kwh": [0.35 + ((i % 24) / 100.0) for i in range(intervals)],
+        "grid_import_price_per_kwh": [0.35 + ((i % 24) / 100.0) for i in range(intervals)],
         "solar_input_kwh": [
             max(0.0, 3.0 - abs(12 - (i % 24)) * 0.4) for i in range(intervals)
         ],
@@ -229,6 +229,7 @@ def test_complex_48h_input_returns_valid_result():
 
 def test_state_roundtrip_with_sliding_window_inputs():
     full_prices = [0.40, 0.22, 0.27, 0.33, 0.19, 0.41, 0.36, 0.24]
+    full_export_prices = [0.05, 0.01, 0.02, 0.08, 0.10, 0.06, 0.03, 0.02]
     full_solar = [0.0, 0.1, 0.5, 1.2, 0.8, 0.2, 0.0, 0.0]
     full_usage = [1.1, 1.0, 0.9, 1.2, 1.0, 1.4, 1.3, 1.1]
 
@@ -249,7 +250,8 @@ def test_state_roundtrip_with_sliding_window_inputs():
 
     first_payload = {
         **base_payload,
-        "price_per_kwh": full_prices[:6],
+        "grid_import_price_per_kwh": full_prices[:6],
+        "grid_export_price_per_kwh": full_export_prices[:6],
         "solar_input_kwh": full_solar[:6],
         "usage_kwh": full_usage[:6],
     }
@@ -263,10 +265,14 @@ def test_state_roundtrip_with_sliding_window_inputs():
         base64.urlsafe_b64decode(first_result["state"].encode("ascii")).decode("utf-8")
     )
     assert decoded["v"] == 1
+    assert "grid_import_price_per_kwh" in decoded
+    assert "grid_export_price_per_kwh" in decoded
+    assert decoded["grid_export_price_per_kwh"] == pytest.approx(full_export_prices[:6])
 
     second_payload = {
         **base_payload,
-        "price_per_kwh": full_prices[2:],
+        "grid_import_price_per_kwh": full_prices[2:],
+        "grid_export_price_per_kwh": full_export_prices[2:],
         "solar_input_kwh": full_solar[2:],
         "usage_kwh": full_usage[2:],
         "state": first_result["state"],
@@ -279,7 +285,7 @@ def test_state_roundtrip_with_sliding_window_inputs():
 
 def test_optional_entities_return_independent_start_options_without_affecting_schedule():
     base_payload = {
-        "price_per_kwh": [0.50, 0.48, 0.45, 0.30, 0.20, 0.18, 0.40, 0.55],
+        "grid_import_price_per_kwh": [0.50, 0.48, 0.45, 0.30, 0.20, 0.18, 0.40, 0.55],
         "solar_input_kwh": [0.0, 0.0, 0.0, 0.2, 0.8, 0.9, 0.2, 0.0],
         "usage_kwh": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
         "battery_entities": [
@@ -345,7 +351,7 @@ def test_optional_entities_return_independent_start_options_without_affecting_sc
 
 def test_optional_entities_consider_pv_surplus_not_just_price():
     payload = {
-        "price_per_kwh": [0.05, 0.05, 0.40, 0.40],
+        "grid_import_price_per_kwh": [0.05, 0.05, 0.40, 0.40],
         "solar_input_kwh": [0.0, 0.0, 4.0, 4.0],
         "usage_kwh": [2.0, 2.0, 0.0, 0.0],
         "battery_entities": [
@@ -385,7 +391,7 @@ def test_optional_entities_consider_pv_surplus_not_just_price():
 
 def test_optional_entities_favor_negative_price_slots():
     payload = {
-        "price_per_kwh": [0.30, -0.25, 0.35, 0.40],
+        "grid_import_price_per_kwh": [0.30, -0.25, 0.35, 0.40],
         "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
         "usage_kwh": [1.0, 1.0, 1.0, 1.0],
         "battery_entities": [
@@ -422,7 +428,7 @@ def test_optional_entities_favor_negative_price_slots():
 
 def test_optional_entities_favor_negative_price_with_pv_surplus_area():
     payload = {
-        "price_per_kwh": [0.05, 0.05, -0.30, -0.30],
+        "grid_import_price_per_kwh": [0.05, 0.05, -0.30, -0.30],
         "solar_input_kwh": [0.0, 0.0, 4.0, 4.0],
         "usage_kwh": [2.0, 2.0, 0.0, 0.0],
         "battery_entities": [
@@ -457,9 +463,319 @@ def test_optional_entities_favor_negative_price_with_pv_surplus_area():
     assert result["suboptimal"] is False
 
 
+def test_feed_in_prices_shift_pv_charging_to_lower_export_value_slots():
+    zero_feed_in_payload = {
+        "grid_import_price_per_kwh": [0.2, 0.2, 1.2, 0.2],
+        "solar_input_kwh": [1.0, 1.0, 0.0, 0.0],
+        "usage_kwh": [0.0, 0.0, 1.0, 0.0],
+        "battery_entities": [
+            {
+                "name": "home_battery",
+                "initial_kwh": 0.0,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 1.0,
+                "charge_curve_kwh": [1.0],
+                "discharge_curve_kwh": [1.0],
+                "can_charge_from": 2,
+            }
+        ],
+        "comfort_entities": [],
+    }
+
+    valued_feed_in_payload = {
+        **zero_feed_in_payload,
+        "grid_export_price_per_kwh": [1.0, 0.1, 0.0, 0.0],
+    }
+
+    zero_feed_in = _run_optimizer(zero_feed_in_payload)
+    valued_feed_in = _run_optimizer(valued_feed_in_payload)
+
+    zero_schedule = zero_feed_in["entities"][0]["schedule"]
+    valued_schedule = valued_feed_in["entities"][0]["schedule"]
+
+    assert zero_schedule[0]["state"] == "charge"
+    assert valued_schedule[0]["state"] == "hold"
+    assert valued_schedule[1]["state"] == "charge"
+    assert valued_feed_in["projections"]["projected_cost"] < (
+        zero_feed_in["projections"]["projected_cost"]
+    )
+
+
+def test_live_grid_export_benchmark_scenario_uses_real_15min_stromligning_values():
+    # Live Home Assistant data captured on 2026-03-09 in Europe/Copenhagen.
+    # Strømligning is native 15-minute price data. Deye daily energy totals are
+    # available as hourly recorder statistics, so each hourly kWh delta is split
+    # evenly into the four matching 15-minute slots.
+    buy_prices = [
+        1.637598,
+        1.571761,
+        1.555792,
+        1.507979,
+        1.544679,
+        1.527123,
+        1.517785,
+        1.503683,
+        1.519652,
+        1.509287,
+        1.528897,
+        1.529738,
+        1.530018,
+        1.53394,
+        1.533847,
+        1.540571,
+        1.558127,
+        1.554392,
+        1.587263,
+        1.659356,
+        1.557287,
+        1.679527,
+        1.831745,
+        2.060352,
+        2.062983,
+        2.176165,
+        2.421114,
+        2.451371,
+        2.785783,
+        2.778592,
+        2.432601,
+        2.147777,
+        2.871323,
+        2.224726,
+        2.117987,
+        1.84745,
+        2.241722,
+        1.957365,
+        1.833162,
+        1.703077,
+        1.831388,
+        1.744633,
+        1.628462,
+        1.561692,
+        1.591295,
+        1.540774,
+        1.481568,
+        1.427031,
+        1.417599,
+        1.399296,
+        1.393506,
+        1.382393,
+        1.36493,
+        1.373615,
+        1.394907,
+        1.430673,
+        1.363156,
+        1.489786,
+        1.537039,
+        1.639015,
+        1.623513,
+        1.67861,
+        1.831295,
+        2.076617,
+        1.689723,
+        2.029177,
+        2.153566,
+        2.474997,
+        2.666953,
+        2.990813,
+        3.343061,
+        3.904025,
+        3.644041,
+        3.828476,
+        3.822033,
+        3.81783,
+        3.796912,
+        3.51629,
+        3.513022,
+        3.399466,
+        3.513302,
+        3.301598,
+        2.978392,
+        2.880245,
+        2.334266,
+        2.215014,
+        2.116773,
+        2.004524,
+        2.195029,
+        2.098002,
+        2.083247,
+        1.962407,
+        2.04608,
+        2.001722,
+        1.942143,
+        1.953909,
+    ]
+    feed_in_prices = [
+        1.134348,
+        1.068511,
+        1.052542,
+        1.004729,
+        1.041429,
+        1.023873,
+        1.014535,
+        1.000433,
+        1.016402,
+        1.006037,
+        1.025647,
+        1.026488,
+        1.026768,
+        1.03069,
+        1.030597,
+        1.037321,
+        1.054877,
+        1.051142,
+        1.084013,
+        1.156106,
+        1.054037,
+        1.176277,
+        1.328495,
+        1.557102,
+        1.315608,
+        1.428791,
+        1.673739,
+        1.703996,
+        2.038408,
+        2.031217,
+        1.685226,
+        1.400402,
+        2.123948,
+        1.477351,
+        1.370612,
+        1.100075,
+        1.494347,
+        1.20999,
+        1.085787,
+        0.955702,
+        1.084013,
+        0.997258,
+        0.881087,
+        0.814317,
+        0.84392,
+        0.793399,
+        0.734193,
+        0.679656,
+        0.670224,
+        0.651921,
+        0.646131,
+        0.635018,
+        0.617555,
+        0.62624,
+        0.647532,
+        0.683298,
+        0.615781,
+        0.742411,
+        0.789664,
+        0.89164,
+        0.876138,
+        0.931235,
+        1.08392,
+        1.329242,
+        0.942348,
+        1.281802,
+        1.406191,
+        1.727623,
+        1.187203,
+        1.511063,
+        1.863311,
+        2.424275,
+        2.164291,
+        2.348726,
+        2.342283,
+        2.33808,
+        2.317162,
+        2.03654,
+        2.033272,
+        1.919716,
+        2.033552,
+        1.821848,
+        1.498642,
+        1.400495,
+        1.586891,
+        1.467639,
+        1.369398,
+        1.257149,
+        1.447654,
+        1.350627,
+        1.335872,
+        1.215032,
+        1.298705,
+        1.254347,
+        1.194768,
+        1.206534,
+    ]
+    solar_input = [0.0] * len(buy_prices)
+    usage = [0.0] * len(buy_prices)
+    pv_energy_hourly = {
+        8: 2.52,
+        9: 2.43,
+        10: 5.50,
+        11: 8.17,
+        12: 8.76,
+        13: 7.75,
+        14: 6.23,
+        15: 3.32,
+        16: 0.98,
+        18: 0.28,
+    }
+    load_energy_hourly = {
+        8: 5.32,
+        9: 1.51,
+        10: 1.51,
+        11: 1.02,
+        12: 0.97,
+        13: 0.83,
+        14: 0.97,
+        15: 0.75,
+        16: 0.91,
+        18: 1.83,
+    }
+    for hour, value in pv_energy_hourly.items():
+        for slot in range(hour * 4, hour * 4 + 4):
+            solar_input[slot] = value / 4.0
+    for hour, value in load_energy_hourly.items():
+        for slot in range(hour * 4, hour * 4 + 4):
+            usage[slot] = value / 4.0
+
+    base_payload = {
+        "grid_import_price_per_kwh": buy_prices,
+        "solar_input_kwh": solar_input,
+        "usage_kwh": usage,
+        "battery_entities": [
+            {
+                "name": "benchmark_battery",
+                "initial_kwh": 0.0,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 10.0,
+                "charge_curve_kwh": [1.25],
+                "discharge_curve_kwh": [1.25],
+                "can_charge_from": 2,
+            }
+        ],
+        "comfort_entities": [],
+    }
+
+    without_feed_in = _run_optimizer(base_payload)
+    with_feed_in = _run_optimizer(
+        {
+            **base_payload,
+            "grid_export_price_per_kwh": feed_in_prices,
+        }
+    )
+
+    without_schedule = without_feed_in["entities"][0]["schedule"]
+    with_schedule = with_feed_in["entities"][0]["schedule"]
+
+    assert with_feed_in["projections"]["projected_cost"] < (
+        without_feed_in["projections"]["projected_cost"]
+    )
+    assert with_schedule != without_schedule
+    assert sum(
+        point["state"] == "charge" for point in with_schedule
+    ) < sum(point["state"] == "charge" for point in without_schedule)
+
+
 def test_validation_rejects_series_length_mismatch():
     payload = {
-        "price_per_kwh": [0.3, 0.2, 0.1, 0.2],
+        "grid_import_price_per_kwh": [0.3, 0.2, 0.1, 0.2],
         "solar_input_kwh": [0.0, 0.0, 0.0],
         "usage_kwh": [1.0, 1.0, 1.0, 1.0],
         "battery_entities": [
@@ -482,7 +798,7 @@ def test_validation_rejects_series_length_mismatch():
 
 def test_validation_rejects_too_short_horizon():
     payload = {
-        "price_per_kwh": [0.3, 0.2, 0.1],
+        "grid_import_price_per_kwh": [0.3, 0.2, 0.1],
         "solar_input_kwh": [0.0, 0.0, 0.0],
         "usage_kwh": [1.0, 1.0, 1.0],
         "battery_entities": [
@@ -505,7 +821,7 @@ def test_validation_rejects_too_short_horizon():
 
 def test_validation_rejects_comfort_min_on_not_less_than_solve_horizon():
     payload = {
-        "price_per_kwh": [0.3, 0.2, 0.1, 0.2],
+        "grid_import_price_per_kwh": [0.3, 0.2, 0.1, 0.2],
         "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
         "usage_kwh": [1.0, 1.0, 1.0, 1.0],
         "battery_entities": [
@@ -539,7 +855,7 @@ def test_validation_rejects_comfort_min_on_not_less_than_solve_horizon():
 
 def test_validation_rejects_infeasible_optional_options():
     payload = {
-        "price_per_kwh": [0.3, 0.2, 0.1, 0.2],
+        "grid_import_price_per_kwh": [0.3, 0.2, 0.1, 0.2],
         "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
         "usage_kwh": [1.0, 1.0, 1.0, 1.0],
         "battery_entities": [
@@ -574,7 +890,7 @@ def test_validation_rejects_infeasible_optional_options():
 
 def test_optional_energy_curve_is_spread_over_duration_timeslots():
     payload = {
-        "price_per_kwh": [1.0, 1.0, 1.0, 1.0],
+        "grid_import_price_per_kwh": [1.0, 1.0, 1.0, 1.0],
         "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
         "usage_kwh": [0.0, 0.0, 0.0, 0.0],
         "battery_entities": [
@@ -610,7 +926,7 @@ def test_optional_energy_curve_is_spread_over_duration_timeslots():
 
 def test_validation_rejects_optional_curve_longer_than_duration():
     payload = {
-        "price_per_kwh": [0.3, 0.2, 0.1, 0.2],
+        "grid_import_price_per_kwh": [0.3, 0.2, 0.1, 0.2],
         "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
         "usage_kwh": [1.0, 1.0, 1.0, 1.0],
         "battery_entities": [
@@ -645,7 +961,7 @@ def test_validation_rejects_optional_curve_longer_than_duration():
 
 def test_validation_normalizes_optional_energy_to_full_profile_list():
     payload = {
-        "price_per_kwh": [0.3, 0.2, 0.1, 0.2],
+        "grid_import_price_per_kwh": [0.3, 0.2, 0.1, 0.2],
         "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
         "usage_kwh": [1.0, 1.0, 1.0, 1.0],
         "rolling_window_slots": 24,
@@ -700,7 +1016,7 @@ def test_validation_normalizes_optional_energy_to_full_profile_list():
 )
 def test_validation_rejects_out_of_range_efficiency(field_name, field_value):
     payload = {
-        "price_per_kwh": [0.2, 0.2, 0.2, 0.2],
+        "grid_import_price_per_kwh": [0.2, 0.2, 0.2, 0.2],
         "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
         "usage_kwh": [0.0, 0.0, 0.0, 0.0],
         "battery_entities": [
@@ -724,7 +1040,7 @@ def test_validation_rejects_out_of_range_efficiency(field_name, field_value):
 
 def test_battery_target_deadline_at_least_is_enforced():
     payload = {
-        "price_per_kwh": [0.1, 0.1, 0.1, 0.5],
+        "grid_import_price_per_kwh": [0.1, 0.1, 0.1, 0.5],
         "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
         "usage_kwh": [0.0, 0.0, 0.0, 0.0],
         "battery_entities": [
@@ -755,7 +1071,7 @@ def test_battery_target_deadline_at_least_is_enforced():
 
 def test_suboptimal_reasons_include_comfort_target_unmet_key():
     payload = {
-        "price_per_kwh": [0.2, 0.2, 0.2, 0.2],
+        "grid_import_price_per_kwh": [0.2, 0.2, 0.2, 0.2],
         "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
         "usage_kwh": [0.0, 0.0, 0.0, 0.0],
         "battery_entities": [
@@ -789,7 +1105,7 @@ def test_suboptimal_reasons_include_comfort_target_unmet_key():
 
 def test_validation_rejects_battery_target_slot_outside_horizon():
     payload = {
-        "price_per_kwh": [0.3, 0.2, 0.1, 0.2],
+        "grid_import_price_per_kwh": [0.3, 0.2, 0.1, 0.2],
         "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
         "usage_kwh": [1.0, 1.0, 1.0, 1.0],
         "battery_entities": [
@@ -819,7 +1135,7 @@ def test_validation_rejects_battery_target_slot_outside_horizon():
 def test_validation_rejects_unknown_charge_source_bits():
     # Any bits outside GRID(1) and PV(2) must be rejected at validation time.
     payload = {
-        "price_per_kwh": [0.2, 0.2, 0.2, 0.2],
+        "grid_import_price_per_kwh": [0.2, 0.2, 0.2, 0.2],
         "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
         "usage_kwh": [0.0, 0.0, 0.0, 0.0],
         "battery_entities": [
@@ -844,7 +1160,7 @@ def test_grid_flag_controls_charging_when_no_pv_surplus_exists():
     # With no PV surplus available, a PV-only battery must not charge,
     # while a GRID-allowed battery should be able to hit its target.
     base_payload = {
-        "price_per_kwh": [0.2, 0.2, 0.2, 0.2],
+        "grid_import_price_per_kwh": [0.2, 0.2, 0.2, 0.2],
         "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
         "usage_kwh": [0.0, 0.0, 0.0, 0.0],
         "battery_entities": [],
@@ -909,7 +1225,7 @@ def test_warm_started_target_remains_reachable_when_horizon_extends_by_one_slot(
     # Extending the warm-started horizon by one slot should not make a
     # previously reachable target become unreachable.
     base_payload = {
-        "price_per_kwh": [3.0] * 5,
+        "grid_import_price_per_kwh": [3.0] * 5,
         "solar_input_kwh": [0.0] * 5,
         "usage_kwh": [0.25] * 5,
         "battery_entities": [
@@ -953,7 +1269,7 @@ def test_warm_started_target_uses_early_low_cost_window_before_deadline():
     # should use the low-cost slots to build charge ahead of the target rather
     # than defer into the later expensive period.
     base_payload = {
-        "price_per_kwh": [0.10, 0.10, 0.80, 0.80, 0.80, 0.80],
+        "grid_import_price_per_kwh": [0.10, 0.10, 0.80, 0.80, 0.80, 0.80],
         "solar_input_kwh": [0.0] * 6,
         "usage_kwh": [0.25] * 6,
         "battery_entities": [
@@ -998,7 +1314,7 @@ def test_pv_flag_controls_charging_when_solar_surplus_exists():
     # With persistent PV surplus, a battery that allows PV should charge,
     # while charging-disabled should stay at its initial level.
     base_payload = {
-        "price_per_kwh": [0.2, 0.2, 0.2, 0.2],
+        "grid_import_price_per_kwh": [0.2, 0.2, 0.2, 0.2],
         "solar_input_kwh": [4.0, 4.0, 4.0, 4.0],
         "usage_kwh": [0.0, 0.0, 0.0, 0.0],
         "battery_entities": [],
@@ -1063,7 +1379,7 @@ def test_comfort_entity_is_kept_on_for_required_slots():
     # The planner should satisfy the minimum ON-slot requirement,
     # even when prices vary across the horizon.
     payload = {
-        "price_per_kwh": [0.5, 0.5, 0.2, 0.2, 0.2, 0.5, 0.5, 0.5],
+        "grid_import_price_per_kwh": [0.5, 0.5, 0.2, 0.2, 0.2, 0.5, 0.5, 0.5],
         "solar_input_kwh": [0.0] * 8,
         "usage_kwh": [0.0] * 8,
         "battery_entities": [
@@ -1107,7 +1423,7 @@ def test_comfort_entity_is_kept_on_for_required_slots():
 
 def test_battery_never_discharges_below_minimum_kwh():
     payload = {
-        "price_per_kwh": [2.0] * 8 + [1.0] * 8,
+        "grid_import_price_per_kwh": [2.0] * 8 + [1.0] * 8,
         "solar_input_kwh": [0.0] * 16,
         "usage_kwh": [0.2] * 16,
         "battery_entities": [
@@ -1132,7 +1448,7 @@ def test_battery_never_discharges_below_minimum_kwh():
 
 def test_charge_efficiency_increases_required_input_cost():
     base_payload = {
-        "price_per_kwh": [0.2, 0.2, 0.2, 0.2],
+        "grid_import_price_per_kwh": [0.2, 0.2, 0.2, 0.2],
         "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
         "usage_kwh": [0.0, 0.0, 0.0, 0.0],
         "battery_entities": [
@@ -1173,7 +1489,7 @@ def test_charge_efficiency_increases_required_input_cost():
 
 def test_discharge_efficiency_reduces_deliverable_energy():
     base_payload = {
-        "price_per_kwh": [1.0, 1.0, 0.1, 0.1],
+        "grid_import_price_per_kwh": [1.0, 1.0, 0.1, 0.1],
         "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
         "usage_kwh": [1.0, 1.0, 1.0, 1.0],
         "battery_entities": [
