@@ -49,7 +49,7 @@ After installing WattPlan via HACS, configure the following:
 - [docs/example-deye-solcast-stromligning.md](docs/example-deye-solcast-stromligning.md) - Concrete end-to-end example using Strømligning, Deye, and Solcast
 - [docs/extras.md](docs/extras.md) - Batteries, comfort loads, optional loads, and how to wire WattPlan actions into your own automations
 - [docs/entities-and-services.md](docs/entities-and-services.md) - All exposed entities and services, including battery targets
-- [docs/development.md](docs/development.md) - Local setup, standalone test env, optional symlink workflow, packaging
+- [docs/development.md](docs/development.md) - Local setup, test env, optional symlink workflow, packaging
 - [docs/architecture.md](docs/architecture.md) - Code layout, runtime boundaries, planning flow
 - [docs/release.md](docs/release.md) - Tags, prereleases, GitHub release artifacts
 - [docs/optimizer-api.md](docs/optimizer-api.md) - Direct optimizer API notes

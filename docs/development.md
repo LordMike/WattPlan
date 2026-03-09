@@ -6,14 +6,17 @@ Work from `WattPlan` as the source of truth.
 
 ## Setup
 
-Create a standalone test virtualenv:
+Create a test virtualenv with the Home Assistant test dependencies.
 
 ```bash
 python3.14 -m venv .venv-test
 source .venv-test/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -r requirements-test.txt
+python -m pip install -e .[test]
 ```
+
+Use Python 3.14.2 or newer. The current pinned test stack resolves to
+`homeassistant==2026.3.1`, which requires that patch level.
 
 Run tests directly from this repo:
 

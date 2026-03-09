@@ -14,7 +14,9 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.14"
+          # Keep the patch version aligned with the Home Assistant wheel
+          # transitively pinned by pytest-homeassistant-custom-component.
+          python-version: "3.14.3"
 
       - name: Install dependencies
         run: |
