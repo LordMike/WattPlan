@@ -6,13 +6,13 @@ Work from `WattPlan` as the source of truth.
 
 ## Setup
 
-Create a test virtualenv with the Home Assistant test dependencies.
+Create a local virtualenv with the test dependencies.
 
 ```bash
-python3.14 -m venv .venv-test
-source .venv-test/bin/activate
+python3.14 -m venv .venv
+. .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e .[test]
+python -m pip install -r requirements-test.txt
 ```
 
 Use Python 3.14.2 or newer. The current pinned test stack resolves to
@@ -21,7 +21,7 @@ Use Python 3.14.2 or newer. The current pinned test stack resolves to
 Run tests directly from this repo:
 
 ```bash
-PYTHONPATH=src pytest tests
+python -m pytest tests
 ```
 
 ## Testing
@@ -29,19 +29,19 @@ PYTHONPATH=src pytest tests
 Run the full suite from the repo:
 
 ```bash
-PYTHONPATH=src pytest
+python -m pytest
 ```
 
 Run only optimizer tests:
 
 ```bash
-PYTHONPATH=src pytest tests/optimizer
+python -m pytest tests/optimizer
 ```
 
-Run only integration tests from the standalone virtualenv:
+Run only integration tests:
 
 ```bash
-PYTHONPATH=src pytest tests/integration
+python -m pytest tests/integration
 ```
 
 ## Packaging
