@@ -58,11 +58,33 @@ from tests.common import MockConfigEntry
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
+SECTION_SOURCE_MANUAL = "manual"
+
 
 def _numeric_template(count: int) -> str:
     """Return a template string that renders a native numeric list."""
     values = [float(index) for index in range(count)]
     return f"{{{{ {values!r} }}}}"
+
+
+async def _finish_config_entry_creation(
+    hass: HomeAssistant, result: dict[str, Any]
+) -> dict[str, Any]:
+    """Advance through final config-flow steps before entry creation."""
+    while result["type"] is FlowResultType.FORM:
+        if result["step_id"] == "source_export_price":
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"],
+                {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
+            )
+            continue
+        if result["step_id"] == "setup_complete":
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"], {}
+            )
+            continue
+        break
+    return result
 
 
 async def _create_entry_with_price_template(hass: HomeAssistant) -> config_entries.ConfigEntry:
@@ -125,6 +147,7 @@ async def _create_entry_with_price_template(hass: HomeAssistant) -> config_entri
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED}
     )
+    result = await _finish_config_entry_creation(hass, result)
     assert result["type"] is FlowResultType.CREATE_ENTRY
 
     return hass.config_entries.async_entries(DOMAIN)[0]
@@ -171,9 +194,11 @@ async def test_options_flow_persists_price_adapter_modifiers(
         {
             "entity_id": ["sensor.price_provider"],
             CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_VALUES,
-            CONF_NAME: "prices",
-            "time_key": "start",
-            "value_key": "value",
+            SECTION_SOURCE_MANUAL: {
+                CONF_NAME: "prices",
+                "time_key": "start",
+                "value_key": "value",
+            },
             CONF_FIXUP_PROFILE: FIXUP_PROFILE_EXTEND,
             "advanced": {
                 CONF_AGGREGATION_MODE: AGGREGATION_MODE_MAX,
@@ -265,9 +290,11 @@ async def test_config_flow_auto_detects_entity_adapter(
         {
             "entity_id": ["sensor.first", "sensor.second"],
             CONF_ADAPTER_TYPE: ADAPTER_TYPE_AUTO_DETECT,
-            CONF_NAME: "",
-            "time_key": "",
-            "value_key": "",
+            SECTION_SOURCE_MANUAL: {
+                CONF_NAME: "",
+                "time_key": "",
+                "value_key": "",
+            },
             CONF_FIXUP_PROFILE: FIXUP_PROFILE_REPAIR,
             "advanced": {
                 CONF_AGGREGATION_MODE: AGGREGATION_MODE_MIN,
@@ -289,6 +316,7 @@ async def test_config_flow_auto_detects_entity_adapter(
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED}
     )
+    result = await _finish_config_entry_creation(hass, result)
     assert result["type"] is FlowResultType.CREATE_ENTRY
 
     entry = hass.config_entries.async_entries(DOMAIN)[0]
@@ -351,9 +379,11 @@ async def test_config_flow_persists_explicit_multi_entity_adapter(
         {
             "entity_id": ["sensor.today", "sensor.tomorrow"],
             CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
-            CONF_NAME: "detailedForecast",
-            "time_key": "period_start",
-            "value_key": "pv_estimate",
+            SECTION_SOURCE_MANUAL: {
+                CONF_NAME: "detailedForecast",
+                "time_key": "period_start",
+                "value_key": "pv_estimate",
+            },
             CONF_FIXUP_PROFILE: FIXUP_PROFILE_REPAIR,
             "advanced": {
                 CONF_AGGREGATION_MODE: AGGREGATION_MODE_MIN,
@@ -375,6 +405,7 @@ async def test_config_flow_persists_explicit_multi_entity_adapter(
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED}
     )
+    result = await _finish_config_entry_creation(hass, result)
     assert result["type"] is FlowResultType.CREATE_ENTRY
 
     entry = hass.config_entries.async_entries(DOMAIN)[0]
@@ -427,9 +458,11 @@ async def test_options_flow_auto_detects_service_adapter(
         {
             CONF_SERVICE: "test.prices",
             CONF_ADAPTER_TYPE: ADAPTER_TYPE_AUTO_DETECT,
-            CONF_NAME: "",
-            "time_key": "",
-            "value_key": "",
+            SECTION_SOURCE_MANUAL: {
+                CONF_NAME: "",
+                "time_key": "",
+                "value_key": "",
+            },
             CONF_FIXUP_PROFILE: FIXUP_PROFILE_EXTEND,
             "advanced": {
                 CONF_AGGREGATION_MODE: AGGREGATION_MODE_MAX,
@@ -540,6 +573,7 @@ async def test_config_flow_persists_usage_built_in_source(
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED}
     )
+    result = await _finish_config_entry_creation(hass, result)
     assert result["type"] is FlowResultType.CREATE_ENTRY
     usage = result["data"][CONF_SOURCES][CONF_SOURCE_USAGE]
     assert usage[CONF_SOURCE_MODE] == SOURCE_MODE_BUILT_IN
@@ -713,6 +747,12 @@ async def test_config_flow_persists_pv_energy_provider_source(
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {"accept_source_summary": True}
     )
+    assert result["step_id"] == "source_export_price"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED}
+    )
+    result = await _finish_config_entry_creation(hass, result)
     assert result["type"] is FlowResultType.CREATE_ENTRY
 
     created_entry = hass.config_entries.async_entries(DOMAIN)[0]

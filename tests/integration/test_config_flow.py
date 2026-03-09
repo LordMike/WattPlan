@@ -70,6 +70,40 @@ def _default_source_mode(result: dict[str, Any]) -> str:
     return marker.default()
 
 
+async def _finish_setup_if_needed(
+    hass: HomeAssistant, result: dict[str, Any]
+) -> dict[str, Any]:
+    """Advance through any final setup forms before entry creation."""
+    while result["type"] is FlowResultType.FORM:
+        if result["step_id"] == "source_export_price":
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"],
+                {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
+            )
+            continue
+        if result["step_id"] == "setup_complete":
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"], {}
+            )
+            continue
+        break
+    return result
+
+
+async def _finish_subentry_if_needed(
+    hass: HomeAssistant, result: dict[str, Any]
+) -> dict[str, Any]:
+    """Advance through any final subentry confirmation form."""
+    while result["type"] is FlowResultType.FORM and result["step_id"] in {
+        "complete",
+        "reconfigure_complete",
+    }:
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {}
+        )
+    return result
+
+
 async def _create_basic_entry(hass: HomeAssistant) -> config_entries.ConfigEntry:
     """Create a basic WattPlan config entry for subentry tests."""
     result = await hass.config_entries.flow.async_init(
@@ -113,6 +147,7 @@ async def _create_basic_entry(hass: HomeAssistant) -> config_entries.ConfigEntry
         result["flow_id"],
         {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
     )
+    result = await _finish_setup_if_needed(hass, result)
     assert result["type"] is FlowResultType.CREATE_ENTRY
 
     entry = hass.config_entries.async_entries(DOMAIN)[0]
@@ -184,12 +219,13 @@ async def test_form(hass: HomeAssistant, mock_setup_entry: AsyncMock) -> None:
     )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "source_pv"
-    assert _default_source_mode(result) == "energy_provider"
+    assert _default_source_mode(result) == "not_used"
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
     )
+    result = await _finish_setup_if_needed(hass, result)
     await hass.async_block_till_done()
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -245,6 +281,7 @@ async def test_multiple_setups_allowed(
         result["flow_id"],
         {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
     )
+    result = await _finish_setup_if_needed(hass, result)
     await hass.async_block_till_done()
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -308,6 +345,7 @@ async def test_export_price_step_is_shown_only_when_pv_is_configured(
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED}
     )
+    result = await _finish_setup_if_needed(hass, result)
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert len(mock_setup_entry.mock_calls) == 1
 
@@ -357,6 +395,7 @@ async def test_options_flow_add_core_and_one_of_each_asset(
         result["flow_id"],
         {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
     )
+    result = await _finish_setup_if_needed(hass, result)
     await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
 
@@ -426,6 +465,7 @@ async def test_options_flow_add_core_and_one_of_each_asset(
             CONF_CAN_CHARGE_FROM_PV: True,
         },
     )
+    result = await _finish_subentry_if_needed(hass, result)
     assert result["type"] is FlowResultType.CREATE_ENTRY
 
     result = await hass.config_entries.subentries.async_init(
@@ -445,6 +485,7 @@ async def test_options_flow_add_core_and_one_of_each_asset(
             CONF_EXPECTED_POWER_KW: 1.5,
         },
     )
+    result = await _finish_subentry_if_needed(hass, result)
     assert result["type"] is FlowResultType.CREATE_ENTRY
 
     result = await hass.config_entries.subentries.async_init(
@@ -462,6 +503,7 @@ async def test_options_flow_add_core_and_one_of_each_asset(
             CONF_MIN_OPTION_GAP_MINUTES: 0,
         },
     )
+    result = await _finish_subentry_if_needed(hass, result)
     assert result["type"] is FlowResultType.CREATE_ENTRY
 
     await hass.async_block_till_done()

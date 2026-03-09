@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
+
+from homeassistant.util import dt as dt_util
 
 
 def _notify_target_listeners(runtime_data: Any, subentry_id: str) -> None:
@@ -37,7 +39,7 @@ def get_active_battery_target(
     if target is None:
         return None
 
-    current_time = now or datetime.now(tz=UTC)
+    current_time = now or dt_util.utcnow()
     if target.reach_at <= current_time:
         return None
     return target
@@ -53,7 +55,7 @@ def clear_expired_battery_targets(
     This keeps planning behavior deterministic: once the requested deadline is in
     the past, the target should no longer influence optimizer input or UI state.
     """
-    current_time = now or datetime.now(tz=UTC)
+    current_time = now or dt_util.utcnow()
     expired = [
         subentry_id
         for subentry_id, target in runtime_data.battery_targets.items()

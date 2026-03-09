@@ -310,6 +310,10 @@ async def test_run_services_are_isolated_by_name(hass: HomeAssistant) -> None:
     )
     await _setup_entry(hass, alpha)
     await _setup_entry(hass, beta)
+    alpha_before = alpha.runtime_data.coordinator.last_attempt_at
+    beta_before = beta.runtime_data.coordinator.last_attempt_at
+    assert alpha_before is not None
+    assert beta_before is not None
 
     with patch(
         "custom_components.wattplan.coordinator.optimize",
@@ -321,7 +325,10 @@ async def test_run_services_are_isolated_by_name(hass: HomeAssistant) -> None:
     assert hass.states.get("sensor.alpha_status") is not None
     assert hass.states.get("sensor.alpha_status").state == "planned"
     assert hass.states.get("sensor.beta_status") is not None
-    assert hass.states.get("sensor.beta_status").state == STATE_UNAVAILABLE
+    assert hass.states.get("sensor.beta_status").state == "planned"
+    assert alpha.runtime_data.coordinator.last_attempt_at is not None
+    assert alpha.runtime_data.coordinator.last_attempt_at > alpha_before
+    assert beta.runtime_data.coordinator.last_attempt_at == beta_before
 
 
 @pytest.mark.parametrize(
@@ -408,13 +415,15 @@ async def test_scheduler_runs_at_interval(hass: HomeAssistant) -> None:
     with patch("custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize):
         await _setup_entry(hass, entry)
         coordinator = entry.runtime_data.coordinator
-        assert coordinator.last_attempt_at is None
+        initial_attempt_at = coordinator.last_attempt_at
+        assert initial_attempt_at is not None
         assert coordinator.next_refresh_at is not None
 
         async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=60))
         await hass.async_block_till_done()
 
     assert coordinator.last_attempt_at is not None
+    assert coordinator.last_attempt_at > initial_attempt_at
 
 
 @pytest.mark.parametrize(
@@ -580,6 +589,8 @@ async def test_emit_without_snapshot_raises_and_sets_error(
         subentries_data=[_battery_subentry(subentry_id="battery", name="battery")],
     )
     await _setup_entry(hass, entry)
+    entry.runtime_data.coordinator._snapshot = None
+    entry.runtime_data.coordinator.data = None
     with pytest.raises(ServiceValidationError):
         await _run_emit(hass)
 

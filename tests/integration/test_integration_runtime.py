@@ -600,8 +600,12 @@ async def test_battery_target_changes_plan_and_expires_after_deadline(
         "custom_components.wattplan.coordinator.optimize",
         side_effect=_fake_optimize_with_target_behavior,
     ):
-        assert await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
+        with patch(
+            "homeassistant.helpers.entity.Entity.entity_registry_enabled_default",
+            return_value=True,
+        ):
+            assert await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done()
 
         await hass.services.async_call(DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True)
         await hass.async_block_till_done()
@@ -632,20 +636,32 @@ async def test_battery_target_changes_plan_and_expires_after_deadline(
         assert plan_details is not None
         assert plan_details.attributes["battery_battery_action"] == ["c", "c", "h", "h"]
 
-        async_fire_time_changed(hass, target_at + timedelta(minutes=1))
+        expired_at = target_at + timedelta(minutes=1)
+        async_fire_time_changed(hass, expired_at)
         await hass.async_block_till_done()
 
-        await hass.services.async_call(DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True)
-        await hass.async_block_till_done()
+        with patch(
+            "custom_components.wattplan.target_runtime.dt_util.utcnow",
+            return_value=expired_at,
+        ):
+            await hass.services.async_call(
+                DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True
+            )
+            await hass.async_block_till_done()
 
-        target_sensor = hass.states.get("sensor.home_battery_target")
-        assert target_sensor is not None
-        assert target_sensor.state == STATE_UNKNOWN
-        assert target_sensor.attributes["by"] == "not_set"
+            target_sensor = hass.states.get("sensor.home_battery_target")
+            assert target_sensor is not None
+            assert target_sensor.state == STATE_UNKNOWN
+            assert target_sensor.attributes["by"] == "not_set"
 
-        plan_details = hass.states.get("sensor.home_plan_details")
-        assert plan_details is not None
-        assert plan_details.attributes["battery_battery_action"] == ["h", "h", "h", "h"]
+            plan_details = hass.states.get("sensor.home_plan_details")
+            assert plan_details is not None
+            assert plan_details.attributes["battery_battery_action"] == [
+                "h",
+                "h",
+                "h",
+                "h",
+            ]
 
 
 async def test_clear_target_service_removes_active_battery_target(

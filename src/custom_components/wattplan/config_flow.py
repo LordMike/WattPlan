@@ -1210,20 +1210,23 @@ def _validate_source_adapter_input(data: dict[str, Any]) -> dict[str, str]:
     errors: dict[str, str] = {}
     if data.get(CONF_ADAPTER_TYPE) == ADAPTER_TYPE_AUTO_DETECT:
         return errors
+    manual = data.get(SECTION_SOURCE_MANUAL, {})
+    if not isinstance(manual, dict):
+        manual = {}
     _validate_text_field(
-        str(data.get(CONF_NAME, "")),
+        str(manual.get(CONF_NAME, data.get(CONF_NAME, ""))),
         CONF_NAME,
         errors,
         max_length=MAX_SOURCE_KEY_LENGTH,
     )
     _validate_text_field(
-        str(data.get(CONF_TIME_KEY, "")),
+        str(manual.get(CONF_TIME_KEY, data.get(CONF_TIME_KEY, ""))),
         CONF_TIME_KEY,
         errors,
         max_length=MAX_SOURCE_KEY_LENGTH,
     )
     _validate_text_field(
-        str(data.get(CONF_VALUE_KEY, "")),
+        str(manual.get(CONF_VALUE_KEY, data.get(CONF_VALUE_KEY, ""))),
         CONF_VALUE_KEY,
         errors,
         max_length=MAX_SOURCE_KEY_LENGTH,
@@ -1242,20 +1245,23 @@ def _validate_service_adapter_input(data: dict[str, Any]) -> dict[str, str]:
     )
     if data.get(CONF_ADAPTER_TYPE) == ADAPTER_TYPE_AUTO_DETECT:
         return errors
+    manual = data.get(SECTION_SOURCE_MANUAL, {})
+    if not isinstance(manual, dict):
+        manual = {}
     _validate_text_field(
-        str(data.get(CONF_NAME, "")),
+        str(manual.get(CONF_NAME, data.get(CONF_NAME, ""))),
         CONF_NAME,
         errors,
         max_length=MAX_SOURCE_KEY_LENGTH,
     )
     _validate_text_field(
-        str(data.get(CONF_TIME_KEY, "")),
+        str(manual.get(CONF_TIME_KEY, data.get(CONF_TIME_KEY, ""))),
         CONF_TIME_KEY,
         errors,
         max_length=MAX_SOURCE_KEY_LENGTH,
     )
     _validate_text_field(
-        str(data.get(CONF_VALUE_KEY, "")),
+        str(manual.get(CONF_VALUE_KEY, data.get(CONF_VALUE_KEY, ""))),
         CONF_VALUE_KEY,
         errors,
         max_length=MAX_SOURCE_KEY_LENGTH,
@@ -1275,9 +1281,12 @@ async def _async_prepare_entity_source_input(
         entity_ids = [str(entity_id) for entity_id in selected_entities]
 
     adapter_type = str(user_input[CONF_ADAPTER_TYPE])
-    root_key = str(user_input.get(CONF_NAME, ""))
-    time_key = str(user_input.get(CONF_TIME_KEY, ""))
-    value_key = str(user_input.get(CONF_VALUE_KEY, ""))
+    manual = user_input.get(SECTION_SOURCE_MANUAL, {})
+    if not isinstance(manual, dict):
+        manual = {}
+    root_key = str(manual.get(CONF_NAME, user_input.get(CONF_NAME, "")))
+    time_key = str(manual.get(CONF_TIME_KEY, user_input.get(CONF_TIME_KEY, "")))
+    value_key = str(manual.get(CONF_VALUE_KEY, user_input.get(CONF_VALUE_KEY, "")))
 
     resolved_adapter = adapter_type
 
@@ -1307,9 +1316,12 @@ async def _async_prepare_service_source_input(
 ) -> dict[str, Any]:
     """Return explicit service adapter config, resolving auto-detect if needed."""
     adapter_type = str(user_input[CONF_ADAPTER_TYPE])
-    root_key = str(user_input.get(CONF_NAME, ""))
-    time_key = str(user_input.get(CONF_TIME_KEY, ""))
-    value_key = str(user_input.get(CONF_VALUE_KEY, ""))
+    manual = user_input.get(SECTION_SOURCE_MANUAL, {})
+    if not isinstance(manual, dict):
+        manual = {}
+    root_key = str(manual.get(CONF_NAME, user_input.get(CONF_NAME, "")))
+    time_key = str(manual.get(CONF_TIME_KEY, user_input.get(CONF_TIME_KEY, "")))
+    value_key = str(manual.get(CONF_VALUE_KEY, user_input.get(CONF_VALUE_KEY, "")))
     service_name = str(user_input[CONF_SERVICE])
     resolved_adapter = adapter_type
 
