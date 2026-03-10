@@ -23,20 +23,35 @@ The main runtime center is the coordinator:
 - `binary_sensor.py` / `sensor.py`: Expose planning state, diagnostics, and error scopes.
 - `source_pipeline.py`, `source_provider.py`, `source_fixup.py`: Resolve raw source data and normalize it into planner-ready values.
 
-## Source Handling
-WattPlan resolves four main source groups:
+## Data Acquisition
+WattPlan acquires four planner input series:
 - **Price**
 - **Export price**
 - **Usage**
 - **PV**
 
-Each source can use different modes depending on the integration path. The source pipeline is responsible for:
-- Creating the correct provider
-- Validating data shape and entity compatibility
-- Applying fixup/reuse behavior where supported
-- Distinguishing fatal planning failures from degraded-but-usable input states
+Each source group is configured with one provider mode at a time. Supported modes depend on the source:
+- Price and export price: entity adapter, service adapter, or template
+- Usage: built-in history-based forecast, entity adapter, service adapter, or template
+- PV: Home Assistant Energy solar provider, entity adapter, service adapter, or template
 
-That distinction matters for PV and export price in particular: some failures degrade planning quality without stopping the planner entirely.
+Entity-adapter mode can optionally merge multiple same-shaped entities into one combined payload before normalization. Aside from that case, each source resolves through one configured provider path.
+
+The acquisition pipeline for each source is:
+1. Select the configured provider mode and fetch raw payload or direct slot values.
+2. Normalize the provider output into one numeric value per planner slot.
+3. Apply slot-level aggregation when multiple values land in the same slot.
+4. Optionally align timestamps to the nearest slot, repair gaps by resampling, and fill edges.
+5. Optionally extend the tail with the value from 24 hours earlier when the source uses an extend-style fixup path.
+6. Optionally reuse the last successful normalized window for a limited time when a refresh fails.
+
+After this, the coordinator holds four slot-aligned numeric arrays that are passed to the optimizer:
+- `grid_import_price_per_kwh`
+- `grid_export_price_per_kwh`
+- `usage_kwh`
+- `solar_input_kwh`
+
+Source health is tracked alongside the values. A source can be healthy, unavailable, or incomplete. Import price is required. Usage is optional to configure, but if configured and failing it blocks planning. PV and export price are non-blocking optional inputs; when unavailable, planning can continue with degraded assumptions.
 
 ## Planning Flow
 The high-level planning flow looks like this:
@@ -63,7 +78,7 @@ flowchart LR
     V4[Template]
   end
 
-  N[<b>Normalization</b><br/>Aggregation, alignment,<br/>resampling, fixups]
+  N[<b>Data acquisition</b><br/>Provider fetch, normalization,<br/>repair, extend, stale reuse]
   Loads[<b>Configured loads</b><br/>Batteries, washers/tumblers/dryers,<br/>HVACs/pumps/..]
   Plan[Planning]
   V[Plan Output<br/>Visualization entities]
@@ -84,6 +99,3 @@ flowchart LR
 The optimizer package is intentionally kept free of `homeassistant` imports. The integration translates Home Assistant state into optimizer inputs and translates optimizer results back into entities, services, and diagnostics.
 
 That boundary is the main extraction seam if the optimizer is ever split into its own package later.
-
-## Integration Boundaries
-The integration and optimizer interact through a defined boundary, ensuring that the optimizer operates independently of Home Assistant's runtime. This separation allows for easier testing and potential future enhancements, such as splitting the optimizer into its own package. The integration handles the translation of data between Home Assistant and the optimizer, ensuring that both components can evolve without tightly coupling their implementations.

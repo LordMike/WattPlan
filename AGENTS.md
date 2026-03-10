@@ -29,6 +29,9 @@ Prefer updating the integration, tests, and docs together when behavior changes.
 - Optimizer-only tests live in `tests/optimizer/`.
 - `hass-core/config/custom_components/wattplan` and `hass-core/tests/custom_components/wattplan` are symlinks into this repo.
 - Keep release packaging focused on the integration tree under `src/custom_components/wattplan/`.
+- The HA integration acquires four planner input series: import price, export price, usage, and PV.
+- Each source uses one configured provider mode, then passes through normalization/fixup to produce one value per planner slot before the optimizer runs.
+- Keep source acquisition behavior centered in `source_pipeline.py`, `source_provider.py`, `source_fixup.py`, and `coordinator.py`; preserve the rule that `optimizer/` stays free of `homeassistant` imports.
 
 ## Documentation upkeep
 - `README.md` — keep quickstart, release flow, and repo purpose aligned with the current structure
