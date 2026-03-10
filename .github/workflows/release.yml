@@ -2,8 +2,11 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*"
+  workflow_dispatch:
 
 jobs:
   release:
@@ -15,16 +18,46 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.14"
+          python-version: "3.14.3"
 
-      - name: Build release artifact
+      - name: Compute artifact version
+        id: version
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="$(python - <<'PY'
+import json
+from pathlib import Path
+
+manifest = json.loads(Path("src/custom_components/wattplan/manifest.json").read_text())
+print(f"{manifest['version']}-dev.{__import__('os').environ['GITHUB_SHA'][:7]}")
+PY
+)"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build tagged release artifact
+        if: github.ref_type == 'tag'
+        run: |
           python scripts/build_hacs_zip.py \
-            --version-label "$VERSION" \
-            --validate-manifest-version "$VERSION"
+            --version-label "${{ steps.version.outputs.version }}" \
+            --validate-manifest-version "${{ steps.version.outputs.version }}"
+
+      - name: Build dev release artifact
+        if: github.ref_type != 'tag'
+        run: |
+          python scripts/build_hacs_zip.py \
+            --version-label "${{ steps.version.outputs.version }}"
+
+      - name: Upload release workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wattplan-release-${{ steps.version.outputs.version }}
+          path: dist/*.zip
 
       - name: Create GitHub release
+        if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.zip

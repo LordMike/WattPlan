@@ -42,7 +42,7 @@ After installing WattPlan via HACS, configure the following:
 - Battery, comfort-load, and optional-load planning
 - Planned actions are exposed as entities, so you can easily use the results to do automations
 - Battery targets can be set and cleared through WattPlan services
-- GitHub Actions for CI, tagged releases, and prereleases
+- GitHub Actions for CI, tagged releases, prereleases, and `main` branch dev artifacts
 
 ## Documentation
 - [docs/source-data.md](docs/source-data.md) - Source modes, data model, and how to feed WattPlan price, export price, usage, and PV data
@@ -52,7 +52,7 @@ After installing WattPlan via HACS, configure the following:
 - [docs/error-handling.md](docs/error-handling.md) - Health states, degraded operation, and what `ok`, `degraded`, and `failed` mean
 - [docs/development.md](docs/development.md) - Local setup, test env, optional symlink workflow, packaging
 - [docs/architecture.md](docs/architecture.md) - Code layout, runtime boundaries, planning flow
-- [docs/release.md](docs/release.md) - Tags, prereleases, GitHub release artifacts
+- [docs/release.md](docs/release.md) - Tags, prereleases, dev artifacts, GitHub release assets
 - [docs/optimizer-api.md](docs/optimizer-api.md) - Direct optimizer API notes
 
 ## Limitations

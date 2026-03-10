@@ -5,11 +5,12 @@ WattPlan uses two GitHub Actions workflows:
 - `CI`
   - runs on pushes and pull requests
   - runs the test suite
-  - builds a zip artifact on `main`
 - `Release`
   - runs on tags matching `v*`
+  - runs on pushes to `main`
+  - can also be started manually from GitHub Actions
   - builds a HACS-ready zip
-  - publishes it as a GitHub release asset
+  - publishes a GitHub release asset only for tags
 
 ## Versioning
 
@@ -22,7 +23,7 @@ The leading `v` is stripped before validating the integration manifest version.
 
 ## Artifact behavior
 
-Release builds run:
+Tagged release builds run:
 
 ```bash
 python scripts/build_hacs_zip.py \
@@ -36,7 +37,12 @@ The generated artifact is:
 
 The zip contains the integration tree under:
 
-- `src/custom_components/wattplan/...`
+- `custom_components/wattplan/...`
+
+For tagged commits, the workflow publishes the same zip in two places:
+
+- as a GitHub Actions workflow artifact
+- as a GitHub release asset on the tag's release page
 
 ## Prereleases
 
@@ -47,10 +53,12 @@ Examples:
 - `v0.3.0-beta.1`
 - `v0.3.0-rc.1`
 
-## Main branch artifacts
+## Main branch dev artifacts
 
-Pushes to `main` build a CI artifact labeled with the short commit SHA:
+Pushes to `main` build a release-style dev artifact labeled from the manifest version plus the short commit SHA:
 
-- `wattplan-main-<sha>.zip`
+- `wattplan-<manifest-version>-dev.<sha>.zip`
 
-These are uploaded as workflow artifacts, not published as GitHub releases.
+These are uploaded as workflow artifacts, not published as GitHub releases, and do not validate the manifest version against a tag.
+
+Manual runs of the `Release` workflow behave the same way unless you run them from a tag ref.
