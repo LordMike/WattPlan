@@ -18,37 +18,24 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.14.3"
+          python-version: "3.14"
 
-      - name: Compute artifact version
+      - name: Build release artifact
         id: version
         run: |
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
+            VALIDATE_ARGS=(--validate-manifest-version "$VERSION")
           else
-            VERSION="$(python - <<'PY'
-import json
-from pathlib import Path
-
-manifest = json.loads(Path("src/custom_components/wattplan/manifest.json").read_text())
-print(f"{manifest['version']}-dev.{__import__('os').environ['GITHUB_SHA'][:7]}")
-PY
-)"
+            VERSION="$(python -c "import json, os; from pathlib import Path; manifest = json.loads(Path('src/custom_components/wattplan/manifest.json').read_text()); print(f\"{manifest['version']}-dev.{os.environ['GITHUB_SHA'][:7]}\")")"
+            VALIDATE_ARGS=()
           fi
+
+          python scripts/build_hacs_zip.py \
+            --version-label "$VERSION" \
+            "${VALIDATE_ARGS[@]}"
+
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Build tagged release artifact
-        if: github.ref_type == 'tag'
-        run: |
-          python scripts/build_hacs_zip.py \
-            --version-label "${{ steps.version.outputs.version }}" \
-            --validate-manifest-version "${{ steps.version.outputs.version }}"
-
-      - name: Build dev release artifact
-        if: github.ref_type != 'tag'
-        run: |
-          python scripts/build_hacs_zip.py \
-            --version-label "${{ steps.version.outputs.version }}"
 
       - name: Upload release workflow artifact
         uses: actions/upload-artifact@v4
@@ -57,7 +44,7 @@ PY
           path: dist/*.zip
 
       - name: Create GitHub release
-        if: github.ref_type == 'tag'
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.zip
