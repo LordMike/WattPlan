@@ -323,11 +323,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
     @property
     def overall_status(self) -> dict[str, Any]:
         """Return current top-level health payload."""
-        payload = {
-            **self._overall_status,
-            "last_success_at": self._last_success_at,
-            "last_attempt_at": self._last_attempt_at,
-        }
+        payload = dict(self._overall_status)
         if self.is_stale:
             payload.update(
                 {
@@ -913,7 +909,6 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 "optionals": optional_name_to_subentry,
             },
             "usage_forecast_points": usage_forecast_points,
-            "source_health": self._source_health_diagnostics(),
         }
 
     async def async_build_planner_input_export(self) -> dict[str, Any]:
@@ -1010,20 +1005,6 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         )
         self._source_providers[provider_key] = provider
         return provider
-
-    def _source_health_diagnostics(self) -> dict[str, Any]:
-        """Return the current source issue state for diagnostics payloads."""
-        return {
-            source_key: {
-                "kind": issue.kind,
-                **issue.data,
-            }
-            for source_key, issue in self._active_source_issues.items()
-        }
-
-    def _source_status_diagnostics(self) -> dict[str, Any]:
-        """Return stable source status diagnostics for entity projection."""
-        return {key: dict(value) for key, value in self._source_statuses.items()}
 
     def _record_source_issue_if_needed(
         self,
@@ -1140,8 +1121,8 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 "reason_summary": "Source is healthy",
                 "is_stale": False,
                 "is_critical": is_critical,
-                "available_count": health.available_count if health is not None else None,
-                "required_count": health.required_count if health is not None else None,
+                "available_count": None,
+                "required_count": None,
                 "expires_at": None,
                 "provider_kind": provider_kind,
             }
@@ -1636,8 +1617,6 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                         start_at + timedelta(minutes=horizon_slots * slot_minutes)
                     ).isoformat(),
                 },
-                "source_health": request.get("source_health", {}),
-                "source_statuses": self._source_status_diagnostics(),
                 **self._build_enabled_plan_details(request, result),
             },
         }

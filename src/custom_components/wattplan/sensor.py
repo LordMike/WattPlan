@@ -158,15 +158,26 @@ class StatusSensor(WattPlanCoordinatorSensor):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return status context."""
-        attrs = self.coordinator.error_attributes()
-        attrs.update(self.coordinator.overall_status)
-        return attrs
+        status = self.coordinator.overall_status
+        return {
+            "reason_codes": list(status.get("reason_codes", [])),
+            "reason_summary": str(status.get("reason_summary", "")),
+            "affected_sources": list(status.get("affected_sources", [])),
+            "critical_sources_failed": list(
+                status.get("critical_sources_failed", [])
+            ),
+            "is_stale": bool(status.get("is_stale", False)),
+            "has_usable_plan": bool(status.get("has_usable_plan", False)),
+            "plan_created_at": status.get("plan_created_at"),
+            "expires_at": status.get("expires_at"),
+        }
 
 
 class StatusMessageSensor(WattPlanCoordinatorSensor):
     """Human-readable summary of current integration health."""
 
     _require_snapshot = False
+    _attr_entity_registry_enabled_default = False
 
     @property
     def native_value(self) -> str | None:
@@ -186,6 +197,7 @@ class SourceStatusSensor(WattPlanCoordinatorSensor):
     """Status sensor for one configured source."""
 
     _require_snapshot = False
+    _attr_entity_registry_enabled_default = False
 
     def __init__(
         self,
@@ -210,7 +222,19 @@ class SourceStatusSensor(WattPlanCoordinatorSensor):
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
         """Return stable public source health payload."""
-        return self.coordinator.source_status(self._source_key)
+        status = self.coordinator.source_status(self._source_key)
+        if status is None:
+            return None
+        return {
+            "reason_code": status.get("reason_code"),
+            "reason_summary": status.get("reason_summary"),
+            "is_stale": bool(status.get("is_stale", False)),
+            "is_critical": bool(status.get("is_critical", False)),
+            "available_count": status.get("available_count"),
+            "required_count": status.get("required_count"),
+            "expires_at": status.get("expires_at"),
+            "provider_kind": status.get("provider_kind"),
+        }
 
 
 class ActionSensor(WattPlanCoordinatorSensor):
