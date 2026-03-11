@@ -50,7 +50,7 @@ from custom_components.wattplan.coordinator import PlanningStageError
 import pytest
 
 from homeassistant import config_entries
-from homeassistant.const import CONF_NAME, STATE_UNAVAILABLE
+from homeassistant.const import CONF_NAME, STATE_OFF, STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.util import dt as dt_util
