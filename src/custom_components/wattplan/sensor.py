@@ -19,11 +19,15 @@ from .target_runtime import get_active_battery_target
 from .const import (
     CONF_OPTIONS_COUNT,
     CONF_SLOT_MINUTES,
+    CONF_SOURCE_EXPORT_PRICE,
     CONF_SOURCE_MODE,
+    CONF_SOURCE_IMPORT_PRICE,
+    CONF_SOURCE_PV,
     CONF_SOURCE_USAGE,
     CONF_SOURCES,
     DOMAIN,
     SOURCE_MODE_BUILT_IN,
+    SOURCE_MODE_NOT_USED,
     SUBENTRY_TYPE_BATTERY,
     SUBENTRY_TYPE_COMFORT,
     SUBENTRY_TYPE_OPTIONAL,
@@ -83,6 +87,7 @@ class WattPlanCoordinatorSensor(CoordinatorEntity[WattPlanCoordinator], SensorEn
 
     _attr_should_poll = False
     _require_snapshot = True
+    _require_usable_plan = False
 
     def __init__(
         self,
@@ -107,7 +112,7 @@ class WattPlanCoordinatorSensor(CoordinatorEntity[WattPlanCoordinator], SensorEn
         """Return if entity is available."""
         if not super().available:
             return False
-        if self.coordinator.is_stale:
+        if self._require_usable_plan and not self.coordinator.has_usable_plan:
             return False
         if self._require_snapshot and self.coordinator.snapshot is None:
             return False
@@ -143,44 +148,75 @@ class StaticValueSensor(WattPlanCoordinatorSensor):
 class StatusSensor(WattPlanCoordinatorSensor):
     """Status sensor projected from the latest snapshot."""
 
+    _require_snapshot = False
+
     @property
     def native_value(self) -> str | None:
         """Return planner status value from snapshot."""
-        if snapshot := self.snapshot:
-            return snapshot.planner_status
-        return None
+        return str(self.coordinator.overall_status.get("status"))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return status context."""
         attrs = self.coordinator.error_attributes()
-        if snapshot := self.snapshot:
-            optimizer = {}
-            if isinstance(snapshot.diagnostics, dict):
-                optimizer = snapshot.diagnostics.get("optimizer", {})
-            reason_keys = []
-            if isinstance(optimizer, dict):
-                raw_reason_keys = optimizer.get("suboptimal_reasons", [])
-                if isinstance(raw_reason_keys, list):
-                    reason_keys = [str(reason) for reason in raw_reason_keys]
-            attrs.update(
-                {
-                    "snapshot_created_at": snapshot.created_at,
-                    "planner_message": snapshot.planner_message,
-                    "suboptimal_reason_keys": reason_keys,
-                    "suboptimal_reason_descriptions": [
-                        SUBOPTIMAL_REASON_DESCRIPTIONS.get(
-                            reason, f"Unknown suboptimal reason: {reason}"
-                        )
-                        for reason in reason_keys
-                    ],
-                }
-            )
+        attrs.update(self.coordinator.overall_status)
         return attrs
+
+
+class StatusMessageSensor(WattPlanCoordinatorSensor):
+    """Human-readable summary of current integration health."""
+
+    _require_snapshot = False
+
+    @property
+    def native_value(self) -> str | None:
+        """Return summary text from coordinator health."""
+        summary = self.coordinator.overall_status.get("reason_summary")
+        return str(summary) if summary is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return supporting machine-readable reasons."""
+        return {
+            "reason_codes": list(self.coordinator.overall_status.get("reason_codes", []))
+        }
+
+
+class SourceStatusSensor(WattPlanCoordinatorSensor):
+    """Status sensor for one configured source."""
+
+    _require_snapshot = False
+
+    def __init__(
+        self,
+        config_entry: ConfigEntry,
+        coordinator: WattPlanCoordinator,
+        *,
+        source_key: str,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize source status sensor."""
+        super().__init__(config_entry, coordinator, **kwargs)
+        self._source_key = source_key
+
+    @property
+    def native_value(self) -> str | None:
+        """Return current source state."""
+        status = self.coordinator.source_status(self._source_key)
+        if status is None:
+            return None
+        return str(status.get("status"))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return stable public source health payload."""
+        return self.coordinator.source_status(self._source_key)
 
 
 class ActionSensor(WattPlanCoordinatorSensor):
     """Action sensor with next action timestamp attributes."""
+
+    _require_usable_plan = True
 
     def __init__(
         self,
@@ -382,6 +418,7 @@ class UsageForecastSensor(WattPlanCoordinatorSensor):
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_entity_registry_enabled_default = False
     _attr_suggested_display_precision = 2
+    _require_usable_plan = True
 
     @property
     def native_value(self) -> float | None:
@@ -423,6 +460,7 @@ class PlanDetailsSensor(WattPlanCoordinatorSensor):
     _attr_device_class = SensorDeviceClass.TIMESTAMP
     # Keep the large graph payload out of recorder; the card reads live state.
     _unrecorded_attributes = frozenset({MATCH_ALL})
+    _require_usable_plan = True
 
     def __init__(
         self,
@@ -457,6 +495,8 @@ class PlanDetailsSensor(WattPlanCoordinatorSensor):
 
 class ProjectionSensor(WattPlanCoordinatorSensor):
     """Sensor exposing projected cost savings metrics from the optimizer."""
+
+    _require_usable_plan = True
 
     def __init__(
         self,
@@ -571,6 +611,19 @@ async def async_setup_entry(
             object_id=f"{entry_slug}_status",
             unique_id=f"{config_entry.entry_id}:entry:status",
         ),
+        StatusMessageSensor(
+            config_entry,
+            coordinator,
+            object_id=f"{entry_slug}_status_message",
+            unique_id=f"{config_entry.entry_id}:entry:status_message",
+        ),
+        SourceStatusSensor(
+            config_entry,
+            coordinator,
+            source_key=CONF_SOURCE_IMPORT_PRICE,
+            object_id=f"{entry_slug}_import_price_status",
+            unique_id=f"{config_entry.entry_id}:entry:import_price_status",
+        ),
         LastRunSensor(
             config_entry,
             coordinator,
@@ -646,6 +699,19 @@ async def async_setup_entry(
     usage_source = config_entry.data.get(CONF_SOURCES, {}).get(CONF_SOURCE_USAGE, {})
     if (
         isinstance(usage_source, dict)
+        and usage_source.get(CONF_SOURCE_MODE) != SOURCE_MODE_NOT_USED
+    ):
+        sensors.append(
+            SourceStatusSensor(
+                config_entry,
+                coordinator,
+                source_key=CONF_SOURCE_USAGE,
+                object_id=f"{entry_slug}_usage_status",
+                unique_id=f"{config_entry.entry_id}:entry:usage_status",
+            )
+        )
+    if (
+        isinstance(usage_source, dict)
         and usage_source.get(CONF_SOURCE_MODE) == SOURCE_MODE_BUILT_IN
     ):
         sensors.append(
@@ -654,6 +720,36 @@ async def async_setup_entry(
                 coordinator,
                 object_id=f"{entry_slug}_usage_forecast",
                 unique_id=f"{config_entry.entry_id}:entry:usage_forecast",
+            )
+        )
+
+    export_source = config_entry.data.get(CONF_SOURCES, {}).get(CONF_SOURCE_EXPORT_PRICE, {})
+    if (
+        isinstance(export_source, dict)
+        and export_source.get(CONF_SOURCE_MODE) != SOURCE_MODE_NOT_USED
+    ):
+        sensors.append(
+            SourceStatusSensor(
+                config_entry,
+                coordinator,
+                source_key=CONF_SOURCE_EXPORT_PRICE,
+                object_id=f"{entry_slug}_export_price_status",
+                unique_id=f"{config_entry.entry_id}:entry:export_price_status",
+            )
+        )
+
+    pv_source = config_entry.data.get(CONF_SOURCES, {}).get(CONF_SOURCE_PV, {})
+    if (
+        isinstance(pv_source, dict)
+        and pv_source.get(CONF_SOURCE_MODE) != SOURCE_MODE_NOT_USED
+    ):
+        sensors.append(
+            SourceStatusSensor(
+                config_entry,
+                coordinator,
+                source_key=CONF_SOURCE_PV,
+                object_id=f"{entry_slug}_pv_status",
+                unique_id=f"{config_entry.entry_id}:entry:pv_status",
             )
         )
 

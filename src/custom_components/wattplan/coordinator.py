@@ -68,6 +68,7 @@ from .const import (
 from .historical_on_off_provider import HistoricalOnOffProvider
 from .optimizer import OptimizationParams, optimize
 from .source_fixup import SourceFixupProvider, SourceHealthKind
+from .source_fixup import SourceHealthState
 from .source_issues import (
     build_source_issue,
     clear_entry_source_issues,
@@ -279,6 +280,18 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         self._on_off_providers: dict[str, HistoricalOnOffProvider] = {}
         self._source_providers: dict[str, SourceProvider] = {}
         self._active_source_issues: dict[str, Any] = {}
+        self._source_statuses: dict[str, dict[str, Any]] = {}
+        self._overall_status: dict[str, Any] = {
+            "status": "failed",
+            "reason_codes": ["planner_failed"],
+            "reason_summary": "No usable plan is available",
+            "affected_sources": [],
+            "critical_sources_failed": [],
+            "is_stale": False,
+            "has_usable_plan": False,
+            "expires_at": None,
+            "plan_created_at": None,
+        }
         self._snapshot_store = Store[dict[str, Any]](
             hass,
             STORAGE_VERSION,
@@ -301,6 +314,38 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
     def snapshot(self) -> CoordinatorSnapshot | None:
         """Return the latest immutable snapshot."""
         return self._snapshot
+
+    @property
+    def has_usable_plan(self) -> bool:
+        """Return whether the current coordinator state exposes a usable plan."""
+        return bool(self.overall_status.get("has_usable_plan", False))
+
+    @property
+    def overall_status(self) -> dict[str, Any]:
+        """Return current top-level health payload."""
+        payload = {
+            **self._overall_status,
+            "last_success_at": self._last_success_at,
+            "last_attempt_at": self._last_attempt_at,
+        }
+        if self.is_stale:
+            payload.update(
+                {
+                    "status": "failed",
+                    "reason_codes": ["coordinator_stale"],
+                    "reason_summary": "No usable plan is available because coordinator state is stale",
+                    "has_usable_plan": False,
+                    "is_stale": False,
+                }
+            )
+        return payload
+
+    def source_status(self, source_key: str) -> dict[str, Any] | None:
+        """Return current source health payload for one source."""
+        status = self._source_statuses.get(source_key)
+        if status is None:
+            return None
+        return dict(status)
 
     @property
     def last_attempt_at(self) -> datetime | None:
@@ -472,10 +517,12 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 await self.async_persist_snapshot()
                 self._clear_stage_error(Stage.PLAN)
                 self._last_success_at = datetime.now(tz=UTC)
+                self._recompute_overall_status(planner_output=planner_output)
                 self._sync_source_issues(entry)
                 if trigger is CycleTrigger.SERVICE:
                     self.async_update_listeners()
             except PlanningStageError as err:
+                self._mark_failed_status(err)
                 self._sync_source_issues(self._require_entry())
                 self._set_stage_error(
                     Stage.PLAN,
@@ -490,6 +537,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             except ServiceValidationError:
                 raise
             except Exception as err:
+                self._mark_failed_status(err)
                 self._sync_source_issues(self._require_entry())
                 self._set_stage_error(
                     Stage.PLAN,
@@ -973,6 +1021,10 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             for source_key, issue in self._active_source_issues.items()
         }
 
+    def _source_status_diagnostics(self) -> dict[str, Any]:
+        """Return stable source status diagnostics for entity projection."""
+        return {key: dict(value) for key, value in self._source_statuses.items()}
+
     def _record_source_issue_if_needed(
         self,
         *,
@@ -990,9 +1042,19 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
 
         if not isinstance(provider, SourceFixupProvider):
             self._active_source_issues.pop(source_key, None)
+            self._source_statuses[source_key] = self._build_source_status(
+                source_key=source_key,
+                source_config=source_config,
+                health=None,
+            )
             return
 
         health = provider.last_health
+        self._source_statuses[source_key] = self._build_source_status(
+            source_key=source_key,
+            source_config=source_config,
+            health=health,
+        )
         if health.kind is SourceHealthKind.OK:
             self._active_source_issues.pop(source_key, None)
             return
@@ -1050,6 +1112,191 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
     def _source_fill_defaults_needed(self, source_config: dict[str, Any]) -> bool:
         """Return whether the incomplete-source repair can still change config."""
         return source_fill_defaults_needed(source_config)
+
+    def _source_is_critical(
+        self, source_key: str, source_config: dict[str, Any]
+    ) -> bool:
+        """Return whether one configured source is critical to usable planning."""
+        if source_key == CONF_SOURCE_IMPORT_PRICE:
+            return True
+        if source_key == CONF_SOURCE_USAGE:
+            return source_config.get(CONF_SOURCE_MODE) != SOURCE_MODE_NOT_USED
+        return False
+
+    def _build_source_status(
+        self,
+        *,
+        source_key: str,
+        source_config: dict[str, Any],
+        health: SourceHealthState | None,
+    ) -> dict[str, Any]:
+        """Return stable public status payload for one configured source."""
+        is_critical = self._source_is_critical(source_key, source_config)
+        provider_kind = str(source_config.get(CONF_SOURCE_MODE, "unknown"))
+        if health is None or health.kind is SourceHealthKind.OK:
+            return {
+                "status": "ok",
+                "reason_code": "fresh",
+                "reason_summary": "Source is healthy",
+                "is_stale": False,
+                "is_critical": is_critical,
+                "available_count": health.available_count if health is not None else None,
+                "required_count": health.required_count if health is not None else None,
+                "expires_at": None,
+                "provider_kind": provider_kind,
+            }
+
+        if health.using_stale:
+            status = "degraded"
+            reason_code = (
+                "incomplete_stale_backed"
+                if health.kind is SourceHealthKind.INCOMPLETE
+                else "stale_reuse"
+            )
+            reason_summary = "Source is using stale fallback data"
+        elif is_critical:
+            status = "failed"
+            reason_code = (
+                "not_covering_horizon"
+                if health.kind is SourceHealthKind.INCOMPLETE
+                else "unavailable"
+            )
+            reason_summary = "Source is unavailable for planning"
+        else:
+            status = "degraded"
+            reason_code = (
+                "not_covering_horizon"
+                if health.kind is SourceHealthKind.INCOMPLETE
+                else "unavailable_noncritical"
+            )
+            reason_summary = "Source is unavailable, but planning can continue"
+
+        return {
+            "status": status,
+            "reason_code": reason_code,
+            "reason_summary": reason_summary,
+            "is_stale": health.using_stale,
+            "is_critical": is_critical,
+            "available_count": health.available_count,
+            "required_count": health.required_count,
+            "expires_at": health.expires_at.isoformat() if health.expires_at else None,
+            "provider_kind": provider_kind,
+        }
+
+    def _recompute_overall_status(self, *, planner_output: dict[str, Any]) -> None:
+        """Recompute the public integration status from source and planner state."""
+        reason_codes: list[str] = []
+        affected_sources: list[str] = []
+        critical_sources_failed: list[str] = []
+        is_stale = False
+        status = "ok"
+
+        for source_key, source_status in self._source_statuses.items():
+            source_state = str(source_status.get("status", "ok"))
+            if bool(source_status.get("is_stale", False)):
+                is_stale = True
+            if source_state == "ok":
+                continue
+            affected_sources.append(source_key.removeprefix("source_"))
+            if source_key == CONF_SOURCE_IMPORT_PRICE:
+                if source_state == "failed":
+                    critical_sources_failed.append("import_price")
+                    reason_codes.append("source_import_price_failed_critical")
+                    status = "failed"
+                else:
+                    reason_codes.append("source_import_price_degraded")
+                    if status != "failed":
+                        status = "degraded"
+                continue
+            if source_key == CONF_SOURCE_USAGE:
+                if source_state == "failed":
+                    critical_sources_failed.append("usage")
+                    reason_codes.append("source_usage_failed_critical")
+                    status = "failed"
+                else:
+                    reason_codes.append("source_usage_degraded")
+                    if status != "failed":
+                        status = "degraded"
+                continue
+            if source_key == CONF_SOURCE_PV:
+                reason_codes.append("source_pv_failed_noncritical")
+                if status != "failed":
+                    status = "degraded"
+                continue
+            if source_key == CONF_SOURCE_EXPORT_PRICE:
+                reason_codes.append("source_export_price_failed_noncritical")
+                if status != "failed":
+                    status = "degraded"
+
+        optimizer = planner_output.get("diagnostics", {}).get("optimizer", {})
+        if (
+            status != "failed"
+            and isinstance(optimizer, dict)
+            and bool(optimizer.get("suboptimal", False))
+        ):
+            status = "degraded"
+            reason_codes.append("optimizer_suboptimal")
+
+        has_usable_plan = status != "failed"
+        if not has_usable_plan:
+            reason_summary = "No usable plan is available"
+        elif status == "degraded":
+            if is_stale and affected_sources:
+                reason_summary = (
+                    f"Plan is available using stale {affected_sources[0].replace('_', ' ')} data"
+                )
+            elif affected_sources:
+                reason_summary = (
+                    f"Plan is available, but {affected_sources[0].replace('_', ' ')} is degraded"
+                )
+            elif "optimizer_suboptimal" in reason_codes:
+                reason_summary = "Plan is available, but the optimizer returned a degraded result"
+            else:
+                reason_summary = "Plan is available, but degraded"
+        else:
+            reason_summary = "Plan is healthy"
+
+        self._overall_status = {
+            "status": status,
+            "reason_codes": reason_codes,
+            "reason_summary": reason_summary,
+            "affected_sources": affected_sources,
+            "critical_sources_failed": critical_sources_failed,
+            "is_stale": is_stale,
+            "has_usable_plan": has_usable_plan,
+            "expires_at": next(
+                (
+                    payload.get("expires_at")
+                    for payload in self._source_statuses.values()
+                    if payload.get("is_stale") and payload.get("expires_at")
+                ),
+                None,
+            ),
+            "plan_created_at": (
+                self._snapshot.created_at.isoformat() if self._snapshot is not None else None
+            ),
+        }
+
+    def _mark_failed_status(self, err: Exception) -> None:
+        """Mark the public health model as failed after a planning error."""
+        existing_sources = [
+            source_key.removeprefix("source_")
+            for source_key, source_status in self._source_statuses.items()
+            if source_status.get("status") == "failed"
+        ]
+        self._overall_status = {
+            "status": "failed",
+            "reason_codes": ["planner_failed"],
+            "reason_summary": str(err),
+            "affected_sources": existing_sources,
+            "critical_sources_failed": [
+                source for source in existing_sources if source in {"import_price", "usage"}
+            ],
+            "is_stale": False,
+            "has_usable_plan": False,
+            "expires_at": None,
+            "plan_created_at": None,
+        }
 
     def _values_to_points(
         self, values: list[float], window: SourceWindow
@@ -1357,7 +1604,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
 
         is_suboptimal = bool(result.get("suboptimal", False))
         reasons = list(result.get("suboptimal_reasons", []))
-        status = "suboptimal" if is_suboptimal else "planned"
+        status = "degraded" if is_suboptimal else "ok"
         message = (
             f"Plan solved with suboptimal constraints: {', '.join(reasons)}"
             if is_suboptimal
@@ -1390,6 +1637,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                     ).isoformat(),
                 },
                 "source_health": request.get("source_health", {}),
+                "source_statuses": self._source_status_diagnostics(),
                 **self._build_enabled_plan_details(request, result),
             },
         }
@@ -1891,6 +2139,23 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             if payload.get("last_duration_ms") is not None
             else None
         )
+        planner_status = str(snapshot.planner_status)
+        restored_status = planner_status if planner_status in {"ok", "degraded"} else "ok"
+        self._overall_status = {
+            "status": restored_status,
+            "reason_codes": [],
+            "reason_summary": (
+                snapshot.planner_message
+                if snapshot.planner_message is not None
+                else "Restored plan snapshot"
+            ),
+            "affected_sources": [],
+            "critical_sources_failed": [],
+            "is_stale": False,
+            "has_usable_plan": True,
+            "expires_at": None,
+            "plan_created_at": snapshot.created_at.isoformat(),
+        }
         # Keep restored entities available until the next scheduled cycle updates
         # the real execution timestamps.
         self._last_attempt_at = datetime.now(tz=UTC)

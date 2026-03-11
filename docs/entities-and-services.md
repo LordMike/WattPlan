@@ -15,7 +15,12 @@ These exist once per WattPlan setup:
 
 | Entity | Purpose |
 | --- | --- |
-| `sensor.<setup_slug>_status` | Current planner status such as `planned`, `suboptimal`, or `error`. |
+| `sensor.<setup_slug>_status` | Current integration health: `ok`, `degraded`, or `failed`. Includes attributes such as `reason_codes`, `affected_sources`, `is_stale`, and `has_usable_plan`. |
+| `sensor.<setup_slug>_status_message` | Human-readable summary of the current integration health. |
+| `sensor.<setup_slug>_import_price_status` | Import price source health: `ok`, `degraded`, or `failed`. |
+| `sensor.<setup_slug>_usage_status` | Present when usage is configured. Usage source health: `ok`, `degraded`, or `failed`. |
+| `sensor.<setup_slug>_export_price_status` | Present when export price is configured. Export price source health: `ok`, `degraded`, or `failed`. |
+| `sensor.<setup_slug>_pv_status` | Present when PV is configured. PV source health: `ok`, `degraded`, or `failed`. |
 | `sensor.<setup_slug>_last_run` | Timestamp of the last successful planning cycle. |
 | `sensor.<setup_slug>_next_run` | Timestamp of the next scheduled planning cycle. |
 | `sensor.<setup_slug>_last_run_duration` | Duration of the last planning cycle in milliseconds. |
@@ -26,6 +31,8 @@ These exist once per WattPlan setup:
 | `sensor.<setup_slug>_plan_details` | Disabled by default. Raw planner-detail payload at WattPlan's configured slot size. |
 | `sensor.<setup_slug>_plan_details_hourly` | Disabled by default. The same planner details, aggregated to hourly buckets. |
 | `sensor.<setup_slug>_usage_forecast` | Present when the built-in usage source is configured. Exposes the generated usage forecast. |
+
+When `sensor.<setup_slug>_status` is `failed`, plan-dependent entities such as action sensors, plan details, projected savings, and usage forecast become unavailable rather than continuing to expose stale plan data.
 
 ## Battery Entities
 

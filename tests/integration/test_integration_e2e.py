@@ -50,7 +50,7 @@ from custom_components.wattplan.coordinator import PlanningStageError
 import pytest
 
 from homeassistant import config_entries
-from homeassistant.const import CONF_NAME, STATE_OFF, STATE_ON, STATE_UNAVAILABLE
+from homeassistant.const import CONF_NAME, STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.util import dt as dt_util
@@ -323,9 +323,9 @@ async def test_run_services_are_isolated_by_name(hass: HomeAssistant) -> None:
         await _run_emit(hass, name="Alpha")
 
     assert hass.states.get("sensor.alpha_status") is not None
-    assert hass.states.get("sensor.alpha_status").state == "planned"
+    assert hass.states.get("sensor.alpha_status").state == "ok"
     assert hass.states.get("sensor.beta_status") is not None
-    assert hass.states.get("sensor.beta_status").state == "planned"
+    assert hass.states.get("sensor.beta_status").state == "failed"
     assert alpha.runtime_data.coordinator.last_attempt_at is not None
     assert alpha.runtime_data.coordinator.last_attempt_at > alpha_before
     assert beta.runtime_data.coordinator.last_attempt_at == beta_before
@@ -427,7 +427,7 @@ async def test_scheduler_runs_at_interval(hass: HomeAssistant) -> None:
 
 
 @pytest.mark.parametrize(
-    ("source_override", "patch_optimize", "expected_error_entity", "expect_raise"),
+    ("source_override", "patch_optimize", "expected_status", "expected_source"),
     [
         (
             {
@@ -437,8 +437,8 @@ async def test_scheduler_runs_at_interval(hass: HomeAssistant) -> None:
                 },
             },
             None,
-            "binary_sensor.home_source_import_price_error",
-            True,
+            "failed",
+            ("sensor.home_import_price_status", "failed"),
         ),
         (
             {
@@ -448,8 +448,8 @@ async def test_scheduler_runs_at_interval(hass: HomeAssistant) -> None:
                 },
             },
             None,
-            "binary_sensor.home_source_usage_error",
-            True,
+            "failed",
+            ("sensor.home_usage_status", "failed"),
         ),
         (
             {
@@ -459,27 +459,26 @@ async def test_scheduler_runs_at_interval(hass: HomeAssistant) -> None:
                 },
             },
             None,
-            "binary_sensor.home_source_pv_error",
-            False,
+            "degraded",
+            ("sensor.home_pv_status", "degraded"),
         ),
         (
             {},
             RuntimeError("optimizer failed"),
-            "binary_sensor.home_optimize_error",
-            True,
+            "failed",
+            None,
         ),
     ],
 )
-async def test_error_sensors_can_turn_on_for_failures(
+async def test_status_sensors_reflect_failures(
     hass: HomeAssistant,
     entity_registry_enabled_by_default: None,
     source_override: dict[str, dict[str, Any]],
     patch_optimize: Exception | None,
-    expected_error_entity: str,
-    expect_raise: bool,
+    expected_status: str,
+    expected_source: tuple[str, str] | None,
 ) -> None:
-    """Each specialized error sensor should represent its own failure class."""
-    # Purpose: verify the integration exposes all error scopes through entities.
+    """Overall and per-source status sensors should expose failure classes."""
     sources = _base_sources()
     sources.update(source_override)
     entry = _entry(
@@ -499,25 +498,32 @@ async def test_error_sensors_can_turn_on_for_failures(
             side_effect=_fake_optimize,
         )
     )
-    if expect_raise:
+    if patch_optimize or expected_status == "failed":
         with optimize_patch, pytest.raises(PlanningStageError):
             await _run_optimize(hass)
     else:
         with optimize_patch:
             await _run_optimize(hass)
 
-    assert hass.states.get(expected_error_entity) is not None
-    expected_state = STATE_OFF if expected_error_entity.endswith("source_pv_error") else STATE_ON
-    assert hass.states.get(expected_error_entity).state == expected_state
-    assert hass.states.get("binary_sensor.home_has_error").state == expected_state
+    status = hass.states.get("sensor.home_status")
+    assert status is not None
+    assert status.state == expected_status
+    if expected_source is not None:
+        entity_id, source_state = expected_source
+        source_status = hass.states.get(entity_id)
+        assert source_status is not None
+        assert source_status.state == source_state
+    battery_action = hass.states.get("sensor.home_battery_action")
+    assert battery_action is not None
+    if expected_status == "failed":
+        assert battery_action.state == STATE_UNAVAILABLE
 
 
-async def test_error_clears_after_recovery(
+async def test_status_recovers_after_source_recovery(
     hass: HomeAssistant,
     entity_registry_enabled_by_default: None,
 ) -> None:
-    """A later successful run should clear previous coordinator error state."""
-    # Purpose: ensure users can observe recovery without restarting HA.
+    """A later successful run should restore the new status model."""
     sources = _base_sources()
     sources[CONF_SOURCE_IMPORT_PRICE] = {
         CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
@@ -534,8 +540,8 @@ async def test_error_clears_after_recovery(
     ), pytest.raises(PlanningStageError):
         await _run_optimize(hass)
 
-    assert hass.states.get("binary_sensor.home_source_import_price_error").state == STATE_ON
-    assert hass.states.get("binary_sensor.home_has_error").state == STATE_ON
+    assert hass.states.get("sensor.home_status").state == "failed"
+    assert hass.states.get("sensor.home_import_price_status").state == "failed"
 
     hass.config_entries.async_update_entry(
         entry,
@@ -549,8 +555,8 @@ async def test_error_clears_after_recovery(
     with patch("custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize):
         await _run_optimize(hass)
 
-    assert hass.states.get("binary_sensor.home_source_import_price_error").state == STATE_OFF
-    assert hass.states.get("binary_sensor.home_has_error").state == STATE_OFF
+    assert hass.states.get("sensor.home_status").state == "ok"
+    assert hass.states.get("sensor.home_import_price_status").state == "ok"
 
 
 async def test_suboptimal_result_is_exposed(
@@ -573,9 +579,8 @@ async def test_suboptimal_result_is_exposed(
 
     status = hass.states.get("sensor.home_status")
     assert status is not None
-    assert status.state == "suboptimal"
-    assert "constraint_tightness" in str(status.attributes.get("planner_message"))
-    assert hass.states.get("binary_sensor.home_optimize_error").state == STATE_OFF
+    assert status.state == "degraded"
+    assert "optimizer_suboptimal" in list(status.attributes.get("reason_codes", []))
 
 
 async def test_emit_without_snapshot_raises_and_sets_error(
@@ -597,3 +602,41 @@ async def test_emit_without_snapshot_raises_and_sets_error(
     coordinator = entry.runtime_data.coordinator
     assert coordinator.has_error is True
     assert coordinator.error_attributes()["emit_error_kind"] == "emit_no_snapshot"
+
+
+async def test_removed_binary_error_entities_are_not_created(
+    hass: HomeAssistant,
+    entity_registry_enabled_by_default: None,
+) -> None:
+    """Legacy binary error entities should not exist anymore."""
+    entry = _entry(
+        title="Home",
+        subentries_data=[_battery_subentry(subentry_id="battery", name="battery")],
+    )
+    await _setup_entry(hass, entry)
+
+    assert hass.states.get("binary_sensor.home_has_error") is None
+    assert hass.states.get("binary_sensor.home_source_import_price_error") is None
+    assert hass.states.get("binary_sensor.home_source_usage_error") is None
+    assert hass.states.get("binary_sensor.home_source_pv_error") is None
+    assert hass.states.get("binary_sensor.home_optimize_error") is None
+
+
+async def test_optional_source_status_entities_are_omitted_when_not_configured(
+    hass: HomeAssistant,
+    entity_registry_enabled_by_default: None,
+) -> None:
+    """Unconfigured optional sources should not get status entities."""
+    sources = _base_sources()
+    sources.pop(CONF_SOURCE_PV, None)
+    entry = _entry(
+        title="Home",
+        subentries_data=[_battery_subentry(subentry_id="battery", name="battery")],
+        sources=sources,
+    )
+    await _setup_entry(hass, entry)
+
+    assert hass.states.get("sensor.home_import_price_status") is not None
+    assert hass.states.get("sensor.home_usage_status") is not None
+    assert hass.states.get("sensor.home_pv_status") is None
+    assert hass.states.get("sensor.home_export_price_status") is None

@@ -45,7 +45,7 @@ from .forecast_provider import ForecastProvider
 from .source_pipeline import build_source_base_provider
 from .target_runtime import clear_battery_target, set_battery_target
 
-PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
+PLATFORMS: list[Platform] = [Platform.SENSOR]
 
 DATA_ENTRY_COUNT = "entry_count"
 DATA_SERVICE_REGISTERED = "service_registered"
