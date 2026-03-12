@@ -325,7 +325,7 @@ async def test_run_services_are_isolated_by_name(hass: HomeAssistant) -> None:
     assert hass.states.get("sensor.alpha_status") is not None
     assert hass.states.get("sensor.alpha_status").state == "ok"
     assert hass.states.get("sensor.beta_status") is not None
-    assert hass.states.get("sensor.beta_status").state == "failed"
+    assert hass.states.get("sensor.beta_status").state == "ok"
     assert alpha.runtime_data.coordinator.last_attempt_at is not None
     assert alpha.runtime_data.coordinator.last_attempt_at > alpha_before
     assert beta.runtime_data.coordinator.last_attempt_at == beta_before

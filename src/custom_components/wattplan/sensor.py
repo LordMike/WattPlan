@@ -723,6 +723,7 @@ async def async_setup_entry(
     usage_source = config_entry.data.get(CONF_SOURCES, {}).get(CONF_SOURCE_USAGE, {})
     if (
         isinstance(usage_source, dict)
+        and usage_source
         and usage_source.get(CONF_SOURCE_MODE) != SOURCE_MODE_NOT_USED
     ):
         sensors.append(
@@ -736,6 +737,7 @@ async def async_setup_entry(
         )
     if (
         isinstance(usage_source, dict)
+        and usage_source
         and usage_source.get(CONF_SOURCE_MODE) == SOURCE_MODE_BUILT_IN
     ):
         sensors.append(
@@ -750,6 +752,7 @@ async def async_setup_entry(
     export_source = config_entry.data.get(CONF_SOURCES, {}).get(CONF_SOURCE_EXPORT_PRICE, {})
     if (
         isinstance(export_source, dict)
+        and export_source
         and export_source.get(CONF_SOURCE_MODE) != SOURCE_MODE_NOT_USED
     ):
         sensors.append(
@@ -765,6 +768,7 @@ async def async_setup_entry(
     pv_source = config_entry.data.get(CONF_SOURCES, {}).get(CONF_SOURCE_PV, {})
     if (
         isinstance(pv_source, dict)
+        and pv_source
         and pv_source.get(CONF_SOURCE_MODE) != SOURCE_MODE_NOT_USED
     ):
         sensors.append(

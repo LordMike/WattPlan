@@ -22,6 +22,11 @@ Prefer updating the integration, tests, and docs together when behavior changes.
 - Test: `pytest`
 - Run: `PYTHONPATH=src pytest tests` or `PYTHONPATH=src ../hass-core/.venv/bin/pytest tests`
 
+## Testing in Codex
+- When running pytest from Codex, request elevated execution for each test run instead of using the default sandbox.
+- Current issue: Home Assistant pytest bootstrap can hang inside the sandbox, while the same tests complete normally outside it.
+- Treat sandboxed pytest hangs as environment noise unless the same failure reproduces in an elevated run.
+
 ## Repo conventions
 - Integration code lives in `src/custom_components/wattplan/`.
 - Optimizer code lives in `src/custom_components/wattplan/optimizer/`.

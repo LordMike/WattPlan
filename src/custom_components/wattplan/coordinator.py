@@ -2075,6 +2075,13 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             "action_emission_enabled": self._action_emission_enabled,
         }
 
+    def _source_health_diagnostics(self) -> dict[str, dict[str, Any]]:
+        """Return a stable copy of per-source public health payloads."""
+        return {
+            source_key: dict(payload)
+            for source_key, payload in self._source_statuses.items()
+        }
+
     def restore_payload(self) -> dict[str, Any] | None:
         """Return serialized coordinator state suitable for restore."""
         if self._snapshot is None:
