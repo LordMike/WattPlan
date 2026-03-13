@@ -29,7 +29,7 @@ def _build_zip(output_path: Path) -> None:
         for file_path in sorted(INTEGRATION_ROOT.rglob("*")):
             if file_path.is_dir():
                 continue
-            archive_name = file_path.relative_to(REPO_ROOT / "src").as_posix()
+            archive_name = file_path.relative_to(INTEGRATION_ROOT).as_posix()
             archive.write(file_path, archive_name)
 
 

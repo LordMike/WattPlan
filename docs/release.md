@@ -36,9 +36,7 @@ The generated artifact is:
 - tagged release: `dist/wattplan.zip`
 - `main` branch / manual non-tag run: `dist/wattplan-<version>.zip`
 
-The zip contains the integration tree under:
-
-- `custom_components/wattplan/...`
+The tagged release artifact is the HACS release zip.
 
 For tagged commits, the workflow publishes the same zip in two places:
 
