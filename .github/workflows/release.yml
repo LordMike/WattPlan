@@ -26,13 +26,15 @@ jobs:
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
             VALIDATE_ARGS=(--validate-manifest-version "$VERSION")
+            OUTPUT_NAME="wattplan.zip"
           else
             VERSION="$(python -c "import json, os; from pathlib import Path; manifest = json.loads(Path('src/custom_components/wattplan/manifest.json').read_text()); print(f\"{manifest['version']}-dev.{os.environ['GITHUB_SHA'][:7]}\")")"
             VALIDATE_ARGS=()
+            OUTPUT_NAME="wattplan-$VERSION.zip"
           fi
 
           python scripts/build_hacs_zip.py \
-            --version-label "$VERSION" \
+            --output-name "$OUTPUT_NAME" \
             "${VALIDATE_ARGS[@]}"
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"

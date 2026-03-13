@@ -27,13 +27,14 @@ Tagged release builds run:
 
 ```bash
 python scripts/build_hacs_zip.py \
-  --version-label "$VERSION" \
+  --output-name "wattplan.zip" \
   --validate-manifest-version "$VERSION"
 ```
 
 The generated artifact is:
 
-- `dist/wattplan-<version>.zip`
+- tagged release: `dist/wattplan.zip`
+- `main` branch / manual non-tag run: `dist/wattplan-<version>.zip`
 
 The zip contains the integration tree under:
 

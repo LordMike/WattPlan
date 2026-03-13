@@ -48,6 +48,10 @@ def main() -> int:
         "--validate-manifest-version",
         help="Fail if the manifest version does not match this exact value.",
     )
+    parser.add_argument(
+        "--output-name",
+        help="Exact filename for the generated zip. Overrides --version-label.",
+    )
     args = parser.parse_args()
 
     manifest_version = _manifest_version()
@@ -60,8 +64,11 @@ def main() -> int:
             f"{args.validate_manifest_version!r}"
         )
 
-    version_label = args.version_label or manifest_version
-    output_path = REPO_ROOT / args.output_dir / f"wattplan-{version_label}.zip"
+    if args.output_name:
+        output_path = REPO_ROOT / args.output_dir / args.output_name
+    else:
+        version_label = args.version_label or manifest_version
+        output_path = REPO_ROOT / args.output_dir / f"wattplan-{version_label}.zip"
     _build_zip(output_path)
     print(output_path)
     return 0
