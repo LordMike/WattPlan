@@ -716,6 +716,47 @@ def _conflict_action_text(source: dict[str, Any]) -> str:
     return "Use one consistent forecast structure, or switch to manual mapping."
 
 
+def _preview_source_from_auto_detect_error(
+    source: dict[str, Any],
+    err: SourceProviderError,
+) -> dict[str, Any] | None:
+    """Build a best-effort preview source from usable auto-detect matches."""
+    if source.get(CONF_SOURCE_MODE) != SOURCE_MODE_ENTITY_ADAPTER:
+        return None
+
+    detected = err.details.get("detected_mappings")
+    if not isinstance(detected, list) or not detected:
+        return None
+
+    groups: dict[tuple[str, str, str], list[str]] = {}
+    for item in detected:
+        if not isinstance(item, dict):
+            continue
+        root_key = str(item.get("root_key", ""))
+        time_key = str(item.get("time_key", ""))
+        value_key = str(item.get("value_key", ""))
+        entity_id = str(item.get("entity_id", ""))
+        if not entity_id or not root_key or not time_key or not value_key:
+            continue
+        groups.setdefault((root_key, time_key, value_key), []).append(entity_id)
+
+    if not groups:
+        return None
+
+    (root_key, time_key, value_key), entity_ids = max(
+        groups.items(),
+        key=lambda item: (len(item[1]), sorted(item[1])),
+    )
+    return {
+        **source,
+        CONF_WATTPLAN_ENTITY_ID: entity_ids,
+        CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
+        CONF_NAME: root_key,
+        CONF_TIME_KEY: time_key,
+        CONF_VALUE_KEY: value_key,
+    }
+
+
 def _auto_detect_diagnostic_text(
     source: dict[str, Any],
     source_input: dict[str, Any] | None,
@@ -853,6 +894,7 @@ async def _async_source_summary(
     error_key: str | None = None
     source_error: SourceProviderError | None = None
     resolved_input = source_input
+    has_preview_source = False
 
     try:
         resolved_source, resolved_input = await _async_resolve_source_for_review(
@@ -863,6 +905,9 @@ async def _async_source_summary(
         error_key = _invalid_key_from_source_error(err)
         is_valid = False
         source_error = err
+        if preview_source := _preview_source_from_auto_detect_error(source, err):
+            resolved_source = preview_source
+            has_preview_source = True
     else:
         is_valid = True
 
@@ -894,7 +939,7 @@ async def _async_source_summary(
     except (SourceProviderError, vol.Invalid):
         pass
 
-    if error_key is None:
+    if error_key is None or has_preview_source:
         raw_source = {**resolved_source, CONF_FIXUP_PROFILE: FIXUP_PROFILE_STRICT}
         try:
             raw_available_count = await _async_provider_available_count(

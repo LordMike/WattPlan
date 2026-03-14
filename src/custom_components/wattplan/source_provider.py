@@ -288,7 +288,7 @@ async def async_auto_detect_entity_adapter(
     entity_ids: list[str],
 ) -> AdapterAutoDetectResult:
     """Return one mapping that is compatible with all selected entities."""
-    detected_mappings: list[AdapterAutoDetectResult] = []
+    detected_mappings: list[tuple[str, AdapterAutoDetectResult]] = []
     entity_candidates: dict[str, list[dict[str, Any]]] = {}
     for entity_id in entity_ids:
         state = hass.states.get(entity_id)
@@ -316,20 +316,31 @@ async def async_auto_detect_entity_adapter(
         ]
 
         detected = auto_detect_mapping(root)
-        if detected is None:
-            raise SourceProviderError(
-                "source_validation",
-                "Selected entities do not share one compatible forecast structure",
-                details={
-                    "entity_ids": entity_ids,
-                    "diagnostic_kind": "auto_detect_no_match",
-                    "entity_candidates": entity_candidates,
-                },
-            )
-        detected_mappings.append(detected)
+        if detected is not None:
+            detected_mappings.append((entity_id, detected))
 
-    first_detected = detected_mappings[0]
-    if any(detected != first_detected for detected in detected_mappings[1:]):
+    if not detected_mappings or len(detected_mappings) != len(entity_ids):
+        raise SourceProviderError(
+            "source_validation",
+            "Selected entities do not share one compatible forecast structure",
+            details={
+                "entity_ids": entity_ids,
+                "diagnostic_kind": "auto_detect_no_match",
+                "entity_candidates": entity_candidates,
+                "detected_mappings": [
+                    {
+                        "entity_id": entity_id,
+                        "root_key": detected.root_key,
+                        "time_key": detected.time_key,
+                        "value_key": detected.value_key,
+                    }
+                    for entity_id, detected in detected_mappings
+                ],
+            },
+        )
+
+    first_detected = detected_mappings[0][1]
+    if any(detected != first_detected for _, detected in detected_mappings[1:]):
         raise SourceProviderError(
             "source_validation",
             "Selected entities do not share one compatible forecast structure",
@@ -344,7 +355,7 @@ async def async_auto_detect_entity_adapter(
                         "time_key": detected.time_key,
                         "value_key": detected.value_key,
                     }
-                    for entity_id, detected in zip(entity_ids, detected_mappings, strict=True)
+                    for entity_id, detected in detected_mappings
                 ],
             },
         )
