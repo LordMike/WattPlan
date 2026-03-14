@@ -7,8 +7,11 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VENV_DIR="${WATTPLAN_TEST_VENV:-/tmp/wattplan-venv}"
-BASE_TEMP_DIR="${WATTPLAN_TEST_BASETEMP:-/tmp/wattplan-pytest}"
+WORKTREE_KEY="$(printf '%s' "$ROOT_DIR" | cksum | awk '{print $1}')"
+DEFAULT_VENV_DIR="/tmp/wattplan-venv-$WORKTREE_KEY"
+DEFAULT_BASE_TEMP_DIR="/tmp/wattplan-pytest-$WORKTREE_KEY"
+VENV_DIR="${WATTPLAN_TEST_VENV:-$DEFAULT_VENV_DIR}"
+BASE_TEMP_DIR="${WATTPLAN_TEST_BASETEMP:-$DEFAULT_BASE_TEMP_DIR}"
 
 export TMPDIR=/tmp
 export TEMP=/tmp
