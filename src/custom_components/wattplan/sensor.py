@@ -50,6 +50,13 @@ SUBOPTIMAL_REASON_DESCRIPTIONS: dict[str, str] = {
     ),
 }
 
+BATTERY_CHARGE_SOURCE_LABELS: dict[str, str] = {
+    "n": "(N)one",
+    "g": "(G)rid",
+    "p": "(P)V",
+    "gp": "(G)rid and (P)V",
+}
+
 
 def _subentry_slug(subentry: Any) -> str:
     """Return slug for subentry naming."""
@@ -74,6 +81,11 @@ def _entry_device_info(config_entry: ConfigEntry) -> DeviceInfo:
 def _as_datetime(value: Any) -> datetime | None:
     """Convert a dynamic value to datetime when possible."""
     return parse_datetime_like(value)
+
+
+def _friendly_charge_source_label(charge_source: str) -> str:
+    """Return a user-facing charge source label for compact planner codes."""
+    return BATTERY_CHARGE_SOURCE_LABELS.get(charge_source, charge_source)
 
 
 class WattPlanCoordinatorSensor(CoordinatorEntity[WattPlanCoordinator], SensorEntity):
@@ -281,7 +293,11 @@ class ActionSensor(WattPlanCoordinatorSensor):
             attrs["next_action"] = next_action
 
         if self._group == "batteries" and (charge_source := data.get("charge_source")):
-            attrs["charge_source"] = str(charge_source)
+            charge_source_code = str(charge_source)
+            attrs["charge_source"] = charge_source_code
+            attrs["charge_source_friendly"] = _friendly_charge_source_label(
+                charge_source_code
+            )
 
         return attrs or None
 

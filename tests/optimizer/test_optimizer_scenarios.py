@@ -501,6 +501,22 @@ def test_feed_in_prices_shift_pv_charging_to_lower_export_value_slots():
     )
 
 
+def test_hold_state_always_serializes_no_charge_source():
+    result = {
+        "battery_states": optimizer.np.asarray([[0, 1, 2]], dtype=optimizer.np.float64),
+        "battery_charge_grid": optimizer.np.asarray(
+            [[1.0, 1.0, 0.0]], dtype=optimizer.np.float64
+        ),
+        "battery_charge_pv": optimizer.np.asarray(
+            [[1.0, 0.0, 1.0]], dtype=optimizer.np.float64
+        ),
+    }
+
+    assert optimizer._battery_schedule_charge_source(result, 0, 0) == 0
+    assert optimizer._battery_schedule_charge_source(result, 0, 1) == 1
+    assert optimizer._battery_schedule_charge_source(result, 0, 2) == 2
+
+
 def test_live_grid_export_benchmark_scenario_uses_real_15min_stromligning_values():
     # Live Home Assistant data captured on 2026-03-09 in Europe/Copenhagen.
     # Strømligning is native 15-minute price data. Deye daily energy totals are

@@ -333,8 +333,97 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
 
     battery_action = hass.states.get("sensor.home_battery_action")
     assert battery_action is not None
+    assert battery_action.attributes["charge_source"] == "g"
+    assert battery_action.attributes["charge_source_friendly"] == "(G)rid"
     assert battery_action.attributes["next_action"] == "hold"
     assert "next_action_timestamp" in battery_action.attributes
+
+
+async def test_battery_action_sensor_exposes_friendly_combined_charge_source(
+    hass: HomeAssistant,
+) -> None:
+    """Battery action sensor should expose a friendly label for source codes."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: 60,
+            CONF_HOURS_TO_PLAN: 4,
+            CONF_SOURCES: {
+                CONF_SOURCE_IMPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [0.2, 0.25, 0.3, 0.35] }}",
+                },
+                CONF_SOURCE_USAGE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [1.0, 1.1, 1.0, 0.9] }}",
+                },
+                CONF_SOURCE_PV: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [0.0, 0.2, 0.3, 0.1] }}",
+                },
+            },
+        },
+        options={
+            CONF_PLANNING_ENABLED: False,
+            CONF_ACTION_EMISSION_ENABLED: False,
+        },
+        subentries_data=[
+            config_entries.ConfigSubentryData(
+                subentry_id="battery_sub",
+                subentry_type=SUBENTRY_TYPE_BATTERY,
+                title="battery",
+                unique_id="battery:battery",
+                data={
+                    CONF_NAME: "battery",
+                    CONF_SOC_SOURCE: "sensor.battery_soc",
+                    CONF_CAPACITY_KWH: 10.0,
+                    CONF_MINIMUM_KWH: 1.0,
+                    CONF_MAX_CHARGE_KW: 3.0,
+                    CONF_MAX_DISCHARGE_KW: 3.0,
+                    CONF_CHARGE_EFFICIENCY: 0.9,
+                    CONF_DISCHARGE_EFFICIENCY: 0.9,
+                    CONF_CAN_CHARGE_FROM_GRID: True,
+                    CONF_CAN_CHARGE_FROM_PV: True,
+                },
+            )
+        ],
+    )
+    entry.add_to_hass(hass)
+
+    hass.states.async_set("sensor.battery_soc", "5.0")
+
+    with patch("custom_components.wattplan.coordinator.optimize") as optimize_mock:
+        optimize_mock.return_value = {
+            **_fake_optimize(None),
+            "entities": [
+                {
+                    "name": "battery",
+                    "type": "battery",
+                    "schedule": [
+                        {"state": "charge", "charge_source": 3, "level": 5.2},
+                        {"state": "hold", "charge_source": 0, "level": 5.2},
+                        {"state": "hold", "charge_source": 0, "level": 5.2},
+                        {"state": "hold", "charge_source": 0, "level": 5.2},
+                    ],
+                }
+            ],
+            "optional_entity_options": [],
+        }
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        await hass.services.async_call(
+            DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True
+        )
+        await hass.async_block_till_done()
+
+    battery_action = hass.states.get("sensor.home_battery_action")
+    assert battery_action is not None
+    assert battery_action.state == "charge"
+    assert battery_action.attributes["charge_source"] == "gp"
+    assert battery_action.attributes["charge_source_friendly"] == "(G)rid and (P)V"
 
 
 async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
