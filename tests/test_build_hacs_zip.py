@@ -30,3 +30,4 @@ def test_build_hacs_zip_uses_hacs_archive_layout(tmp_path) -> None:
     assert "manifest.json" in names
     assert "__init__.py" in names
     assert all("/" not in name or not name.startswith("custom_components/") for name in names)
+    assert all(not name.startswith("utilities/") for name in names)

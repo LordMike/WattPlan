@@ -12,6 +12,7 @@ import zipfile
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INTEGRATION_ROOT = REPO_ROOT / "src" / "custom_components" / "wattplan"
 MANIFEST_PATH = INTEGRATION_ROOT / "manifest.json"
+EXCLUDED_DIRECTORIES = {"utilities"}
 
 
 def _manifest_version() -> str:
@@ -28,6 +29,8 @@ def _build_zip(output_path: Path) -> None:
     with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for file_path in sorted(INTEGRATION_ROOT.rglob("*")):
             if file_path.is_dir():
+                continue
+            if any(part in EXCLUDED_DIRECTORIES for part in file_path.relative_to(INTEGRATION_ROOT).parts):
                 continue
             archive_name = file_path.relative_to(INTEGRATION_ROOT).as_posix()
             archive.write(file_path, archive_name)
