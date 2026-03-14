@@ -23,6 +23,7 @@ from .adapter_auto import (
     AdapterAutoDetectResult,
     auto_detect_mapping,
     resolve_nested_value,
+    summarize_auto_detect_candidates,
 )
 from .const import (
     ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
@@ -320,7 +321,8 @@ async def async_auto_detect_entity_adapter(
     entity_ids: list[str],
 ) -> list[AdapterAutoDetectResult]:
     """Return one detected mapping for each selected entity."""
-    detected_mappings: list[AdapterAutoDetectResult] = []
+    detected_mappings: list[tuple[str, AdapterAutoDetectResult]] = []
+    entity_candidates: dict[str, list[dict[str, Any]]] = {}
     for entity_id in entity_ids:
         state = hass.states.get(entity_id)
         if state is None:
@@ -333,16 +335,44 @@ async def async_auto_detect_entity_adapter(
         root = dict(state.attributes)
         with suppress(json.JSONDecodeError):
             root["state_json"] = json.loads(state.state)
+        entity_candidates[entity_id] = [
+            {
+                "path": summary.path or "<root>",
+                "row_count": summary.row_count,
+                "sample_type": summary.sample_type,
+                "timestamp_keys": list(summary.timestamp_keys),
+                "numeric_keys": list(summary.numeric_keys),
+                "compatible": summary.compatible,
+                "reason": summary.reason,
+            }
+            for summary in summarize_auto_detect_candidates(root)
+        ]
 
         detected = auto_detect_mapping(root)
-        if detected is None:
-            raise SourceProviderError(
-                "source_validation",
-                f"Source entity `{entity_id}` returned no compatible forecast list",
-                details={"entity_id": entity_id, "entity_ids": entity_ids},
-            )
-        detected_mappings.append(detected)
-    return detected_mappings
+        if detected is not None:
+            detected_mappings.append((entity_id, detected))
+
+    if not detected_mappings or len(detected_mappings) != len(entity_ids):
+        raise SourceProviderError(
+            "source_validation",
+            "One or more selected entities returned no compatible forecast list",
+            details={
+                "entity_ids": entity_ids,
+                "diagnostic_kind": "auto_detect_no_match",
+                "entity_candidates": entity_candidates,
+                "detected_mappings": [
+                    {
+                        "entity_id": entity_id,
+                        "root_key": detected.root_key,
+                        "time_key": detected.time_key,
+                        "value_key": detected.value_key,
+                    }
+                    for entity_id, detected in detected_mappings
+                ],
+            },
+        )
+
+    return [detected for _, detected in detected_mappings]
 
 
 async def async_auto_detect_service_adapter(
@@ -366,12 +396,28 @@ async def async_auto_detect_service_adapter(
         blocking=True,
         return_response=True,
     )
+    candidates = [
+        {
+            "path": summary.path or "<root>",
+            "row_count": summary.row_count,
+            "sample_type": summary.sample_type,
+            "timestamp_keys": list(summary.timestamp_keys),
+            "numeric_keys": list(summary.numeric_keys),
+            "compatible": summary.compatible,
+            "reason": summary.reason,
+        }
+        for summary in summarize_auto_detect_candidates(response)
+    ]
     detected = auto_detect_mapping(response)
     if detected is None:
         raise SourceProviderError(
             "source_validation",
             f"Service `{service_name}` returned no compatible forecast list",
-            details={"service": service_name},
+            details={
+                "service": service_name,
+                "diagnostic_kind": "auto_detect_no_match",
+                "candidates": candidates,
+            },
         )
     return detected
 
