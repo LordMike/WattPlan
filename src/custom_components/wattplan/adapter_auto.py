@@ -8,6 +8,8 @@ from numbers import Number
 import re
 from typing import Any
 
+from .datetime_utils import parse_datetime_like
+
 
 @dataclass(frozen=True, slots=True)
 class AdapterAutoDetectResult:
@@ -66,13 +68,8 @@ def iter_candidate_lists(root: Any, prefix: str = "") -> list[tuple[str, list[An
 
 
 def _coerce_timestamp(value: Any) -> datetime | None:
-    """Return parsed datetime when the value looks like an ISO timestamp."""
-    if not isinstance(value, str):
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError:
-        return None
+    """Return parsed datetime when the value looks like a timestamp."""
+    return parse_datetime_like(value)
 
 
 def _coerce_decimal(value: Any) -> float | None:

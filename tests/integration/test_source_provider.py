@@ -443,6 +443,75 @@ async def test_merged_provider_tolerates_one_empty_entity_provider(
     assert "produced 0 usable points" in caplog.text
 
 
+async def test_entity_adapter_accepts_native_datetime_attribute_values(
+    hass: HomeAssistant,
+) -> None:
+    """Entity object adapters should accept native datetime attribute values."""
+    start = datetime(2026, 3, 14, 0, 0, tzinfo=UTC)
+    hass.states.async_set(
+        "sensor.native_datetime_prices",
+        "ok",
+        {
+            "prices": [
+                {"start": start, "price": 1.0},
+                {"start": start.replace(hour=1), "price": 2.0},
+                {"start": start.replace(hour=2), "price": 3.0},
+                {"start": start.replace(hour=3), "price": 4.0},
+            ]
+        },
+    )
+
+    provider = build_source_base_provider(
+        hass,
+        source_key="import_price",
+        source_config={
+            CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+            "entity_id": "sensor.native_datetime_prices",
+            CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
+            CONF_NAME: "prices",
+            "time_key": "start",
+            "value_key": "price",
+        },
+    )
+
+    values = await provider.async_values(
+        SourceWindow(
+            start_at=start,
+            slot_minutes=60,
+            slots=4,
+        )
+    )
+
+    assert values == [1.0, 2.0, 3.0, 4.0]
+
+
+async def test_auto_detect_entity_adapter_accepts_native_datetime_attributes(
+    hass: HomeAssistant,
+) -> None:
+    """Auto-detect should treat native datetime values as timestamp-like."""
+    start = datetime(2026, 3, 14, 0, 0, tzinfo=UTC)
+    hass.states.async_set(
+        "sensor.native_datetime_prices",
+        "ok",
+        {
+            "prices": [
+                {"start": start, "price": 1.0},
+                {"start": start.replace(hour=1), "price": 2.0},
+            ]
+        },
+    )
+
+    detected = await async_auto_detect_entity_adapter(
+        hass,
+        ["sensor.native_datetime_prices"],
+    )
+
+    assert len(detected) == 1
+    assert detected[0].root_key == "prices"
+    assert detected[0].time_key == "start"
+    assert detected[0].value_key == "price"
+
+
 async def test_service_adapter_provider_returns_values(hass: HomeAssistant) -> None:
     """Service adapter should return nested service response values."""
 

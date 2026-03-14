@@ -33,6 +33,7 @@ from .const import (
     SUBENTRY_TYPE_OPTIONAL,
 )
 from .coordinator import CoordinatorSnapshot, WattPlanCoordinator
+from .datetime_utils import parse_datetime_like
 
 SUBOPTIMAL_REASON_DESCRIPTIONS: dict[str, str] = {
     "battery_min_unmet": (
@@ -72,14 +73,7 @@ def _entry_device_info(config_entry: ConfigEntry) -> DeviceInfo:
 
 def _as_datetime(value: Any) -> datetime | None:
     """Convert a dynamic value to datetime when possible."""
-    if isinstance(value, datetime):
-        return value
-    if isinstance(value, str):
-        try:
-            return datetime.fromisoformat(value)
-        except ValueError:
-            return None
-    return None
+    return parse_datetime_like(value)
 
 
 class WattPlanCoordinatorSensor(CoordinatorEntity[WattPlanCoordinator], SensorEntity):

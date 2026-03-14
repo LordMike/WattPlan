@@ -101,6 +101,7 @@ from .const import (
     SUBENTRY_TYPE_COMFORT,
     SUBENTRY_TYPE_OPTIONAL,
 )
+from .datetime_utils import parse_datetime_like
 from .forecast_provider import ForecastProvider
 from .source_pipeline import build_source_base_provider, build_source_value_provider
 from .source_provider import (
@@ -140,12 +141,7 @@ def _format_coverage_datetime(
     value: str | datetime, timezone_name: str | None
 ) -> str:
     """Format coverage datetimes in the Home Assistant local timezone."""
-    parsed = value
-    if isinstance(value, str):
-        try:
-            parsed = datetime.fromisoformat(value)
-        except ValueError:
-            return value
+    parsed = parse_datetime_like(value)
     if not isinstance(parsed, datetime):
         return str(value)
     try:
@@ -480,20 +476,14 @@ def _built_in_history_coverage(
 
     rows: list[datetime] = []
     for row in debug.get("raw_history_states", []):
-        last_changed = row.get("last_changed")
-        if isinstance(last_changed, str):
-            try:
-                rows.append(datetime.fromisoformat(last_changed))
-            except ValueError:
-                continue
+        last_changed = parse_datetime_like(row.get("last_changed"))
+        if last_changed is not None:
+            rows.append(last_changed)
     if not rows:
         for row in debug.get("raw_statistics_rows", []):
-            started = row.get("start")
-            if isinstance(started, str):
-                try:
-                    rows.append(datetime.fromisoformat(started))
-                except ValueError:
-                    continue
+            started = parse_datetime_like(row.get("start"))
+            if started is not None:
+                rows.append(started)
     if not rows:
         return start_at, start_at, 0.0
     coverage_start = min(rows)
@@ -524,12 +514,8 @@ def _summarize_payload_coverage(
         for point in payload:
             if not isinstance(point, dict):
                 continue
-            stamp = point.get(time_key)
-            if not isinstance(stamp, str):
-                continue
-            try:
-                point_dt = datetime.fromisoformat(stamp)
-            except ValueError:
+            point_dt = parse_datetime_like(point.get(time_key))
+            if point_dt is None:
                 continue
             point_dt = floor_to_slot(
                 point_dt.astimezone(UTC)

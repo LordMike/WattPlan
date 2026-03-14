@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 
 from .const import DOMAIN
+from .datetime_utils import parse_datetime_like
 from .source_issues import (
     _covered_hours,
     source_display_name,
@@ -111,11 +112,9 @@ async def async_create_fix_flow(
     available_count = int(data.get("available_count", 0))
     required_count = int(data.get("required_count", 0))
     slot_minutes = int(entry.data.get("slot_minutes", 60)) if entry else 60
-    if expires_at := data.get("expires_at"):
-        expires_dt = datetime.fromisoformat(str(expires_at)).astimezone()
-        expires_local = datetime.fromisoformat(str(expires_at)).astimezone().strftime(
-            "%Y-%m-%d %H:%M %Z"
-        )
+    if expires_at := parse_datetime_like(data.get("expires_at")):
+        expires_dt = expires_at.astimezone()
+        expires_local = expires_dt.strftime("%Y-%m-%d %H:%M %Z")
         now_local = datetime.now(tz=expires_dt.tzinfo)
         total_minutes = max(int((expires_dt - now_local).total_seconds() // 60), 0)
         hours, minutes = divmod(total_minutes, 60)

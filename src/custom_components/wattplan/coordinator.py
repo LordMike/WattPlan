@@ -65,6 +65,7 @@ from .const import (
     SUBENTRY_TYPE_COMFORT,
     SUBENTRY_TYPE_OPTIONAL,
 )
+from .datetime_utils import parse_datetime_like
 from .historical_on_off_provider import HistoricalOnOffProvider
 from .optimizer import OptimizationParams, optimize
 from .source_fixup import SourceFixupProvider, SourceHealthKind
@@ -103,15 +104,10 @@ def _snapshot_schema_id() -> str:
 
 def _parse_datetime(value: Any) -> datetime | None:
     """Parse a datetime-like restore value."""
-    if isinstance(value, datetime):
-        return value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
-    if isinstance(value, str):
-        try:
-            parsed = datetime.fromisoformat(value)
-        except ValueError:
-            return None
-        return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
-    return None
+    parsed = parse_datetime_like(value)
+    if parsed is None:
+        return None
+    return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 SCHEDULE_OFFSET = timedelta(seconds=2)

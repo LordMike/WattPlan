@@ -621,6 +621,65 @@ async def test_config_flow_failed_entity_auto_detect_previews_usable_providers(
     )
 
 
+async def test_config_flow_auto_detect_accepts_native_datetime_attributes(
+    hass: HomeAssistant,
+) -> None:
+    """Entity auto-detect should accept attribute rows with native datetimes."""
+    start = datetime.now(tz=UTC).replace(minute=0, second=0, microsecond=0)
+    hass.states.async_set(
+        "sensor.native_datetime_prices",
+        "ok",
+        {
+            "prices": [
+                {"start": start, "price": 1.0},
+                {"start": start + timedelta(hours=1), "price": 2.0},
+                {"start": start + timedelta(hours=2), "price": 3.0},
+            ]
+        },
+    )
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_NAME: "Native datetime auto detect",
+            CONF_SLOT_MINUTES: "60",
+            CONF_HOURS_TO_PLAN: "12",
+        },
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER},
+    )
+    assert result["step_id"] == "source_price_adapter"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            "entity_id": ["sensor.native_datetime_prices"],
+            CONF_ADAPTER_TYPE: ADAPTER_TYPE_AUTO_DETECT,
+            SECTION_SOURCE_MANUAL: {
+                CONF_NAME: "",
+                "time_key": "",
+                "value_key": "",
+            },
+            CONF_FIXUP_PROFILE: FIXUP_PROFILE_REPAIR,
+        },
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "source_review"
+    assert result["errors"] == {}
+    assert (
+        "✅ Looks usable. Found forecast data in `prices` "
+        "using `start` for time and `price` for value."
+        in result["description_placeholders"]["diagnostic_text"]
+    )
+
+
 async def test_options_flow_auto_detects_service_adapter(
     hass: HomeAssistant,
 ) -> None:

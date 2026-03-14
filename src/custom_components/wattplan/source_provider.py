@@ -61,6 +61,7 @@ from .const import (
     SOURCE_MODE_TEMPLATE,
 )
 from .forecast_provider import ForecastProvider
+from .datetime_utils import parse_datetime_like
 from .source_types import SourceProvider, SourceProviderError, SourceWindow
 
 CONF_WATTPLAN_ENTITY_ID = "entity_id"
@@ -613,7 +614,7 @@ class TemplateAdapterSourceProvider(SourceProvider):
 
             start_value = point.get(time_key)
             numeric_value = point.get(value_key)
-            if not isinstance(start_value, str):
+            if not isinstance(start_value, (str, datetime)):
                 if strict:
                     raise SourceProviderError(
                         "source_parse",
@@ -623,11 +624,17 @@ class TemplateAdapterSourceProvider(SourceProvider):
                 continue
 
             try:
-                start_dt = datetime.fromisoformat(start_value)
+                start_dt = parse_datetime_like(start_value)
+                if start_dt is None:
+                    raise ValueError
                 value = float(numeric_value)
             except (TypeError, ValueError) as err:
                 if strict:
-                    field_name = time_key if not isinstance(start_value, str) else value_key
+                    field_name = (
+                        value_key
+                        if isinstance(start_value, (str, datetime))
+                        else time_key
+                    )
                     raise SourceProviderError(
                         "source_parse",
                         (
@@ -725,16 +732,15 @@ class TemplateAdapterSourceProvider(SourceProvider):
 
             start_value = point.get(time_key)
             numeric_value = point.get(value_key)
-            if not isinstance(start_value, str):
+            if not isinstance(start_value, (str, datetime)):
                 raise SourceProviderError(
                     "source_parse",
                     f"{self._source_name} point {index + 1} missing `{time_key}`",
                     details={"source": self._source_name, "index": index, "key": time_key},
                 )
 
-            try:
-                start_dt = datetime.fromisoformat(start_value)
-            except ValueError as err:
+            start_dt = parse_datetime_like(start_value)
+            if start_dt is None:
                 raise SourceProviderError(
                     "source_parse",
                     (
@@ -746,7 +752,7 @@ class TemplateAdapterSourceProvider(SourceProvider):
                         "index": index,
                         "value": start_value,
                     },
-                ) from err
+                )
 
             try:
                 value = float(numeric_value)
@@ -1198,13 +1204,10 @@ class EnergySolarForecastSourceProvider(TemplateAdapterSourceProvider):
         slot_delta = timedelta(minutes=window.slot_minutes)
         max_slot = 0
         for point in payload:
-            stamp = point.get("start")
-            if not isinstance(stamp, str):
+            point_start = parse_datetime_like(point.get("start"))
+            if point_start is None:
                 continue
-            try:
-                point_start = self._as_utc(datetime.fromisoformat(stamp))
-            except ValueError:
-                continue
+            point_start = self._as_utc(point_start)
 
             if self._clamp_mode == CLAMP_MODE_NEAREST:
                 slot_index = self._nearest_slot_index(point_start, start_at, slot_delta)
