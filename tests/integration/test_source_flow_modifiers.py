@@ -167,6 +167,62 @@ async def test_config_flow_persists_price_template_modifiers(
     assert price[CONF_EDGE_FILL_MODE] == EDGE_FILL_MODE_HOLD
 
 
+async def test_source_review_shows_raw_and_adjusted_coverage(
+    hass: HomeAssistant,
+) -> None:
+    """Review should distinguish native coverage from repaired planner coverage."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "requirements"
+
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["step_id"] == "planner_setup"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_NAME: "Coverage review",
+            CONF_SLOT_MINUTES: "60",
+            CONF_HOURS_TO_PLAN: "24",
+        },
+    )
+    assert result["step_id"] == "source_price"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE}
+    )
+    assert result["step_id"] == "source_price_template"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_TEMPLATE: _numeric_template(12),
+            CONF_FIXUP_PROFILE: FIXUP_PROFILE_REPAIR,
+            "advanced": {
+                CONF_AGGREGATION_MODE: AGGREGATION_MODE_MIN,
+                CONF_CLAMP_MODE: CLAMP_MODE_NEAREST,
+                CONF_RESAMPLE_MODE: RESAMPLE_MODE_FORWARD_FILL,
+                CONF_EDGE_FILL_MODE: EDGE_FILL_MODE_HOLD,
+            },
+        },
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "source_review"
+    assert (
+        result["description_placeholders"]["raw_coverage_summary"]
+        == "12 usable intervals, 24 needed, 60-minute resolution"
+    )
+    assert (
+        result["description_placeholders"]["adjusted_coverage_summary"]
+        == "24 usable intervals, 24 needed, 60-minute resolution"
+    )
+    assert "only **12 usable intervals, 24 needed, 60-minute resolution** came from the source itself" in result[
+        "description_placeholders"
+    ]["review_text"]
+
+
 async def test_options_flow_persists_price_adapter_modifiers(
     hass: HomeAssistant,
 ) -> None:
@@ -416,6 +472,53 @@ async def test_config_flow_persists_explicit_multi_entity_adapter(
     assert price["value_key"] == "pv_estimate"
 
 
+async def test_config_flow_routes_failed_entity_auto_detect_to_review(
+    hass: HomeAssistant,
+) -> None:
+    """Entity adapter semantic failures should be reported on review."""
+    hass.states.async_set("sensor.bad_prices", "ok", {"prices": [{"foo": "bar"}]})
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_NAME: "Auto detect failure",
+            CONF_SLOT_MINUTES: "60",
+            CONF_HOURS_TO_PLAN: "12",
+        },
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER},
+    )
+    assert result["step_id"] == "source_price_adapter"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            "entity_id": ["sensor.bad_prices"],
+            CONF_ADAPTER_TYPE: ADAPTER_TYPE_AUTO_DETECT,
+            SECTION_SOURCE_MANUAL: {
+                CONF_NAME: "",
+                "time_key": "",
+                "value_key": "",
+            },
+            CONF_FIXUP_PROFILE: FIXUP_PROFILE_REPAIR,
+        },
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "source_review"
+    assert result["errors"] == {"base": "auto_detect_no_match"}
+    assert result["data_schema"].schema == {}
+
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "source_price_adapter"
+
+
 async def test_options_flow_auto_detects_service_adapter(
     hass: HomeAssistant,
 ) -> None:
@@ -487,6 +590,54 @@ async def test_options_flow_auto_detects_service_adapter(
     assert price[CONF_NAME] == "prices.home"
     assert price["time_key"] == "start_time"
     assert price["value_key"] == "price"
+
+
+async def test_options_flow_routes_failed_service_auto_detect_to_review(
+    hass: HomeAssistant,
+) -> None:
+    """Service adapter semantic failures should be reported on review."""
+
+    async def _handle_bad_prices(call: ServiceCall) -> dict[str, object]:
+        return {"prices": [{"foo": "bar"}]}
+
+    hass.services.async_register(
+        "test",
+        "bad_prices",
+        _handle_bad_prices,
+        supports_response=SupportsResponse.ONLY,
+    )
+    entry = await _create_entry_with_price_template(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "source_price"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_SERVICE_ADAPTER}
+    )
+    assert result["step_id"] == "source_price_service"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_SERVICE: "test.bad_prices",
+            CONF_ADAPTER_TYPE: ADAPTER_TYPE_AUTO_DETECT,
+            SECTION_SOURCE_MANUAL: {
+                CONF_NAME: "",
+                "time_key": "",
+                "value_key": "",
+            },
+            CONF_FIXUP_PROFILE: FIXUP_PROFILE_REPAIR,
+        },
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "source_review"
+    assert result["errors"] == {"base": "auto_detect_no_match"}
+    assert result["data_schema"].schema == {}
+
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {})
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "source_price_service"
 
 
 async def test_config_flow_persists_usage_built_in_source(

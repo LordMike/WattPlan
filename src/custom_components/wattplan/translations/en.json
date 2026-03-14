@@ -658,7 +658,7 @@
       },
       "source_review": {
         "title": "Review source coverage",
-        "description": "**Coverage summary**\n\n- The source provided **{coverage_summary}**\n- Coverage starts at **{coverage_start}**\n- Coverage ends at **{coverage_end}**\n\n**Review**\n\n{review_text}\n\n{accept_note}",
+        "description": "**Raw source coverage**\n\n- The source itself provided **{raw_coverage_summary}**\n- Raw coverage starts at **{raw_coverage_start}**\n- Raw coverage ends at **{raw_coverage_end}**\n\n**Adjusted planner coverage**\n\n- After WattPlan repair/fill, the planner has **{adjusted_coverage_summary}**\n- Adjusted coverage starts at **{adjusted_coverage_start}**\n- Adjusted coverage ends at **{adjusted_coverage_end}**\n\n**Review**\n\n{review_text}\n\n{diagnostic_text}\n\n{accept_note}",
         "submit": "Next",
         "data": {
           "accept_source_summary": "I accept this source setup"
@@ -678,13 +678,17 @@
       "built_in_requires_energy_kwh": "Select an energy sensor with unit `kWh` for the built-in usage forecast.",
       "attribute_name_required": "An attribute name is required for this adapter.",
       "invalid_payload": "Source output must be a list of numeric values or a list of objects containing timestamp and value fields.",
+      "auto_detect_no_match": "Auto detect did not find a compatible forecast list. Review the candidate paths and pick manual mapping if needed.",
+      "auto_detect_conflict": "Auto detect found forecast data, but the selected entities did not resolve to the same root path and fields.",
       "built_in_no_numeric_history": "No usable numeric history was found for the selected load sensor in the configured lookback period.",
       "review_ready": "This source is **ready** for the selected horizon. ✅",
+      "review_ready_extended": "This source is usable for the selected horizon, but only **{raw_coverage_summary}** came from the source itself. WattPlan repaired or extended it to cover the full plan. ⚠️ If you can provide more native forecast data, go back and choose a source with longer coverage.",
       "review_limited_history": "This source is usable, but only {history_days} days of history were found. Forecast quality may be poor.",
       "review_invalid": "",
       "review_incomplete": "This source does not cover the full planning horizon. ❌ Choose a fixup profile to repair gaps or extend the tail.",
       "review_has_gaps": "This source has gaps between known samples. ❌ A fixup profile is recommended.",
       "review_has_gaps_repaired": "This source has gaps between known samples, but the selected fixup profile will repair them for planning. ✅",
+      "review_no_data": "No data",
       "review_accept_note_valid": "Acceptance is already enabled because this source meets the current requirements. Disable it to return and adjust the input.",
       "review_accept_note_invalid": "Next will bring you back to the source input page so you can adjust the provider or fixup settings.",
       "invalid_start": "One or more entries has an invalid timestamp. Check the configured time key and use ISO format with timezone.",
@@ -1094,7 +1098,7 @@
       },
       "source_review": {
         "title": "Review source coverage",
-        "description": "**Coverage summary**\n\n- The source provided **{coverage_summary}**\n- Coverage starts at **{coverage_start}**\n- Coverage ends at **{coverage_end}**\n\n**Review**\n\n{review_text}\n\n{accept_note}",
+        "description": "**Raw source coverage**\n\n- The source itself provided **{raw_coverage_summary}**\n- Raw coverage starts at **{raw_coverage_start}**\n- Raw coverage ends at **{raw_coverage_end}**\n\n**Adjusted planner coverage**\n\n- After WattPlan repair/fill, the planner has **{adjusted_coverage_summary}**\n- Adjusted coverage starts at **{adjusted_coverage_start}**\n- Adjusted coverage ends at **{adjusted_coverage_end}**\n\n**Review**\n\n{review_text}\n\n{diagnostic_text}\n\n{accept_note}",
         "submit": "Next",
         "data": {
           "accept_source_summary": "I accept this source setup"
@@ -1395,6 +1399,8 @@
       "built_in_requires_energy_kwh": "Select an energy sensor with unit `kWh` for the built-in usage forecast.",
       "attribute_name_required": "An attribute name is required for this adapter.",
       "invalid_payload": "Source output must be a list of numeric values or a list of objects containing timestamp and value fields.",
+      "auto_detect_no_match": "Auto detect did not find a compatible forecast list. Review the candidate paths and pick manual mapping if needed.",
+      "auto_detect_conflict": "Auto detect found forecast data, but the selected entities did not resolve to the same root path and fields.",
       "built_in_no_numeric_history": "No usable numeric history was found for the selected load sensor in the configured lookback period.",
       "invalid_start": "One or more entries has an invalid timestamp. Check the configured time key and use ISO format with timezone.",
       "invalid_value": "One or more entries has a non-numeric value. Check the configured value key and output numeric values.",
