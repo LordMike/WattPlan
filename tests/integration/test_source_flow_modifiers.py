@@ -511,7 +511,7 @@ async def test_config_flow_routes_failed_entity_auto_detect_to_review(
     )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "source_review"
-    assert result["errors"] == {"base": "invalid_payload"}
+    assert result["errors"] == {"base": "auto_detect_no_match"}
     assert result["data_schema"].schema == {}
 
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
@@ -632,7 +632,7 @@ async def test_options_flow_routes_failed_service_auto_detect_to_review(
     )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "source_review"
-    assert result["errors"] == {"base": "invalid_payload"}
+    assert result["errors"] == {"base": "auto_detect_no_match"}
     assert result["data_schema"].schema == {}
 
     result = await hass.config_entries.options.async_configure(result["flow_id"], {})
