@@ -11,11 +11,13 @@
         "description": "Create one WattPlan setup for your home.",
         "submit": "Next",
         "data": {
+          "optimizer_profile": "Optimizer profile",
           "name": "Setup name",
           "slot_minutes": "Resolution (minutes)",
           "hours_to_plan": "How many hours ahead should the plan cover"
         },
         "data_description": {
+          "optimizer_profile": "Choose how actively WattPlan should use batteries.\n\n- Aggressive: Favors savings and accepts more battery movement.\n- Balanced: Good default for most homes; balances savings and calmer battery behavior.\n- Conservative: Avoids smaller moves and keeps battery behavior steadier.\n\n[Read more here](https://github.com/LordMike/WattPlan/blob/main/docs/optimizer-profiles.md).",
           "name": "This name will identify this WattPlan setup in Home Assistant.",
           "slot_minutes": "This is the plan resolution. A lower value means more detailed plans and more required forecast values.",
           "hours_to_plan": "WattPlan needs forecasts that cover the full selected period."
@@ -707,12 +709,12 @@
         "title": "Planner settings",
         "description": "Edit planner settings and forecast sources for this setup.",
         "menu_options": {
-          "planner_core": "Core planner settings",
+          "planner_timers": "Scheduler settings",
+          "planner_core": "General settings",
           "source_price": "Price source",
           "source_export_price": "Export price source",
           "source_usage": "Usage source",
           "source_pv": "Solar source",
-          "planner_timers": "Planner timer settings",
           "battery_entities": "Battery entities",
           "comfort_entities": "Comfort entities",
           "optional_entities": "Optional entities",
@@ -720,13 +722,15 @@
         }
       },
       "planner_core": {
-        "title": "Core settings",
+        "title": "General settings",
         "description": "Set interval size and planning horizon. These values define how many forecast values are required.",
         "data": {
+          "optimizer_profile": "Optimizer profile",
           "slot_minutes": "Resolution (minutes)",
           "hours_to_plan": "How many hours ahead should the plan cover"
         },
         "data_description": {
+          "optimizer_profile": "Choose how actively WattPlan should use batteries.\n\n- Aggressive: Favors savings and accepts more battery movement.\n- Balanced: Good default for most homes; balances savings and calmer battery behavior.\n- Conservative: Avoids smaller moves and keeps battery behavior steadier.\n\n[Read more here](https://github.com/LordMike/WattPlan/blob/main/docs/optimizer-profiles.md).",
           "slot_minutes": "This is the plan resolution. A lower value means more detailed plans and more required forecast values.",
           "hours_to_plan": "WattPlan needs forecasts that cover the full selected period."
         }
@@ -1108,17 +1112,15 @@
         }
       },
       "planner_timers": {
-        "title": "Planner timers",
+        "title": "Scheduler settings",
         "description": "When enabled, planning and action publishing run every {slot_minutes} minutes.",
         "data": {
           "planning_enabled": "Planning enabled",
-          "action_emission_enabled": "Action emission enabled",
-          "optimizer_profile": "Optimizer profile"
+          "action_emission_enabled": "Action emission enabled"
         },
         "data_description": {
           "planning_enabled": "When enabled, optimization runs every {slot_minutes} minutes and publishes the new plan to WattPlan entities.",
-          "action_emission_enabled": "When enabled, action states like charge/discharge/hold are published every {slot_minutes} minutes.",
-          "optimizer_profile": "Choose how actively WattPlan should use batteries.\n\n- Aggressive: Favors savings and accepts more battery movement.\n- Balanced: Good default for most homes; balances savings and calmer battery behavior.\n- Conservative: Avoids smaller moves and keeps battery behavior steadier.\n\n[Read more here](https://github.com/LordMike/WattPlan/blob/main/docs/optimizer-profiles.md)."
+          "action_emission_enabled": "When enabled, action states like charge/discharge/hold are published every {slot_minutes} minutes."
         }
       },
       "battery_entities": {
