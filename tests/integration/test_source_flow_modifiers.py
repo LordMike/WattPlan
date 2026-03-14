@@ -22,6 +22,7 @@ from custom_components.wattplan.const import (
     CONF_FIXUP_PROFILE,
     CONF_HISTORY_DAYS,
     CONF_HOURS_TO_PLAN,
+    CONF_PROVIDERS,
     CONF_RESAMPLE_MODE,
     CONF_SERVICE,
     CONF_SLOT_MINUTES,
@@ -219,9 +220,10 @@ async def test_options_flow_persists_price_adapter_modifiers(
     updated = hass.config_entries.async_get_entry(entry.entry_id)
     assert updated is not None
     price = updated.data[CONF_SOURCES][CONF_SOURCE_IMPORT_PRICE]
+    provider = price[CONF_PROVIDERS][0]
     assert price[CONF_SOURCE_MODE] == SOURCE_MODE_ENTITY_ADAPTER
-    assert price[CONF_ADAPTER_TYPE] == ADAPTER_TYPE_ATTRIBUTE_VALUES
-    assert price[CONF_NAME] == "prices"
+    assert provider[CONF_ADAPTER_TYPE] == ADAPTER_TYPE_ATTRIBUTE_VALUES
+    assert provider[CONF_NAME] == "prices"
     assert price[CONF_FIXUP_PROFILE] == FIXUP_PROFILE_EXTEND
     assert price[CONF_AGGREGATION_MODE] == AGGREGATION_MODE_MAX
     assert price[CONF_CLAMP_MODE] == CLAMP_MODE_NONE
@@ -322,11 +324,18 @@ async def test_config_flow_auto_detects_entity_adapter(
     entry = hass.config_entries.async_entries(DOMAIN)[0]
     price = entry.data[CONF_SOURCES][CONF_SOURCE_IMPORT_PRICE]
     assert price[CONF_SOURCE_MODE] == SOURCE_MODE_ENTITY_ADAPTER
-    assert price["entity_id"] == ["sensor.first", "sensor.second"]
-    assert price[CONF_ADAPTER_TYPE] == ADAPTER_TYPE_ATTRIBUTE_OBJECTS
-    assert price[CONF_NAME] == "prices.home"
-    assert price["time_key"] == "starts_at"
-    assert price["value_key"] == "amount"
+    assert len(price[CONF_PROVIDERS]) == 2
+    assert [provider["entity_id"] for provider in price[CONF_PROVIDERS]] == [
+        "sensor.first",
+        "sensor.second",
+    ]
+    assert all(
+        provider[CONF_ADAPTER_TYPE] == ADAPTER_TYPE_ATTRIBUTE_OBJECTS
+        for provider in price[CONF_PROVIDERS]
+    )
+    assert {provider[CONF_NAME] for provider in price[CONF_PROVIDERS]} == {"prices.home"}
+    assert {provider["time_key"] for provider in price[CONF_PROVIDERS]} == {"starts_at"}
+    assert {provider["value_key"] for provider in price[CONF_PROVIDERS]} == {"amount"}
 
 
 async def test_config_flow_persists_explicit_multi_entity_adapter(
@@ -410,10 +419,13 @@ async def test_config_flow_persists_explicit_multi_entity_adapter(
 
     entry = hass.config_entries.async_entries(DOMAIN)[0]
     price = entry.data[CONF_SOURCES][CONF_SOURCE_IMPORT_PRICE]
-    assert price["entity_id"] == ["sensor.today", "sensor.tomorrow"]
-    assert price[CONF_NAME] == "detailedForecast"
-    assert price["time_key"] == "period_start"
-    assert price["value_key"] == "pv_estimate"
+    assert [provider["entity_id"] for provider in price[CONF_PROVIDERS]] == [
+        "sensor.today",
+        "sensor.tomorrow",
+    ]
+    assert {provider[CONF_NAME] for provider in price[CONF_PROVIDERS]} == {"detailedForecast"}
+    assert {provider["time_key"] for provider in price[CONF_PROVIDERS]} == {"period_start"}
+    assert {provider["value_key"] for provider in price[CONF_PROVIDERS]} == {"pv_estimate"}
 
 
 async def test_options_flow_auto_detects_service_adapter(
@@ -481,12 +493,13 @@ async def test_options_flow_auto_detects_service_adapter(
     updated = hass.config_entries.async_get_entry(entry.entry_id)
     assert updated is not None
     price = updated.data[CONF_SOURCES][CONF_SOURCE_IMPORT_PRICE]
+    provider = price[CONF_PROVIDERS][0]
     assert price[CONF_SOURCE_MODE] == SOURCE_MODE_SERVICE_ADAPTER
-    assert price[CONF_SERVICE] == "test.prices"
-    assert price[CONF_ADAPTER_TYPE] == ADAPTER_TYPE_SERVICE_RESPONSE
-    assert price[CONF_NAME] == "prices.home"
-    assert price["time_key"] == "start_time"
-    assert price["value_key"] == "price"
+    assert provider[CONF_SERVICE] == "test.prices"
+    assert provider[CONF_ADAPTER_TYPE] == ADAPTER_TYPE_SERVICE_RESPONSE
+    assert provider[CONF_NAME] == "prices.home"
+    assert provider["time_key"] == "start_time"
+    assert provider["value_key"] == "price"
 
 
 async def test_config_flow_persists_usage_built_in_source(
@@ -577,8 +590,8 @@ async def test_config_flow_persists_usage_built_in_source(
     assert result["type"] is FlowResultType.CREATE_ENTRY
     usage = result["data"][CONF_SOURCES][CONF_SOURCE_USAGE]
     assert usage[CONF_SOURCE_MODE] == SOURCE_MODE_BUILT_IN
-    assert usage["entity_id"] == "sensor.house_load_kwh"
-    assert usage[CONF_HISTORY_DAYS] == 14
+    assert usage[CONF_PROVIDERS][0]["entity_id"] == "sensor.house_load_kwh"
+    assert usage[CONF_PROVIDERS][0][CONF_HISTORY_DAYS] == 14
 
 
 async def test_built_in_usage_source_shows_sensor_validation_error(
@@ -758,7 +771,7 @@ async def test_config_flow_persists_pv_energy_provider_source(
     created_entry = hass.config_entries.async_entries(DOMAIN)[0]
     pv = created_entry.data[CONF_SOURCES][CONF_SOURCE_PV]
     assert pv[CONF_SOURCE_MODE] == SOURCE_MODE_ENERGY_PROVIDER
-    assert pv[CONF_CONFIG_ENTRY_ID] == entry.entry_id
+    assert pv[CONF_PROVIDERS][0][CONF_CONFIG_ENTRY_ID] == entry.entry_id
     assert pv[CONF_FIXUP_PROFILE] == FIXUP_PROFILE_EXTEND
     assert pv[CONF_AGGREGATION_MODE] == AGGREGATION_MODE_MAX
     assert pv[CONF_CLAMP_MODE] == CLAMP_MODE_NONE

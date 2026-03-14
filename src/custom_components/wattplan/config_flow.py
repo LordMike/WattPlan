@@ -63,6 +63,7 @@ from .const import (
     CONF_ON_OFF_SOURCE,
     CONF_OPTIONS_COUNT,
     CONF_PLANNING_ENABLED,
+    CONF_PROVIDERS,
     CONF_RESAMPLE_MODE,
     CONF_ROLLING_WINDOW_HOURS,
     CONF_RUN_WITHIN_HOURS,
@@ -106,6 +107,8 @@ from .source_provider import (
     async_auto_detect_entity_adapter,
     async_auto_detect_service_adapter,
     async_get_energy_solar_forecast_entries,
+    primary_provider_config,
+    source_mode,
 )
 from .source_types import SourceProviderError, SourceWindow
 
@@ -276,7 +279,23 @@ def _default_modifier_values() -> dict[str, str]:
 
 def _source_base_defaults(source: dict[str, Any]) -> dict[str, Any]:
     """Return defaults for provider-specific input including fixup settings."""
-    return dict(source)
+    provider = primary_provider_config(source)
+    defaults = {
+        **dict(provider),
+        **{
+            key: value
+            for key, value in source.items()
+            if key not in {CONF_PROVIDERS}
+        },
+    }
+    providers = source.get(CONF_PROVIDERS)
+    if isinstance(providers, list) and providers and source_mode(source) == SOURCE_MODE_ENTITY_ADAPTER:
+        defaults[CONF_WATTPLAN_ENTITY_ID] = [
+            provider[CONF_WATTPLAN_ENTITY_ID]
+            for provider in providers
+            if isinstance(provider, dict) and CONF_WATTPLAN_ENTITY_ID in provider
+        ]
+    return defaults
 
 
 def _preferred_source_mode(
@@ -324,9 +343,10 @@ def _auto_detect_step_defaults(
     that auto-detect was the chosen workflow, while showing what it found.
     """
     defaults = dict(user_input)
-    defaults[CONF_NAME] = resolved_source.get(CONF_NAME, "")
-    defaults[CONF_TIME_KEY] = resolved_source.get(CONF_TIME_KEY, "")
-    defaults[CONF_VALUE_KEY] = resolved_source.get(CONF_VALUE_KEY, "")
+    provider = primary_provider_config(resolved_source)
+    defaults[CONF_NAME] = provider.get(CONF_NAME, "")
+    defaults[CONF_TIME_KEY] = provider.get(CONF_TIME_KEY, "")
+    defaults[CONF_VALUE_KEY] = provider.get(CONF_VALUE_KEY, "")
     defaults[CONF_ADAPTER_TYPE] = ADAPTER_TYPE_AUTO_DETECT
     return defaults
 
@@ -562,24 +582,25 @@ def _source_mode_summary(source: dict[str, Any] | None) -> str:
     if not isinstance(source, dict):
         return "Not configured"
 
-    mode = source.get(CONF_SOURCE_MODE)
+    mode = source_mode(source)
+    provider = primary_provider_config(source)
     if mode == SOURCE_MODE_ENTITY_ADAPTER:
-        entity_ids = source.get(CONF_WATTPLAN_ENTITY_ID)
+        entity_ids = source.get(CONF_WATTPLAN_ENTITY_ID, provider.get(CONF_WATTPLAN_ENTITY_ID))
         if isinstance(entity_ids, list) and entity_ids:
             return f"Entity attribute: {', '.join(str(entity_id) for entity_id in entity_ids)}"
         if isinstance(entity_ids, str) and entity_ids:
             return f"Entity attribute: {entity_ids}"
         return "Entity attribute"
     if mode == SOURCE_MODE_SERVICE_ADAPTER:
-        service = source.get(CONF_SERVICE)
+        service = provider.get(CONF_SERVICE, source.get(CONF_SERVICE))
         return f"Service call: {service}" if service else "Service call"
     if mode == SOURCE_MODE_TEMPLATE:
         return "Template"
     if mode == SOURCE_MODE_BUILT_IN:
-        entity_id = source.get(CONF_WATTPLAN_ENTITY_ID)
+        entity_id = provider.get(CONF_WATTPLAN_ENTITY_ID, source.get(CONF_WATTPLAN_ENTITY_ID))
         return f"Built in: {entity_id}" if entity_id else "Built in"
     if mode == SOURCE_MODE_ENERGY_PROVIDER:
-        config_entry_id = source.get(CONF_CONFIG_ENTRY_ID)
+        config_entry_id = provider.get(CONF_CONFIG_ENTRY_ID, source.get(CONF_CONFIG_ENTRY_ID))
         return (
             f"Energy provider: {config_entry_id}"
             if config_entry_id
@@ -1288,22 +1309,35 @@ async def _async_prepare_entity_source_input(
     time_key = str(manual.get(CONF_TIME_KEY, user_input.get(CONF_TIME_KEY, "")))
     value_key = str(manual.get(CONF_VALUE_KEY, user_input.get(CONF_VALUE_KEY, "")))
 
-    resolved_adapter = adapter_type
-
     if adapter_type == ADAPTER_TYPE_AUTO_DETECT:
-        detected = await async_auto_detect_entity_adapter(hass, entity_ids)
-        resolved_adapter = ADAPTER_TYPE_ATTRIBUTE_OBJECTS
-        root_key = detected.root_key
-        time_key = detected.time_key
-        value_key = detected.value_key
+        detected_list = await async_auto_detect_entity_adapter(hass, entity_ids)
+        providers = [
+            {
+                CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+                CONF_WATTPLAN_ENTITY_ID: entity_id,
+                CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
+                CONF_NAME: detected.root_key,
+                CONF_TIME_KEY: detected.time_key,
+                CONF_VALUE_KEY: detected.value_key,
+            }
+            for entity_id, detected in zip(entity_ids, detected_list, strict=True)
+        ]
+    else:
+        providers = [
+            {
+                CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+                CONF_WATTPLAN_ENTITY_ID: entity_id,
+                CONF_ADAPTER_TYPE: adapter_type,
+                CONF_NAME: root_key,
+                CONF_TIME_KEY: time_key,
+                CONF_VALUE_KEY: value_key,
+            }
+            for entity_id in entity_ids
+        ]
 
     source = {
         CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
-        CONF_WATTPLAN_ENTITY_ID: entity_ids,
-        CONF_ADAPTER_TYPE: resolved_adapter,
-        CONF_NAME: root_key,
-        CONF_TIME_KEY: time_key,
-        CONF_VALUE_KEY: value_key,
+        CONF_PROVIDERS: providers,
         CONF_FIXUP_PROFILE: user_input[CONF_FIXUP_PROFILE],
     }
     source.update(user_input.get(SECTION_SOURCE_ADVANCED, {}))
@@ -1334,11 +1368,16 @@ async def _async_prepare_service_source_input(
 
     source = {
         CONF_SOURCE_MODE: SOURCE_MODE_SERVICE_ADAPTER,
-        CONF_SERVICE: service_name,
-        CONF_ADAPTER_TYPE: resolved_adapter,
-        CONF_NAME: root_key,
-        CONF_TIME_KEY: time_key,
-        CONF_VALUE_KEY: value_key,
+        CONF_PROVIDERS: [
+            {
+                CONF_SOURCE_MODE: SOURCE_MODE_SERVICE_ADAPTER,
+                CONF_SERVICE: service_name,
+                CONF_ADAPTER_TYPE: resolved_adapter,
+                CONF_NAME: root_key,
+                CONF_TIME_KEY: time_key,
+                CONF_VALUE_KEY: value_key,
+            }
+        ],
         CONF_FIXUP_PROFILE: user_input[CONF_FIXUP_PROFILE],
     }
     source.update(user_input.get(SECTION_SOURCE_ADVANCED, {}))
@@ -1600,7 +1639,12 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
             defaults = user_input
             source = {
                 CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                CONF_TEMPLATE: user_input[CONF_TEMPLATE],
+                CONF_PROVIDERS: [
+                    {
+                        CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                        CONF_TEMPLATE: user_input[CONF_TEMPLATE],
+                    }
+                ],
                 CONF_FIXUP_PROFILE: user_input[CONF_FIXUP_PROFILE],
             }
             source.update(user_input.get(SECTION_SOURCE_ADVANCED, {}))
@@ -1702,8 +1746,13 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
             defaults = user_input
             source = {
                 CONF_SOURCE_MODE: SOURCE_MODE_BUILT_IN,
-                CONF_WATTPLAN_ENTITY_ID: user_input[CONF_WATTPLAN_ENTITY_ID],
-                CONF_HISTORY_DAYS: int(user_input[CONF_HISTORY_DAYS]),
+                CONF_PROVIDERS: [
+                    {
+                        CONF_SOURCE_MODE: SOURCE_MODE_BUILT_IN,
+                        CONF_WATTPLAN_ENTITY_ID: user_input[CONF_WATTPLAN_ENTITY_ID],
+                        CONF_HISTORY_DAYS: int(user_input[CONF_HISTORY_DAYS]),
+                    }
+                ],
             }
             return await self._async_prepare_source_review(
                 CONF_SOURCE_USAGE,
@@ -1836,7 +1885,12 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
             defaults = user_input
             source = {
                 CONF_SOURCE_MODE: SOURCE_MODE_ENERGY_PROVIDER,
-                CONF_CONFIG_ENTRY_ID: user_input[CONF_CONFIG_ENTRY_ID],
+                CONF_PROVIDERS: [
+                    {
+                        CONF_SOURCE_MODE: SOURCE_MODE_ENERGY_PROVIDER,
+                        CONF_CONFIG_ENTRY_ID: user_input[CONF_CONFIG_ENTRY_ID],
+                    }
+                ],
                 CONF_FIXUP_PROFILE: FIXUP_PROFILE_EXTEND,
             }
             source.update(user_input.get(SECTION_SOURCE_ADVANCED, {}))
@@ -2432,7 +2486,12 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
             defaults = user_input
             source = {
                 CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                CONF_TEMPLATE: user_input[CONF_TEMPLATE],
+                CONF_PROVIDERS: [
+                    {
+                        CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                        CONF_TEMPLATE: user_input[CONF_TEMPLATE],
+                    }
+                ],
                 CONF_FIXUP_PROFILE: user_input[CONF_FIXUP_PROFILE],
             }
             source.update(user_input.get(SECTION_SOURCE_ADVANCED, {}))
@@ -2552,8 +2611,13 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
             defaults = user_input
             source = {
                 CONF_SOURCE_MODE: SOURCE_MODE_BUILT_IN,
-                CONF_WATTPLAN_ENTITY_ID: user_input[CONF_WATTPLAN_ENTITY_ID],
-                CONF_HISTORY_DAYS: int(user_input[CONF_HISTORY_DAYS]),
+                CONF_PROVIDERS: [
+                    {
+                        CONF_SOURCE_MODE: SOURCE_MODE_BUILT_IN,
+                        CONF_WATTPLAN_ENTITY_ID: user_input[CONF_WATTPLAN_ENTITY_ID],
+                        CONF_HISTORY_DAYS: int(user_input[CONF_HISTORY_DAYS]),
+                    }
+                ],
             }
             return await self._async_prepare_source_review(
                 CONF_SOURCE_USAGE,
@@ -2678,7 +2742,12 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
             defaults = user_input
             source = {
                 CONF_SOURCE_MODE: SOURCE_MODE_ENERGY_PROVIDER,
-                CONF_CONFIG_ENTRY_ID: user_input[CONF_CONFIG_ENTRY_ID],
+                CONF_PROVIDERS: [
+                    {
+                        CONF_SOURCE_MODE: SOURCE_MODE_ENERGY_PROVIDER,
+                        CONF_CONFIG_ENTRY_ID: user_input[CONF_CONFIG_ENTRY_ID],
+                    }
+                ],
                 CONF_FIXUP_PROFILE: FIXUP_PROFILE_EXTEND,
             }
             source.update(user_input.get(SECTION_SOURCE_ADVANCED, {}))
