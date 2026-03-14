@@ -24,9 +24,7 @@ CONF_CAN_CHARGE_FROM_GRID = "can_charge_from_grid"
 CONF_CAN_CHARGE_FROM_PV = "can_charge_from_pv"
 CONF_CAPACITY_KWH = "capacity_kwh"
 CONF_CHARGE_EFFICIENCY = "charge_efficiency"
-CONF_THROUGHPUT_COST_PER_KWH = "throughput_cost_per_kwh"
-CONF_ACTION_DEADBAND_KWH = "action_deadband_kwh"
-CONF_MODE_SWITCH_COST = "mode_switch_cost"
+CONF_OPTIMIZER_PROFILE = "optimizer_profile"
 CONF_PREFER_PV_SURPLUS_CHARGING = "prefer_pv_surplus_charging"
 CONF_COMFORTS = "comforts"
 CONF_DURATION_MINUTES = "duration_minutes"
@@ -107,6 +105,10 @@ ADAPTER_TYPE_SERVICE_RESPONSE = "service_response"
 
 ENERGY_MODE_SCALAR = "scalar"
 ENERGY_MODE_PROFILE = "profile"
+
+OPTIMIZER_PROFILE_AGGRESSIVE = "aggressive"
+OPTIMIZER_PROFILE_BALANCED = "balanced"
+OPTIMIZER_PROFILE_CONSERVATIVE = "conservative"
 
 SLOT_MINUTE_OPTIONS: tuple[int, ...] = (15, 30, 60)
 HOURS_TO_PLAN_OPTIONS: tuple[int, ...] = (12, 24, 48, 72, 96, 120, 144, 168)

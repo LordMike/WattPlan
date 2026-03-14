@@ -28,7 +28,6 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import slugify
 
 from .const import (
-    CONF_ACTION_DEADBAND_KWH,
     CONF_CAN_CHARGE_FROM_GRID,
     CONF_CAN_CHARGE_FROM_PV,
     CONF_CAPACITY_KWH,
@@ -42,11 +41,11 @@ from .const import (
     CONF_MAX_CONSECUTIVE_OFF_MINUTES,
     CONF_MAX_DISCHARGE_KW,
     CONF_MEASURED_POWER_SOURCE,
-    CONF_MODE_SWITCH_COST,
     CONF_MIN_CONSECUTIVE_OFF_MINUTES,
     CONF_MIN_CONSECUTIVE_ON_MINUTES,
     CONF_MIN_OPTION_GAP_MINUTES,
     CONF_MINIMUM_KWH,
+    CONF_OPTIMIZER_PROFILE,
     CONF_ON_OFF_SOURCE,
     CONF_OPTIONS_COUNT,
     CONF_ROLLING_WINDOW_HOURS,
@@ -61,7 +60,9 @@ from .const import (
     CONF_SOURCES,
     CONF_TARGET_ON_HOURS_PER_WINDOW,
     CONF_PREFER_PV_SURPLUS_CHARGING,
-    CONF_THROUGHPUT_COST_PER_KWH,
+    OPTIMIZER_PROFILE_AGGRESSIVE,
+    OPTIMIZER_PROFILE_BALANCED,
+    OPTIMIZER_PROFILE_CONSERVATIVE,
     DOMAIN,
     SOURCE_MODE_BUILT_IN,
     SOURCE_MODE_NOT_USED,
@@ -88,6 +89,23 @@ from .target_runtime import clear_expired_battery_targets, get_active_battery_ta
 _LOGGER = logging.getLogger(__name__)
 HEARTBEAT_OFFSET = timedelta(minutes=3)
 STORAGE_VERSION = 1
+PROFILE_SETTINGS = {
+    "aggressive": {
+        "throughput_cost_per_kwh": 0.0,
+        "action_deadband_kwh": 0.0,
+        "mode_switch_cost": 0.0,
+    },
+    "balanced": {
+        "throughput_cost_per_kwh": 0.02,
+        "action_deadband_kwh": 0.05,
+        "mode_switch_cost": 0.01,
+    },
+    "conservative": {
+        "throughput_cost_per_kwh": 0.08,
+        "action_deadband_kwh": 0.1,
+        "mode_switch_cost": 0.03,
+    },
+}
 
 
 def _snapshot_schema_id() -> str:
@@ -738,15 +756,6 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                         )
                     ],
                     "can_charge_from": can_charge_from,
-                    "throughput_cost_per_kwh": float(
-                        subentry.data.get(CONF_THROUGHPUT_COST_PER_KWH, 0.0)
-                    ),
-                    "action_deadband_kwh": float(
-                        subentry.data.get(CONF_ACTION_DEADBAND_KWH, 0.0)
-                    ),
-                    "mode_switch_cost": float(
-                        subentry.data.get(CONF_MODE_SWITCH_COST, 0.0)
-                    ),
                     "prefer_pv_surplus_charging": bool(
                         subentry.data.get(CONF_PREFER_PV_SURPLUS_CHARGING, False)
                     ),
@@ -909,6 +918,14 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 "usage_kwh": usage_values if usage_values is not None else [0.0] * expected_slots,
                 "rolling_window_slots": (
                     next(iter(rolling_window_slots_set)) if rolling_window_slots_set else 24
+                ),
+                **PROFILE_SETTINGS.get(
+                    str(
+                        entry.options.get(
+                            CONF_OPTIMIZER_PROFILE, OPTIMIZER_PROFILE_BALANCED
+                        )
+                    ),
+                    PROFILE_SETTINGS[OPTIMIZER_PROFILE_BALANCED],
                 ),
                 "battery_entities": battery_entities,
                 "comfort_entities": comfort_entities,

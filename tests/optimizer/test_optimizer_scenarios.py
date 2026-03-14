@@ -1524,7 +1524,7 @@ def test_discharge_efficiency_reduces_deliverable_energy():
     )
 
 
-def test_throughput_cost_reduces_marginal_arbitrage():
+def test_conservative_profile_reduces_marginal_arbitrage():
     base_payload = {
         "grid_import_price_per_kwh": [0.1, 0.1, 0.8, 0.8],
         "grid_export_price_per_kwh": [0.0, 0.0, 0.0, 0.0],
@@ -1545,20 +1545,22 @@ def test_throughput_cost_reduces_marginal_arbitrage():
     }
 
     low_cost = _run_optimizer(base_payload)
-    high_cost_payload = json.loads(json.dumps(base_payload))
-    high_cost_payload["battery_entities"][0]["throughput_cost_per_kwh"] = 0.5
-    high_cost = _run_optimizer(high_cost_payload)
+    conservative_payload = json.loads(json.dumps(base_payload))
+    conservative_payload["throughput_cost_per_kwh"] = 0.08
+    conservative_payload["action_deadband_kwh"] = 0.1
+    conservative_payload["mode_switch_cost"] = 0.03
+    conservative = _run_optimizer(conservative_payload)
 
     assert low_cost["entities"][0]["schedule"][0]["state"] == "charge"
     assert any(
         point["state"] == "discharge" for point in low_cost["entities"][0]["schedule"]
     )
     assert all(
-        point["state"] == "hold" for point in high_cost["entities"][0]["schedule"]
+        point["state"] == "hold" for point in conservative["entities"][0]["schedule"]
     )
 
 
-def test_action_deadband_suppresses_tiny_battery_moves():
+def test_conservative_profile_suppresses_tiny_battery_moves():
     base_payload = {
         "grid_import_price_per_kwh": [0.1, 0.1, 1.0, 1.0],
         "grid_export_price_per_kwh": [0.0, 0.0, 0.0, 0.0],
@@ -1579,9 +1581,11 @@ def test_action_deadband_suppresses_tiny_battery_moves():
     }
 
     no_deadband = _run_optimizer(base_payload)
-    deadband_payload = json.loads(json.dumps(base_payload))
-    deadband_payload["battery_entities"][0]["action_deadband_kwh"] = 0.1
-    with_deadband = _run_optimizer(deadband_payload)
+    conservative_payload = json.loads(json.dumps(base_payload))
+    conservative_payload["throughput_cost_per_kwh"] = 0.08
+    conservative_payload["action_deadband_kwh"] = 0.1
+    conservative_payload["mode_switch_cost"] = 0.03
+    with_profile = _run_optimizer(conservative_payload)
 
     assert no_deadband["entities"][0]["schedule"][0]["state"] == "charge"
     assert any(
@@ -1589,7 +1593,7 @@ def test_action_deadband_suppresses_tiny_battery_moves():
         for point in no_deadband["entities"][0]["schedule"]
     )
     assert all(
-        point["state"] == "hold" for point in with_deadband["entities"][0]["schedule"]
+        point["state"] == "hold" for point in with_profile["entities"][0]["schedule"]
     )
 
 

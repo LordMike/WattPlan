@@ -49,6 +49,7 @@ After installing WattPlan via HACS, configure the following:
 - [docs/example-deye-solcast-stromligning.md](docs/example-deye-solcast-stromligning.md) - Concrete end-to-end example using Strømligning, Deye, and Solcast
 - [docs/extras.md](docs/extras.md) - Batteries, comfort loads, optional loads, and how to wire WattPlan actions into your own automations
 - [docs/entities-and-services.md](docs/entities-and-services.md) - All exposed entities and services, including battery targets
+- [docs/optimizer-profiles.md](docs/optimizer-profiles.md) - What Aggressive, Balanced, and Conservative mean in practice
 - [docs/error-handling.md](docs/error-handling.md) - Health states, degraded operation, and what `ok`, `degraded`, and `failed` mean
 - [docs/development.md](docs/development.md) - Local setup with `uv`, local test env caveats, optional symlink workflow, packaging
 - [docs/architecture.md](docs/architecture.md) - Code layout, runtime boundaries, planning flow
