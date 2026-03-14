@@ -63,6 +63,8 @@ from .const import (
     CONF_ON_OFF_SOURCE,
     CONF_OPTIONS_COUNT,
     CONF_PLANNING_ENABLED,
+    CONF_OPTIMIZER_PROFILE,
+    CONF_PREFER_PV_SURPLUS_CHARGING,
     CONF_PROVIDERS,
     CONF_RESAMPLE_MODE,
     CONF_ROLLING_WINDOW_HOURS,
@@ -87,6 +89,9 @@ from .const import (
     FIXUP_PROFILE_REPAIR,
     FIXUP_PROFILE_STRICT,
     HOURS_TO_PLAN_OPTIONS,
+    OPTIMIZER_PROFILE_AGGRESSIVE,
+    OPTIMIZER_PROFILE_BALANCED,
+    OPTIMIZER_PROFILE_CONSERVATIVE,
     RESAMPLE_MODE_FORWARD_FILL,
     RESAMPLE_MODE_LINEAR,
     RESAMPLE_MODE_NONE,
@@ -1134,14 +1139,55 @@ async def _async_config_translation(
     return message
 
 
+def _optimizer_profile_selector(default: str) -> selector.SelectSelector:
+    """Build selector for user-facing optimizer profiles."""
+    return selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=[
+                selector.SelectOptionDict(
+                    value=OPTIMIZER_PROFILE_AGGRESSIVE,
+                    label="Aggressive",
+                ),
+                selector.SelectOptionDict(
+                    value=OPTIMIZER_PROFILE_BALANCED,
+                    label="Balanced",
+                ),
+                selector.SelectOptionDict(
+                    value=OPTIMIZER_PROFILE_CONSERVATIVE,
+                    label="Conservative",
+                ),
+            ],
+            mode=selector.SelectSelectorMode.DROPDOWN,
+        )
+    )
+
+
 def _core_schema(
-    defaults: dict[str, Any] | None = None, *, include_name: bool = False
+    defaults: dict[str, Any] | None = None,
+    *,
+    include_name: bool = False,
+    include_profile: bool = False,
+    profile_last: bool = False,
 ) -> vol.Schema:
     """Build schema for the core planner settings."""
     defaults = defaults or {}
     slot_default = str(defaults.get(CONF_SLOT_MINUTES, 15))
     hours_default = str(defaults.get(CONF_HOURS_TO_PLAN, 48))
-    schema: dict[Any, Any] = {
+    schema: dict[Any, Any] = {}
+    profile_field = None
+    if include_profile:
+        profile_field = (
+            vol.Required(
+                CONF_OPTIMIZER_PROFILE,
+                default=str(
+                    defaults.get(CONF_OPTIMIZER_PROFILE, OPTIMIZER_PROFILE_BALANCED)
+                ),
+            ),
+            _optimizer_profile_selector(
+                str(defaults.get(CONF_OPTIMIZER_PROFILE, OPTIMIZER_PROFILE_BALANCED))
+            ),
+        )
+    schema.update({
         vol.Required(CONF_SLOT_MINUTES, default=slot_default): selector.SelectSelector(
             selector.SelectSelectorConfig(
                 options=[str(option) for option in SLOT_MINUTE_OPTIONS],
@@ -1154,11 +1200,17 @@ def _core_schema(
                 mode=selector.SelectSelectorMode.DROPDOWN,
             )
         ),
-    }
+    })
+    if include_profile and not profile_last:
+        assert profile_field is not None
+        schema[profile_field[0]] = profile_field[1]
     if include_name:
         schema[vol.Required(CONF_NAME, default=defaults.get(CONF_NAME, "WattPlan"))] = (
             selector.TextSelector()
         )
+    if include_profile and profile_last:
+        assert profile_field is not None
+        schema[profile_field[0]] = profile_field[1]
     return vol.Schema(schema)
 
 
@@ -1455,6 +1507,7 @@ def _battery_schema() -> vol.Schema:
                 default={
                     CONF_CHARGE_EFFICIENCY: 0.9,
                     CONF_DISCHARGE_EFFICIENCY: 0.9,
+                    CONF_PREFER_PV_SURPLUS_CHARGING: False,
                 },
             ): section(
                 vol.Schema(
@@ -1481,6 +1534,10 @@ def _battery_schema() -> vol.Schema:
                                 mode=selector.NumberSelectorMode.BOX,
                             )
                         ),
+                        vol.Required(
+                            CONF_PREFER_PV_SURPLUS_CHARGING,
+                            default=False,
+                        ): selector.BooleanSelector(),
                     }
                 ),
                 {"collapsed": True},
@@ -1871,6 +1928,7 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
     MINOR_VERSION = 1
 
     _core: dict[str, Any]
+    _entry_options: dict[str, Any]
     _sources: dict[str, dict[str, Any]]
     _last_source_available_count: int | None = None
     _pending_source_key: str | None = None
@@ -1924,14 +1982,24 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             errors = _validate_core_data(user_input, include_name=True)
             if not errors:
-                self._core = _normalize_core_input(user_input)
+                normalized = _normalize_core_input(user_input)
+                self._entry_options = {
+                    CONF_PLANNING_ENABLED: True,
+                    CONF_ACTION_EMISSION_ENABLED: True,
+                    CONF_OPTIMIZER_PROFILE: str(
+                        normalized.pop(
+                            CONF_OPTIMIZER_PROFILE, OPTIMIZER_PROFILE_BALANCED
+                        )
+                    ),
+                }
+                self._core = normalized
                 self._sources = {}
                 return await self.async_step_source_price()
 
         return self.async_show_form(
             step_id="planner_setup",
             data_schema=self.add_suggested_values_to_schema(
-                _core_schema(include_name=True), user_input or {}
+                _core_schema(include_name=True, include_profile=True), user_input or {}
             ),
             errors=errors,
             last_step=False,
@@ -2578,10 +2646,7 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
                     **{key: value for key, value in self._core.items() if key != CONF_NAME},
                     CONF_SOURCES: self._sources,
                 },
-                options={
-                    CONF_PLANNING_ENABLED: True,
-                    CONF_ACTION_EMISSION_ENABLED: True,
-                },
+                options=self._entry_options,
             )
 
         return self.async_show_form(
@@ -2658,6 +2723,9 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
         self._options = deepcopy(dict(config_entry.options))
         self._options.setdefault(CONF_PLANNING_ENABLED, True)
         self._options.setdefault(CONF_ACTION_EMISSION_ENABLED, True)
+        self._options.setdefault(
+            CONF_OPTIMIZER_PROFILE, OPTIMIZER_PROFILE_BALANCED
+        )
         self._selected_subentry_id = None
         self._last_source_available_count = None
         self._pending_source_key = None
@@ -2672,12 +2740,12 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
         """Menu for options."""
         menu_options = [
             "planner_core",
+            "planner_timers",
             "source_price",
             "source_usage",
             "source_pv",
             "source_export_price",
         ]
-        menu_options.append("planner_timers")
 
         return self.async_show_menu(
             step_id="init",
@@ -2692,14 +2760,29 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
         if user_input is not None:
             errors = _validate_core_data(user_input)
             if not errors:
-                self._data.update(_normalize_core_input(user_input))
+                normalized = _normalize_core_input(user_input)
+                self._options[CONF_OPTIMIZER_PROFILE] = str(
+                    normalized.pop(CONF_OPTIMIZER_PROFILE, OPTIMIZER_PROFILE_BALANCED)
+                )
+                self._data.update(normalized)
                 self.hass.config_entries.async_update_entry(self.config_entry, data=self._data)
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry, options=self._options
+                )
                 return await self.async_step_init()
 
         return self.async_show_form(
             step_id="planner_core",
             data_schema=self.add_suggested_values_to_schema(
-                _core_schema(self._data), user_input or {}
+                _core_schema(
+                    {
+                        **self._data,
+                        CONF_OPTIMIZER_PROFILE: self._options[CONF_OPTIMIZER_PROFILE],
+                    },
+                    include_profile=True,
+                    profile_last=True,
+                ),
+                user_input or {},
             ),
             errors=errors,
         )
@@ -3710,6 +3793,7 @@ def _normalize_battery_input(user_input: dict[str, Any]) -> dict[str, Any]:
     data.update(data.pop(SECTION_BATTERY_ADVANCED, {}))
     data.setdefault(CONF_CHARGE_EFFICIENCY, 0.9)
     data.setdefault(CONF_DISCHARGE_EFFICIENCY, 0.9)
+    data.setdefault(CONF_PREFER_PV_SURPLUS_CHARGING, False)
     return data
 
 
@@ -3719,6 +3803,9 @@ def _battery_form_defaults(data: dict[str, Any]) -> dict[str, Any]:
     defaults[SECTION_BATTERY_ADVANCED] = {
         CONF_CHARGE_EFFICIENCY: defaults.get(CONF_CHARGE_EFFICIENCY, 0.9),
         CONF_DISCHARGE_EFFICIENCY: defaults.get(CONF_DISCHARGE_EFFICIENCY, 0.9),
+        CONF_PREFER_PV_SURPLUS_CHARGING: defaults.get(
+            CONF_PREFER_PV_SURPLUS_CHARGING, False
+        ),
     }
     return defaults
 

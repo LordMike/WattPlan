@@ -67,6 +67,10 @@ class BatteryEntityParams(BaseModel):
     discharge_efficiency: float = Field(
         1.0, description="Discharge efficiency fraction (0, 1]."
     )
+    prefer_pv_surplus_charging: bool = Field(
+        False,
+        description="Whether PV surplus should be preferentially stored here.",
+    )
     can_charge_from: int = Field(
         int(ChargeSource.PV),
         description="Bitmask of allowed charge sources: GRID=1, PV=2.",
@@ -298,6 +302,15 @@ class OptimizationParams(BaseModel):
         ge=1,
         description="Rolling window size in slots used by comfort ON-slot accounting.",
     )
+    throughput_cost_per_kwh: float = Field(
+        0.0, description="Additional cost applied to charging/discharging throughput."
+    )
+    action_deadband_kwh: float = Field(
+        0.0, description="Commands smaller than this are treated as hold."
+    )
+    mode_switch_cost: float = Field(
+        0.0, description="Cost for switching between charge/hold/discharge behavior."
+    )
     battery_entities: List[BatteryEntityParams] = Field(
         ..., description="List of battery-like entities."
     )
@@ -357,6 +370,16 @@ class OptimizationParams(BaseModel):
 
     @model_validator(mode="after")
     def _validate_cross_field_consistency(self):
+        for field_name in (
+            "throughput_cost_per_kwh",
+            "action_deadband_kwh",
+            "mode_switch_cost",
+        ):
+            value = float(getattr(self, field_name))
+            if not np.isfinite(value):
+                raise ValueError(f"{field_name} must be finite")
+            if value < 0.0:
+                raise ValueError(f"{field_name} must be >= 0")
         horizon = len(self.grid_import_price_per_kwh)
         solve_horizon = min(SOLVE_HORIZON_SLOTS, horizon)
         if len(self.grid_export_price_per_kwh) == 0:
@@ -470,6 +493,10 @@ class BatteryEntity:
     discharge_curve_kwh: List[float]
     charge_efficiency: float
     discharge_efficiency: float
+    throughput_cost_per_kwh: float
+    action_deadband_kwh: float
+    mode_switch_cost: float
+    prefer_pv_surplus_charging: bool
     can_charge_from: int
 
 
@@ -545,6 +572,12 @@ def _entity_fingerprint(battery_entities, comfort_entities, rolling_window_slots
                 "discharge_curve_kwh": [float(v) for v in e.discharge_curve_kwh],
                 "charge_efficiency": float(e.charge_efficiency),
                 "discharge_efficiency": float(e.discharge_efficiency),
+                "throughput_cost_per_kwh": float(e.throughput_cost_per_kwh),
+                "action_deadband_kwh": float(e.action_deadband_kwh),
+                "mode_switch_cost": float(e.mode_switch_cost),
+                "prefer_pv_surplus_charging": bool(
+                    e.prefer_pv_surplus_charging
+                ),
                 "can_charge_from": int(e.can_charge_from),
                 "target": (
                     {
@@ -716,6 +749,12 @@ def normalize_calculation_input(params: OptimizationParams):
                 discharge_curve_kwh=[float(v) for v in entity.discharge_curve_kwh],
                 charge_efficiency=float(entity.charge_efficiency),
                 discharge_efficiency=float(entity.discharge_efficiency),
+                throughput_cost_per_kwh=float(params.throughput_cost_per_kwh),
+                action_deadband_kwh=float(params.action_deadband_kwh),
+                mode_switch_cost=float(params.mode_switch_cost),
+                prefer_pv_surplus_charging=bool(
+                    entity.prefer_pv_surplus_charging
+                ),
                 can_charge_from=int(entity.can_charge_from),
             )
         )

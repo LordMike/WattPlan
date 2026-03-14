@@ -8,6 +8,8 @@ This document describes the direct Python API for the optimizer packaged inside 
 
 The optimizer is model-predictive-control (MPC) based.
 
+If you are using WattPlan through the Home Assistant integration, see [optimizer-profiles.md](optimizer-profiles.md) for the user-facing `Aggressive`, `Balanced`, and `Conservative` presets. Those profiles are integration-level presets that map onto the numeric optimizer fields documented here.
+
 ## Time Resolution (Timeslots)
 All time-indexed fields use **timeslots**.
 - A timeslot is one fixed slice of time at your chosen resolution (for example, 15 minutes).
@@ -36,6 +38,9 @@ result = optimize(params)
 | `solar_input_kwh` | `list[float]` | Yes* | `[]` | Must match `len(grid_import_price_per_kwh)`, finite, `>= 0` | Per-timeslot PV forecast (kWh per timeslot). |
 | `usage_kwh` | `list[float]` | Yes* | `[]` | Must match `len(grid_import_price_per_kwh)`, finite, `>= 0` | Per-timeslot base load forecast (kWh per timeslot). |
 | `rolling_window_slots` | `int` | No | `24` | `>= 1` | Slot count used for comfort rolling-window ON accounting. |
+| `throughput_cost_per_kwh` | `float` | No | `0.0` | Finite, `>= 0` | Extra cost on charge/discharge throughput to reduce cycling. |
+| `action_deadband_kwh` | `float` | No | `0.0` | Finite, `>= 0` | Commands smaller than this are treated as hold. |
+| `mode_switch_cost` | `float` | No | `0.0` | Finite, `>= 0` | Extra cost on changing battery behavior between slots. |
 | `battery_entities` | `list[BatteryEntityParams]` | Yes | - | May be empty | Main controllable storage entities. |
 | `comfort_entities` | `list[ComfortEntityParams]` | Yes | - | May be empty | Required-but-shiftable comfort entities. |
 | `optional_entities` | `list[OptionalEntityParams]` | No | `[]` | Fully validated for feasibility | Advisory start-time options only. |
@@ -59,6 +64,7 @@ result = optimize(params)
 | `discharge_curve_kwh` | `list[float]` | Yes | - | Non-empty, finite, `>= 0` | Dischargeable energy per slot by SoC curve (kWh per slot). |
 | `charge_efficiency` | `float` | No | `1.0` | Finite, `(0, 1]` | Fraction of charged energy that increases SoC. |
 | `discharge_efficiency` | `float` | No | `1.0` | Finite, `(0, 1]` | Fraction of discharged SoC energy delivered to load. |
+| `prefer_pv_surplus_charging` | `bool` | No | `false` | - | Route PV surplus into this battery instead of optimizing tiny export/recharge timing. |
 | `can_charge_from` | `int` | No | `2` | `0`, `1`, `2`, `3` | Charge-source flags (`1=GRID`, `2=PV`, `3=GRID|PV`; `0` means charging disabled). |
 
 **Curve Unit Note:**

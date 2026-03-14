@@ -474,8 +474,8 @@ def test_feed_in_prices_shift_pv_charging_to_lower_export_value_slots():
                 "initial_kwh": 0.0,
                 "minimum_kwh": 0.0,
                 "capacity_kwh": 1.0,
-                "charge_curve_kwh": [1.0],
-                "discharge_curve_kwh": [1.0],
+                "charge_curve_kwh": [0.05],
+                "discharge_curve_kwh": [0.05],
                 "can_charge_from": 2,
             }
         ],
@@ -800,8 +800,8 @@ def test_validation_rejects_series_length_mismatch():
                 "initial_kwh": 1.0,
                 "minimum_kwh": 0.0,
                 "capacity_kwh": 2.0,
-                "charge_curve_kwh": [1.0],
-                "discharge_curve_kwh": [1.0],
+                "charge_curve_kwh": [0.05],
+                "discharge_curve_kwh": [0.05],
                 "can_charge_from": 1,
             }
         ],
@@ -1538,3 +1538,108 @@ def test_discharge_efficiency_reduces_deliverable_energy():
         lossy["projections"]["per_slot"][0]["projected_cost"]
         > efficient["projections"]["per_slot"][0]["projected_cost"]
     )
+
+
+def test_conservative_profile_reduces_marginal_arbitrage():
+    base_payload = {
+        "grid_import_price_per_kwh": [0.1, 0.1, 0.8, 0.8],
+        "grid_export_price_per_kwh": [0.0, 0.0, 0.0, 0.0],
+        "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
+        "usage_kwh": [0.0, 0.0, 1.0, 1.0],
+        "battery_entities": [
+            {
+                "name": "b",
+                "initial_kwh": 0.0,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 1.0,
+                "charge_curve_kwh": [0.05],
+                "discharge_curve_kwh": [0.05],
+                "can_charge_from": 1,
+            }
+        ],
+        "comfort_entities": [],
+    }
+
+    low_cost = _run_optimizer(base_payload)
+    conservative_payload = json.loads(json.dumps(base_payload))
+    conservative_payload["throughput_cost_per_kwh"] = 0.08
+    conservative_payload["action_deadband_kwh"] = 0.1
+    conservative_payload["mode_switch_cost"] = 0.03
+    conservative = _run_optimizer(conservative_payload)
+
+    assert low_cost["entities"][0]["schedule"][0]["state"] == "charge"
+    assert any(
+        point["state"] == "discharge" for point in low_cost["entities"][0]["schedule"]
+    )
+    assert all(
+        point["state"] == "hold" for point in conservative["entities"][0]["schedule"]
+    )
+
+
+def test_conservative_profile_suppresses_tiny_battery_moves():
+    base_payload = {
+        "grid_import_price_per_kwh": [0.1, 0.1, 1.0, 1.0],
+        "grid_export_price_per_kwh": [0.0, 0.0, 0.0, 0.0],
+        "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
+        "usage_kwh": [0.0, 0.0, 0.05, 0.05],
+        "battery_entities": [
+            {
+                "name": "b",
+                "initial_kwh": 0.0,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 1.0,
+                "charge_curve_kwh": [0.05],
+                "discharge_curve_kwh": [0.05],
+                "can_charge_from": 1,
+            }
+        ],
+        "comfort_entities": [],
+    }
+
+    no_deadband = _run_optimizer(base_payload)
+    conservative_payload = json.loads(json.dumps(base_payload))
+    conservative_payload["throughput_cost_per_kwh"] = 0.08
+    conservative_payload["action_deadband_kwh"] = 0.1
+    conservative_payload["mode_switch_cost"] = 0.03
+    with_profile = _run_optimizer(conservative_payload)
+
+    assert no_deadband["entities"][0]["schedule"][0]["state"] == "charge"
+    assert any(
+        point["state"] == "discharge"
+        for point in no_deadband["entities"][0]["schedule"]
+    )
+    assert all(
+        point["state"] == "hold" for point in with_profile["entities"][0]["schedule"]
+    )
+
+
+def test_prefer_pv_surplus_charging_sinks_surplus_into_battery():
+    base_payload = {
+        "grid_import_price_per_kwh": [0.2, 0.2, 0.2, 0.2],
+        "grid_export_price_per_kwh": [1.0, 0.8, 0.8, 0.8],
+        "solar_input_kwh": [1.0, 0.0, 0.0, 0.0],
+        "usage_kwh": [0.0, 0.0, 0.0, 0.0],
+        "battery_entities": [
+            {
+                "name": "ev",
+                "initial_kwh": 0.0,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 1.0,
+                "charge_curve_kwh": [1.0],
+                "discharge_curve_kwh": [0.0],
+                "can_charge_from": 2,
+            }
+        ],
+        "comfort_entities": [],
+    }
+
+    baseline = _run_optimizer(base_payload)
+    pv_sink_payload = json.loads(json.dumps(base_payload))
+    pv_sink_payload["battery_entities"][0]["prefer_pv_surplus_charging"] = True
+    pv_sink = _run_optimizer(pv_sink_payload)
+
+    assert baseline["entities"][0]["schedule"][0]["state"] == "hold"
+    assert baseline["entities"][0]["schedule"][0]["level"] == pytest.approx(0.0)
+    assert pv_sink["entities"][0]["schedule"][0]["state"] == "charge"
+    assert pv_sink["entities"][0]["schedule"][0]["charge_source"] == 2
+    assert pv_sink["entities"][0]["schedule"][0]["level"] == pytest.approx(1.0)
