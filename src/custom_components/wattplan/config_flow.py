@@ -908,6 +908,8 @@ async def _async_source_summary(
         if preview_source := _preview_source_from_auto_detect_error(source, err):
             resolved_source = preview_source
             has_preview_source = True
+            if source_input is not None:
+                resolved_input = _auto_detect_step_defaults(source_input, preview_source)
     else:
         is_valid = True
 
