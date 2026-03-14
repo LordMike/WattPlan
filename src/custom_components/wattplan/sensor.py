@@ -434,6 +434,21 @@ class OptionalTimestampSensor(WattPlanCoordinatorSensor):
     @property
     def native_value(self) -> datetime | None:
         """Return timestamp from optional diagnostics payload."""
+        return _as_datetime(self._diagnostic_value(self._key))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Expose the option end timestamp on optional start sensors."""
+        end_key = self._end_key()
+        if end_key is None:
+            return None
+        end_at = self._diagnostic_value(end_key)
+        if end_at is None:
+            return None
+        return {"end_timestamp": end_at}
+
+    def _diagnostic_value(self, key: str) -> Any:
+        """Return one optional diagnostics value for this subentry."""
         if not self.snapshot:
             return None
         diagnostics = self.snapshot.diagnostics or {}
@@ -443,7 +458,15 @@ class OptionalTimestampSensor(WattPlanCoordinatorSensor):
         subentry_data = optional_data.get(self._subentry_id, {})
         if not isinstance(subentry_data, dict):
             return None
-        return _as_datetime(subentry_data.get(self._key))
+        return subentry_data.get(key)
+
+    def _end_key(self) -> str | None:
+        """Return the diagnostics key holding the corresponding end timestamp."""
+        if self._key == "next_start_option":
+            return "next_end_option"
+        if self._key.startswith("option_") and self._key.endswith("_start"):
+            return f"{self._key[:-6]}_end"
+        return None
 
 
 class UsageForecastSensor(WattPlanCoordinatorSensor):
@@ -842,17 +865,6 @@ async def async_setup_entry(
                         unique_id=(
                             f"{config_entry.entry_id}:{subentry.subentry_id}:"
                             "next_start_option"
-                        ),
-                    ),
-                    OptionalTimestampSensor(
-                        config_entry,
-                        coordinator,
-                        subentry_id=subentry.subentry_id,
-                        key="next_end_option",
-                        object_id=f"{entry_slug}_{sub_slug}_next_end_option",
-                        unique_id=(
-                            f"{config_entry.entry_id}:{subentry.subentry_id}:"
-                            "next_end_option"
                         ),
                     ),
                 ]

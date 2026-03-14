@@ -1607,8 +1607,12 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 ).isoformat()
             for index, option in enumerate(options, start=1):
                 start_slot = int(option["start_timeslot"])
+                end_slot = int(option["end_timeslot"])
                 optional_diag[f"option_{index}_start"] = (
                     start_at + timedelta(minutes=start_slot * slot_minutes)
+                ).isoformat()
+                optional_diag[f"option_{index}_end"] = (
+                    start_at + timedelta(minutes=end_slot * slot_minutes)
                 ).isoformat()
             optionals[subentry_id] = optional_diag
 

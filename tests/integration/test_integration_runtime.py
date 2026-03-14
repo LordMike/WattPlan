@@ -312,8 +312,15 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
     _assert_valid_state(hass, "sensor.home_battery_action")
     _assert_valid_state(hass, "sensor.home_comfort_action")
     _assert_valid_state(hass, "sensor.home_optional_next_start_option")
-    _assert_valid_state(hass, "sensor.home_optional_next_end_option")
     _assert_valid_state(hass, "sensor.home_optional_option_1_start")
+
+    next_option = hass.states.get("sensor.home_optional_next_start_option")
+    assert next_option is not None
+    assert next_option.attributes["end_timestamp"] == "2026-01-01T02:00:00+00:00"
+
+    option_1 = hass.states.get("sensor.home_optional_option_1_start")
+    assert option_1 is not None
+    assert option_1.attributes["end_timestamp"] == "2026-01-01T02:00:00+00:00"
 
     savings = hass.states.get("sensor.home_projected_cost_savings")
     assert savings is not None
@@ -489,6 +496,7 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
                             "next_start_option": "2026-01-01T01:00:00+00:00",
                             "next_end_option": "2026-01-01T02:00:00+00:00",
                             "option_1_start": "2026-01-01T01:00:00+00:00",
+                            "option_1_end": "2026-01-01T02:00:00+00:00",
                         }
                     },
                     "optimizer": {
@@ -507,7 +515,10 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
 
     _assert_valid_state(hass, "sensor.home_status")
     _assert_valid_state(hass, "sensor.home_optional_next_start_option")
-    _assert_valid_state(hass, "sensor.home_optional_next_end_option")
+
+    next_option = hass.states.get("sensor.home_optional_next_start_option")
+    assert next_option is not None
+    assert next_option.attributes["end_timestamp"] == "2026-01-01T02:00:00+00:00"
 
 
 async def test_plan_details_sensor_exposes_horizon_length_arrays(

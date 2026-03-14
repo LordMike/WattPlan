@@ -351,12 +351,10 @@ async def test_run_services_are_isolated_by_name(hass: HomeAssistant) -> None:
             _optional_subentry(subentry_id="optional_new", name="optional_new"),
             [
                 "sensor.home_optional_old_next_start_option",
-                "sensor.home_optional_old_next_end_option",
                 "sensor.home_optional_old_option_1_start",
             ],
             [
                 "sensor.home_optional_new_next_start_option",
-                "sensor.home_optional_new_next_end_option",
                 "sensor.home_optional_new_option_1_start",
             ],
         ),
