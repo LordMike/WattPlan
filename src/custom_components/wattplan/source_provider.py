@@ -99,6 +99,18 @@ def source_providers(source_config: dict[str, Any]) -> list[dict[str, Any]]:
     providers = source_config.get(CONF_PROVIDERS)
     if isinstance(providers, list) and providers:
         return [provider for provider in providers if isinstance(provider, dict)]
+
+    if source_mode(source_config) == SOURCE_MODE_ENTITY_ADAPTER:
+        entity_ids = source_config.get(CONF_WATTPLAN_ENTITY_ID)
+        if isinstance(entity_ids, list) and entity_ids:
+            return [
+                {
+                    **source_config,
+                    CONF_WATTPLAN_ENTITY_ID: str(entity_id),
+                }
+                for entity_id in entity_ids
+            ]
+
     return [source_config]
 
 

@@ -24,6 +24,7 @@ from .source_provider import (
     EnergySolarForecastSourceProvider,
     MergedSourceProvider,
     TemplateAdapterSourceProvider,
+    source_providers,
 )
 from .source_types import SourceProvider
 
@@ -45,9 +46,7 @@ def build_source_base_provider(
     """
 
     mode = source_config.get(CONF_SOURCE_MODE)
-    providers_config = source_config.get(CONF_PROVIDERS)
-    if not isinstance(providers_config, list) or not providers_config:
-        providers_config = [source_config]
+    providers_config = source_providers(source_config)
 
     if len(providers_config) == 1 and mode == SOURCE_MODE_BUILT_IN:
         provider_config = providers_config[0]

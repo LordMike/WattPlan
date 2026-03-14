@@ -320,6 +320,61 @@ async def test_entity_adapter_provider_merges_multiple_entities(
     assert values == [1.0, 2.0, 3.0, 4.0]
 
 
+async def test_legacy_multi_entity_adapter_config_still_merges_entities(
+    hass: HomeAssistant,
+) -> None:
+    """Old multi-entity entity-adapter config should normalize into merged providers."""
+    hass.states.async_set(
+        "sensor.today",
+        "ok",
+        {
+            "detailedForecast": [
+                {
+                    "period_start": "2026-01-01T00:00:00+00:00",
+                    "pv_estimate": 1.0,
+                },
+                {
+                    "period_start": "2026-01-01T01:00:00+00:00",
+                    "pv_estimate": 2.0,
+                },
+            ]
+        },
+    )
+    hass.states.async_set(
+        "sensor.tomorrow",
+        "ok",
+        {
+            "detailedForecast": [
+                {
+                    "period_start": "2026-01-01T02:00:00+00:00",
+                    "pv_estimate": 3.0,
+                },
+                {
+                    "period_start": "2026-01-01T03:00:00+00:00",
+                    "pv_estimate": 4.0,
+                },
+            ]
+        },
+    )
+
+    provider = build_source_base_provider(
+        hass,
+        source_key="solar",
+        source_config={
+            CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+            "entity_id": ["sensor.today", "sensor.tomorrow"],
+            CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
+            CONF_NAME: "detailedForecast",
+            "time_key": "period_start",
+            "value_key": "pv_estimate",
+        },
+    )
+
+    values = await provider.async_values(_hour_window())
+
+    assert values == [1.0, 2.0, 3.0, 4.0]
+
+
 async def test_merged_provider_tolerates_one_empty_entity_provider(
     hass: HomeAssistant, caplog: pytest.LogCaptureFixture
 ) -> None:

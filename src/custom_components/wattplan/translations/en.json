@@ -75,7 +75,7 @@
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
-          "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
+          "entity_id": "One or more entities to inspect. Auto detect checks each selected entity and keeps one detected mapping per usable entity.",
           "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
@@ -205,7 +205,7 @@
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
-          "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
+          "entity_id": "One or more entities to inspect. Auto detect checks each selected entity and keeps one detected mapping per usable entity.",
           "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
@@ -398,7 +398,7 @@
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
-          "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
+          "entity_id": "One or more entities to inspect. Auto detect checks each selected entity and keeps one detected mapping per usable entity.",
           "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
@@ -542,7 +542,7 @@
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
-          "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
+          "entity_id": "One or more entities to inspect. Auto detect checks each selected entity and keeps one detected mapping per usable entity.",
           "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
@@ -679,7 +679,7 @@
       "attribute_name_required": "An attribute name is required for this adapter.",
       "invalid_payload": "Source output must be a list of numeric values or a list of objects containing timestamp and value fields.",
       "auto_detect_no_match": "Auto detect did not find a compatible forecast list. Review the candidate paths and pick manual mapping if needed.",
-      "auto_detect_conflict": "Auto detect found forecast data, but the selected entities did not resolve to the same root path and fields.",
+      "auto_detect_conflict": "Auto detect found forecast data, but the selected input did not resolve to one consistent structure. Review the detected mappings and adjust the selection or switch to manual mapping if needed.",
       "built_in_no_numeric_history": "No usable numeric history was found for the selected load sensor in the configured lookback period.",
       "review_ready": "This source is **ready** for the selected horizon. ✅",
       "review_ready_extended": "This source is usable for the selected horizon, but only **{raw_coverage_summary}** came from the source itself. WattPlan repaired or extended it to cover the full plan. ⚠️ If you can provide more native forecast data, go back and choose a source with longer coverage.",
@@ -787,7 +787,7 @@
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
-          "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
+          "entity_id": "One or more entities to inspect. Auto detect checks each selected entity and keeps one detected mapping per usable entity.",
           "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
           "name": "Attribute path that contains the forecast list. Ignored in auto detect mode.",
           "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
@@ -868,7 +868,7 @@
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
-          "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
+          "entity_id": "One or more entities to inspect. Auto detect checks each selected entity and keeps one detected mapping per usable entity.",
           "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
           "name": "Attribute path that contains the forecast list. Ignored in auto detect mode.",
           "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
@@ -961,7 +961,7 @@
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
-          "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
+          "entity_id": "One or more entities to inspect. Auto detect checks each selected entity and keeps one detected mapping per usable entity.",
           "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
           "name": "Attribute path that contains the forecast list. Ignored in auto detect mode.",
           "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
@@ -1038,7 +1038,7 @@
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
-          "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
+          "entity_id": "One or more entities to inspect. Auto detect checks each selected entity and keeps one detected mapping per usable entity.",
           "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
           "name": "Attribute path that contains the forecast list. Ignored in auto detect mode.",
           "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
@@ -1400,7 +1400,7 @@
       "attribute_name_required": "An attribute name is required for this adapter.",
       "invalid_payload": "Source output must be a list of numeric values or a list of objects containing timestamp and value fields.",
       "auto_detect_no_match": "Auto detect did not find a compatible forecast list. Review the candidate paths and pick manual mapping if needed.",
-      "auto_detect_conflict": "Auto detect found forecast data, but the selected entities did not resolve to the same root path and fields.",
+      "auto_detect_conflict": "Auto detect found forecast data, but the selected input did not resolve to one consistent structure. Review the detected mappings and adjust the selection or switch to manual mapping if needed.",
       "built_in_no_numeric_history": "No usable numeric history was found for the selected load sensor in the configured lookback period.",
       "invalid_start": "One or more entries has an invalid timestamp. Check the configured time key and use ISO format with timezone.",
       "invalid_value": "One or more entries has a non-numeric value. Check the configured value key and output numeric values.",

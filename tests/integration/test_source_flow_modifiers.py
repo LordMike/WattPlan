@@ -364,8 +364,20 @@ async def test_config_flow_auto_detects_entity_adapter(
     )
     assert result["step_id"] == "source_review"
     diagnostic_text = result["description_placeholders"]["diagnostic_text"]
-    assert "`sensor.first` -> `prices.home` / `starts_at` / `amount`" in diagnostic_text
-    assert "`sensor.second` -> `prices.home` / `starts_at` / `amount`" in diagnostic_text
+    assert (
+        "- WattPlan checked each selected entity and found usable forecast data."
+        in diagnostic_text
+    )
+    assert (
+        "✅ Looks usable: `sensor.first`. Found forecast data in `prices.home` using "
+        "`starts_at` for time and `amount` for value."
+        in diagnostic_text
+    )
+    assert (
+        "✅ Looks usable: `sensor.second`. Found forecast data in `prices.home` using "
+        "`starts_at` for time and `amount` for value."
+        in diagnostic_text
+    )
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {"accept_source_summary": True}
     )

@@ -727,7 +727,10 @@ def _conflict_action_text(source: dict[str, Any]) -> str:
     """Return guidance when multiple compatible mappings disagree."""
     source_mode = source.get(CONF_SOURCE_MODE)
     if source_mode == SOURCE_MODE_ENTITY_ADAPTER:
-        return "Use only one usable entity for this source, or switch to manual mapping."
+        return (
+            "Remove the entities that do not match the others, or switch to manual "
+            "mapping."
+        )
     if source_mode == SOURCE_MODE_SERVICE_ADAPTER:
         return (
             "Return one consistent forecast structure from the service, or switch "
@@ -796,32 +799,41 @@ def _auto_detect_diagnostic_text(
 
     lines = ["**Auto-detect**"]
     if err is None:
-        provider = primary_provider_config(resolved_source)
-        lines.extend(
-            [
-                "",
-                f"- Root path: `{provider.get(CONF_NAME, '') or '<root>'}`",
-                f"- Timestamp field: `{provider.get(CONF_TIME_KEY, '')}`",
-                f"- Value field: `{provider.get(CONF_VALUE_KEY, '')}`",
-            ]
-        )
+        lines.append("")
         detected_providers = resolved_source.get(CONF_PROVIDERS)
         if isinstance(detected_providers, list) and len(detected_providers) > 1:
+            lines.append(
+                "- WattPlan checked each selected entity and found usable forecast data."
+            )
             lines.append("")
             lines.extend(
-                f"- `{provider_config.get(CONF_WATTPLAN_ENTITY_ID, 'entity')}` -> "
-                f"`{provider_config.get(CONF_NAME, '') or '<root>'}` / "
-                f"`{provider_config.get(CONF_TIME_KEY, '')}` / "
-                f"`{provider_config.get(CONF_VALUE_KEY, '')}`"
+                f"- ✅ Looks usable: `{provider_config.get(CONF_WATTPLAN_ENTITY_ID, 'entity')}`. "
+                f"Found forecast data in `{provider_config.get(CONF_NAME, '') or '<root>'}` "
+                f"using `{provider_config.get(CONF_TIME_KEY, '')}` for time and "
+                f"`{provider_config.get(CONF_VALUE_KEY, '')}` for value."
                 for provider_config in detected_providers
                 if isinstance(provider_config, dict)
             )
+            return "\n".join(lines)
+
+        provider = primary_provider_config(resolved_source)
+        lines.extend(
+            [
+                "- WattPlan found usable forecast data automatically.",
+                "",
+                f"- ✅ Looks usable. Found forecast data in "
+                f"`{provider.get(CONF_NAME, '') or '<root>'}` using "
+                f"`{provider.get(CONF_TIME_KEY, '')}` for time and "
+                f"`{provider.get(CONF_VALUE_KEY, '')}` for value.",
+            ]
+        )
         return "\n".join(lines)
 
     lines.append("")
     if err.details.get("diagnostic_kind") == "auto_detect_conflict":
         lines.append(
-            "- WattPlan found forecast-like data, but it could not build one consistent source from the selected input."
+            "- WattPlan found usable forecast data, but the selected input did not "
+            "resolve to one consistent structure."
         )
         lines.append("")
         for detected in err.details.get("detected_mappings", []):
