@@ -748,7 +748,8 @@ def _preview_source_from_auto_detect_error(
     if not isinstance(detected, list) or not detected:
         return None
 
-    groups: dict[tuple[str, str, str], list[str]] = {}
+    providers: list[dict[str, Any]] = []
+    entity_ids: list[str] = []
     for item in detected:
         if not isinstance(item, dict):
             continue
@@ -758,22 +759,25 @@ def _preview_source_from_auto_detect_error(
         entity_id = str(item.get("entity_id", ""))
         if not entity_id or not root_key or not time_key or not value_key:
             continue
-        groups.setdefault((root_key, time_key, value_key), []).append(entity_id)
+        entity_ids.append(entity_id)
+        providers.append(
+            {
+                CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+                CONF_WATTPLAN_ENTITY_ID: entity_id,
+                CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
+                CONF_NAME: root_key,
+                CONF_TIME_KEY: time_key,
+                CONF_VALUE_KEY: value_key,
+            }
+        )
 
-    if not groups:
+    if not providers:
         return None
 
-    (root_key, time_key, value_key), entity_ids = max(
-        groups.items(),
-        key=lambda item: (len(item[1]), sorted(item[1])),
-    )
     return {
         **source,
         CONF_WATTPLAN_ENTITY_ID: entity_ids,
-        CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
-        CONF_NAME: root_key,
-        CONF_TIME_KEY: time_key,
-        CONF_VALUE_KEY: value_key,
+        CONF_PROVIDERS: providers,
     }
 
 
@@ -792,14 +796,26 @@ def _auto_detect_diagnostic_text(
 
     lines = ["**Auto-detect**"]
     if err is None:
+        provider = primary_provider_config(resolved_source)
         lines.extend(
             [
                 "",
-                f"- Root path: `{resolved_source.get(CONF_NAME, '') or '<root>'}`",
-                f"- Timestamp field: `{resolved_source.get(CONF_TIME_KEY, '')}`",
-                f"- Value field: `{resolved_source.get(CONF_VALUE_KEY, '')}`",
+                f"- Root path: `{provider.get(CONF_NAME, '') or '<root>'}`",
+                f"- Timestamp field: `{provider.get(CONF_TIME_KEY, '')}`",
+                f"- Value field: `{provider.get(CONF_VALUE_KEY, '')}`",
             ]
         )
+        detected_providers = resolved_source.get(CONF_PROVIDERS)
+        if isinstance(detected_providers, list) and len(detected_providers) > 1:
+            lines.append("")
+            lines.extend(
+                f"- `{provider_config.get(CONF_WATTPLAN_ENTITY_ID, 'entity')}` -> "
+                f"`{provider_config.get(CONF_NAME, '') or '<root>'}` / "
+                f"`{provider_config.get(CONF_TIME_KEY, '')}` / "
+                f"`{provider_config.get(CONF_VALUE_KEY, '')}`"
+                for provider_config in detected_providers
+                if isinstance(provider_config, dict)
+            )
         return "\n".join(lines)
 
     lines.append("")

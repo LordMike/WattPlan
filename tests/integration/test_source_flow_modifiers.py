@@ -363,6 +363,9 @@ async def test_config_flow_auto_detects_entity_adapter(
         },
     )
     assert result["step_id"] == "source_review"
+    diagnostic_text = result["description_placeholders"]["diagnostic_text"]
+    assert "`sensor.first` -> `prices.home` / `starts_at` / `amount`" in diagnostic_text
+    assert "`sensor.second` -> `prices.home` / `starts_at` / `amount`" in diagnostic_text
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {"accept_source_summary": True}
     )
@@ -525,10 +528,85 @@ async def test_config_flow_routes_failed_entity_auto_detect_to_review(
     assert result["step_id"] == "source_review"
     assert result["errors"] == {"base": "auto_detect_no_match"}
     assert result["data_schema"].schema == {}
+    assert (
+        result["description_placeholders"]["diagnostic_text"]
+        == "**Auto-detect**\n\n"
+        "- WattPlan could not build a usable forecast source from the selected input.\n\n"
+        "- ❌ Not usable: `sensor.bad_prices`. Found list data in `prices`, but no "
+        "timestamp field WattPlan can use. Ensure you picked an entity with forecast "
+        "data in its attributes, or switch to manual mapping."
+    )
 
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "source_price_adapter"
+
+
+async def test_config_flow_failed_entity_auto_detect_previews_usable_providers(
+    hass: HomeAssistant,
+) -> None:
+    """Review preview should preserve detected providers after partial auto-detect failure."""
+    start = datetime.now(tz=UTC).replace(minute=0, second=0, microsecond=0)
+    hass.states.async_set(
+        "sensor.good_prices",
+        "ok",
+        {
+            "prices": {
+                "home": [
+                    {
+                        "starts_at": (start + timedelta(hours=hour)).isoformat(),
+                        "amount": float(hour + 1),
+                    }
+                    for hour in range(6)
+                ]
+            }
+        },
+    )
+    hass.states.async_set("sensor.bad_prices", "ok", {"prices": [{"foo": "bar"}]})
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_NAME: "Partial auto detect preview",
+            CONF_SLOT_MINUTES: "60",
+            CONF_HOURS_TO_PLAN: "12",
+        },
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER},
+    )
+    assert result["step_id"] == "source_price_adapter"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            "entity_id": ["sensor.good_prices", "sensor.bad_prices"],
+            CONF_ADAPTER_TYPE: ADAPTER_TYPE_AUTO_DETECT,
+            SECTION_SOURCE_MANUAL: {
+                CONF_NAME: "",
+                "time_key": "",
+                "value_key": "",
+            },
+            CONF_FIXUP_PROFILE: FIXUP_PROFILE_REPAIR,
+        },
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "source_review"
+    assert result["errors"] == {"base": "auto_detect_no_match"}
+    assert (
+        result["description_placeholders"]["raw_coverage_summary"]
+        == "6 usable intervals, 12 needed, 60-minute resolution"
+    )
+    assert (
+        "`sensor.good_prices`. Found forecast data in `prices.home` using `starts_at` "
+        "for time and `amount` for value."
+        in result["description_placeholders"]["diagnostic_text"]
+    )
 
 
 async def test_options_flow_auto_detects_service_adapter(
