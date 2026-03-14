@@ -41,6 +41,7 @@ from .const import (
     CONF_CAN_CHARGE_FROM_GRID,
     CONF_CAN_CHARGE_FROM_PV,
     CONF_CAPACITY_KWH,
+    CONF_ACTION_DEADBAND_KWH,
     CONF_CHARGE_EFFICIENCY,
     CONF_CLAMP_MODE,
     CONF_CONFIG_ENTRY_ID,
@@ -60,9 +61,11 @@ from .const import (
     CONF_MIN_CONSECUTIVE_ON_MINUTES,
     CONF_MIN_OPTION_GAP_MINUTES,
     CONF_MINIMUM_KWH,
+    CONF_MODE_SWITCH_COST,
     CONF_ON_OFF_SOURCE,
     CONF_OPTIONS_COUNT,
     CONF_PLANNING_ENABLED,
+    CONF_PREFER_PV_SURPLUS_CHARGING,
     CONF_PROVIDERS,
     CONF_RESAMPLE_MODE,
     CONF_ROLLING_WINDOW_HOURS,
@@ -78,6 +81,7 @@ from .const import (
     CONF_SOURCES,
     CONF_TARGET_ON_HOURS_PER_WINDOW,
     CONF_TEMPLATE,
+    CONF_THROUGHPUT_COST_PER_KWH,
     CONF_TIME_KEY,
     CONF_VALUE_KEY,
     DOMAIN,
@@ -1455,6 +1459,10 @@ def _battery_schema() -> vol.Schema:
                 default={
                     CONF_CHARGE_EFFICIENCY: 0.9,
                     CONF_DISCHARGE_EFFICIENCY: 0.9,
+                    CONF_THROUGHPUT_COST_PER_KWH: 0.0,
+                    CONF_ACTION_DEADBAND_KWH: 0.0,
+                    CONF_MODE_SWITCH_COST: 0.0,
+                    CONF_PREFER_PV_SURPLUS_CHARGING: False,
                 },
             ): section(
                 vol.Schema(
@@ -1481,6 +1489,43 @@ def _battery_schema() -> vol.Schema:
                                 mode=selector.NumberSelectorMode.BOX,
                             )
                         ),
+                        vol.Required(
+                            CONF_THROUGHPUT_COST_PER_KWH,
+                            default=0.0,
+                        ): selector.NumberSelector(
+                            selector.NumberSelectorConfig(
+                                min=0,
+                                max=100,
+                                step=0.01,
+                                mode=selector.NumberSelectorMode.BOX,
+                            )
+                        ),
+                        vol.Required(
+                            CONF_ACTION_DEADBAND_KWH,
+                            default=0.0,
+                        ): selector.NumberSelector(
+                            selector.NumberSelectorConfig(
+                                min=0,
+                                max=100,
+                                step=0.01,
+                                mode=selector.NumberSelectorMode.BOX,
+                            )
+                        ),
+                        vol.Required(
+                            CONF_MODE_SWITCH_COST,
+                            default=0.0,
+                        ): selector.NumberSelector(
+                            selector.NumberSelectorConfig(
+                                min=0,
+                                max=100,
+                                step=0.01,
+                                mode=selector.NumberSelectorMode.BOX,
+                            )
+                        ),
+                        vol.Required(
+                            CONF_PREFER_PV_SURPLUS_CHARGING,
+                            default=False,
+                        ): selector.BooleanSelector(),
                     }
                 ),
                 {"collapsed": True},
@@ -3701,6 +3746,13 @@ def _validate_battery_data(data: dict[str, Any]) -> dict[str, str]:
     for field in (CONF_CHARGE_EFFICIENCY, CONF_DISCHARGE_EFFICIENCY):
         if not 0 < float(data[field]) <= 1:
             errors[field] = "battery_efficiency_invalid"
+    for field in (
+        CONF_THROUGHPUT_COST_PER_KWH,
+        CONF_ACTION_DEADBAND_KWH,
+        CONF_MODE_SWITCH_COST,
+    ):
+        if float(data.get(field, 0.0)) < 0:
+            errors[field] = "battery_non_negative_invalid"
     return errors
 
 
@@ -3710,6 +3762,10 @@ def _normalize_battery_input(user_input: dict[str, Any]) -> dict[str, Any]:
     data.update(data.pop(SECTION_BATTERY_ADVANCED, {}))
     data.setdefault(CONF_CHARGE_EFFICIENCY, 0.9)
     data.setdefault(CONF_DISCHARGE_EFFICIENCY, 0.9)
+    data.setdefault(CONF_THROUGHPUT_COST_PER_KWH, 0.0)
+    data.setdefault(CONF_ACTION_DEADBAND_KWH, 0.0)
+    data.setdefault(CONF_MODE_SWITCH_COST, 0.0)
+    data.setdefault(CONF_PREFER_PV_SURPLUS_CHARGING, False)
     return data
 
 
@@ -3719,6 +3775,14 @@ def _battery_form_defaults(data: dict[str, Any]) -> dict[str, Any]:
     defaults[SECTION_BATTERY_ADVANCED] = {
         CONF_CHARGE_EFFICIENCY: defaults.get(CONF_CHARGE_EFFICIENCY, 0.9),
         CONF_DISCHARGE_EFFICIENCY: defaults.get(CONF_DISCHARGE_EFFICIENCY, 0.9),
+        CONF_THROUGHPUT_COST_PER_KWH: defaults.get(
+            CONF_THROUGHPUT_COST_PER_KWH, 0.0
+        ),
+        CONF_ACTION_DEADBAND_KWH: defaults.get(CONF_ACTION_DEADBAND_KWH, 0.0),
+        CONF_MODE_SWITCH_COST: defaults.get(CONF_MODE_SWITCH_COST, 0.0),
+        CONF_PREFER_PV_SURPLUS_CHARGING: defaults.get(
+            CONF_PREFER_PV_SURPLUS_CHARGING, False
+        ),
     }
     return defaults
 

@@ -1456,11 +1456,19 @@
               "name": "Advanced battery behavior",
               "data": {
                 "charge_efficiency": "Charge efficiency",
-                "discharge_efficiency": "Discharge efficiency"
+                "discharge_efficiency": "Discharge efficiency",
+                "throughput_cost_per_kwh": "Throughput cost per kWh",
+                "action_deadband_kwh": "Action deadband (kWh)",
+                "mode_switch_cost": "Mode switch cost",
+                "prefer_pv_surplus_charging": "Prefer PV surplus charging"
               },
               "data_description": {
                 "charge_efficiency": "Fraction of charging energy that ends up stored in the battery.",
-                "discharge_efficiency": "Fraction of stored energy that can be delivered when discharging."
+                "discharge_efficiency": "Fraction of stored energy that can be delivered when discharging.",
+                "throughput_cost_per_kwh": "Extra optimizer cost applied to charging and discharging throughput to reduce wear-driven cycling.",
+                "action_deadband_kwh": "Ignore planned battery actions smaller than this energy amount per slot.",
+                "mode_switch_cost": "Extra optimizer cost for changing between charge, hold, and discharge behavior.",
+                "prefer_pv_surplus_charging": "When enabled, route any available PV surplus into this battery instead of timing small exports for later recharge."
               }
             }
           }
@@ -1492,11 +1500,19 @@
               "name": "Advanced battery behavior",
               "data": {
                 "charge_efficiency": "Charge efficiency",
-                "discharge_efficiency": "Discharge efficiency"
+                "discharge_efficiency": "Discharge efficiency",
+                "throughput_cost_per_kwh": "Throughput cost per kWh",
+                "action_deadband_kwh": "Action deadband (kWh)",
+                "mode_switch_cost": "Mode switch cost",
+                "prefer_pv_surplus_charging": "Prefer PV surplus charging"
               },
               "data_description": {
                 "charge_efficiency": "Fraction of charging energy that ends up stored in the battery.",
-                "discharge_efficiency": "Fraction of stored energy that can be delivered when discharging."
+                "discharge_efficiency": "Fraction of stored energy that can be delivered when discharging.",
+                "throughput_cost_per_kwh": "Extra optimizer cost applied to charging and discharging throughput to reduce wear-driven cycling.",
+                "action_deadband_kwh": "Ignore planned battery actions smaller than this energy amount per slot.",
+                "mode_switch_cost": "Extra optimizer cost for changing between charge, hold, and discharge behavior.",
+                "prefer_pv_surplus_charging": "When enabled, route any available PV surplus into this battery instead of timing small exports for later recharge."
               }
             }
           }
@@ -1515,7 +1531,8 @@
         "text_required": "Please enter a value.",
         "text_too_long": "That is too long. Please shorten it.",
         "battery_minimum_exceeds_capacity": "Set the minimum battery energy below the battery capacity.",
-        "battery_efficiency_invalid": "Set battery efficiencies to a value greater than 0 and at most 1."
+        "battery_efficiency_invalid": "Set battery efficiencies to a value greater than 0 and at most 1.",
+        "battery_non_negative_invalid": "Set battery optimizer values to 0 or greater."
       },
       "abort": {
         "reconfigure_successful": "Changes saved"

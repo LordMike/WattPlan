@@ -59,6 +59,10 @@ result = optimize(params)
 | `discharge_curve_kwh` | `list[float]` | Yes | - | Non-empty, finite, `>= 0` | Dischargeable energy per slot by SoC curve (kWh per slot). |
 | `charge_efficiency` | `float` | No | `1.0` | Finite, `(0, 1]` | Fraction of charged energy that increases SoC. |
 | `discharge_efficiency` | `float` | No | `1.0` | Finite, `(0, 1]` | Fraction of discharged SoC energy delivered to load. |
+| `throughput_cost_per_kwh` | `float` | No | `0.0` | Finite, `>= 0` | Extra cost on charge/discharge throughput to reduce cycling. |
+| `action_deadband_kwh` | `float` | No | `0.0` | Finite, `>= 0` | Commands smaller than this are treated as hold. |
+| `mode_switch_cost` | `float` | No | `0.0` | Finite, `>= 0` | Extra cost on changing battery behavior between slots. |
+| `prefer_pv_surplus_charging` | `bool` | No | `false` | - | Route PV surplus into this battery instead of optimizing tiny export/recharge timing. |
 | `can_charge_from` | `int` | No | `2` | `0`, `1`, `2`, `3` | Charge-source flags (`1=GRID`, `2=PV`, `3=GRID|PV`; `0` means charging disabled). |
 
 **Curve Unit Note:**

@@ -335,6 +335,7 @@ def _solve_mpc_step(
     battery_entities,
     comfort_entities,
     battery_levels_now,
+    battery_states_now,
     comfort_levels_now,
     prev_comfort_on,
     comfort_off_streaks_now,
@@ -389,7 +390,6 @@ def _solve_mpc_step(
     penalty_battery_target = 5000.0
     penalty_comfort_target = 4000.0
     penalty_switch = 0.0
-    throughput_penalty = 0.0
 
     A_eq = []
     b_eq = []
@@ -405,6 +405,9 @@ def _solve_mpc_step(
         charge_eff = float(entity.charge_efficiency)
         discharge_eff = float(entity.discharge_efficiency)
         can_charge_from_grid, can_charge_from_pv = _charge_source_permissions(entity)
+        throughput_penalty = float(entity.throughput_cost_per_kwh)
+        mode_switch_cost = float(entity.mode_switch_cost)
+        previous_state = int(battery_states_now[b]) if battery_states_now.size else 0
 
         for t in range(horizon):
             grid_upper = charge_limit if can_charge_from_grid else 0.0
@@ -422,6 +425,12 @@ def _solve_mpc_step(
             objective[var["min_slack"].start + t] += penalty_battery_min
             objective[var["target_under"].start] += penalty_battery_target
             objective[var["target_over"].start] += penalty_battery_target
+            if t == 0 and mode_switch_cost > 0.0:
+                if previous_state != 1:
+                    objective[var["charge_grid"].start + t] += mode_switch_cost
+                    objective[var["charge_pv"].start + t] += mode_switch_cost
+                if previous_state != 2:
+                    objective[var["discharge"].start + t] += mode_switch_cost
 
             row = np.zeros(n_vars, dtype=np.float64)
             row[var["charge_grid"].start + t] = 1.0
@@ -666,6 +675,7 @@ def _apply_controls_step(
         charge_limit, discharge_limit = _battery_power_limits(entity, level)
         charge_eff = float(entity.charge_efficiency)
         discharge_eff = float(entity.discharge_efficiency)
+        action_deadband = float(entity.action_deadband_kwh)
         can_charge_from_grid, can_charge_from_pv = _charge_source_permissions(entity)
 
         requested_grid = max(
@@ -697,15 +707,44 @@ def _apply_controls_step(
             pv_surplus_remaining = max(pv_surplus_remaining - actual_pv, 0.0)
             actual_grid = requested_grid
 
+            if actual_grid + actual_pv < action_deadband:
+                pv_surplus_remaining += actual_pv
+                actual_grid = 0.0
+                actual_pv = 0.0
+
+            if (
+                bool(entity.prefer_pv_surplus_charging)
+                and can_charge_from_pv
+                and pv_surplus_remaining > EPSILON
+            ):
+                extra_capacity = max(max_charge - (actual_grid + actual_pv), 0.0)
+                extra_pv = min(extra_capacity, pv_surplus_remaining)
+                if actual_grid + actual_pv + extra_pv >= action_deadband:
+                    actual_pv += extra_pv
+                    pv_surplus_remaining = max(pv_surplus_remaining - extra_pv, 0.0)
+
             charge_grid_amounts[i] = actual_grid
             charge_pv_amounts[i] = actual_pv
             charge_amounts[i] = actual_grid + actual_pv
+        elif (
+            bool(entity.prefer_pv_surplus_charging)
+            and can_charge_from_pv
+            and max_charge > 0.0
+            and pv_surplus_remaining > EPSILON
+        ):
+            extra_pv = min(max_charge, pv_surplus_remaining)
+            if extra_pv >= action_deadband:
+                charge_pv_amounts[i] = extra_pv
+                charge_amounts[i] = extra_pv
+                pv_surplus_remaining = max(pv_surplus_remaining - extra_pv, 0.0)
 
         min_level = float(entity.minimum_kwh)
         available_for_discharge = max(level - min_level, 0.0) * discharge_eff
-        discharge_requests[i] = min(
+        discharge_request = min(
             requested_discharge, discharge_limit, available_for_discharge
         )
+        if discharge_request >= action_deadband:
+            discharge_requests[i] = discharge_request
 
     demand_before_discharge = (
         float(usage[t]) + float(np.sum(charge_amounts)) - float(solar_input[t])
@@ -719,6 +758,10 @@ def _apply_controls_step(
         discharge_amounts = discharge_requests * scale
     else:
         discharge_amounts = discharge_requests
+
+    for i, entity in enumerate(battery_entities):
+        if discharge_amounts[i] < float(entity.action_deadband_kwh):
+            discharge_amounts[i] = 0.0
 
     battery_states = np.zeros(num_battery, dtype=np.int32)
     for i, entity in enumerate(battery_entities):
@@ -872,6 +915,11 @@ def _run_mpc(
                 battery_entities=battery_entities,
                 comfort_entities=[comfort_entities[i] for i in unlocked_indices],
                 battery_levels_now=battery_levels[:, t],
+                battery_states_now=(
+                    battery_states[:, t - 1]
+                    if t > 0
+                    else np.zeros(num_battery, dtype=np.int32)
+                ),
                 comfort_levels_now=comfort_levels[unlocked_indices, t]
                 if unlocked_indices
                 else np.zeros(0, dtype=np.float64),
@@ -1071,7 +1119,9 @@ def _score_schedule(
 
     switch_penalty = 0.0
     for i in range(len(battery_entities)):
-        switch_penalty += 0.05 * float(np.sum(np.diff(battery_states[i]) != 0))
+        switch_penalty += float(battery_entities[i].mode_switch_cost) * float(
+            np.sum(np.diff(battery_states[i]) != 0)
+        )
     for i in range(len(comfort_entities)):
         switch_penalty += 0.05 * float(np.sum(np.diff(comfort_enabled[i]) != 0))
 

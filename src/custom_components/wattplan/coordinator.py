@@ -28,6 +28,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import slugify
 
 from .const import (
+    CONF_ACTION_DEADBAND_KWH,
     CONF_CAN_CHARGE_FROM_GRID,
     CONF_CAN_CHARGE_FROM_PV,
     CONF_CAPACITY_KWH,
@@ -41,6 +42,7 @@ from .const import (
     CONF_MAX_CONSECUTIVE_OFF_MINUTES,
     CONF_MAX_DISCHARGE_KW,
     CONF_MEASURED_POWER_SOURCE,
+    CONF_MODE_SWITCH_COST,
     CONF_MIN_CONSECUTIVE_OFF_MINUTES,
     CONF_MIN_CONSECUTIVE_ON_MINUTES,
     CONF_MIN_OPTION_GAP_MINUTES,
@@ -58,6 +60,8 @@ from .const import (
     CONF_SOURCE_USAGE,
     CONF_SOURCES,
     CONF_TARGET_ON_HOURS_PER_WINDOW,
+    CONF_PREFER_PV_SURPLUS_CHARGING,
+    CONF_THROUGHPUT_COST_PER_KWH,
     DOMAIN,
     SOURCE_MODE_BUILT_IN,
     SOURCE_MODE_NOT_USED,
@@ -734,6 +738,18 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                         )
                     ],
                     "can_charge_from": can_charge_from,
+                    "throughput_cost_per_kwh": float(
+                        subentry.data.get(CONF_THROUGHPUT_COST_PER_KWH, 0.0)
+                    ),
+                    "action_deadband_kwh": float(
+                        subentry.data.get(CONF_ACTION_DEADBAND_KWH, 0.0)
+                    ),
+                    "mode_switch_cost": float(
+                        subentry.data.get(CONF_MODE_SWITCH_COST, 0.0)
+                    ),
+                    "prefer_pv_surplus_charging": bool(
+                        subentry.data.get(CONF_PREFER_PV_SURPLUS_CHARGING, False)
+                    ),
                 }
                 if target := get_active_battery_target(runtime_data, subentry_id):
                     target_slot = self._target_timeslot_from_timestamp(
