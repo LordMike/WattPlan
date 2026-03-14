@@ -22,6 +22,7 @@ from .adapter_auto import (
     AdapterAutoDetectResult,
     auto_detect_mapping,
     resolve_nested_value,
+    summarize_auto_detect_candidates,
 )
 from .const import (
     ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
@@ -288,6 +289,7 @@ async def async_auto_detect_entity_adapter(
 ) -> AdapterAutoDetectResult:
     """Return one mapping that is compatible with all selected entities."""
     detected_mappings: list[AdapterAutoDetectResult] = []
+    entity_candidates: dict[str, list[dict[str, Any]]] = {}
     for entity_id in entity_ids:
         state = hass.states.get(entity_id)
         if state is None:
@@ -300,13 +302,29 @@ async def async_auto_detect_entity_adapter(
         root = dict(state.attributes)
         with suppress(json.JSONDecodeError):
             root["state_json"] = json.loads(state.state)
+        entity_candidates[entity_id] = [
+            {
+                "path": summary.path or "<root>",
+                "row_count": summary.row_count,
+                "sample_type": summary.sample_type,
+                "timestamp_keys": list(summary.timestamp_keys),
+                "numeric_keys": list(summary.numeric_keys),
+                "compatible": summary.compatible,
+                "reason": summary.reason,
+            }
+            for summary in summarize_auto_detect_candidates(root)
+        ]
 
         detected = auto_detect_mapping(root)
         if detected is None:
             raise SourceProviderError(
                 "source_validation",
                 "Selected entities do not share one compatible forecast structure",
-                details={"entity_ids": entity_ids},
+                details={
+                    "entity_ids": entity_ids,
+                    "diagnostic_kind": "auto_detect_no_match",
+                    "entity_candidates": entity_candidates,
+                },
             )
         detected_mappings.append(detected)
 
@@ -315,7 +333,20 @@ async def async_auto_detect_entity_adapter(
         raise SourceProviderError(
             "source_validation",
             "Selected entities do not share one compatible forecast structure",
-            details={"entity_ids": entity_ids},
+            details={
+                "entity_ids": entity_ids,
+                "diagnostic_kind": "auto_detect_conflict",
+                "entity_candidates": entity_candidates,
+                "detected_mappings": [
+                    {
+                        "entity_id": entity_id,
+                        "root_key": detected.root_key,
+                        "time_key": detected.time_key,
+                        "value_key": detected.value_key,
+                    }
+                    for entity_id, detected in zip(entity_ids, detected_mappings, strict=True)
+                ],
+            },
         )
 
     return first_detected
@@ -342,12 +373,28 @@ async def async_auto_detect_service_adapter(
         blocking=True,
         return_response=True,
     )
+    candidates = [
+        {
+            "path": summary.path or "<root>",
+            "row_count": summary.row_count,
+            "sample_type": summary.sample_type,
+            "timestamp_keys": list(summary.timestamp_keys),
+            "numeric_keys": list(summary.numeric_keys),
+            "compatible": summary.compatible,
+            "reason": summary.reason,
+        }
+        for summary in summarize_auto_detect_candidates(response)
+    ]
     detected = auto_detect_mapping(response)
     if detected is None:
         raise SourceProviderError(
             "source_validation",
             f"Service `{service_name}` returned no compatible forecast list",
-            details={"service": service_name},
+            details={
+                "service": service_name,
+                "diagnostic_kind": "auto_detect_no_match",
+                "candidates": candidates,
+            },
         )
     return detected
 

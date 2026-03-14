@@ -18,6 +18,19 @@ class AdapterAutoDetectResult:
     value_key: str
 
 
+@dataclass(frozen=True, slots=True)
+class AdapterCandidateSummary:
+    """Summary of one candidate list considered during auto-detect."""
+
+    path: str
+    row_count: int
+    sample_type: str
+    timestamp_keys: tuple[str, ...]
+    numeric_keys: tuple[str, ...]
+    compatible: bool
+    reason: str
+
+
 def resolve_nested_value(root: Any, path: str) -> Any:
     """Resolve a dotted path from a payload root, allowing an empty path."""
     if not path:
@@ -161,6 +174,85 @@ def detect_object_list_mapping(payload: list[Any]) -> tuple[str, str] | None:
         start_key = next(iter(timestamp_keys))
 
     return (start_key, next(iter(value_keys)))
+
+
+def summarize_candidate_list(path: str, payload: list[Any]) -> AdapterCandidateSummary:
+    """Return one human-readable summary for a candidate list."""
+    if not payload:
+        return AdapterCandidateSummary(
+            path=path,
+            row_count=0,
+            sample_type="empty",
+            timestamp_keys=(),
+            numeric_keys=(),
+            compatible=False,
+            reason="list is empty",
+        )
+
+    sample_type = type(payload[0]).__name__
+    timestamp_keys: set[str] = set()
+    numeric_keys: set[str] = set()
+    matching_rows = 0
+    object_rows = 0
+    missing_timestamp = False
+    missing_numeric = False
+    ambiguous_numeric = False
+
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        object_rows += 1
+        row_timestamp_keys = {
+            key for key, value in item.items() if _coerce_timestamp(value) is not None
+        }
+        row_numeric_keys = {
+            key for key, value in item.items() if _coerce_decimal(value) is not None
+        }
+        timestamp_keys.update(row_timestamp_keys)
+        numeric_keys.update(row_numeric_keys)
+
+        value_key = _select_numeric_value_key(row_numeric_keys)
+        if not row_timestamp_keys:
+            missing_timestamp = True
+        if not row_numeric_keys:
+            missing_numeric = True
+        elif value_key is None:
+            ambiguous_numeric = True
+        elif len(row_timestamp_keys) in {1, 2}:
+            matching_rows += 1
+
+    if not object_rows:
+        reason = f"items are {sample_type}, not objects"
+    elif matching_rows > 0:
+        reason = "compatible"
+    elif not timestamp_keys:
+        reason = "rows have no timestamp-like fields"
+    elif not numeric_keys or missing_numeric:
+        reason = "rows have no numeric value fields"
+    elif ambiguous_numeric:
+        reason = "rows have multiple numeric fields, so one value key could not be chosen"
+    elif missing_timestamp:
+        reason = "rows do not share one usable timestamp field"
+    else:
+        reason = "rows do not match the expected timestamp/value object shape"
+
+    return AdapterCandidateSummary(
+        path=path,
+        row_count=len(payload),
+        sample_type=sample_type,
+        timestamp_keys=tuple(sorted(timestamp_keys)),
+        numeric_keys=tuple(sorted(numeric_keys)),
+        compatible=matching_rows > 0,
+        reason=reason,
+    )
+
+
+def summarize_auto_detect_candidates(root: Any) -> list[AdapterCandidateSummary]:
+    """Return candidate summaries for every list found in a payload root."""
+    return [
+        summarize_candidate_list(path, payload)
+        for path, payload in iter_candidate_lists(root)
+    ]
 
 
 def auto_detect_mapping(root: Any) -> AdapterAutoDetectResult | None:
