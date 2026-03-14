@@ -1219,6 +1219,18 @@ def _optional_entity_options(entity, grid_import_prices, baseline_net_import):
     ]
 
 
+def _battery_schedule_charge_source(result, battery_index: int, timeslot: int) -> int:
+    """Return a normalized charge source bitmask for one battery schedule slot."""
+    battery_state = int(result["battery_states"][battery_index, timeslot])
+    if battery_state == 0:
+        return 0
+
+    return int(
+        (1 if result["battery_charge_grid"][battery_index, timeslot] > EPSILON else 0)
+        | (2 if result["battery_charge_pv"][battery_index, timeslot] > EPSILON else 0)
+    )
+
+
 def optimize_internal(normalized: CalculationInput):
     total_steps = normalized.total_steps
     grid_import_prices = normalized.grid_import_prices
@@ -1316,9 +1328,8 @@ def optimize_internal(normalized: CalculationInput):
                         "state": battery_state_name[
                             int(result["battery_states"][i, t])
                         ],
-                        "charge_source": int(
-                            (1 if result["battery_charge_grid"][i, t] > EPSILON else 0)
-                            | (2 if result["battery_charge_pv"][i, t] > EPSILON else 0)
+                        "charge_source": _battery_schedule_charge_source(
+                            result, i, t
                         ),
                         "level": float(result["battery_levels"][i, t + 1]),
                     }
