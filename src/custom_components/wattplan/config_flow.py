@@ -63,6 +63,7 @@ from .const import (
     CONF_ON_OFF_SOURCE,
     CONF_OPTIONS_COUNT,
     CONF_PLANNING_ENABLED,
+    CONF_PROVIDERS,
     CONF_RESAMPLE_MODE,
     CONF_ROLLING_WINDOW_HOURS,
     CONF_RUN_WITHIN_HOURS,
@@ -106,6 +107,8 @@ from .source_provider import (
     async_auto_detect_entity_adapter,
     async_auto_detect_service_adapter,
     async_get_energy_solar_forecast_entries,
+    primary_provider_config,
+    source_mode,
 )
 from .source_types import SourceProviderError, SourceWindow
 
@@ -289,7 +292,23 @@ def _default_modifier_values() -> dict[str, str]:
 
 def _source_base_defaults(source: dict[str, Any]) -> dict[str, Any]:
     """Return defaults for provider-specific input including fixup settings."""
-    return dict(source)
+    provider = primary_provider_config(source)
+    defaults = {
+        **dict(provider),
+        **{
+            key: value
+            for key, value in source.items()
+            if key not in {CONF_PROVIDERS}
+        },
+    }
+    providers = source.get(CONF_PROVIDERS)
+    if isinstance(providers, list) and providers and source_mode(source) == SOURCE_MODE_ENTITY_ADAPTER:
+        defaults[CONF_WATTPLAN_ENTITY_ID] = [
+            provider[CONF_WATTPLAN_ENTITY_ID]
+            for provider in providers
+            if isinstance(provider, dict) and CONF_WATTPLAN_ENTITY_ID in provider
+        ]
+    return defaults
 
 
 def _preferred_source_mode(
@@ -337,9 +356,10 @@ def _auto_detect_step_defaults(
     that auto-detect was the chosen workflow, while showing what it found.
     """
     defaults = dict(user_input)
-    defaults[CONF_NAME] = resolved_source.get(CONF_NAME, "")
-    defaults[CONF_TIME_KEY] = resolved_source.get(CONF_TIME_KEY, "")
-    defaults[CONF_VALUE_KEY] = resolved_source.get(CONF_VALUE_KEY, "")
+    provider = primary_provider_config(resolved_source)
+    defaults[CONF_NAME] = provider.get(CONF_NAME, "")
+    defaults[CONF_TIME_KEY] = provider.get(CONF_TIME_KEY, "")
+    defaults[CONF_VALUE_KEY] = provider.get(CONF_VALUE_KEY, "")
     defaults[CONF_ADAPTER_TYPE] = ADAPTER_TYPE_AUTO_DETECT
     return defaults
 
@@ -661,11 +681,12 @@ def _entity_candidate_status_line(
     ]
     if compatible:
         best = max(compatible, key=lambda candidate: int(candidate.get("row_count", 0)))
-        row_count = int(best.get("row_count", 0))
         path = str(best.get("path", "<root>"))
+        time_key = str(best.get("time_key", ""))
+        value_key = str(best.get("value_key", ""))
         return (
-            f"- ✅ Looks usable: `{entity_id}`. Found {row_count} forecast entries "
-            f"in `{path}`."
+            f"- ✅ Looks usable: `{entity_id}`. Found forecast data in `{path}` "
+            f"using `{time_key}` for time and `{value_key}` for value."
         )
 
     best = max(candidates, key=lambda candidate: int(candidate.get("row_count", 0)))
@@ -707,7 +728,10 @@ def _conflict_action_text(source: dict[str, Any]) -> str:
     """Return guidance when multiple compatible mappings disagree."""
     source_mode = source.get(CONF_SOURCE_MODE)
     if source_mode == SOURCE_MODE_ENTITY_ADAPTER:
-        return "Use only one usable entity for this source, or switch to manual mapping."
+        return (
+            "Remove the entities that do not match the others, or switch to manual "
+            "mapping."
+        )
     if source_mode == SOURCE_MODE_SERVICE_ADAPTER:
         return (
             "Return one consistent forecast structure from the service, or switch "
@@ -728,7 +752,8 @@ def _preview_source_from_auto_detect_error(
     if not isinstance(detected, list) or not detected:
         return None
 
-    groups: dict[tuple[str, str, str], list[str]] = {}
+    providers: list[dict[str, Any]] = []
+    entity_ids: list[str] = []
     for item in detected:
         if not isinstance(item, dict):
             continue
@@ -738,22 +763,25 @@ def _preview_source_from_auto_detect_error(
         entity_id = str(item.get("entity_id", ""))
         if not entity_id or not root_key or not time_key or not value_key:
             continue
-        groups.setdefault((root_key, time_key, value_key), []).append(entity_id)
+        entity_ids.append(entity_id)
+        providers.append(
+            {
+                CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+                CONF_WATTPLAN_ENTITY_ID: entity_id,
+                CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
+                CONF_NAME: root_key,
+                CONF_TIME_KEY: time_key,
+                CONF_VALUE_KEY: value_key,
+            }
+        )
 
-    if not groups:
+    if not providers:
         return None
 
-    (root_key, time_key, value_key), entity_ids = max(
-        groups.items(),
-        key=lambda item: (len(item[1]), sorted(item[1])),
-    )
     return {
         **source,
         CONF_WATTPLAN_ENTITY_ID: entity_ids,
-        CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
-        CONF_NAME: root_key,
-        CONF_TIME_KEY: time_key,
-        CONF_VALUE_KEY: value_key,
+        CONF_PROVIDERS: providers,
     }
 
 
@@ -772,12 +800,32 @@ def _auto_detect_diagnostic_text(
 
     lines = ["**Auto-detect**"]
     if err is None:
+        lines.append("")
+        detected_providers = resolved_source.get(CONF_PROVIDERS)
+        if isinstance(detected_providers, list) and len(detected_providers) > 1:
+            lines.append(
+                "- WattPlan checked each selected entity and found usable forecast data."
+            )
+            lines.append("")
+            lines.extend(
+                f"- ✅ Looks usable: `{provider_config.get(CONF_WATTPLAN_ENTITY_ID, 'entity')}`. "
+                f"Found forecast data in `{provider_config.get(CONF_NAME, '') or '<root>'}` "
+                f"using `{provider_config.get(CONF_TIME_KEY, '')}` for time and "
+                f"`{provider_config.get(CONF_VALUE_KEY, '')}` for value."
+                for provider_config in detected_providers
+                if isinstance(provider_config, dict)
+            )
+            return "\n".join(lines)
+
+        provider = primary_provider_config(resolved_source)
         lines.extend(
             [
+                "- WattPlan found usable forecast data automatically.",
                 "",
-                f"- Root path: `{resolved_source.get(CONF_NAME, '') or '<root>'}`",
-                f"- Timestamp field: `{resolved_source.get(CONF_TIME_KEY, '')}`",
-                f"- Value field: `{resolved_source.get(CONF_VALUE_KEY, '')}`",
+                f"- ✅ Looks usable. Found forecast data in "
+                f"`{provider.get(CONF_NAME, '') or '<root>'}` using "
+                f"`{provider.get(CONF_TIME_KEY, '')}` for time and "
+                f"`{provider.get(CONF_VALUE_KEY, '')}` for value.",
             ]
         )
         return "\n".join(lines)
@@ -785,7 +833,8 @@ def _auto_detect_diagnostic_text(
     lines.append("")
     if err.details.get("diagnostic_kind") == "auto_detect_conflict":
         lines.append(
-            "- WattPlan found forecast-like data, but it could not build one consistent source from the selected input."
+            "- WattPlan found usable forecast data, but the selected input did not "
+            "resolve to one consistent structure."
         )
         lines.append("")
         for detected in err.details.get("detected_mappings", []):
@@ -804,10 +853,26 @@ def _auto_detect_diagnostic_text(
     lines.append(
         "- WattPlan could not build a usable forecast source from the selected input."
     )
+    detected_mappings = err.details.get("detected_mappings")
+    if isinstance(detected_mappings, list) and detected_mappings:
+        lines.append("")
+        for detected in detected_mappings:
+            entity_id = str(detected.get("entity_id", "entity"))
+            root_key = str(detected.get("root_key", "<root>"))
+            time_key = str(detected.get("time_key", ""))
+            value_key = str(detected.get("value_key", ""))
+            lines.append(
+                f"- ✅ Looks usable: `{entity_id}`. Found forecast data in `{root_key}` "
+                f"using `{time_key}` for time and `{value_key}` for value."
+            )
     entity_candidates = err.details.get("entity_candidates")
     if isinstance(entity_candidates, dict):
         lines.append("")
         for entity_id, candidates in entity_candidates.items():
+            if isinstance(detected_mappings, list) and any(
+                str(item.get("entity_id")) == str(entity_id) for item in detected_mappings
+            ):
+                continue
             lines.append(
                 _entity_candidate_status_line(
                     source,
@@ -842,24 +907,25 @@ def _source_mode_summary(source: dict[str, Any] | None) -> str:
     if not isinstance(source, dict):
         return "Not configured"
 
-    mode = source.get(CONF_SOURCE_MODE)
+    mode = source_mode(source)
+    provider = primary_provider_config(source)
     if mode == SOURCE_MODE_ENTITY_ADAPTER:
-        entity_ids = source.get(CONF_WATTPLAN_ENTITY_ID)
+        entity_ids = source.get(CONF_WATTPLAN_ENTITY_ID, provider.get(CONF_WATTPLAN_ENTITY_ID))
         if isinstance(entity_ids, list) and entity_ids:
             return f"Entity attribute: {', '.join(str(entity_id) for entity_id in entity_ids)}"
         if isinstance(entity_ids, str) and entity_ids:
             return f"Entity attribute: {entity_ids}"
         return "Entity attribute"
     if mode == SOURCE_MODE_SERVICE_ADAPTER:
-        service = source.get(CONF_SERVICE)
+        service = provider.get(CONF_SERVICE, source.get(CONF_SERVICE))
         return f"Service call: {service}" if service else "Service call"
     if mode == SOURCE_MODE_TEMPLATE:
         return "Template"
     if mode == SOURCE_MODE_BUILT_IN:
-        entity_id = source.get(CONF_WATTPLAN_ENTITY_ID)
+        entity_id = provider.get(CONF_WATTPLAN_ENTITY_ID, source.get(CONF_WATTPLAN_ENTITY_ID))
         return f"Built in: {entity_id}" if entity_id else "Built in"
     if mode == SOURCE_MODE_ENERGY_PROVIDER:
-        config_entry_id = source.get(CONF_CONFIG_ENTRY_ID)
+        config_entry_id = provider.get(CONF_CONFIG_ENTRY_ID, source.get(CONF_CONFIG_ENTRY_ID))
         return (
             f"Energy provider: {config_entry_id}"
             if config_entry_id
@@ -1653,22 +1719,35 @@ async def _async_prepare_entity_source_input(
     time_key = str(manual.get(CONF_TIME_KEY, user_input.get(CONF_TIME_KEY, "")))
     value_key = str(manual.get(CONF_VALUE_KEY, user_input.get(CONF_VALUE_KEY, "")))
 
-    resolved_adapter = adapter_type
-
     if adapter_type == ADAPTER_TYPE_AUTO_DETECT:
-        detected = await async_auto_detect_entity_adapter(hass, entity_ids)
-        resolved_adapter = ADAPTER_TYPE_ATTRIBUTE_OBJECTS
-        root_key = detected.root_key
-        time_key = detected.time_key
-        value_key = detected.value_key
+        detected_list = await async_auto_detect_entity_adapter(hass, entity_ids)
+        providers = [
+            {
+                CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+                CONF_WATTPLAN_ENTITY_ID: entity_id,
+                CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
+                CONF_NAME: detected.root_key,
+                CONF_TIME_KEY: detected.time_key,
+                CONF_VALUE_KEY: detected.value_key,
+            }
+            for entity_id, detected in zip(entity_ids, detected_list, strict=True)
+        ]
+    else:
+        providers = [
+            {
+                CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+                CONF_WATTPLAN_ENTITY_ID: entity_id,
+                CONF_ADAPTER_TYPE: adapter_type,
+                CONF_NAME: root_key,
+                CONF_TIME_KEY: time_key,
+                CONF_VALUE_KEY: value_key,
+            }
+            for entity_id in entity_ids
+        ]
 
     source = {
         CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
-        CONF_WATTPLAN_ENTITY_ID: entity_ids,
-        CONF_ADAPTER_TYPE: resolved_adapter,
-        CONF_NAME: root_key,
-        CONF_TIME_KEY: time_key,
-        CONF_VALUE_KEY: value_key,
+        CONF_PROVIDERS: providers,
         CONF_FIXUP_PROFILE: user_input[CONF_FIXUP_PROFILE],
     }
     source.update(user_input.get(SECTION_SOURCE_ADVANCED, {}))
@@ -1699,11 +1778,16 @@ async def _async_prepare_service_source_input(
 
     source = {
         CONF_SOURCE_MODE: SOURCE_MODE_SERVICE_ADAPTER,
-        CONF_SERVICE: service_name,
-        CONF_ADAPTER_TYPE: resolved_adapter,
-        CONF_NAME: root_key,
-        CONF_TIME_KEY: time_key,
-        CONF_VALUE_KEY: value_key,
+        CONF_PROVIDERS: [
+            {
+                CONF_SOURCE_MODE: SOURCE_MODE_SERVICE_ADAPTER,
+                CONF_SERVICE: service_name,
+                CONF_ADAPTER_TYPE: resolved_adapter,
+                CONF_NAME: root_key,
+                CONF_TIME_KEY: time_key,
+                CONF_VALUE_KEY: value_key,
+            }
+        ],
         CONF_FIXUP_PROFILE: user_input[CONF_FIXUP_PROFILE],
     }
     source.update(user_input.get(SECTION_SOURCE_ADVANCED, {}))
@@ -1766,27 +1850,30 @@ async def _async_resolve_source_for_review(
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """Resolve staged source config into the explicit runtime form used for validation."""
     mode = source.get(CONF_SOURCE_MODE)
-    adapter_type = source.get(CONF_ADAPTER_TYPE)
 
-    if mode == SOURCE_MODE_ENTITY_ADAPTER and adapter_type == ADAPTER_TYPE_AUTO_DETECT:
+    if mode == SOURCE_MODE_ENTITY_ADAPTER:
         if source_input is None:
             raise SourceProviderError(
                 "source_validation",
-                "Entity adapter auto detect is missing staged input",
+                "Entity adapter source is missing staged input",
                 details={"source_mode": SOURCE_MODE_ENTITY_ADAPTER},
             )
         resolved = await _async_prepare_entity_source_input(hass, source_input)
-        return resolved, _auto_detect_step_defaults(source_input, resolved)
+        if source_input.get(CONF_ADAPTER_TYPE) == ADAPTER_TYPE_AUTO_DETECT:
+            return resolved, _auto_detect_step_defaults(source_input, resolved)
+        return resolved, source_input
 
-    if mode == SOURCE_MODE_SERVICE_ADAPTER and adapter_type == ADAPTER_TYPE_AUTO_DETECT:
+    if mode == SOURCE_MODE_SERVICE_ADAPTER:
         if source_input is None:
             raise SourceProviderError(
                 "source_validation",
-                "Service adapter auto detect is missing staged input",
+                "Service adapter source is missing staged input",
                 details={"source_mode": SOURCE_MODE_SERVICE_ADAPTER},
             )
         resolved = await _async_prepare_service_source_input(hass, source_input)
-        return resolved, _auto_detect_step_defaults(source_input, resolved)
+        if source_input.get(CONF_ADAPTER_TYPE) == ADAPTER_TYPE_AUTO_DETECT:
+            return resolved, _auto_detect_step_defaults(source_input, resolved)
+        return resolved, source_input
 
     return source, source_input
 
@@ -2046,7 +2133,12 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
             defaults = user_input
             source = {
                 CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                CONF_TEMPLATE: user_input[CONF_TEMPLATE],
+                CONF_PROVIDERS: [
+                    {
+                        CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                        CONF_TEMPLATE: user_input[CONF_TEMPLATE],
+                    }
+                ],
                 CONF_FIXUP_PROFILE: user_input[CONF_FIXUP_PROFILE],
             }
             source.update(user_input.get(SECTION_SOURCE_ADVANCED, {}))
@@ -2148,8 +2240,13 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
             defaults = user_input
             source = {
                 CONF_SOURCE_MODE: SOURCE_MODE_BUILT_IN,
-                CONF_WATTPLAN_ENTITY_ID: user_input[CONF_WATTPLAN_ENTITY_ID],
-                CONF_HISTORY_DAYS: int(user_input[CONF_HISTORY_DAYS]),
+                CONF_PROVIDERS: [
+                    {
+                        CONF_SOURCE_MODE: SOURCE_MODE_BUILT_IN,
+                        CONF_WATTPLAN_ENTITY_ID: user_input[CONF_WATTPLAN_ENTITY_ID],
+                        CONF_HISTORY_DAYS: int(user_input[CONF_HISTORY_DAYS]),
+                    }
+                ],
             }
             return await self._async_prepare_source_review(
                 CONF_SOURCE_USAGE,
@@ -2252,7 +2349,12 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
             defaults = user_input
             source = {
                 CONF_SOURCE_MODE: SOURCE_MODE_ENERGY_PROVIDER,
-                CONF_CONFIG_ENTRY_ID: user_input[CONF_CONFIG_ENTRY_ID],
+                CONF_PROVIDERS: [
+                    {
+                        CONF_SOURCE_MODE: SOURCE_MODE_ENERGY_PROVIDER,
+                        CONF_CONFIG_ENTRY_ID: user_input[CONF_CONFIG_ENTRY_ID],
+                    }
+                ],
                 CONF_FIXUP_PROFILE: FIXUP_PROFILE_EXTEND,
             }
             source.update(user_input.get(SECTION_SOURCE_ADVANCED, {}))
@@ -2869,7 +2971,12 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
             defaults = user_input
             source = {
                 CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                CONF_TEMPLATE: user_input[CONF_TEMPLATE],
+                CONF_PROVIDERS: [
+                    {
+                        CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                        CONF_TEMPLATE: user_input[CONF_TEMPLATE],
+                    }
+                ],
                 CONF_FIXUP_PROFILE: user_input[CONF_FIXUP_PROFILE],
             }
             source.update(user_input.get(SECTION_SOURCE_ADVANCED, {}))
@@ -2989,8 +3096,13 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
             defaults = user_input
             source = {
                 CONF_SOURCE_MODE: SOURCE_MODE_BUILT_IN,
-                CONF_WATTPLAN_ENTITY_ID: user_input[CONF_WATTPLAN_ENTITY_ID],
-                CONF_HISTORY_DAYS: int(user_input[CONF_HISTORY_DAYS]),
+                CONF_PROVIDERS: [
+                    {
+                        CONF_SOURCE_MODE: SOURCE_MODE_BUILT_IN,
+                        CONF_WATTPLAN_ENTITY_ID: user_input[CONF_WATTPLAN_ENTITY_ID],
+                        CONF_HISTORY_DAYS: int(user_input[CONF_HISTORY_DAYS]),
+                    }
+                ],
             }
             return await self._async_prepare_source_review(
                 CONF_SOURCE_USAGE,
@@ -3093,7 +3205,12 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
             defaults = user_input
             source = {
                 CONF_SOURCE_MODE: SOURCE_MODE_ENERGY_PROVIDER,
-                CONF_CONFIG_ENTRY_ID: user_input[CONF_CONFIG_ENTRY_ID],
+                CONF_PROVIDERS: [
+                    {
+                        CONF_SOURCE_MODE: SOURCE_MODE_ENERGY_PROVIDER,
+                        CONF_CONFIG_ENTRY_ID: user_input[CONF_CONFIG_ENTRY_ID],
+                    }
+                ],
                 CONF_FIXUP_PROFILE: FIXUP_PROFILE_EXTEND,
             }
             source.update(user_input.get(SECTION_SOURCE_ADVANCED, {}))

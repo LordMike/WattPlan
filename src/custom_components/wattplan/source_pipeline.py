@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant
 from .const import (
     CONF_FIXUP_PROFILE,
     CONF_HISTORY_DAYS,
+    CONF_PROVIDERS,
     CONF_SOURCE_MODE,
     SOURCE_MODE_ENTITY_ADAPTER,
     FIXUP_PROFILE_REPAIR,
@@ -21,8 +22,9 @@ from .forecast_provider import ForecastProvider
 from .source_fixup import SourceFixupProvider, effective_provider_config
 from .source_provider import (
     EnergySolarForecastSourceProvider,
-    MergedTemplateSourceProvider,
+    MergedSourceProvider,
     TemplateAdapterSourceProvider,
+    source_providers,
 )
 from .source_types import SourceProvider
 
@@ -35,6 +37,7 @@ def build_source_base_provider(
     source_key: str,
     source_config: dict[str, Any],
     validate_built_in_entity: ValidateBuiltInEntity = None,
+    allow_partial_failures: bool = False,
 ) -> SourceProvider:
     """Return the raw provider for one configured source.
 
@@ -42,56 +45,44 @@ def build_source_base_provider(
     selection path so provider composition cannot drift across entry points.
     """
 
-    mode = source_config.get("source_mode")
     mode = source_config.get(CONF_SOURCE_MODE)
-    if mode == SOURCE_MODE_ENTITY_ADAPTER:
-        entity_ids = source_config.get("entity_id")
-        if isinstance(entity_ids, str):
-            # Older saved configs stored a single entity as a string. Normalize
-            # so the flow and runtime both work with the same list-based shape.
-            source_config = {**source_config, "entity_id": [entity_ids]}
-            entity_ids = source_config["entity_id"]
+    providers_config = source_providers(source_config)
 
-        if isinstance(entity_ids, list) and len(entity_ids) == 1:
-            source_config = {**source_config, "entity_id": entity_ids[0]}
-        elif isinstance(entity_ids, list) and len(entity_ids) > 1:
-            # Merge multiple same-shaped entity sources before fixup so the
-            # existing alignment and fill logic sees one combined stream.
-            providers = [
-                TemplateAdapterSourceProvider(
-                    hass,
-                    source_name=source_key,
-                    source_config={**source_config, "entity_id": entity_id},
-                )
-                for entity_id in entity_ids
-            ]
-            return MergedTemplateSourceProvider(
-                providers,
-                hass=hass,
-                source_name=source_key,
-                source_config=source_config,
-            )
-    if mode == SOURCE_MODE_BUILT_IN:
-        entity_id = str(source_config["entity_id"])
+    if len(providers_config) == 1 and mode == SOURCE_MODE_BUILT_IN:
+        provider_config = providers_config[0]
+        entity_id = str(provider_config["entity_id"])
         if validate_built_in_entity is not None:
             validate_built_in_entity(entity_id)
         return ForecastProvider(
             hass,
             entity_id=entity_id,
-            lookback_days=int(source_config.get(CONF_HISTORY_DAYS, 14)),
+            lookback_days=int(provider_config.get(CONF_HISTORY_DAYS, 14)),
         )
-
-    effective_config = effective_provider_config(source_config)
-    if mode == SOURCE_MODE_ENERGY_PROVIDER:
+    if len(providers_config) == 1 and mode == SOURCE_MODE_ENERGY_PROVIDER:
+        effective_config = effective_provider_config(
+            {**source_config, **providers_config[0]}
+        )
         return EnergySolarForecastSourceProvider(
             hass,
             source_name=source_key,
             source_config=effective_config,
         )
-    return TemplateAdapterSourceProvider(
+    if len(providers_config) == 1 and mode != SOURCE_MODE_BUILT_IN:
+        effective_config = effective_provider_config(
+            {**source_config, **providers_config[0]}
+        )
+        return TemplateAdapterSourceProvider(
+            hass,
+            source_name=source_key,
+            source_config=effective_config,
+        )
+
+    return MergedSourceProvider(
         hass,
         source_name=source_key,
-        source_config=effective_config,
+        source_config=source_config,
+        validate_built_in_entity=validate_built_in_entity,
+        allow_partial_failures=allow_partial_failures,
     )
 
 
@@ -114,6 +105,7 @@ def build_source_value_provider(
             source_key=source_key,
             source_config=source_config,
             validate_built_in_entity=validate_built_in_entity,
+            allow_partial_failures=True,
         ),
         profile=str(source_config.get(CONF_FIXUP_PROFILE, FIXUP_PROFILE_REPAIR)),
     )

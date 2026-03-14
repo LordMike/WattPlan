@@ -22,6 +22,7 @@ from custom_components.wattplan.const import (
     CONF_CLAMP_MODE,
     CONF_CONFIG_ENTRY_ID,
     CONF_EDGE_FILL_MODE,
+    CONF_PROVIDERS,
     CONF_RESAMPLE_MODE,
     CONF_SERVICE,
     CONF_SOURCE_MODE,
@@ -214,7 +215,7 @@ async def test_entity_adapter_provider_returns_values(hass: HomeAssistant) -> No
 async def test_entity_adapter_auto_detects_nested_attribute(
     hass: HomeAssistant,
 ) -> None:
-    """Auto detect should resolve one mapping shared by selected entities."""
+    """Auto detect should resolve one mapping per selected entity."""
     hass.states.async_set(
         "sensor.first",
         "ok",
@@ -246,9 +247,10 @@ async def test_entity_adapter_auto_detects_nested_attribute(
 
     detected = await async_auto_detect_entity_adapter(hass, ["sensor.first", "sensor.second"])
 
-    assert detected.root_key == "prices.home"
-    assert detected.time_key == "starts_at"
-    assert detected.value_key == "total"
+    assert len(detected) == 2
+    assert {item.root_key for item in detected} == {"prices.home"}
+    assert {item.time_key for item in detected} == {"starts_at"}
+    assert {item.value_key for item in detected} == {"total"}
 
 
 async def test_entity_adapter_provider_merges_multiple_entities(
@@ -292,6 +294,74 @@ async def test_entity_adapter_provider_merges_multiple_entities(
         source_key="solar",
         source_config={
             CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+            CONF_PROVIDERS: [
+                {
+                    CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+                    "entity_id": "sensor.today",
+                    CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
+                    CONF_NAME: "detailedForecast",
+                    "time_key": "period_start",
+                    "value_key": "pv_estimate",
+                },
+                {
+                    CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+                    "entity_id": "sensor.tomorrow",
+                    CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
+                    CONF_NAME: "detailedForecast",
+                    "time_key": "period_start",
+                    "value_key": "pv_estimate",
+                },
+            ],
+        },
+    )
+
+    values = await provider.async_values(_hour_window())
+
+    assert values == [1.0, 2.0, 3.0, 4.0]
+
+
+async def test_legacy_multi_entity_adapter_config_still_merges_entities(
+    hass: HomeAssistant,
+) -> None:
+    """Old multi-entity entity-adapter config should normalize into merged providers."""
+    hass.states.async_set(
+        "sensor.today",
+        "ok",
+        {
+            "detailedForecast": [
+                {
+                    "period_start": "2026-01-01T00:00:00+00:00",
+                    "pv_estimate": 1.0,
+                },
+                {
+                    "period_start": "2026-01-01T01:00:00+00:00",
+                    "pv_estimate": 2.0,
+                },
+            ]
+        },
+    )
+    hass.states.async_set(
+        "sensor.tomorrow",
+        "ok",
+        {
+            "detailedForecast": [
+                {
+                    "period_start": "2026-01-01T02:00:00+00:00",
+                    "pv_estimate": 3.0,
+                },
+                {
+                    "period_start": "2026-01-01T03:00:00+00:00",
+                    "pv_estimate": 4.0,
+                },
+            ]
+        },
+    )
+
+    provider = build_source_base_provider(
+        hass,
+        source_key="solar",
+        source_config={
+            CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
             "entity_id": ["sensor.today", "sensor.tomorrow"],
             CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
             CONF_NAME: "detailedForecast",
@@ -303,6 +373,74 @@ async def test_entity_adapter_provider_merges_multiple_entities(
     values = await provider.async_values(_hour_window())
 
     assert values == [1.0, 2.0, 3.0, 4.0]
+
+
+async def test_merged_provider_tolerates_one_empty_entity_provider(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Runtime source resolution should tolerate one provider producing no points."""
+    today_points = [
+        {
+            "price": float(index + 1),
+            "start": f"2026-03-14T{index // 4:02d}:{(index % 4) * 15:02d}:00+00:00",
+            "end": f"2026-03-14T{index // 4:02d}:{((index % 4) + 1) * 15 if (index % 4) < 3 else 0:02d}:00+00:00",
+        }
+        for index in range(96)
+    ]
+    hass.states.async_set(
+        "sensor.stromligning_current_price_vat",
+        "ok",
+        {"prices": today_points},
+    )
+    hass.states.async_set(
+        "binary_sensor.stromligning_tomorrow_available_vat",
+        "off",
+        {
+            "available_at": "13:22:18",
+            "forecast_data": False,
+            "prices": [{"end": "2026-03-15T00:00:00+01:00"}],
+        },
+    )
+
+    provider = build_source_base_provider(
+        hass,
+        source_key="import_price",
+        source_config={
+            CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+            CONF_AGGREGATION_MODE: AGGREGATION_MODE_MEAN,
+            CONF_PROVIDERS: [
+                {
+                    CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+                    "entity_id": "sensor.stromligning_current_price_vat",
+                    CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
+                    CONF_NAME: "prices",
+                    "time_key": "start",
+                    "value_key": "price",
+                },
+                {
+                    CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+                    "entity_id": "binary_sensor.stromligning_tomorrow_available_vat",
+                    CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
+                    CONF_NAME: "prices",
+                    "time_key": "start",
+                    "value_key": "price",
+                },
+            ],
+        },
+        allow_partial_failures=True,
+    )
+
+    values = await provider.async_values(
+        SourceWindow(
+            start_at=datetime(2026, 3, 14, 0, 0, tzinfo=UTC),
+            slot_minutes=15,
+            slots=96,
+        )
+    )
+
+    assert len(values) == 96
+    assert values[:4] == [1.0, 2.0, 3.0, 4.0]
+    assert "produced 0 usable points" in caplog.text
 
 
 async def test_service_adapter_provider_returns_values(hass: HomeAssistant) -> None:

@@ -7,6 +7,7 @@ from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 import json
+import logging
 from typing import Any
 
 from homeassistant.components.energy.types import GetSolarForecastType
@@ -40,6 +41,8 @@ from .const import (
     CONF_CLAMP_MODE,
     CONF_CONFIG_ENTRY_ID,
     CONF_EDGE_FILL_MODE,
+    CONF_HISTORY_DAYS,
+    CONF_PROVIDERS,
     CONF_RESAMPLE_MODE,
     CONF_SERVICE,
     CONF_SOURCE_MODE,
@@ -51,14 +54,17 @@ from .const import (
     RESAMPLE_MODE_FORWARD_FILL,
     RESAMPLE_MODE_LINEAR,
     RESAMPLE_MODE_NONE,
+    SOURCE_MODE_BUILT_IN,
     SOURCE_MODE_ENERGY_PROVIDER,
     SOURCE_MODE_ENTITY_ADAPTER,
     SOURCE_MODE_SERVICE_ADAPTER,
     SOURCE_MODE_TEMPLATE,
 )
+from .forecast_provider import ForecastProvider
 from .source_types import SourceProvider, SourceProviderError, SourceWindow
 
 CONF_WATTPLAN_ENTITY_ID = "entity_id"
+_LOGGER = logging.getLogger(__name__)
 VALID_AGGREGATION_MODES = {
     AGGREGATION_MODE_FIRST,
     AGGREGATION_MODE_LAST,
@@ -73,6 +79,45 @@ VALID_RESAMPLE_MODES = {
     RESAMPLE_MODE_LINEAR,
 }
 VALID_EDGE_FILL_MODES = {EDGE_FILL_MODE_NONE, EDGE_FILL_MODE_HOLD}
+
+
+def source_mode(source_config: dict[str, Any]) -> str:
+    """Return the configured source/provider mode."""
+    mode = source_config.get(CONF_SOURCE_MODE)
+    if isinstance(mode, str) and mode:
+        return mode
+    providers = source_config.get(CONF_PROVIDERS)
+    if isinstance(providers, list) and providers:
+        provider_mode = providers[0].get(CONF_SOURCE_MODE)
+        if isinstance(provider_mode, str):
+            return provider_mode
+    return ""
+
+
+def source_providers(source_config: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return provider configs for a source."""
+    providers = source_config.get(CONF_PROVIDERS)
+    if isinstance(providers, list) and providers:
+        return [provider for provider in providers if isinstance(provider, dict)]
+
+    if source_mode(source_config) == SOURCE_MODE_ENTITY_ADAPTER:
+        entity_ids = source_config.get(CONF_WATTPLAN_ENTITY_ID)
+        if isinstance(entity_ids, list) and entity_ids:
+            return [
+                {
+                    **source_config,
+                    CONF_WATTPLAN_ENTITY_ID: str(entity_id),
+                }
+                for entity_id in entity_ids
+            ]
+
+    return [source_config]
+
+
+def primary_provider_config(source_config: dict[str, Any]) -> dict[str, Any]:
+    """Return the first provider config for summaries and defaults."""
+    providers = source_providers(source_config)
+    return providers[0] if providers else {}
 
 
 async def async_get_energy_solar_forecast_platforms(
@@ -286,8 +331,8 @@ class ServiceResponsePayloadProvider(BasePayloadProvider):
 async def async_auto_detect_entity_adapter(
     hass: HomeAssistant,
     entity_ids: list[str],
-) -> AdapterAutoDetectResult:
-    """Return one mapping that is compatible with all selected entities."""
+) -> list[AdapterAutoDetectResult]:
+    """Return one detected mapping for each selected entity."""
     detected_mappings: list[tuple[str, AdapterAutoDetectResult]] = []
     entity_candidates: dict[str, list[dict[str, Any]]] = {}
     for entity_id in entity_ids:
@@ -322,7 +367,7 @@ async def async_auto_detect_entity_adapter(
     if not detected_mappings or len(detected_mappings) != len(entity_ids):
         raise SourceProviderError(
             "source_validation",
-            "Selected entities do not share one compatible forecast structure",
+            "One or more selected entities returned no compatible forecast list",
             details={
                 "entity_ids": entity_ids,
                 "diagnostic_kind": "auto_detect_no_match",
@@ -339,28 +384,7 @@ async def async_auto_detect_entity_adapter(
             },
         )
 
-    first_detected = detected_mappings[0][1]
-    if any(detected != first_detected for _, detected in detected_mappings[1:]):
-        raise SourceProviderError(
-            "source_validation",
-            "Selected entities do not share one compatible forecast structure",
-            details={
-                "entity_ids": entity_ids,
-                "diagnostic_kind": "auto_detect_conflict",
-                "entity_candidates": entity_candidates,
-                "detected_mappings": [
-                    {
-                        "entity_id": entity_id,
-                        "root_key": detected.root_key,
-                        "time_key": detected.time_key,
-                        "value_key": detected.value_key,
-                    }
-                    for entity_id, detected in detected_mappings
-                ],
-            },
-        )
-
-    return first_detected
+    return [detected for _, detected in detected_mappings]
 
 
 async def async_auto_detect_service_adapter(
@@ -503,7 +527,7 @@ class TemplateAdapterSourceProvider(SourceProvider):
         self._resample_mode = self._resample_mode(source_config)
         self._edge_fill_mode = self._edge_fill_mode(source_config)
 
-        mode = source_config.get(CONF_SOURCE_MODE)
+        mode = source_mode(source_config)
         if mode == SOURCE_MODE_TEMPLATE:
             self._payload_provider: BasePayloadProvider = TemplatePayloadProvider(
                 hass, source_name, source_config
@@ -529,7 +553,27 @@ class TemplateAdapterSourceProvider(SourceProvider):
 
     async def async_values(self, window: SourceWindow) -> list[float]:
         """Return exactly `window.slots` values or raise error."""
+        points = await self.async_points(window)
+        return self._points_to_values(points, window)
+
+    async def async_fetch_payload(self) -> Any:
+        """Return raw payload before fixup for review and debug paths."""
+
+        return await self._payload_provider.async_fetch_payload()
+
+    async def async_points(self, window: SourceWindow) -> list[dict[str, Any]]:
+        """Return point objects for this provider."""
         payload = await self.async_fetch_payload()
+        return self._payload_to_points(payload, window, strict=True)
+
+    def _payload_to_points(
+        self,
+        payload: Any,
+        window: SourceWindow,
+        *,
+        strict: bool,
+    ) -> list[dict[str, Any]]:
+        """Convert one provider payload into timestamp/value points."""
         if not isinstance(payload, list):
             raise SourceProviderError(
                 "source_parse",
@@ -540,19 +584,135 @@ class TemplateAdapterSourceProvider(SourceProvider):
                 },
             )
 
-        if payload and isinstance(payload[0], dict):
-            return self._object_values(payload, window)
-        return self._numeric_values(payload, window)
+        if not payload:
+            return []
 
-    async def async_fetch_payload(self) -> Any:
-        """Return raw payload before fixup for review and debug paths."""
+        if isinstance(payload[0], dict):
+            return self._object_payload_to_points(payload, strict=strict)
+        return self._numeric_payload_to_points(payload, window)
 
-        return await self._payload_provider.async_fetch_payload()
-
-    def _object_values(self, payload: list[Any], window: SourceWindow) -> list[float]:
-        """Resolve object payload into one value per requested slot."""
+    def _object_payload_to_points(
+        self,
+        payload: list[Any],
+        *,
+        strict: bool,
+    ) -> list[dict[str, Any]]:
+        """Convert an object payload into point objects."""
         time_key = str(self._source_config.get(CONF_TIME_KEY, "start"))
         value_key = str(self._source_config.get(CONF_VALUE_KEY, "value"))
+        points: list[dict[str, Any]] = []
+        for index, point in enumerate(payload):
+            if not isinstance(point, dict):
+                if strict:
+                    raise SourceProviderError(
+                        "source_parse",
+                        f"{self._source_name} point {index + 1} is not an object",
+                        details={"source": self._source_name, "index": index},
+                    )
+                continue
+
+            start_value = point.get(time_key)
+            numeric_value = point.get(value_key)
+            if not isinstance(start_value, str):
+                if strict:
+                    raise SourceProviderError(
+                        "source_parse",
+                        f"{self._source_name} point {index + 1} missing `{time_key}`",
+                        details={"source": self._source_name, "index": index, "key": time_key},
+                    )
+                continue
+
+            try:
+                start_dt = datetime.fromisoformat(start_value)
+                value = float(numeric_value)
+            except (TypeError, ValueError) as err:
+                if strict:
+                    field_name = time_key if not isinstance(start_value, str) else value_key
+                    raise SourceProviderError(
+                        "source_parse",
+                        (
+                            f"{self._source_name} point {index + 1} has invalid "
+                            f"`{field_name}` value"
+                        ),
+                        details={"source": self._source_name, "index": index},
+                    ) from err
+                continue
+
+            points.append(
+                {
+                    "start": self._as_utc(start_dt).isoformat(),
+                    "value": value,
+                }
+            )
+        return points
+
+    def _numeric_payload_to_points(
+        self,
+        payload: list[Any],
+        window: SourceWindow,
+    ) -> list[dict[str, Any]]:
+        """Convert one numeric payload into timestamp/value points."""
+        points: list[dict[str, Any]] = []
+        start_at = self._as_utc(window.start_at)
+        values_per_slot = 1
+        if len(payload) > window.slots:
+            if len(payload) % window.slots != 0:
+                raise SourceProviderError(
+                    "source_validation",
+                    (
+                        f"{self._source_name} source returned {len(payload)} values, "
+                        f"which cannot be evenly aggregated into {window.slots} slots"
+                    ),
+                    details={
+                        "source": self._source_name,
+                        "available_count": len(payload),
+                        "required_count": window.slots,
+                    },
+                )
+            values_per_slot = len(payload) // window.slots
+        for index, value in enumerate(payload):
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError) as err:
+                raise SourceProviderError(
+                    "source_parse",
+                    (
+                        f"{self._source_name} point {index + 1} has invalid "
+                        f"numeric value `{value}`"
+                    ),
+                    details={"source": self._source_name, "index": index, "value": value},
+                ) from err
+            points.append(
+                {
+                    "start": (
+                        start_at + timedelta(minutes=window.slot_minutes * (index // values_per_slot))
+                    ).isoformat(),
+                    "value": numeric,
+                }
+            )
+        return points
+
+    def _points_to_values(
+        self,
+        payload: list[dict[str, Any]],
+        window: SourceWindow,
+    ) -> list[float]:
+        """Resolve point payload into one value per requested slot."""
+        return self._object_values(payload, window, time_key="start", value_key="value")
+
+    def _object_values(
+        self,
+        payload: list[Any],
+        window: SourceWindow,
+        *,
+        time_key: str | None = None,
+        value_key: str | None = None,
+    ) -> list[float]:
+        """Resolve object payload into one value per requested slot."""
+        if time_key is None:
+            time_key = str(self._source_config.get(CONF_TIME_KEY, "start"))
+        if value_key is None:
+            value_key = str(self._source_config.get(CONF_VALUE_KEY, "value"))
 
         points: list[tuple[datetime, float]] = []
         for index, point in enumerate(payload):
@@ -815,37 +975,170 @@ class TemplateAdapterSourceProvider(SourceProvider):
         return mode
 
 
-class MergedTemplateSourceProvider(TemplateAdapterSourceProvider):
-    """Merge multiple template-style providers before fixup is applied."""
+class MergedSourceProvider(TemplateAdapterSourceProvider):
+    """Merge multiple providers into one shared normalization path."""
 
     def __init__(
         self,
-        providers: list[TemplateAdapterSourceProvider],
-        *,
         hass: HomeAssistant,
+        *,
         source_name: str,
         source_config: dict[str, Any],
+        validate_built_in_entity,
+        allow_partial_failures: bool,
     ) -> None:
         """Initialize the merged provider."""
-        super().__init__(hass, source_name=source_name, source_config=source_config)
-        self._providers = providers
+        super().__init__(
+            hass,
+            source_name=source_name,
+            source_config={**source_config, CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE},
+        )
+        self._hass = hass
+        self._providers = source_providers(source_config)
+        self._validate_built_in_entity = validate_built_in_entity
+        self._allow_partial_failures = allow_partial_failures
 
     async def async_fetch_payload(self) -> Any:
         """Return one merged list from all wrapped providers."""
-        merged_payload: list[Any] = []
-        for provider in self._providers:
-            payload = await provider.async_fetch_payload()
-            if not isinstance(payload, list):
-                raise SourceProviderError(
-                    "source_parse",
-                    (
-                        f"{self._source_name} source output from a merged provider "
-                        "must resolve to a list"
-                    ),
-                    details={"source": self._source_name},
+        return await self._async_collect_points(
+            SourceWindow(start_at=datetime.now(tz=UTC), slot_minutes=60, slots=1),
+            strict=True,
+        )
+
+    async def async_points(self, window: SourceWindow) -> list[dict[str, Any]]:
+        """Return merged point objects from all providers."""
+        return await self._async_collect_points(window, strict=not self._allow_partial_failures)
+
+    async def async_values(self, window: SourceWindow) -> list[float]:
+        """Return normalized values from all merged providers."""
+        points = await self.async_points(window)
+        return self._points_to_values(points, window)
+
+    async def _async_collect_points(
+        self,
+        window: SourceWindow,
+        *,
+        strict: bool,
+    ) -> list[dict[str, Any]]:
+        """Collect point payloads from all configured providers."""
+        merged: list[dict[str, Any]] = []
+        failures: list[SourceProviderError] = []
+        for provider_config in self._providers:
+            try:
+                points = await self._async_provider_points(
+                    provider_config,
+                    window,
+                    strict=strict,
                 )
-            merged_payload.extend(payload)
-        return merged_payload
+            except SourceProviderError as err:
+                failures.append(err)
+                if strict:
+                    raise
+                self._log_provider_failure(provider_config, err)
+                continue
+
+            if not points:
+                if strict:
+                    raise SourceProviderError(
+                        "source_validation",
+                        f"{self._source_name} provider returned no usable points",
+                        details={"source": self._source_name},
+                    )
+                self._log_provider_empty(provider_config)
+                continue
+
+            merged.extend(points)
+
+        if merged:
+            return merged
+        if failures:
+            raise failures[0]
+        raise SourceProviderError(
+            "source_validation",
+            f"{self._source_name} source returned no usable points",
+            details={"source": self._source_name, "available_count": 0},
+        )
+
+    async def _async_provider_points(
+        self,
+        provider_config: dict[str, Any],
+        window: SourceWindow,
+        *,
+        strict: bool,
+    ) -> list[dict[str, Any]]:
+        """Return points for one provider config."""
+        mode = source_mode(provider_config)
+        provider_source_config = {**self._source_config, **provider_config}
+        if mode == SOURCE_MODE_BUILT_IN:
+            entity_id = str(provider_config[CONF_WATTPLAN_ENTITY_ID])
+            if self._validate_built_in_entity is not None:
+                self._validate_built_in_entity(entity_id)
+            provider = ForecastProvider(
+                self._hass,
+                entity_id=entity_id,
+                lookback_days=int(provider_config.get(CONF_HISTORY_DAYS, 14)),
+            )
+            values = await provider.async_values(window)
+            slot_delta = timedelta(minutes=window.slot_minutes)
+            start_at = self._as_utc(window.start_at)
+            return [
+                {
+                    "start": (start_at + (slot_delta * index)).isoformat(),
+                    "value": value,
+                }
+                for index, value in enumerate(values)
+            ]
+
+        if mode == SOURCE_MODE_ENERGY_PROVIDER:
+            provider = EnergySolarForecastSourceProvider(
+                self._hass,
+                source_name=self._source_name,
+                source_config=provider_source_config,
+            )
+            payload = await provider.async_fetch_payload()
+            return provider._payload_to_points(payload, window, strict=strict)
+
+        provider = TemplateAdapterSourceProvider(
+            self._hass,
+            source_name=self._source_name,
+            source_config=provider_source_config,
+        )
+        payload = await provider.async_fetch_payload()
+        return provider._payload_to_points(payload, window, strict=strict)
+
+    def _log_provider_empty(self, provider_config: dict[str, Any]) -> None:
+        """Log when one provider contributes no usable points."""
+        _LOGGER.warning(
+            "%s provider `%s` produced 0 usable points",
+            self._source_name,
+            self._provider_label(provider_config),
+        )
+
+    def _log_provider_failure(
+        self,
+        provider_config: dict[str, Any],
+        err: SourceProviderError,
+    ) -> None:
+        """Log when one provider fails but another can still cover the source."""
+        _LOGGER.warning(
+            "%s provider `%s` failed during merged source resolution: %s",
+            self._source_name,
+            self._provider_label(provider_config),
+            err,
+        )
+
+    def _provider_label(self, provider_config: dict[str, Any]) -> str:
+        """Return one compact provider identifier."""
+        mode = source_mode(provider_config)
+        if mode == SOURCE_MODE_ENTITY_ADAPTER:
+            return str(provider_config.get(CONF_WATTPLAN_ENTITY_ID, "entity"))
+        if mode == SOURCE_MODE_SERVICE_ADAPTER:
+            return str(provider_config.get(CONF_SERVICE, "service"))
+        if mode == SOURCE_MODE_BUILT_IN:
+            return str(provider_config.get(CONF_WATTPLAN_ENTITY_ID, "built_in"))
+        if mode == SOURCE_MODE_ENERGY_PROVIDER:
+            return str(provider_config.get(CONF_CONFIG_ENTRY_ID, "energy_provider"))
+        return mode or "provider"
 
 
 class EnergySolarForecastSourceProvider(TemplateAdapterSourceProvider):

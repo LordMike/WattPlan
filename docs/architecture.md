@@ -30,12 +30,12 @@ WattPlan acquires four planner input series:
 - **Usage**
 - **PV**
 
-Each source group is configured with one provider mode at a time. Supported modes depend on the source:
+Each source group stores one or more provider definitions. Supported provider modes depend on the source:
 - Price and export price: entity adapter, service adapter, or template
 - Usage: built-in history-based forecast, entity adapter, service adapter, or template
 - PV: Home Assistant Energy solar provider, entity adapter, service adapter, or template
 
-Entity-adapter mode can optionally merge multiple same-shaped entities into one combined payload before normalization. Aside from that case, each source resolves through one configured provider path.
+Every provider first resolves into timestamp/value points. The source pipeline then concatenates all provider output for that source before normalization, slot aggregation, repair, and fixup run once on the merged stream. Runtime planning can tolerate one provider failing or producing no usable points when another provider still covers the source.
 
 The acquisition pipeline for each source is:
 1. Select the configured provider mode and fetch raw payload or direct slot values.
