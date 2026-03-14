@@ -615,7 +615,7 @@ async def test_config_flow_failed_entity_auto_detect_previews_usable_providers(
         == "6 usable intervals, 12 needed, 60-minute resolution"
     )
     assert (
-        "`sensor.good_prices`. Found forecast data in `prices.home` using `starts_at` "
+        "✅ Looks usable: `sensor.good_prices`. Found forecast data in `prices.home` using `starts_at` "
         "for time and `amount` for value."
         in result["description_placeholders"]["diagnostic_text"]
     )

@@ -698,12 +698,21 @@ class TemplateAdapterSourceProvider(SourceProvider):
         window: SourceWindow,
     ) -> list[float]:
         """Resolve point payload into one value per requested slot."""
-        return self._object_values(payload, window)
+        return self._object_values(payload, window, time_key="start", value_key="value")
 
-    def _object_values(self, payload: list[Any], window: SourceWindow) -> list[float]:
+    def _object_values(
+        self,
+        payload: list[Any],
+        window: SourceWindow,
+        *,
+        time_key: str | None = None,
+        value_key: str | None = None,
+    ) -> list[float]:
         """Resolve object payload into one value per requested slot."""
-        time_key = str(self._source_config.get(CONF_TIME_KEY, "start"))
-        value_key = str(self._source_config.get(CONF_VALUE_KEY, "value"))
+        if time_key is None:
+            time_key = str(self._source_config.get(CONF_TIME_KEY, "start"))
+        if value_key is None:
+            value_key = str(self._source_config.get(CONF_VALUE_KEY, "value"))
 
         points: list[tuple[datetime, float]] = []
         for index, point in enumerate(payload):

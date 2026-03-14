@@ -681,11 +681,12 @@ def _entity_candidate_status_line(
     ]
     if compatible:
         best = max(compatible, key=lambda candidate: int(candidate.get("row_count", 0)))
-        row_count = int(best.get("row_count", 0))
         path = str(best.get("path", "<root>"))
+        time_key = str(best.get("time_key", ""))
+        value_key = str(best.get("value_key", ""))
         return (
-            f"- ✅ Looks usable: `{entity_id}`. Found {row_count} forecast entries "
-            f"in `{path}`."
+            f"- ✅ Looks usable: `{entity_id}`. Found forecast data in `{path}` "
+            f"using `{time_key}` for time and `{value_key}` for value."
         )
 
     best = max(candidates, key=lambda candidate: int(candidate.get("row_count", 0)))
@@ -852,10 +853,26 @@ def _auto_detect_diagnostic_text(
     lines.append(
         "- WattPlan could not build a usable forecast source from the selected input."
     )
+    detected_mappings = err.details.get("detected_mappings")
+    if isinstance(detected_mappings, list) and detected_mappings:
+        lines.append("")
+        for detected in detected_mappings:
+            entity_id = str(detected.get("entity_id", "entity"))
+            root_key = str(detected.get("root_key", "<root>"))
+            time_key = str(detected.get("time_key", ""))
+            value_key = str(detected.get("value_key", ""))
+            lines.append(
+                f"- ✅ Looks usable: `{entity_id}`. Found forecast data in `{root_key}` "
+                f"using `{time_key}` for time and `{value_key}` for value."
+            )
     entity_candidates = err.details.get("entity_candidates")
     if isinstance(entity_candidates, dict):
         lines.append("")
         for entity_id, candidates in entity_candidates.items():
+            if isinstance(detected_mappings, list) and any(
+                str(item.get("entity_id")) == str(entity_id) for item in detected_mappings
+            ):
+                continue
             lines.append(
                 _entity_candidate_status_line(
                     source,
@@ -1833,27 +1850,30 @@ async def _async_resolve_source_for_review(
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """Resolve staged source config into the explicit runtime form used for validation."""
     mode = source.get(CONF_SOURCE_MODE)
-    adapter_type = source.get(CONF_ADAPTER_TYPE)
 
-    if mode == SOURCE_MODE_ENTITY_ADAPTER and adapter_type == ADAPTER_TYPE_AUTO_DETECT:
+    if mode == SOURCE_MODE_ENTITY_ADAPTER:
         if source_input is None:
             raise SourceProviderError(
                 "source_validation",
-                "Entity adapter auto detect is missing staged input",
+                "Entity adapter source is missing staged input",
                 details={"source_mode": SOURCE_MODE_ENTITY_ADAPTER},
             )
         resolved = await _async_prepare_entity_source_input(hass, source_input)
-        return resolved, _auto_detect_step_defaults(source_input, resolved)
+        if source_input.get(CONF_ADAPTER_TYPE) == ADAPTER_TYPE_AUTO_DETECT:
+            return resolved, _auto_detect_step_defaults(source_input, resolved)
+        return resolved, source_input
 
-    if mode == SOURCE_MODE_SERVICE_ADAPTER and adapter_type == ADAPTER_TYPE_AUTO_DETECT:
+    if mode == SOURCE_MODE_SERVICE_ADAPTER:
         if source_input is None:
             raise SourceProviderError(
                 "source_validation",
-                "Service adapter auto detect is missing staged input",
+                "Service adapter source is missing staged input",
                 details={"source_mode": SOURCE_MODE_SERVICE_ADAPTER},
             )
         resolved = await _async_prepare_service_source_input(hass, source_input)
-        return resolved, _auto_detect_step_defaults(source_input, resolved)
+        if source_input.get(CONF_ADAPTER_TYPE) == ADAPTER_TYPE_AUTO_DETECT:
+            return resolved, _auto_detect_step_defaults(source_input, resolved)
+        return resolved, source_input
 
     return source, source_input
 
