@@ -6,17 +6,22 @@ Work from `WattPlan` as the source of truth.
 
 ## Setup
 
-Create a local virtualenv with the test dependencies.
+Install `uv`, then create a local virtualenv with the editable test
+dependencies.
 
 ```bash
-python3.14 -m venv .venv
+uv venv --python python3.14 .venv
 . .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements-test.txt
+uv pip install --python .venv/bin/python -e '.[test]'
 ```
 
-Use Python 3.14.2 or newer. The current pinned test stack resolves to
-`homeassistant==2026.3.1`, which requires that patch level.
+Use Python 3.14.2 or newer. The pinned Home Assistant test stack currently
+requires that patch level.
+
+On systems where the repo lives on a mounted or network-backed filesystem, a
+repo-local `.venv` may be less reliable with `uv` than a virtualenv created on
+the native local filesystem. If that affects your setup, create the venv in
+your preferred local location and point the test wrapper at it.
 
 Run tests directly from this repo:
 
@@ -30,6 +35,13 @@ Run the full suite from the repo:
 
 ```bash
 ./scripts/run_tests.sh
+```
+
+If your virtualenv is not at the wrapper's default location, point the wrapper
+at it:
+
+```bash
+WATTPLAN_TEST_VENV=/path/to/venv ./scripts/run_tests.sh
 ```
 
 Run only optimizer tests:
@@ -52,7 +64,7 @@ Run the isolated hello-world Home Assistant smoke test:
 
 This smoke test is separate from the main `tests/` suite. It disables pytest
 plugin autoload, blocks `pycares`/`aiodns` imports inside the smoke test, and
-runs from `/tmp` so it is less sensitive to WSL and Windows-mounted paths.
+runs from `/tmp` so it is less sensitive to filesystem-specific path issues.
 
 If you want a dedicated local venv for just that smoke test, create
 `sandbox/ha_hello_world/.venv` and point the runner at it with

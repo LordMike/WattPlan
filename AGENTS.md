@@ -26,6 +26,8 @@ Prefer updating the integration, tests, and docs together when behavior changes.
 - When running pytest from Codex, request elevated execution for each test run instead of using the default sandbox.
 - Current issue: Home Assistant pytest bootstrap can hang inside the sandbox, while the same tests complete normally outside it.
 - Treat sandboxed pytest hangs as environment noise unless the same failure reproduces in an elevated run.
+- When this repo is on a mounted or network-backed filesystem, prefer placing Codex-managed test virtualenvs on a native local filesystem under `/tmp` instead of a repo-local `.venv`; `uv` installs on the mounted path can leave the Home Assistant package incomplete.
+- The default `./scripts/run_tests.sh` wrapper already uses worktree-specific paths under `/tmp` for both the virtualenv and pytest `--basetemp`. Reuse that convention for Codex-created envs to avoid collisions across parallel worktrees.
 
 ## Repo conventions
 - Integration code lives in `src/custom_components/wattplan/`.
