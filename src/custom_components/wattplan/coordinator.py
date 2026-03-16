@@ -685,36 +685,36 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
 
         timings: list[TimingEntry] = []
 
-        price_values = await self._async_resolve_source(
+        price_values = await self._timed_resolve_source(
+            timings,
             entry=entry,
             source_key=CONF_SOURCE_IMPORT_PRICE,
             source_config=sources.get(CONF_SOURCE_IMPORT_PRICE, {}),
             window=window,
-            timings=timings,
         )
-        export_price_values = await self._async_resolve_optional_source(
+        export_price_values = await self._timed_resolve_optional_source(
+            timings,
             entry=entry,
             source_key=CONF_SOURCE_EXPORT_PRICE,
             source_config=sources.get(CONF_SOURCE_EXPORT_PRICE, {}),
             window=window,
             blocks_planning=False,
-            timings=timings,
         )
-        usage_values = await self._async_resolve_optional_source(
+        usage_values = await self._timed_resolve_optional_source(
+            timings,
             entry=entry,
             source_key=CONF_SOURCE_USAGE,
             source_config=sources.get(CONF_SOURCE_USAGE, {}),
             window=window,
             blocks_planning=True,
-            timings=timings,
         )
-        pv_values = await self._async_resolve_optional_source(
+        pv_values = await self._timed_resolve_optional_source(
+            timings,
             entry=entry,
             source_key=CONF_SOURCE_PV,
             source_config=sources.get(CONF_SOURCE_PV, {}),
             window=window,
             blocks_planning=False,
-            timings=timings,
         )
 
         usage_forecast_points: list[dict[str, Any]] | None = None
@@ -971,6 +971,61 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         request, _timings = await self._async_build_planning_request(entry)
         return request
 
+    async def _timed_resolve_source(
+        self,
+        timings: list[TimingEntry],
+        *,
+        entry: ConfigEntry,
+        source_key: str,
+        source_config: dict[str, Any],
+        window: SourceWindow,
+    ) -> list[float]:
+        """Resolve one required source and record its elapsed time."""
+        started_at = time.monotonic()
+        try:
+            return await self._async_resolve_source(
+                entry=entry,
+                source_key=source_key,
+                source_config=source_config,
+                window=window,
+            )
+        finally:
+            self._append_timing(
+                timings,
+                task=f"source: {source_key}, fetching data",
+                duration_ms=_duration_ms(started_at),
+            )
+
+    async def _timed_resolve_optional_source(
+        self,
+        timings: list[TimingEntry],
+        *,
+        entry: ConfigEntry,
+        source_key: str,
+        source_config: dict[str, Any],
+        window: SourceWindow,
+        blocks_planning: bool,
+    ) -> list[float] | None:
+        """Resolve one optional source and record timing only when configured."""
+        mode = source_config.get(CONF_SOURCE_MODE)
+        if not mode or mode == SOURCE_MODE_NOT_USED:
+            return None
+        started_at = time.monotonic()
+        try:
+            return await self._async_resolve_optional_source(
+                entry=entry,
+                source_key=source_key,
+                source_config=source_config,
+                window=window,
+                blocks_planning=blocks_planning,
+            )
+        finally:
+            self._append_timing(
+                timings,
+                task=f"source: {source_key}, fetching data",
+                duration_ms=_duration_ms(started_at),
+            )
+
     async def _async_resolve_source(
         self,
         *,
@@ -978,7 +1033,6 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         source_key: str,
         source_config: dict[str, Any],
         window: SourceWindow,
-        timings: list[TimingEntry],
     ) -> list[float]:
         """Resolve one required source through shared provider logic."""
         mode = source_config.get(CONF_SOURCE_MODE)
@@ -989,7 +1043,6 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 details={"source": source_key},
             )
 
-        started_at = time.monotonic()
         try:
             provider = self._source_provider(source_key, source_config)
             values = await provider.async_values(window)
@@ -1000,11 +1053,6 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 provider=provider,
             )
         except SourceProviderError as err:
-            self._append_timing(
-                timings,
-                task=f"source: {source_key}, fetching data",
-                duration_ms=_duration_ms(started_at),
-            )
             self._record_source_issue_if_needed(
                 entry=entry,
                 source_key=source_key,
@@ -1017,11 +1065,6 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 details=err.details,
             ) from err
         else:
-            self._append_timing(
-                timings,
-                task=f"source: {source_key}, fetching data",
-                duration_ms=_duration_ms(started_at),
-            )
             return values
 
     async def _async_resolve_optional_source(
@@ -1032,7 +1075,6 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         source_config: dict[str, Any],
         window: SourceWindow,
         blocks_planning: bool,
-        timings: list[TimingEntry],
     ) -> list[float] | None:
         """Resolve one optional source when explicitly configured."""
         mode = source_config.get(CONF_SOURCE_MODE)
@@ -1044,7 +1086,6 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 source_key=source_key,
                 source_config=source_config,
                 window=window,
-                timings=timings,
             )
         except PlanningStageError:
             if blocks_planning:
