@@ -113,7 +113,7 @@ type TimingEntry = tuple[str, int]
 
 def _duration_ms(started_at: float) -> int:
     """Return elapsed monotonic time in whole milliseconds."""
-    return max(0, int(round((time.monotonic() - started_at) * 1000)))
+    return int(round((time.monotonic() - started_at) * 1000))
 
 
 def _snapshot_schema_id() -> str:
@@ -692,10 +692,11 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             source_config=sources.get(CONF_SOURCE_IMPORT_PRICE, {}),
             window=window,
         )
-        self._append_timing(
-            timings,
-            task=f"source: {CONF_SOURCE_IMPORT_PRICE}, fetching data",
-            duration_ms=_duration_ms(started_at),
+        timings.append(
+            (
+                f"source: {CONF_SOURCE_IMPORT_PRICE}, fetching data",
+                _duration_ms(started_at),
+            )
         )
 
         export_price_source = sources.get(CONF_SOURCE_EXPORT_PRICE, {})
@@ -713,10 +714,11 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 window=window,
                 blocks_planning=False,
             )
-            self._append_timing(
-                timings,
-                task=f"source: {CONF_SOURCE_EXPORT_PRICE}, fetching data",
-                duration_ms=_duration_ms(started_at),
+            timings.append(
+                (
+                    f"source: {CONF_SOURCE_EXPORT_PRICE}, fetching data",
+                    _duration_ms(started_at),
+                )
             )
         else:
             export_price_values = None
@@ -735,10 +737,11 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 window=window,
                 blocks_planning=True,
             )
-            self._append_timing(
-                timings,
-                task=f"source: {CONF_SOURCE_USAGE}, fetching data",
-                duration_ms=_duration_ms(started_at),
+            timings.append(
+                (
+                    f"source: {CONF_SOURCE_USAGE}, fetching data",
+                    _duration_ms(started_at),
+                )
             )
         else:
             usage_values = None
@@ -757,10 +760,11 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 window=window,
                 blocks_planning=False,
             )
-            self._append_timing(
-                timings,
-                task=f"source: {CONF_SOURCE_PV}, fetching data",
-                duration_ms=_duration_ms(started_at),
+            timings.append(
+                (
+                    f"source: {CONF_SOURCE_PV}, fetching data",
+                    _duration_ms(started_at),
+                )
             )
         else:
             pv_values = None
@@ -1541,10 +1545,20 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 f"Optimizer execution failed: {err}",
             ) from err
 
-        self._append_timing(
-            timings,
-            task="optimizer: calculate plan",
-            duration_ms=int(round(float(result.get("execution_time", _duration_ms(started_at) / 1000)) * 1000)),
+        timings.append(
+            (
+                "optimizer: calculate plan",
+                int(
+                    round(
+                        float(
+                            result.get(
+                                "execution_time", _duration_ms(started_at) / 1000
+                            )
+                        )
+                        * 1000
+                    )
+                ),
+            )
         )
         runtime_data.optimizer_state = result.get("state")
         return result
@@ -1621,16 +1635,6 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             "hold": "h",
         }.get(action, "h")
 
-    def _append_timing(
-        self,
-        timings: list[TimingEntry],
-        *,
-        task: str,
-        duration_ms: int,
-    ) -> None:
-        """Append one public timing entry."""
-        timings.append((task, max(0, int(duration_ms))))
-
     def _append_total_timing(
         self, *, planner_output: dict[str, Any], total_ms: int
     ) -> None:
@@ -1648,7 +1652,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 continue
             while timings and isinstance(timings[-1], tuple | list) and len(timings[-1]) == 2 and timings[-1][0] == "total":
                 timings.pop()
-            timings.append(("total", max(0, int(total_ms))))
+            timings.append(("total", int(total_ms)))
 
     def _planner_output_from_result(
         self,
@@ -1823,11 +1827,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         if self._plan_details_enabled("plan_details"):
             started_at = time.monotonic()
             raw_details = self._build_plan_details_payload(request, result)
-            self._append_timing(
-                timing_entries,
-                task="plan: build details payload",
-                duration_ms=_duration_ms(started_at),
-            )
+            timing_entries.append(("plan: build details payload", _duration_ms(started_at)))
             raw_details["timings"] = list(timing_entries)
             diagnostics["plan_details"] = raw_details
 
@@ -1835,10 +1835,8 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             if raw_details is None:
                 started_at = time.monotonic()
                 raw_details = self._build_plan_details_payload(request, result)
-                self._append_timing(
-                    timing_entries,
-                    task="plan: build details payload",
-                    duration_ms=_duration_ms(started_at),
+                timing_entries.append(
+                    ("plan: build details payload", _duration_ms(started_at))
                 )
                 raw_details["timings"] = list(timing_entries)
             diagnostics["plan_details_hourly"] = self._aggregate_plan_details(
