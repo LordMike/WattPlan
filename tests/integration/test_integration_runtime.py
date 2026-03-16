@@ -199,6 +199,37 @@ def _fake_optimize_with_target_behavior(params: object) -> dict[str, object]:
     }
 
 
+def _fake_optimize_with_extreme_savings(_params: object) -> dict[str, object]:
+    """Return a plan whose percentage savings should be hidden as unknown."""
+    return {
+        "execution_time": 0.01,
+        "fitness": 1.0,
+        "avg_price": 0.25,
+        "projections": {
+            "baseline_cost": 0.1,
+            "projected_cost": -1.4,
+            "projected_savings_cost": 1.5,
+            "projected_savings_pct": 1500.0,
+            "per_slot": [
+                {
+                    "baseline_cost": 0.1,
+                    "projected_cost": -1.4,
+                    "projected_savings_cost": 1.5,
+                    "projected_savings_pct": 1500.0,
+                }
+            ],
+        },
+        "suboptimal": False,
+        "suboptimal_reasons": [],
+        "problems": [],
+        "successful_solves": 1,
+        "reused_steps": 0,
+        "entities": [],
+        "optional_entity_options": [],
+        "state": None,
+    }
+
+
 
 
 def _assert_valid_state(hass: HomeAssistant, entity_id: str) -> None:
@@ -348,6 +379,14 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
     assert savings_pct.attributes["span_end"] == savings.attributes["span_end"]
     assert savings_pct.attributes["total"] == 24.0
     assert savings_pct.attributes["values"] == [25.0, 33.333333, 25.0, 14.285714]
+    assert savings_pct.attributes["formula"] == "(1 - projected_cost / baseline_cost) * 100"
+    assert savings_pct.attributes["baseline_cost"] == 12.5
+    assert savings_pct.attributes["projected_cost"] == 9.5
+    assert savings_pct.attributes["projected_savings_cost"] == 3.0
+    assert savings_pct.attributes["baseline_cost_values"] == [2.0, 3.0, 4.0, 3.5]
+    assert savings_pct.attributes["projected_cost_values"] == [1.5, 2.0, 3.0, 3.0]
+    assert savings_pct.attributes["projected_savings_cost_values"] == [0.5, 1.0, 1.0, 0.5]
+    assert savings_pct.attributes["max_exposed_percentage"] == 200.0
 
     battery_action = hass.states.get("sensor.home_battery_action")
     assert battery_action is not None
@@ -355,6 +394,52 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
     assert battery_action.attributes["charge_source_friendly"] == "(G)rid"
     assert "next_action" not in battery_action.attributes
     assert "next_action_timestamp" not in battery_action.attributes
+
+
+async def test_projected_savings_percentage_becomes_unknown_when_extreme(
+    hass: HomeAssistant,
+) -> None:
+    """Hide implausibly large projected savings percentages while keeping components."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: 60,
+            CONF_HOURS_TO_PLAN: 4,
+            CONF_SOURCES: {
+                CONF_SOURCE_IMPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [0.2, 0.2, 0.2, 0.2] }}",
+                },
+                CONF_SOURCE_USAGE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [1.0, 1.0, 1.0, 1.0] }}",
+                },
+            },
+        },
+        options={
+            CONF_PLANNING_ENABLED: False,
+            CONF_ACTION_EMISSION_ENABLED: False,
+        },
+    )
+    entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.wattplan.coordinator.optimize",
+        side_effect=_fake_optimize_with_extreme_savings,
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    savings_pct = hass.states.get("sensor.home_projected_savings_percentage")
+    assert savings_pct is not None
+    assert savings_pct.state == STATE_UNKNOWN
+    assert savings_pct.attributes["total"] == 1500.0
+    assert savings_pct.attributes["baseline_cost"] == 0.1
+    assert savings_pct.attributes["projected_cost"] == -1.4
+    assert savings_pct.attributes["projected_savings_cost"] == 1.5
+    assert savings_pct.attributes["max_exposed_percentage"] == 200.0
 
 
 async def test_battery_action_sensor_exposes_friendly_combined_charge_source(
