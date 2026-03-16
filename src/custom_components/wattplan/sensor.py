@@ -346,18 +346,67 @@ class ActionSensor(WattPlanCoordinatorSensor):
 
     @property
     def extra_state_attributes(self) -> dict[str, str] | None:
-        """Return next action metadata."""
+        """Return action metadata."""
+        data = self._action_data()
+        attrs: dict[str, str] = {}
+        if self._group == "batteries" and (charge_source := data.get("charge_source")):
+            charge_source_code = str(charge_source)
+            attrs["charge_source"] = charge_source_code
+            attrs["charge_source_friendly"] = _friendly_charge_source_label(
+                charge_source_code
+            )
+
+        return attrs or None
+
+
+class NextActionSensor(WattPlanCoordinatorSensor):
+    """Disabled-by-default sensor exposing the next planned action."""
+
+    _require_usable_plan = True
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(
+        self,
+        config_entry: ConfigEntry,
+        coordinator: WattPlanCoordinator,
+        *,
+        subentry_id: str,
+        group: str,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize next-action sensor."""
+        super().__init__(config_entry, coordinator, **kwargs)
+        self._subentry_id = subentry_id
+        self._group = group
+
+    def _action_data(self) -> dict[str, Any]:
+        """Return action data for this subentry from snapshot diagnostics."""
+        if not self.snapshot:
+            return {}
+        diagnostics = self.snapshot.diagnostics or {}
+        group_data = diagnostics.get(self._group, {})
+        if isinstance(group_data, dict):
+            subentry_data = group_data.get(self._subentry_id, {})
+            if isinstance(subentry_data, dict):
+                return subentry_data
+        return {}
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the next action label."""
+        next_action = self._action_data().get("next_action")
+        return str(next_action) if isinstance(next_action, str) else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str] | None:
+        """Return next-action metadata."""
         data = self._action_data()
         attrs: dict[str, str] = {}
         timestamp = _as_datetime(data.get("next_action_timestamp"))
         if timestamp is not None:
-            attrs["next_action_timestamp"] = timestamp.isoformat()
+            attrs["timestamp"] = timestamp.isoformat()
 
-        next_action = data.get("next_action")
-        if isinstance(next_action, str):
-            attrs["next_action"] = next_action
-
-        if self._group == "batteries" and (charge_source := data.get("charge_source")):
+        if self._group == "batteries" and (charge_source := data.get("next_charge_source")):
             charge_source_code = str(charge_source)
             attrs["charge_source"] = charge_source_code
             attrs["charge_source_friendly"] = _friendly_charge_source_label(
@@ -985,6 +1034,16 @@ async def async_setup_entry(
                         object_id=f"{entry_slug}_{sub_slug}_action",
                         unique_id=f"{config_entry.entry_id}:{subentry.subentry_id}:action",
                     ),
+                    NextActionSensor(
+                        config_entry,
+                        coordinator,
+                        subentry_id=subentry.subentry_id,
+                        group="batteries",
+                        object_id=f"{entry_slug}_{sub_slug}_next_action",
+                        unique_id=(
+                            f"{config_entry.entry_id}:{subentry.subentry_id}:next_action"
+                        ),
+                    ),
                 ]
             )
         elif subentry.subentry_type == SUBENTRY_TYPE_COMFORT:
@@ -998,6 +1057,16 @@ async def async_setup_entry(
                         friendly_name=_subentry_sensor_name(subentry_name, "action"),
                         object_id=f"{entry_slug}_{sub_slug}_action",
                         unique_id=f"{config_entry.entry_id}:{subentry.subentry_id}:action",
+                    ),
+                    NextActionSensor(
+                        config_entry,
+                        coordinator,
+                        subentry_id=subentry.subentry_id,
+                        group="comforts",
+                        object_id=f"{entry_slug}_{sub_slug}_next_action",
+                        unique_id=(
+                            f"{config_entry.entry_id}:{subentry.subentry_id}:next_action"
+                        ),
                     ),
                 ]
             )

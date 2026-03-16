@@ -9,12 +9,13 @@ pytest.importorskip("numpy")
 pytest.importorskip("pydantic")
 
 from custom_components.wattplan.optimizer import mpc_power_optimizer as optimizer
+from custom_components.wattplan.test_plan_invariants import assert_plan_invariants
 
 
 def _run_optimizer(input_payload):
     optimizer.np.random.seed(12345)
     params = optimizer.OptimizationParams(**input_payload)
-    return optimizer.optimize(params)
+    return assert_plan_invariants(optimizer.optimize(params))
 
 
 def _assert_common_result_shape(
