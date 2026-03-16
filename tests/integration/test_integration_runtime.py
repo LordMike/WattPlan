@@ -55,6 +55,7 @@ import pytest
 from homeassistant import config_entries
 from homeassistant.const import CONF_NAME, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
@@ -346,6 +347,28 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
     _assert_valid_state(hass, "sensor.home_optional_next_start_option")
     _assert_valid_state(hass, "sensor.home_optional_option_1_start")
 
+    entity_registry = er.async_get(hass)
+    assert (
+        entity_registry.async_get("sensor.home_projected_cost_savings_this_interval")
+        is not None
+    )
+    assert (
+        entity_registry.async_get(
+            "sensor.home_projected_savings_percentage_this_interval"
+        )
+        is not None
+    )
+    assert (
+        entity_registry.async_get("sensor.home_projected_cost_savings_next_interval")
+        is None
+    )
+    assert (
+        entity_registry.async_get(
+            "sensor.home_projected_savings_percentage_next_interval"
+        )
+        is None
+    )
+
     next_option = hass.states.get("sensor.home_optional_next_start_option")
     assert next_option is not None
     next_option_start = dt_util.parse_datetime(next_option.state)
@@ -367,6 +390,7 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
     savings = hass.states.get("sensor.home_projected_cost_savings")
     assert savings is not None
     assert float(savings.state) == 3.0
+    assert savings.attributes["friendly_name"] == "Projected Cost Savings over 4h"
     assert "span_start" in savings.attributes
     assert "span_end" in savings.attributes
     assert savings.attributes["total"] == 3.0
@@ -387,13 +411,38 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
     assert savings_pct.attributes["projected_cost_values"] == [1.5, 2.0, 3.0, 3.0]
     assert savings_pct.attributes["projected_savings_cost_values"] == [0.5, 1.0, 1.0, 0.5]
     assert savings_pct.attributes["max_exposed_percentage"] == 200.0
+    assert (
+        savings_pct.attributes["friendly_name"]
+        == "Projected Savings Percentage over 4h"
+    )
+
+    projected_cost_entry = entity_registry.async_get(
+        "sensor.home_projected_cost_savings_this_interval"
+    )
+    assert projected_cost_entry is not None
+    assert projected_cost_entry.original_name == "Projected Cost Savings over 1h"
+
+    projected_pct_entry = entity_registry.async_get(
+        "sensor.home_projected_savings_percentage_this_interval"
+    )
+    assert projected_pct_entry is not None
+    assert projected_pct_entry.original_name == "Projected Savings Percentage over 1h"
 
     battery_action = hass.states.get("sensor.home_battery_action")
     assert battery_action is not None
+    assert battery_action.attributes["friendly_name"] == "(battery) Action"
     assert battery_action.attributes["charge_source"] == "g"
     assert battery_action.attributes["charge_source_friendly"] == "(G)rid"
     assert "next_action" not in battery_action.attributes
     assert "next_action_timestamp" not in battery_action.attributes
+
+    next_option = hass.states.get("sensor.home_optional_next_start_option")
+    assert next_option is not None
+    assert next_option.attributes["friendly_name"] == "(optional) Next Start Option"
+
+    option_1 = hass.states.get("sensor.home_optional_option_1_start")
+    assert option_1 is not None
+    assert option_1.attributes["friendly_name"] == "(optional) Option 1 Start"
 
 
 async def test_projected_savings_percentage_becomes_unknown_when_extreme(

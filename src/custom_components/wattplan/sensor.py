@@ -17,6 +17,7 @@ from homeassistant.util import slugify
 from .target_runtime import get_active_battery_target
 
 from .const import (
+    CONF_HOURS_TO_PLAN,
     CONF_OPTIONS_COUNT,
     CONF_SLOT_MINUTES,
     CONF_SOURCE_EXPORT_PRICE,
@@ -59,6 +60,21 @@ BATTERY_CHARGE_SOURCE_LABELS: dict[str, str] = {
 
 MAX_EXPOSED_PROJECTED_SAVINGS_PCT = 200.0
 
+ENTRY_FRIENDLY_NAMES: dict[str, str] = {
+    "status": "Status",
+    "status_message": "Status Message",
+    "import_price_status": "Import Price Status",
+    "export_price_status": "Export Price Status",
+    "usage_status": "Usage Status",
+    "usage_forecast": "Usage Forecast",
+    "pv_status": "PV Status",
+    "last_run": "Last Run",
+    "next_run": "Next Run",
+    "last_run_duration": "Last Run Duration",
+    "plan_details": "Plan Details",
+    "plan_details_hourly": "Plan Details Hourly",
+}
+
 
 def _subentry_slug(subentry: Any) -> str:
     """Return slug for subentry naming."""
@@ -68,6 +84,55 @@ def _subentry_slug(subentry: Any) -> str:
 def _entry_slug(config_entry: ConfigEntry) -> str:
     """Return slug for config entry naming."""
     return slugify(config_entry.title) or "entry"
+
+
+def _subentry_display_name(subentry: Any) -> str:
+    """Return configured subentry display name, falling back to title."""
+    return str(subentry.data.get(CONF_NAME, subentry.title))
+
+
+def _duration_label(*, minutes: int) -> str:
+    """Return a compact duration label for user-facing sensor names."""
+    if minutes % 60 == 0:
+        return f"{minutes // 60}h"
+    return f"{minutes}m"
+
+
+def _entry_sensor_name(
+    sensor_key: str, *, slot_minutes: int, hours_to_plan: int
+) -> str:
+    """Return explicit entry-level sensor name."""
+    if sensor_key == "projected_cost_savings":
+        return f"Projected Cost Savings over {_duration_label(minutes=hours_to_plan * 60)}"
+    if sensor_key == "projected_savings_percentage":
+        return (
+            "Projected Savings Percentage over "
+            f"{_duration_label(minutes=hours_to_plan * 60)}"
+        )
+    if sensor_key == "projected_cost_savings_this_interval":
+        return f"Projected Cost Savings over {_duration_label(minutes=slot_minutes)}"
+    if sensor_key == "projected_savings_percentage_this_interval":
+        return (
+            "Projected Savings Percentage over "
+            f"{_duration_label(minutes=slot_minutes)}"
+        )
+    return ENTRY_FRIENDLY_NAMES[sensor_key]
+
+
+def _subentry_sensor_name(subentry_name: str, sensor_key: str) -> str:
+    """Return explicit subentry-level sensor name."""
+    if sensor_key == "target":
+        return f"({subentry_name}) Target"
+    if sensor_key == "action":
+        return f"({subentry_name}) Action"
+    if sensor_key == "next_action":
+        return f"({subentry_name}) Next Action"
+    if sensor_key == "next_start_option":
+        return f"({subentry_name}) Next Start Option"
+    if sensor_key.startswith("option_") and sensor_key.endswith("_start"):
+        option_number = sensor_key[len("option_") : -len("_start")]
+        return f"({subentry_name}) Option {option_number} Start"
+    raise ValueError(f"Unsupported subentry sensor key: {sensor_key}")
 
 
 def _entry_device_info(config_entry: ConfigEntry) -> DeviceInfo:
@@ -103,13 +168,15 @@ class WattPlanCoordinatorSensor(CoordinatorEntity[WattPlanCoordinator], SensorEn
         coordinator: WattPlanCoordinator,
         *,
         object_id: str,
+        friendly_name: str,
         unique_id: str,
         device_class: SensorDeviceClass | None = None,
     ) -> None:
         """Initialize coordinator-backed sensor."""
         super().__init__(coordinator)
         self._attr_object_id = object_id
-        self._attr_name = object_id
+        self._attr_name = friendly_name
+        self.internal_integration_suggested_object_id = object_id
         self._attr_unique_id = unique_id
         self._attr_device_info = _entry_device_info(config_entry)
         if device_class is not None:
@@ -367,11 +434,13 @@ class BatteryTargetSocSensor(SensorEntity):
         subentry_id: str,
         *,
         object_id: str,
+        friendly_name: str,
         unique_id: str,
     ) -> None:
         """Initialize battery target sensor."""
         self._attr_object_id = object_id
-        self._attr_name = object_id
+        self._attr_name = friendly_name
+        self.internal_integration_suggested_object_id = object_id
         self._attr_unique_id = unique_id
         self._attr_device_info = _entry_device_info(config_entry)
         self._runtime_data = runtime_data
@@ -760,6 +829,8 @@ async def async_setup_entry(
 ) -> None:
     """Set up WattPlan sensors for one config entry."""
     entry_slug = _entry_slug(config_entry)
+    slot_minutes = int(config_entry.data[CONF_SLOT_MINUTES])
+    hours_to_plan = int(config_entry.data[CONF_HOURS_TO_PLAN])
     runtime_data = config_entry.runtime_data
     coordinator = runtime_data.coordinator
 
@@ -767,12 +838,20 @@ async def async_setup_entry(
         StatusSensor(
             config_entry,
             coordinator,
+            friendly_name=_entry_sensor_name(
+                "status", slot_minutes=slot_minutes, hours_to_plan=hours_to_plan
+            ),
             object_id=f"{entry_slug}_status",
             unique_id=f"{config_entry.entry_id}:entry:status",
         ),
         StatusMessageSensor(
             config_entry,
             coordinator,
+            friendly_name=_entry_sensor_name(
+                "status_message",
+                slot_minutes=slot_minutes,
+                hours_to_plan=hours_to_plan,
+            ),
             object_id=f"{entry_slug}_status_message",
             unique_id=f"{config_entry.entry_id}:entry:status_message",
         ),
@@ -780,12 +859,20 @@ async def async_setup_entry(
             config_entry,
             coordinator,
             source_key=CONF_SOURCE_IMPORT_PRICE,
+            friendly_name=_entry_sensor_name(
+                "import_price_status",
+                slot_minutes=slot_minutes,
+                hours_to_plan=hours_to_plan,
+            ),
             object_id=f"{entry_slug}_import_price_status",
             unique_id=f"{config_entry.entry_id}:entry:import_price_status",
         ),
         LastRunSensor(
             config_entry,
             coordinator,
+            friendly_name=_entry_sensor_name(
+                "last_run", slot_minutes=slot_minutes, hours_to_plan=hours_to_plan
+            ),
             object_id=f"{entry_slug}_last_run",
             unique_id=f"{config_entry.entry_id}:entry:last_run",
             device_class=SensorDeviceClass.TIMESTAMP,
@@ -793,6 +880,9 @@ async def async_setup_entry(
         NextRunSensor(
             config_entry,
             coordinator,
+            friendly_name=_entry_sensor_name(
+                "next_run", slot_minutes=slot_minutes, hours_to_plan=hours_to_plan
+            ),
             object_id=f"{entry_slug}_next_run",
             unique_id=f"{config_entry.entry_id}:entry:next_run",
             device_class=SensorDeviceClass.TIMESTAMP,
@@ -800,6 +890,11 @@ async def async_setup_entry(
         LastRunDurationSensor(
             config_entry,
             coordinator,
+            friendly_name=_entry_sensor_name(
+                "last_run_duration",
+                slot_minutes=slot_minutes,
+                hours_to_plan=hours_to_plan,
+            ),
             object_id=f"{entry_slug}_last_run_duration",
             unique_id=f"{config_entry.entry_id}:entry:last_run_duration",
         ),
@@ -809,6 +904,11 @@ async def async_setup_entry(
             projection_key="projected_savings_cost",
             aggregate_mode="horizon",
             use_home_currency=True,
+            friendly_name=_entry_sensor_name(
+                "projected_cost_savings",
+                slot_minutes=slot_minutes,
+                hours_to_plan=hours_to_plan,
+            ),
             object_id=f"{entry_slug}_projected_cost_savings",
             unique_id=f"{config_entry.entry_id}:entry:projected_cost_savings",
         ),
@@ -817,6 +917,11 @@ async def async_setup_entry(
             coordinator,
             projection_key="projected_savings_pct",
             aggregate_mode="horizon",
+            friendly_name=_entry_sensor_name(
+                "projected_savings_percentage",
+                slot_minutes=slot_minutes,
+                hours_to_plan=hours_to_plan,
+            ),
             object_id=f"{entry_slug}_projected_savings_percentage",
             unique_id=f"{config_entry.entry_id}:entry:projected_savings_percentage",
             native_unit_of_measurement="%",
@@ -827,22 +932,40 @@ async def async_setup_entry(
             projection_key="projected_savings_cost",
             aggregate_mode="next_interval",
             use_home_currency=True,
-            object_id=f"{entry_slug}_projected_cost_savings_next_interval",
-            unique_id=f"{config_entry.entry_id}:entry:projected_cost_savings_next_interval",
+            friendly_name=_entry_sensor_name(
+                "projected_cost_savings_this_interval",
+                slot_minutes=slot_minutes,
+                hours_to_plan=hours_to_plan,
+            ),
+            object_id=f"{entry_slug}_projected_cost_savings_this_interval",
+            unique_id=f"{config_entry.entry_id}:entry:projected_cost_savings_this_interval",
         ),
         ProjectionSensor(
             config_entry,
             coordinator,
             projection_key="projected_savings_pct",
             aggregate_mode="next_interval",
-            object_id=f"{entry_slug}_projected_savings_percentage_next_interval",
-            unique_id=f"{config_entry.entry_id}:entry:projected_savings_percentage_next_interval",
+            friendly_name=_entry_sensor_name(
+                "projected_savings_percentage_this_interval",
+                slot_minutes=slot_minutes,
+                hours_to_plan=hours_to_plan,
+            ),
+            object_id=f"{entry_slug}_projected_savings_percentage_this_interval",
+            unique_id=(
+                f"{config_entry.entry_id}:entry:"
+                "projected_savings_percentage_this_interval"
+            ),
             native_unit_of_measurement="%",
         ),
         PlanDetailsSensor(
             config_entry,
             coordinator,
             details_key="plan_details",
+            friendly_name=_entry_sensor_name(
+                "plan_details",
+                slot_minutes=slot_minutes,
+                hours_to_plan=hours_to_plan,
+            ),
             object_id=f"{entry_slug}_plan_details",
             unique_id=f"{config_entry.entry_id}:entry:plan_details",
         ),
@@ -850,6 +973,11 @@ async def async_setup_entry(
             config_entry,
             coordinator,
             details_key="plan_details_hourly",
+            friendly_name=_entry_sensor_name(
+                "plan_details_hourly",
+                slot_minutes=slot_minutes,
+                hours_to_plan=hours_to_plan,
+            ),
             object_id=f"{entry_slug}_plan_details_hourly",
             unique_id=f"{config_entry.entry_id}:entry:plan_details_hourly",
         ),
@@ -866,6 +994,11 @@ async def async_setup_entry(
                 config_entry,
                 coordinator,
                 source_key=CONF_SOURCE_USAGE,
+                friendly_name=_entry_sensor_name(
+                    "usage_status",
+                    slot_minutes=slot_minutes,
+                    hours_to_plan=hours_to_plan,
+                ),
                 object_id=f"{entry_slug}_usage_status",
                 unique_id=f"{config_entry.entry_id}:entry:usage_status",
             )
@@ -879,6 +1012,11 @@ async def async_setup_entry(
             UsageForecastSensor(
                 config_entry,
                 coordinator,
+                friendly_name=_entry_sensor_name(
+                    "usage_forecast",
+                    slot_minutes=slot_minutes,
+                    hours_to_plan=hours_to_plan,
+                ),
                 object_id=f"{entry_slug}_usage_forecast",
                 unique_id=f"{config_entry.entry_id}:entry:usage_forecast",
             )
@@ -895,6 +1033,11 @@ async def async_setup_entry(
                 config_entry,
                 coordinator,
                 source_key=CONF_SOURCE_EXPORT_PRICE,
+                friendly_name=_entry_sensor_name(
+                    "export_price_status",
+                    slot_minutes=slot_minutes,
+                    hours_to_plan=hours_to_plan,
+                ),
                 object_id=f"{entry_slug}_export_price_status",
                 unique_id=f"{config_entry.entry_id}:entry:export_price_status",
             )
@@ -911,6 +1054,11 @@ async def async_setup_entry(
                 config_entry,
                 coordinator,
                 source_key=CONF_SOURCE_PV,
+                friendly_name=_entry_sensor_name(
+                    "pv_status",
+                    slot_minutes=slot_minutes,
+                    hours_to_plan=hours_to_plan,
+                ),
                 object_id=f"{entry_slug}_pv_status",
                 unique_id=f"{config_entry.entry_id}:entry:pv_status",
             )
@@ -918,6 +1066,7 @@ async def async_setup_entry(
 
     for subentry in config_entry.subentries.values():
         sub_slug = _subentry_slug(subentry)
+        subentry_name = _subentry_display_name(subentry)
         if subentry.subentry_type == SUBENTRY_TYPE_BATTERY:
             sensors.extend(
                 [
@@ -927,6 +1076,7 @@ async def async_setup_entry(
                         config_entry,
                         runtime_data,
                         subentry.subentry_id,
+                        friendly_name=_subentry_sensor_name(subentry_name, "target"),
                         object_id=f"{entry_slug}_{sub_slug}_target",
                         unique_id=f"{config_entry.entry_id}:{subentry.subentry_id}:target",
                     ),
@@ -935,6 +1085,7 @@ async def async_setup_entry(
                         coordinator,
                         subentry_id=subentry.subentry_id,
                         group="batteries",
+                        friendly_name=_subentry_sensor_name(subentry_name, "action"),
                         object_id=f"{entry_slug}_{sub_slug}_action",
                         unique_id=f"{config_entry.entry_id}:{subentry.subentry_id}:action",
                     ),
@@ -943,6 +1094,9 @@ async def async_setup_entry(
                         coordinator,
                         subentry_id=subentry.subentry_id,
                         group="batteries",
+                        friendly_name=_subentry_sensor_name(
+                            subentry_name, "next_action"
+                        ),
                         object_id=f"{entry_slug}_{sub_slug}_next_action",
                         unique_id=(
                             f"{config_entry.entry_id}:{subentry.subentry_id}:next_action"
@@ -958,6 +1112,7 @@ async def async_setup_entry(
                         coordinator,
                         subentry_id=subentry.subentry_id,
                         group="comforts",
+                        friendly_name=_subentry_sensor_name(subentry_name, "action"),
                         object_id=f"{entry_slug}_{sub_slug}_action",
                         unique_id=f"{config_entry.entry_id}:{subentry.subentry_id}:action",
                     ),
@@ -966,6 +1121,9 @@ async def async_setup_entry(
                         coordinator,
                         subentry_id=subentry.subentry_id,
                         group="comforts",
+                        friendly_name=_subentry_sensor_name(
+                            subentry_name, "next_action"
+                        ),
                         object_id=f"{entry_slug}_{sub_slug}_next_action",
                         unique_id=(
                             f"{config_entry.entry_id}:{subentry.subentry_id}:next_action"
@@ -983,6 +1141,9 @@ async def async_setup_entry(
                         coordinator,
                         subentry_id=subentry.subentry_id,
                         key="next_start_option",
+                        friendly_name=_subentry_sensor_name(
+                            subentry_name, "next_start_option"
+                        ),
                         object_id=f"{entry_slug}_{sub_slug}_next_start_option",
                         unique_id=(
                             f"{config_entry.entry_id}:{subentry.subentry_id}:"
@@ -999,6 +1160,9 @@ async def async_setup_entry(
                         coordinator,
                         subentry_id=subentry.subentry_id,
                         key=option_key,
+                        friendly_name=_subentry_sensor_name(
+                            subentry_name, option_key
+                        ),
                         object_id=f"{entry_slug}_{sub_slug}_option_{option_index}_start",
                         unique_id=(
                             f"{config_entry.entry_id}:{subentry.subentry_id}:"
