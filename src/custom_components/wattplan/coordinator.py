@@ -1546,22 +1546,8 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 current = schedule[0]
                 current_source = self._map_charge_source(int(current.get("charge_source", 0)))
                 battery_charge_source[subentry_id] = current_source
-                next_change = self._next_change(
-                    schedule,
-                    key="state",
-                    start_at=start_at,
-                    slot_minutes=slot_minutes,
-                )
-                next_action_timestamp = next_change[0] if next_change is not None else None
-                next_action = str(next_change[1]) if next_change is not None else None
                 batteries[subentry_id] = {
                     "action": str(current.get("state", "hold")),
-                    "next_action_timestamp": (
-                        next_action_timestamp.isoformat()
-                        if next_action_timestamp is not None
-                        else None
-                    ),
-                    "next_action": next_action,
                     "charge_source": current_source,
                 }
                 continue
@@ -1571,20 +1557,8 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 if subentry_id is None:
                     continue
                 current = schedule[0]
-                next_change = self._next_change(
-                    schedule,
-                    key="enabled",
-                    start_at=start_at,
-                    slot_minutes=slot_minutes,
-                )
-                next_action_timestamp = next_change[0] if next_change is not None else None
                 comforts[subentry_id] = {
                     "action": "on" if bool(current.get("enabled")) else "off",
-                    "next_action_timestamp": (
-                        next_action_timestamp.isoformat()
-                        if next_action_timestamp is not None
-                        else None
-                    ),
                 }
 
         for optional in result.get("optional_entity_options", []):

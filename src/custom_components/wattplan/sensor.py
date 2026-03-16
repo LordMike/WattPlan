@@ -281,17 +281,9 @@ class ActionSensor(WattPlanCoordinatorSensor):
 
     @property
     def extra_state_attributes(self) -> dict[str, str] | None:
-        """Return next action metadata."""
+        """Return action metadata."""
         data = self._action_data()
         attrs: dict[str, str] = {}
-        timestamp = _as_datetime(data.get("next_action_timestamp"))
-        if timestamp is not None:
-            attrs["next_action_timestamp"] = timestamp.isoformat()
-
-        next_action = data.get("next_action")
-        if isinstance(next_action, str):
-            attrs["next_action"] = next_action
-
         if self._group == "batteries" and (charge_source := data.get("charge_source")):
             charge_source_code = str(charge_source)
             attrs["charge_source"] = charge_source_code

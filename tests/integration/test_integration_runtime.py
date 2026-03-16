@@ -49,6 +49,7 @@ from custom_components.wattplan.const import (
     SUBENTRY_TYPE_OPTIONAL,
 )
 from custom_components.wattplan.coordinator import STORAGE_VERSION, _snapshot_schema_id
+from custom_components.wattplan.test_plan_invariants import assert_plan_invariants
 import pytest
 
 from homeassistant import config_entries
@@ -64,7 +65,7 @@ pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
 def _fake_optimize(_params: object) -> dict[str, object]:
     """Return deterministic optimizer output for integration projection tests."""
-    return {
+    return assert_plan_invariants({
         "execution_time": 0.01,
         "fitness": 1.23,
         "avg_price": 0.25,
@@ -147,7 +148,7 @@ def _fake_optimize(_params: object) -> dict[str, object]:
             }
         ],
         "state": None,
-    }
+    })
 
 
 def _fake_optimize_with_target_behavior(params: object) -> dict[str, object]:
@@ -342,8 +343,8 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
     assert battery_action is not None
     assert battery_action.attributes["charge_source"] == "g"
     assert battery_action.attributes["charge_source_friendly"] == "(G)rid"
-    assert battery_action.attributes["next_action"] == "hold"
-    assert "next_action_timestamp" in battery_action.attributes
+    assert "next_action" not in battery_action.attributes
+    assert "next_action_timestamp" not in battery_action.attributes
 
 
 async def test_battery_action_sensor_exposes_friendly_combined_charge_source(

@@ -47,6 +47,7 @@ from custom_components.wattplan.const import (
     SUBENTRY_TYPE_OPTIONAL,
 )
 from custom_components.wattplan.coordinator import PlanningStageError
+from custom_components.wattplan.test_plan_invariants import assert_plan_invariants
 import pytest
 
 from homeassistant import config_entries
@@ -85,7 +86,7 @@ def _name_of(model: Any) -> str:
 
 def _fake_optimize(_params: object) -> dict[str, object]:
     """Return minimal successful optimizer output."""
-    return {
+    return assert_plan_invariants({
         "execution_time": 0.01,
         "fitness": 1.0,
         "avg_price": 0.2,
@@ -97,7 +98,7 @@ def _fake_optimize(_params: object) -> dict[str, object]:
         "entities": [],
         "optional_entity_options": [],
         "state": "state-token",
-    }
+    })
 
 
 def _fake_optimize_with_entities(params: Any) -> dict[str, object]:
@@ -151,7 +152,7 @@ def _fake_optimize_with_entities(params: Any) -> dict[str, object]:
     result = _fake_optimize(params)
     result["entities"] = [*battery_results, *comfort_results]
     result["optional_entity_options"] = optional_results
-    return result
+    return assert_plan_invariants(result)
 
 
 def _base_sources() -> dict[str, dict[str, Any]]:
