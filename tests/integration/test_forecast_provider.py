@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
 import custom_components.wattplan.forecast_provider as provider_module
+import custom_components.wattplan.rolling_history_cache as cache_module
 from custom_components.wattplan.forecast_provider import ForecastProvider
 from custom_components.wattplan.source_types import SourceProviderError, SourceWindow
 import pytest
@@ -23,23 +24,28 @@ _VALID_LOAD_ATTRS = {
 
 
 class _FakeRecorder:
-    """Recorder stub with one queued history response."""
+    """Recorder stub with queued history/statistics responses."""
 
     def __init__(
         self,
-        history_response: dict[str, list[Any]],
+        history_response: dict[str, list[Any]] | None = None,
         statistics_response: dict[str, list[dict[str, Any]]] | None = None,
+        history_responses: list[dict[str, list[Any]]] | None = None,
     ) -> None:
         """Initialize fake recorder response."""
-        self._history_response = history_response
+        self._history_responses = (
+            history_responses[:] if history_responses is not None else [history_response or {}]
+        )
         self._statistics_response = statistics_response or {}
         self.calls = 0
+        self.fetch_starts: list[datetime] = []
 
     async def async_add_executor_job(self, _job: Any) -> dict[str, list[Any]]:
         """Return queued recorder response."""
         self.calls += 1
-        if self.calls == 1:
-            return self._history_response
+        if self.calls % 2 == 1:
+            self.fetch_starts.append(_job.args[1])
+            return self._history_responses.pop(0)
         return self._statistics_response
 
 
@@ -106,6 +112,7 @@ async def test_forecast_weekday_weighting_prefers_same_weekday(
         ]
     }
     recorder = _FakeRecorder(history_states)
+    monkeypatch.setattr(cache_module, "get_instance", lambda _hass: recorder)
     monkeypatch.setattr(provider_module, "get_instance", lambda _hass: recorder)
 
     provider = ForecastProvider(
@@ -159,6 +166,7 @@ async def test_forecast_requires_numeric_history(
         ]
     }
     recorder = _FakeRecorder(history_states)
+    monkeypatch.setattr(cache_module, "get_instance", lambda _hass: recorder)
     monkeypatch.setattr(provider_module, "get_instance", lambda _hass: recorder)
     provider = ForecastProvider(hass, entity_id=entity_id)
 
@@ -189,6 +197,7 @@ async def test_forecast_uses_long_term_statistics_when_state_history_is_sparse(
             ]
         },
     )
+    monkeypatch.setattr(cache_module, "get_instance", lambda _hass: recorder)
     monkeypatch.setattr(provider_module, "get_instance", lambda _hass: recorder)
 
     provider = ForecastProvider(
@@ -236,6 +245,7 @@ async def test_forecast_accepts_non_kwh_when_history_is_numeric(
         },
         statistics_response={entity_id: []},
     )
+    monkeypatch.setattr(cache_module, "get_instance", lambda _hass: recorder)
     monkeypatch.setattr(provider_module, "get_instance", lambda _hass: recorder)
 
     provider = ForecastProvider(hass, entity_id=entity_id)
@@ -275,6 +285,7 @@ async def test_forecast_uses_meter_deltas_not_raw_totals(
         },
         statistics_response={entity_id: []},
     )
+    monkeypatch.setattr(cache_module, "get_instance", lambda _hass: recorder)
     monkeypatch.setattr(provider_module, "get_instance", lambda _hass: recorder)
 
     provider = ForecastProvider(hass, entity_id=entity_id)
@@ -315,6 +326,7 @@ async def test_forecast_handles_meter_reset(
         },
         statistics_response={entity_id: []},
     )
+    monkeypatch.setattr(cache_module, "get_instance", lambda _hass: recorder)
     monkeypatch.setattr(provider_module, "get_instance", lambda _hass: recorder)
 
     provider = ForecastProvider(hass, entity_id=entity_id, recency_decay=0.0)
@@ -349,6 +361,7 @@ async def test_forecast_spreads_sparse_meter_delta_over_elapsed_time(
         },
         statistics_response={entity_id: []},
     )
+    monkeypatch.setattr(cache_module, "get_instance", lambda _hass: recorder)
     monkeypatch.setattr(provider_module, "get_instance", lambda _hass: recorder)
 
     provider = ForecastProvider(
@@ -367,3 +380,116 @@ async def test_forecast_spreads_sparse_meter_delta_over_elapsed_time(
     )
 
     assert values == pytest.approx([40.0 / 96.0] * 4)
+
+
+async def test_forecast_fetches_incrementally_from_cache_end(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Second usage refresh should only fetch recorder history since cache end."""
+    hass.config.components.add("recorder")
+    entity_id = "sensor.house_load_kwh"
+    hass.states.async_set(entity_id, "140.0", _VALID_LOAD_ATTRS)
+
+    recorder = _FakeRecorder(
+        history_responses=[
+            {
+                entity_id: [
+                    SimpleNamespace(
+                        state="100.0", last_changed=datetime(2026, 1, 1, 0, 0, tzinfo=UTC)
+                    ),
+                    SimpleNamespace(
+                        state="101.0", last_changed=datetime(2026, 1, 1, 1, 0, tzinfo=UTC)
+                    ),
+                ]
+            },
+            {
+                entity_id: [
+                    SimpleNamespace(
+                        state="101.0", last_changed=datetime(2026, 1, 1, 1, 0, tzinfo=UTC)
+                    ),
+                    SimpleNamespace(
+                        state="102.0", last_changed=datetime(2026, 1, 1, 2, 0, tzinfo=UTC)
+                    ),
+                ]
+            },
+        ],
+        statistics_response={entity_id: []},
+    )
+    monkeypatch.setattr(cache_module, "get_instance", lambda _hass: recorder)
+    monkeypatch.setattr(provider_module, "get_instance", lambda _hass: recorder)
+
+    provider = ForecastProvider(
+        hass,
+        entity_id=entity_id,
+        lookback_days=14,
+        same_weekday_weight=1.0,
+        other_weekday_weight=1.0,
+        recency_decay=0.0,
+    )
+
+    await provider.async_values(
+        SourceWindow(
+            start_at=datetime(2026, 1, 1, 1, 0, tzinfo=UTC),
+            slot_minutes=60,
+            slots=1,
+        )
+    )
+    await provider.async_values(
+        SourceWindow(
+            start_at=datetime(2026, 1, 1, 2, 0, tzinfo=UTC),
+            slot_minutes=60,
+            slots=1,
+        )
+    )
+
+    assert recorder.fetch_starts == [
+        datetime(2025, 12, 18, 1, 0, tzinfo=UTC),
+        datetime(2026, 1, 1, 1, 0, tzinfo=UTC),
+    ]
+
+
+async def test_forecast_restarts_full_fetch_when_window_moves_past_cache(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A later window outside the cached lookback should reset the cache."""
+    hass.config.components.add("recorder")
+    entity_id = "sensor.house_load_kwh"
+    hass.states.async_set(entity_id, "140.0", _VALID_LOAD_ATTRS)
+
+    first_start = datetime(2026, 1, 15, 0, 0, tzinfo=UTC)
+    second_start = first_start + timedelta(days=20)
+    recorder = _FakeRecorder(
+        history_responses=[
+            {entity_id: []},
+            {entity_id: []},
+        ],
+        statistics_response={
+            entity_id: [
+                {"start": datetime(2026, 1, 14, 0, 0, tzinfo=UTC), "sum": 100.0},
+                {"start": datetime(2026, 1, 15, 0, 0, tzinfo=UTC), "sum": 124.0},
+                {"start": datetime(2026, 2, 3, 0, 0, tzinfo=UTC), "sum": 200.0},
+                {"start": datetime(2026, 2, 4, 0, 0, tzinfo=UTC), "sum": 224.0},
+            ]
+        },
+    )
+    monkeypatch.setattr(cache_module, "get_instance", lambda _hass: recorder)
+    monkeypatch.setattr(provider_module, "get_instance", lambda _hass: recorder)
+
+    provider = ForecastProvider(
+        hass,
+        entity_id=entity_id,
+        lookback_days=14,
+        same_weekday_weight=1.0,
+        other_weekday_weight=1.0,
+        recency_decay=0.0,
+    )
+
+    await provider.async_values(SourceWindow(start_at=first_start, slot_minutes=60, slots=1))
+    await provider.async_values(
+        SourceWindow(start_at=second_start, slot_minutes=60, slots=1)
+    )
+
+    assert recorder.fetch_starts == [
+        datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+        datetime(2026, 1, 21, 0, 0, tzinfo=UTC),
+    ]

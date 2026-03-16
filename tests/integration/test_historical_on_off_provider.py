@@ -7,10 +7,9 @@ from types import SimpleNamespace
 from typing import Any
 
 import custom_components.wattplan.historical_on_off_provider as provider_module
-from custom_components.wattplan.historical_on_off_provider import (
-    HistoricalOnOffProvider,
-    OnOffSample,
-)
+import custom_components.wattplan.rolling_history_cache as cache_module
+from custom_components.wattplan.historical_on_off_provider import HistoricalOnOffProvider
+from custom_components.wattplan.rolling_history_cache import RollingHistoryCache
 import pytest
 
 from homeassistant.core import HomeAssistant
@@ -91,7 +90,7 @@ async def test_provider_uses_history_to_compute_on_slots(
             }
         ]
     )
-    monkeypatch.setattr(provider_module, "get_instance", lambda _hass: recorder)
+    monkeypatch.setattr(cache_module, "get_instance", lambda _hass: recorder)
 
     provider = HistoricalOnOffProvider(hass, entity_id)
     is_on_now, on_slots, _off_streak_slots = await provider.async_runtime_state(
@@ -129,7 +128,7 @@ async def test_provider_fetches_incrementally_from_cache_end(
             {entity_id: []},
         ]
     )
-    monkeypatch.setattr(provider_module, "get_instance", lambda _hass: recorder)
+    monkeypatch.setattr(cache_module, "get_instance", lambda _hass: recorder)
 
     provider = HistoricalOnOffProvider(hass, entity_id)
 
@@ -145,19 +144,19 @@ async def test_provider_fetches_incrementally_from_cache_end(
     ]
 
 
-def test_prune_cache_keeps_boundary_sample_and_newer() -> None:
-    """Prune should retain last pre-window sample and all newer samples."""
-    provider = HistoricalOnOffProvider(hass=SimpleNamespace(), entity_id="binary_sensor.x")
-    provider._samples = [
-        OnOffSample(datetime(2026, 1, 1, 0, 0, tzinfo=UTC), is_on=False),
-        OnOffSample(datetime(2026, 1, 1, 0, 5, tzinfo=UTC), is_on=True),
-        OnOffSample(datetime(2026, 1, 1, 0, 10, tzinfo=UTC), is_on=False),
-        OnOffSample(datetime(2026, 1, 1, 0, 20, tzinfo=UTC), is_on=True),
+def test_rolling_cache_keeps_boundary_sample_and_newer() -> None:
+    """Prune should retain last pre-window state and all newer states."""
+    cache = RollingHistoryCache(hass=SimpleNamespace(), entity_id="binary_sensor.x")
+    cache._entries = [
+        SimpleNamespace(state="off", last_changed=datetime(2026, 1, 1, 0, 0, tzinfo=UTC)),
+        SimpleNamespace(state="on", last_changed=datetime(2026, 1, 1, 0, 5, tzinfo=UTC)),
+        SimpleNamespace(state="off", last_changed=datetime(2026, 1, 1, 0, 10, tzinfo=UTC)),
+        SimpleNamespace(state="on", last_changed=datetime(2026, 1, 1, 0, 20, tzinfo=UTC)),
     ]
 
-    provider._prune_cache(window_start=datetime(2026, 1, 1, 0, 12, tzinfo=UTC))
+    cache._prune(window_start=datetime(2026, 1, 1, 0, 12, tzinfo=UTC))
 
-    assert provider._samples == [
-        OnOffSample(datetime(2026, 1, 1, 0, 10, tzinfo=UTC), is_on=False),
-        OnOffSample(datetime(2026, 1, 1, 0, 20, tzinfo=UTC), is_on=True),
+    assert [entry.last_changed for entry in cache._entries] == [
+        datetime(2026, 1, 1, 0, 10, tzinfo=UTC),
+        datetime(2026, 1, 1, 0, 20, tzinfo=UTC),
     ]
