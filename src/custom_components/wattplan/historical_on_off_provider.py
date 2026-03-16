@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from functools import partial
 
-from homeassistant.components.recorder import get_instance, history
 from homeassistant.const import STATE_ON
 from homeassistant.core import HomeAssistant
+
+from .rolling_history_cache import RollingHistoryCache
 
 
 @dataclass(slots=True)
@@ -26,8 +26,7 @@ class HistoricalOnOffProvider:
         """Initialize the historical provider for one entity."""
         self._hass = hass
         self._entity_id = entity_id
-        self._samples: list[OnOffSample] = []
-        self._cache_end: datetime | None = None
+        self._history_cache = RollingHistoryCache(hass, entity_id)
 
     async def async_runtime_state(
         self, *, rolling_window_slots: int, slot_minutes: int
@@ -49,70 +48,36 @@ class HistoricalOnOffProvider:
         if "recorder" not in self._hass.config.components:
             return is_on_now, 0, off_streak_slots_now
 
-        await self._async_fetch_since_cache(window_start=window_start, now=now)
-        self._prune_cache(window_start=window_start)
-        on_seconds = self._on_seconds_between(start=window_start, end=now)
+        states = await self._history_cache.async_fetch(window_start=window_start, now=now)
+        samples = self._samples_from_states(states)
+        on_seconds = self._on_seconds_between(samples=samples, start=window_start, end=now)
         on_slots = int(round(on_seconds / slot_seconds))
         on_slots = max(0, min(rolling_window_slots, on_slots))
         return is_on_now, on_slots, off_streak_slots_now
 
-    async def _async_fetch_since_cache(
-        self, *, window_start: datetime, now: datetime
-    ) -> None:
-        """Fetch recorder history incrementally from cache boundary to now."""
-        if self._cache_end is None or self._cache_end < window_start:
-            fetch_start = window_start
-            self._samples = []
-        else:
-            fetch_start = self._cache_end
-
-        history_data = await get_instance(self._hass).async_add_executor_job(
-            partial(
-                history.state_changes_during_period,
-                self._hass,
-                fetch_start,
-                now,
-                entity_id=self._entity_id,
-                include_start_time_state=True,
-                no_attributes=True,
+    def _samples_from_states(self, states: list[object]) -> list[OnOffSample]:
+        """Convert recorder states into deduplicated on/off samples."""
+        samples = [
+            OnOffSample(
+                at=self._as_utc(item.last_changed),
+                is_on=item.state == STATE_ON,
             )
-        )
-        states = list(history_data.get(self._entity_id, []))
-        if not states:
-            self._cache_end = now
-            return
-
-        new_samples = [
-            OnOffSample(at=item.last_changed.astimezone(UTC), is_on=item.state == STATE_ON)
             for item in states
+            if getattr(item, "last_changed", None) is not None
         ]
-        self._samples.extend(new_samples)
-        self._samples.sort(key=lambda sample: sample.at)
-        self._samples = self._deduplicate(self._samples)
-        self._cache_end = now
+        return self._deduplicate(samples)
 
-    def _prune_cache(self, *, window_start: datetime) -> None:
-        """Prune cached samples and keep only one boundary sample before window."""
-        if not self._samples:
-            return
-
-        keep_index = 0
-        for index, sample in enumerate(self._samples):
-            if sample.at <= window_start:
-                keep_index = index
-            else:
-                break
-        self._samples = self._samples[keep_index:]
-
-    def _on_seconds_between(self, *, start: datetime, end: datetime) -> float:
+    def _on_seconds_between(
+        self, *, samples: list[OnOffSample], start: datetime, end: datetime
+    ) -> float:
         """Calculate ON seconds in the closed-open interval `[start, end)`."""
-        if not self._samples or start >= end:
+        if not samples or start >= end:
             return 0.0
 
         on_seconds = 0.0
-        prev_state = self._samples[0].is_on
+        prev_state = samples[0].is_on
         prev_time = start
-        for sample in self._samples:
+        for sample in samples:
             if sample.at <= start:
                 prev_state = sample.is_on
                 prev_time = start
@@ -140,3 +105,9 @@ class HistoricalOnOffProvider:
                 continue
             deduped.append(sample)
         return deduped
+
+    def _as_utc(self, value: datetime) -> datetime:
+        """Normalize datetimes to timezone-aware UTC."""
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
