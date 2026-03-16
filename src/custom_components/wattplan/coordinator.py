@@ -685,40 +685,87 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
 
         timings: list[TimingEntry] = []
 
-        price_values = await self._timed_resolve_source(
-            timings,
+        started_at = time.monotonic()
+        price_values = await self._async_resolve_source(
             entry=entry,
             source_key=CONF_SOURCE_IMPORT_PRICE,
             source_config=sources.get(CONF_SOURCE_IMPORT_PRICE, {}),
             window=window,
         )
-        export_price_values = await self._timed_resolve_optional_source(
+        self._append_timing(
             timings,
-            entry=entry,
-            source_key=CONF_SOURCE_EXPORT_PRICE,
-            source_config=sources.get(CONF_SOURCE_EXPORT_PRICE, {}),
-            window=window,
-            blocks_planning=False,
-        )
-        usage_values = await self._timed_resolve_optional_source(
-            timings,
-            entry=entry,
-            source_key=CONF_SOURCE_USAGE,
-            source_config=sources.get(CONF_SOURCE_USAGE, {}),
-            window=window,
-            blocks_planning=True,
-        )
-        pv_values = await self._timed_resolve_optional_source(
-            timings,
-            entry=entry,
-            source_key=CONF_SOURCE_PV,
-            source_config=sources.get(CONF_SOURCE_PV, {}),
-            window=window,
-            blocks_planning=False,
+            task=f"source: {CONF_SOURCE_IMPORT_PRICE}, fetching data",
+            duration_ms=_duration_ms(started_at),
         )
 
-        usage_forecast_points: list[dict[str, Any]] | None = None
+        export_price_source = sources.get(CONF_SOURCE_EXPORT_PRICE, {})
+        export_price_values: list[float] | None
+        if (
+            isinstance(export_price_source, dict)
+            and export_price_source.get(CONF_SOURCE_MODE)
+            not in {None, SOURCE_MODE_NOT_USED}
+        ):
+            started_at = time.monotonic()
+            export_price_values = await self._async_resolve_optional_source(
+                entry=entry,
+                source_key=CONF_SOURCE_EXPORT_PRICE,
+                source_config=export_price_source,
+                window=window,
+                blocks_planning=False,
+            )
+            self._append_timing(
+                timings,
+                task=f"source: {CONF_SOURCE_EXPORT_PRICE}, fetching data",
+                duration_ms=_duration_ms(started_at),
+            )
+        else:
+            export_price_values = None
+
         usage_source = sources.get(CONF_SOURCE_USAGE, {})
+        usage_values: list[float] | None
+        if (
+            isinstance(usage_source, dict)
+            and usage_source.get(CONF_SOURCE_MODE) not in {None, SOURCE_MODE_NOT_USED}
+        ):
+            started_at = time.monotonic()
+            usage_values = await self._async_resolve_optional_source(
+                entry=entry,
+                source_key=CONF_SOURCE_USAGE,
+                source_config=usage_source,
+                window=window,
+                blocks_planning=True,
+            )
+            self._append_timing(
+                timings,
+                task=f"source: {CONF_SOURCE_USAGE}, fetching data",
+                duration_ms=_duration_ms(started_at),
+            )
+        else:
+            usage_values = None
+
+        pv_source = sources.get(CONF_SOURCE_PV, {})
+        pv_values: list[float] | None
+        if (
+            isinstance(pv_source, dict)
+            and pv_source.get(CONF_SOURCE_MODE) not in {None, SOURCE_MODE_NOT_USED}
+        ):
+            started_at = time.monotonic()
+            pv_values = await self._async_resolve_optional_source(
+                entry=entry,
+                source_key=CONF_SOURCE_PV,
+                source_config=pv_source,
+                window=window,
+                blocks_planning=False,
+            )
+            self._append_timing(
+                timings,
+                task=f"source: {CONF_SOURCE_PV}, fetching data",
+                duration_ms=_duration_ms(started_at),
+            )
+        else:
+            pv_values = None
+
+        usage_forecast_points: list[dict[str, Any]] | None = None
         if (
             usage_values is not None
             and isinstance(usage_source, dict)
@@ -970,61 +1017,6 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         entry = self._require_entry()
         request, _timings = await self._async_build_planning_request(entry)
         return request
-
-    async def _timed_resolve_source(
-        self,
-        timings: list[TimingEntry],
-        *,
-        entry: ConfigEntry,
-        source_key: str,
-        source_config: dict[str, Any],
-        window: SourceWindow,
-    ) -> list[float]:
-        """Resolve one required source and record its elapsed time."""
-        started_at = time.monotonic()
-        try:
-            return await self._async_resolve_source(
-                entry=entry,
-                source_key=source_key,
-                source_config=source_config,
-                window=window,
-            )
-        finally:
-            self._append_timing(
-                timings,
-                task=f"source: {source_key}, fetching data",
-                duration_ms=_duration_ms(started_at),
-            )
-
-    async def _timed_resolve_optional_source(
-        self,
-        timings: list[TimingEntry],
-        *,
-        entry: ConfigEntry,
-        source_key: str,
-        source_config: dict[str, Any],
-        window: SourceWindow,
-        blocks_planning: bool,
-    ) -> list[float] | None:
-        """Resolve one optional source and record timing only when configured."""
-        mode = source_config.get(CONF_SOURCE_MODE)
-        if not mode or mode == SOURCE_MODE_NOT_USED:
-            return None
-        started_at = time.monotonic()
-        try:
-            return await self._async_resolve_optional_source(
-                entry=entry,
-                source_key=source_key,
-                source_config=source_config,
-                window=window,
-                blocks_planning=blocks_planning,
-            )
-        finally:
-            self._append_timing(
-                timings,
-                task=f"source: {source_key}, fetching data",
-                duration_ms=_duration_ms(started_at),
-            )
 
     async def _async_resolve_source(
         self,
