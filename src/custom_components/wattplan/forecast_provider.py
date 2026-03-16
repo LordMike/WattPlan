@@ -9,10 +9,11 @@ import math
 from math import isnan
 from typing import Any
 
-from homeassistant.components.recorder import get_instance, history
+from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.statistics import statistics_during_period
 from homeassistant.core import HomeAssistant
 
+from .rolling_history_cache import RollingHistoryCache
 from .source_types import SourceProvider, SourceProviderError, SourceWindow
 
 _LOGGER = logging.getLogger(__name__)
@@ -55,6 +56,7 @@ class ForecastProvider(SourceProvider):
         self._same_weekday_weight = same_weekday_weight
         self._other_weekday_weight = other_weekday_weight
         self._recency_decay = max(0.0, recency_decay)
+        self._history_cache = RollingHistoryCache(hass, entity_id)
 
     async def async_forecast(self, window: SourceWindow) -> list[float]:
         """Return exactly `window.slots` forecast values."""
@@ -106,16 +108,9 @@ class ForecastProvider(SourceProvider):
         max_interval_kwh = MAX_IMPLIED_POWER_KW * (window.slot_minutes / 60.0)
         debug_events: list[dict[str, Any]] = []
 
-        history_data = await get_instance(self._hass).async_add_executor_job(
-            partial(
-                history.state_changes_during_period,
-                self._hass,
-                history_start,
-                start_at,
-                entity_id=self._entity_id,
-                include_start_time_state=True,
-                no_attributes=True,
-            )
+        states = await self._history_cache.async_fetch(
+            window_start=history_start,
+            now=start_at,
         )
         long_term_data = await get_instance(self._hass).async_add_executor_job(
             partial(
@@ -130,7 +125,6 @@ class ForecastProvider(SourceProvider):
             )
         )
 
-        states = list(history_data.get(self._entity_id, []))
         # Both recorder state history and long-term statistics are treated as
         # cumulative meter readings. The first normalization step is therefore
         # to convert them into usage segments: `(segment_start, segment_end,
