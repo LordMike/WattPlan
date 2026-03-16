@@ -25,9 +25,9 @@ These exist once per WattPlan setup:
 | `sensor.<setup_slug>_next_run` | Timestamp of the next scheduled planning cycle. |
 | `sensor.<setup_slug>_last_run_duration` | Duration of the last planning cycle in milliseconds. |
 | `sensor.<setup_slug>_projected_cost_savings` | Horizon-wide cost savings for the current plan. |
-| `sensor.<setup_slug>_projected_savings_percentage` | Horizon-wide savings percentage for the current plan. |
+| `sensor.<setup_slug>_projected_savings_percentage` | Horizon-wide savings percentage for the current plan. Uses `(1 - projected_cost / baseline_cost) * 100` and exposes the component costs as attributes. Returns `unknown` when the resulting percentage exceeds WattPlan's current sanity threshold. |
 | `sensor.<setup_slug>_projected_cost_savings_next_interval` | Disabled by default. Savings for the next planner interval only. |
-| `sensor.<setup_slug>_projected_savings_percentage_next_interval` | Disabled by default. Savings percentage for the next planner interval only. |
+| `sensor.<setup_slug>_projected_savings_percentage_next_interval` | Disabled by default. Savings percentage for the next planner interval only, with the same formula, attributes, and sanity-threshold behavior as the horizon sensor. |
 | `sensor.<setup_slug>_plan_details` | Disabled by default. Raw planner-detail payload at WattPlan's configured slot size. |
 | `sensor.<setup_slug>_plan_details_hourly` | Disabled by default. The same planner details, aggregated to hourly buckets. |
 | `sensor.<setup_slug>_usage_forecast` | Present when the built-in usage source is configured. Exposes the generated usage forecast. |

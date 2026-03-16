@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
@@ -57,6 +57,9 @@ BATTERY_CHARGE_SOURCE_LABELS: dict[str, str] = {
     "p": "(P)V",
     "gp": "(G)rid and (P)V",
 }
+
+MAX_EXPOSED_PROJECTED_SAVINGS_PCT = 200.0
+ProjectionValueTransform = Callable[["ProjectionSensor", float], float | None]
 
 ENTRY_FRIENDLY_NAMES: dict[str, str] = {
     "status": "Status",
@@ -151,6 +154,15 @@ def _as_datetime(value: Any) -> datetime | None:
 def _friendly_charge_source_label(charge_source: str) -> str:
     """Return a user-facing charge source label for compact planner codes."""
     return BATTERY_CHARGE_SOURCE_LABELS.get(charge_source, charge_source)
+
+
+def _projected_savings_percentage_value_transform(
+    _sensor: ProjectionSensor, value: float
+) -> float | None:
+    """Hide implausibly large savings percentages from the entity state."""
+    if abs(value) > MAX_EXPOSED_PROJECTED_SAVINGS_PCT:
+        return None
+    return value
 
 
 class WattPlanCoordinatorSensor(CoordinatorEntity[WattPlanCoordinator], SensorEntity):
@@ -680,6 +692,7 @@ class ProjectionSensor(WattPlanCoordinatorSensor):
         *,
         projection_key: str,
         aggregate_mode: str = "horizon",
+        value_transform: ProjectionValueTransform | None = None,
         use_home_currency: bool = False,
         native_unit_of_measurement: str | None = None,
         **kwargs: Any,
@@ -688,6 +701,7 @@ class ProjectionSensor(WattPlanCoordinatorSensor):
         super().__init__(config_entry, coordinator, **kwargs)
         self._projection_key = projection_key
         self._aggregate_mode = aggregate_mode
+        self._value_transform = value_transform
         if use_home_currency:
             self._attr_native_unit_of_measurement = coordinator.hass.config.currency
             self._attr_suggested_display_precision = 2
@@ -704,24 +718,18 @@ class ProjectionSensor(WattPlanCoordinatorSensor):
         optimizer = self._optimizer_diagnostics()
         if optimizer is None:
             return None
-        projections = optimizer.get("projections")
-        if not isinstance(projections, dict):
+        projections = self._projections(optimizer)
+        if projections is None:
             return None
-        if self._aggregate_mode == "horizon":
-            try:
-                return float(projections[self._projection_key])
-            except (KeyError, TypeError, ValueError):
-                return None
-        per_slot = projections.get("per_slot")
-        if not isinstance(per_slot, list) or not per_slot:
+        series = self._selected_projection_series(projections)
+        if series is None:
             return None
-        first_slot = per_slot[0]
-        if not isinstance(first_slot, dict):
+        value = self._coerce_projection_value(series, self._projection_key)
+        if value is None:
             return None
-        try:
-            return float(first_slot[self._projection_key])
-        except (KeyError, TypeError, ValueError):
-            return None
+        if self._value_transform is not None:
+            return self._value_transform(self, value)
+        return value
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
@@ -731,11 +739,11 @@ class ProjectionSensor(WattPlanCoordinatorSensor):
             return None
         span_start = optimizer.get("span_start")
         span_end = optimizer.get("span_end")
-        projections = optimizer.get("projections")
+        projections = self._projections(optimizer)
         if (
             not isinstance(span_start, str)
             or not isinstance(span_end, str)
-            or not isinstance(projections, dict)
+            or projections is None
         ):
             return None
         per_slot = projections.get("per_slot")
@@ -751,12 +759,30 @@ class ProjectionSensor(WattPlanCoordinatorSensor):
             except (KeyError, TypeError, ValueError):
                 continue
 
-        return {
+        attributes: dict[str, Any] = {
             "span_start": span_start,
             "span_end": span_end,
             "total": projections.get(self._projection_key),
             "values": values,
         }
+        if self._projection_key == "projected_savings_pct":
+            attributes["formula"] = "(1 - projected_cost / baseline_cost) * 100"
+            attributes["baseline_cost"] = projections.get("baseline_cost")
+            attributes["projected_cost"] = projections.get("projected_cost")
+            attributes["projected_savings_cost"] = projections.get(
+                "projected_savings_cost"
+            )
+            attributes["baseline_cost_values"] = self._per_slot_values(
+                per_slot, "baseline_cost"
+            )
+            attributes["projected_cost_values"] = self._per_slot_values(
+                per_slot, "projected_cost"
+            )
+            attributes["projected_savings_cost_values"] = self._per_slot_values(
+                per_slot, "projected_savings_cost"
+            )
+            attributes["max_exposed_percentage"] = MAX_EXPOSED_PROJECTED_SAVINGS_PCT
+        return attributes
 
     def _optimizer_diagnostics(self) -> dict[str, Any] | None:
         """Return optimizer diagnostics from the current snapshot."""
@@ -767,6 +793,43 @@ class ProjectionSensor(WattPlanCoordinatorSensor):
         if not isinstance(optimizer, dict):
             return None
         return optimizer
+
+    def _projections(self, optimizer: dict[str, Any]) -> dict[str, Any] | None:
+        """Return optimizer projections when present."""
+        projections = optimizer.get("projections")
+        return projections if isinstance(projections, dict) else None
+
+    def _selected_projection_series(
+        self, projections: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Return the active projection aggregate for this sensor."""
+        if self._aggregate_mode == "horizon":
+            return projections
+        per_slot = projections.get("per_slot")
+        if not isinstance(per_slot, list) or not per_slot:
+            return None
+        first_slot = per_slot[0]
+        return first_slot if isinstance(first_slot, dict) else None
+
+    def _coerce_projection_value(
+        self, source: dict[str, Any], key: str
+    ) -> float | None:
+        """Return a numeric projection value when available."""
+        try:
+            return float(source[key])
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    def _per_slot_values(self, per_slot: list[Any], key: str) -> list[float]:
+        """Return one numeric per-slot projection series."""
+        values: list[float] = []
+        for slot in per_slot:
+            if not isinstance(slot, dict):
+                continue
+            value = self._coerce_projection_value(slot, key)
+            if value is not None:
+                values.append(value)
+        return values
 
 
 async def async_setup_entry(
@@ -863,6 +926,7 @@ async def async_setup_entry(
             config_entry,
             coordinator,
             projection_key="projected_savings_pct",
+            value_transform=_projected_savings_percentage_value_transform,
             aggregate_mode="horizon",
             friendly_name=_entry_sensor_name(
                 "projected_savings_percentage",
@@ -891,6 +955,7 @@ async def async_setup_entry(
             config_entry,
             coordinator,
             projection_key="projected_savings_pct",
+            value_transform=_projected_savings_percentage_value_transform,
             aggregate_mode="next_interval",
             friendly_name=_entry_sensor_name(
                 "projected_savings_percentage_this_interval",
