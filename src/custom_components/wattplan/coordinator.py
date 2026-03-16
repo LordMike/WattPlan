@@ -1500,6 +1500,26 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 )
         return None
 
+    def _next_change_point(
+        self,
+        schedule: list[dict[str, Any]],
+        *,
+        key: str,
+        start_at: datetime,
+        slot_minutes: int,
+    ) -> tuple[datetime, dict[str, Any]] | None:
+        """Return when a schedule key next changes, and the full point at that time."""
+        if not schedule:
+            return None
+        current = schedule[0].get(key)
+        for index, point in enumerate(schedule[1:], start=1):
+            if point.get(key) != current:
+                return (
+                    start_at + timedelta(minutes=index * slot_minutes),
+                    point,
+                )
+        return None
+
     def _map_charge_source(self, charge_source: int) -> str:
         """Map charge source bitmask to readable label."""
         if charge_source == 1:
@@ -1546,9 +1566,35 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 current = schedule[0]
                 current_source = self._map_charge_source(int(current.get("charge_source", 0)))
                 battery_charge_source[subentry_id] = current_source
+                next_change = self._next_change_point(
+                    schedule,
+                    key="state",
+                    start_at=start_at,
+                    slot_minutes=slot_minutes,
+                )
+                next_action_timestamp = next_change[0] if next_change is not None else None
+                next_point = next_change[1] if next_change is not None else None
+                next_action = (
+                    str(next_point.get("state", "hold"))
+                    if isinstance(next_point, dict)
+                    else None
+                )
+                next_action_source = (
+                    self._map_charge_source(int(next_point.get("charge_source", 0)))
+                    if isinstance(next_point, dict)
+                    and str(next_point.get("state", "hold")) == "charge"
+                    else None
+                )
                 batteries[subentry_id] = {
                     "action": str(current.get("state", "hold")),
                     "charge_source": current_source,
+                    "next_action_timestamp": (
+                        next_action_timestamp.isoformat()
+                        if next_action_timestamp is not None
+                        else None
+                    ),
+                    "next_action": next_action,
+                    "next_charge_source": next_action_source,
                 }
                 continue
 
@@ -1557,8 +1603,26 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 if subentry_id is None:
                     continue
                 current = schedule[0]
+                next_change = self._next_change_point(
+                    schedule,
+                    key="enabled",
+                    start_at=start_at,
+                    slot_minutes=slot_minutes,
+                )
+                next_action_timestamp = next_change[0] if next_change is not None else None
+                next_point = next_change[1] if next_change is not None else None
                 comforts[subentry_id] = {
                     "action": "on" if bool(current.get("enabled")) else "off",
+                    "next_action_timestamp": (
+                        next_action_timestamp.isoformat()
+                        if next_action_timestamp is not None
+                        else None
+                    ),
+                    "next_action": (
+                        "on" if bool(next_point.get("enabled")) else "off"
+                        if isinstance(next_point, dict)
+                        else None
+                    ),
                 }
 
         for optional in result.get("optional_entity_options", []):
