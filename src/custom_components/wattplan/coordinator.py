@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import math
+import time
 from typing import Any
 
 from pydantic import ValidationError
@@ -106,6 +107,13 @@ PROFILE_SETTINGS = {
         "mode_switch_cost": 0.03,
     },
 }
+
+type TimingEntry = tuple[str, int]
+
+
+def _duration_ms(started_at: float) -> int:
+    """Return elapsed monotonic time in whole milliseconds."""
+    return max(0, int(round((time.monotonic() - started_at) * 1000)))
 
 
 def _snapshot_schema_id() -> str:
@@ -516,15 +524,24 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             return
 
         started = datetime.now(tz=UTC)
+        total_started = time.monotonic()
         self._last_attempt_at = started
 
         async with self._plan_lock:
             try:
                 self._active_source_issues = {}
                 entry = self._require_entry()
-                request = await self._async_build_planning_request(entry)
-                planner_result = await self._async_run_optimizer(request, entry.runtime_data)
-                planner_output = self._planner_output_from_result(request, planner_result)
+                request, timings = await self._async_build_planning_request(entry)
+                planner_result = await self._async_run_optimizer(
+                    request, entry.runtime_data, timings=timings
+                )
+                planner_output = self._planner_output_from_result(
+                    request, planner_result, timings=timings
+                )
+                self._append_total_timing(
+                    planner_output=planner_output,
+                    total_ms=_duration_ms(total_started),
+                )
                 new_snapshot = self._project_snapshot(planner_output)
                 self._snapshot = new_snapshot
                 self.data = new_snapshot
@@ -646,7 +663,9 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             )
         return entry
 
-    async def _async_build_planning_request(self, entry: ConfigEntry) -> dict[str, Any]:
+    async def _async_build_planning_request(
+        self, entry: ConfigEntry
+    ) -> tuple[dict[str, Any], list[TimingEntry]]:
         """Fetch and validate all inputs and build a planning request."""
         slot_minutes = int(entry.data[CONF_SLOT_MINUTES])
         hours_to_plan = int(entry.data[CONF_HOURS_TO_PLAN])
@@ -664,11 +683,14 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 "Source configuration is missing or invalid",
             )
 
+        timings: list[TimingEntry] = []
+
         price_values = await self._async_resolve_source(
             entry=entry,
             source_key=CONF_SOURCE_IMPORT_PRICE,
             source_config=sources.get(CONF_SOURCE_IMPORT_PRICE, {}),
             window=window,
+            timings=timings,
         )
         export_price_values = await self._async_resolve_optional_source(
             entry=entry,
@@ -676,6 +698,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             source_config=sources.get(CONF_SOURCE_EXPORT_PRICE, {}),
             window=window,
             blocks_planning=False,
+            timings=timings,
         )
         usage_values = await self._async_resolve_optional_source(
             entry=entry,
@@ -683,6 +706,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             source_config=sources.get(CONF_SOURCE_USAGE, {}),
             window=window,
             blocks_planning=True,
+            timings=timings,
         )
         pv_values = await self._async_resolve_optional_source(
             entry=entry,
@@ -690,6 +714,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             source_config=sources.get(CONF_SOURCE_PV, {}),
             window=window,
             blocks_planning=False,
+            timings=timings,
         )
 
         usage_forecast_points: list[dict[str, Any]] | None = None
@@ -902,7 +927,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 "All comfort loads must use the same rolling window duration",
             )
 
-        return {
+        return ({
             "entry_id": entry.entry_id,
             "slot_minutes": slot_minutes,
             "hours_to_plan": hours_to_plan,
@@ -938,12 +963,13 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 "optionals": optional_name_to_subentry,
             },
             "usage_forecast_points": usage_forecast_points,
-        }
+        }, timings)
 
     async def async_build_planner_input_export(self) -> dict[str, Any]:
         """Rebuild and return the current planning request for export."""
         entry = self._require_entry()
-        return await self._async_build_planning_request(entry)
+        request, _timings = await self._async_build_planning_request(entry)
+        return request
 
     async def _async_resolve_source(
         self,
@@ -952,6 +978,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         source_key: str,
         source_config: dict[str, Any],
         window: SourceWindow,
+        timings: list[TimingEntry],
     ) -> list[float]:
         """Resolve one required source through shared provider logic."""
         mode = source_config.get(CONF_SOURCE_MODE)
@@ -962,6 +989,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 details={"source": source_key},
             )
 
+        started_at = time.monotonic()
         try:
             provider = self._source_provider(source_key, source_config)
             values = await provider.async_values(window)
@@ -972,6 +1000,11 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 provider=provider,
             )
         except SourceProviderError as err:
+            self._append_timing(
+                timings,
+                task=f"source: {source_key}, fetching data",
+                duration_ms=_duration_ms(started_at),
+            )
             self._record_source_issue_if_needed(
                 entry=entry,
                 source_key=source_key,
@@ -984,6 +1017,11 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 details=err.details,
             ) from err
         else:
+            self._append_timing(
+                timings,
+                task=f"source: {source_key}, fetching data",
+                duration_ms=_duration_ms(started_at),
+            )
             return values
 
     async def _async_resolve_optional_source(
@@ -994,6 +1032,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         source_config: dict[str, Any],
         window: SourceWindow,
         blocks_planning: bool,
+        timings: list[TimingEntry],
     ) -> list[float] | None:
         """Resolve one optional source when explicitly configured."""
         mode = source_config.get(CONF_SOURCE_MODE)
@@ -1005,6 +1044,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 source_key=source_key,
                 source_config=source_config,
                 window=window,
+                timings=timings,
             )
         except PlanningStageError:
             if blocks_planning:
@@ -1409,7 +1449,11 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         return provider
 
     async def _async_run_optimizer(
-        self, request: dict[str, Any], runtime_data: Any
+        self,
+        request: dict[str, Any],
+        runtime_data: Any,
+        *,
+        timings: list[TimingEntry],
     ) -> dict[str, Any]:
         """Run poweroptim in the executor and normalize planner exceptions."""
         optimizer_params = request["optimizer_params"]
@@ -1456,6 +1500,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             ) from err
 
         try:
+            started_at = time.monotonic()
             result = await self.hass.async_add_executor_job(optimize, params)
         except Exception as err:
             raise PlanningStageError(
@@ -1463,6 +1508,11 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 f"Optimizer execution failed: {err}",
             ) from err
 
+        self._append_timing(
+            timings,
+            task="optimizer: calculate plan",
+            duration_ms=int(round(float(result.get("execution_time", _duration_ms(started_at) / 1000)) * 1000)),
+        )
         runtime_data.optimizer_state = result.get("state")
         return result
 
@@ -1538,8 +1588,41 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             "hold": "h",
         }.get(action, "h")
 
+    def _append_timing(
+        self,
+        timings: list[TimingEntry],
+        *,
+        task: str,
+        duration_ms: int,
+    ) -> None:
+        """Append one public timing entry."""
+        timings.append((task, max(0, int(duration_ms))))
+
+    def _append_total_timing(
+        self, *, planner_output: dict[str, Any], total_ms: int
+    ) -> None:
+        """Append the final total timing entry to any emitted plan details payload."""
+        diagnostics = planner_output.get("diagnostics")
+        if not isinstance(diagnostics, dict):
+            return
+
+        for details_key in ("plan_details", "plan_details_hourly"):
+            payload = diagnostics.get(details_key)
+            if not isinstance(payload, dict):
+                continue
+            timings = payload.get("timings")
+            if not isinstance(timings, list):
+                continue
+            while timings and isinstance(timings[-1], tuple | list) and len(timings[-1]) == 2 and timings[-1][0] == "total":
+                timings.pop()
+            timings.append(("total", max(0, int(total_ms))))
+
     def _planner_output_from_result(
-        self, request: dict[str, Any], result: dict[str, Any]
+        self,
+        request: dict[str, Any],
+        result: dict[str, Any],
+        *,
+        timings: list[TimingEntry],
     ) -> dict[str, Any]:
         """Map poweroptim output to coordinator planner output shape."""
         start_at = request["window"].start_at
@@ -1688,24 +1771,43 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                         start_at + timedelta(minutes=horizon_slots * slot_minutes)
                     ).isoformat(),
                 },
-                **self._build_enabled_plan_details(request, result),
+                **self._build_enabled_plan_details(request, result, timings=timings),
             },
         }
 
     def _build_enabled_plan_details(
-        self, request: dict[str, Any], result: dict[str, Any]
+        self,
+        request: dict[str, Any],
+        result: dict[str, Any],
+        *,
+        timings: list[TimingEntry],
     ) -> dict[str, Any]:
         """Build only the plan detail payloads that are currently enabled."""
         diagnostics: dict[str, Any] = {}
         raw_details: dict[str, Any] | None = None
+        timing_entries = list(timings)
 
         if self._plan_details_enabled("plan_details"):
+            started_at = time.monotonic()
             raw_details = self._build_plan_details_payload(request, result)
+            self._append_timing(
+                timing_entries,
+                task="plan: build details payload",
+                duration_ms=_duration_ms(started_at),
+            )
+            raw_details["timings"] = list(timing_entries)
             diagnostics["plan_details"] = raw_details
 
         if self._plan_details_enabled("plan_details_hourly"):
             if raw_details is None:
+                started_at = time.monotonic()
                 raw_details = self._build_plan_details_payload(request, result)
+                self._append_timing(
+                    timing_entries,
+                    task="plan: build details payload",
+                    duration_ms=_duration_ms(started_at),
+                )
+                raw_details["timings"] = list(timing_entries)
             diagnostics["plan_details_hourly"] = self._aggregate_plan_details(
                 raw_details,
                 target_slot_minutes=60,
@@ -1843,6 +1945,9 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
 
         for key, value in plan_details.items():
             if key in {"start_at", "slot_minutes", "slots"}:
+                continue
+            if key == "timings":
+                aggregated[key] = list(value) if isinstance(value, list) else value
                 continue
             if not isinstance(value, list):
                 aggregated[key] = value

@@ -6,7 +6,9 @@ from datetime import timedelta
 from unittest.mock import patch
 
 from custom_components.wattplan.const import (
+    ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
     CONF_ACTION_EMISSION_ENABLED,
+    CONF_ADAPTER_TYPE,
     CONF_CAN_CHARGE_FROM_GRID,
     CONF_CAN_CHARGE_FROM_PV,
     CONF_CAPACITY_KWH,
@@ -26,6 +28,7 @@ from custom_components.wattplan.const import (
     CONF_ON_OFF_SOURCE,
     CONF_OPTIONS_COUNT,
     CONF_PLANNING_ENABLED,
+    CONF_PROVIDERS,
     CONF_ROLLING_WINDOW_HOURS,
     CONF_RUN_WITHIN_HOURS,
     CONF_SLOT_MINUTES,
@@ -37,11 +40,14 @@ from custom_components.wattplan.const import (
     CONF_SOURCES,
     CONF_TARGET_ON_HOURS_PER_WINDOW,
     CONF_TEMPLATE,
+    CONF_TIME_KEY,
+    CONF_VALUE_KEY,
     DOMAIN,
     SERVICE_CLEAR_TARGET,
     SERVICE_RUN_OPTIMIZE_NOW,
     SERVICE_RUN_PLAN_NOW,
     SERVICE_SET_TARGET,
+    SOURCE_MODE_ENTITY_ADAPTER,
     SOURCE_MODE_NOT_USED,
     SOURCE_MODE_TEMPLATE,
     SUBENTRY_TYPE_BATTERY,
@@ -799,6 +805,157 @@ async def test_plan_details_sensor_exposes_horizon_length_arrays(
     assert state.attributes["battery_battery_charge_source"] == ["g", "n", "n", "n"]
     assert state.attributes["comfort_comfort_enabled"] == [True, False, False, True]
     assert state.attributes["optional_optional_enabled"] == [False, True, True, False]
+    timings = state.attributes["timings"]
+    assert isinstance(timings, list)
+    assert [entry[0] for entry in timings] == [
+        "source: import_price, fetching data",
+        "source: usage, fetching data",
+        "source: pv, fetching data",
+        "optimizer: calculate plan",
+        "plan: build details payload",
+        "total",
+    ]
+    assert all(isinstance(entry, list | tuple) and len(entry) == 2 for entry in timings)
+    assert all(isinstance(entry[1], int) for entry in timings)
+
+    hourly_state = hass.states.get("sensor.home_plan_details_hourly")
+    assert hourly_state is not None
+    assert hourly_state.attributes["timings"] == timings
+
+
+async def test_plan_details_timings_omit_unconfigured_sources(
+    hass: HomeAssistant,
+) -> None:
+    """Timing entries should only include sources that were actually configured."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: 60,
+            CONF_HOURS_TO_PLAN: 4,
+            CONF_SOURCES: {
+                CONF_SOURCE_IMPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [0.2, 0.25, 0.3, 0.35] }}",
+                },
+                CONF_SOURCE_USAGE: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
+                CONF_SOURCE_PV: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
+            },
+        },
+        options={
+            CONF_PLANNING_ENABLED: False,
+            CONF_ACTION_EMISSION_ENABLED: False,
+        },
+    )
+    entry.add_to_hass(hass)
+
+    with patch(
+        "homeassistant.helpers.entity.Entity.entity_registry_enabled_default",
+        return_value=True,
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    with patch("custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize):
+        await hass.services.async_call(
+            DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True
+        )
+        await hass.async_block_till_done()
+
+    state = hass.states.get("sensor.home_plan_details")
+    assert state is not None
+    tasks = [entry[0] for entry in state.attributes["timings"]]
+    assert "source: import_price, fetching data" in tasks
+    assert "source: export_price, fetching data" not in tasks
+    assert "source: usage, fetching data" not in tasks
+    assert "source: pv, fetching data" not in tasks
+    assert tasks[-2:] == ["plan: build details payload", "total"]
+
+
+async def test_plan_details_timings_keep_merged_source_as_single_source_entry(
+    hass: HomeAssistant,
+) -> None:
+    """Merged sources should still expose one public source timing entry."""
+    start_at = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: 60,
+            CONF_HOURS_TO_PLAN: 4,
+            CONF_SOURCES: {
+                CONF_SOURCE_IMPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+                    CONF_PROVIDERS: [
+                        {
+                            CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+                            "entity_id": "sensor.prices_today",
+                            CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
+                            CONF_NAME: "prices",
+                            CONF_TIME_KEY: "start",
+                            CONF_VALUE_KEY: "value",
+                        },
+                        {
+                            CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+                            "entity_id": "sensor.prices_tomorrow",
+                            CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
+                            CONF_NAME: "prices",
+                            CONF_TIME_KEY: "start",
+                            CONF_VALUE_KEY: "value",
+                        },
+                    ],
+                },
+                CONF_SOURCE_USAGE: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
+                CONF_SOURCE_PV: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
+            },
+        },
+        options={
+            CONF_PLANNING_ENABLED: False,
+            CONF_ACTION_EMISSION_ENABLED: False,
+        },
+    )
+    entry.add_to_hass(hass)
+    hass.states.async_set(
+        "sensor.prices_today",
+        "ok",
+        {
+            "prices": [
+                {"start": start_at.isoformat(), "value": 0.2},
+                {"start": (start_at + timedelta(hours=1)).isoformat(), "value": 0.25},
+            ]
+        },
+    )
+    hass.states.async_set(
+        "sensor.prices_tomorrow",
+        "ok",
+        {
+            "prices": [
+                {"start": (start_at + timedelta(hours=2)).isoformat(), "value": 0.3},
+                {"start": (start_at + timedelta(hours=3)).isoformat(), "value": 0.35},
+            ]
+        },
+    )
+
+    with patch(
+        "homeassistant.helpers.entity.Entity.entity_registry_enabled_default",
+        return_value=True,
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    with patch("custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize):
+        await hass.services.async_call(
+            DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True
+        )
+        await hass.async_block_till_done()
+
+    state = hass.states.get("sensor.home_plan_details")
+    assert state is not None
+    tasks = [entry[0] for entry in state.attributes["timings"]]
+    assert tasks.count("source: import_price, fetching data") == 1
+    assert all("provider" not in task for task in tasks)
 
 
 async def test_battery_target_changes_plan_and_expires_after_deadline(
