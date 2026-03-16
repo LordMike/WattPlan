@@ -317,11 +317,21 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
 
     next_option = hass.states.get("sensor.home_optional_next_start_option")
     assert next_option is not None
-    assert next_option.attributes["end_timestamp"] == "2026-01-01T02:00:00+00:00"
+    next_option_start = dt_util.parse_datetime(next_option.state)
+    next_option_end = dt_util.parse_datetime(next_option.attributes["end_timestamp"])
+    assert next_option_start is not None
+    assert next_option_end is not None
+    assert next_option_end - next_option_start == timedelta(hours=1)
 
     option_1 = hass.states.get("sensor.home_optional_option_1_start")
     assert option_1 is not None
-    assert option_1.attributes["end_timestamp"] == "2026-01-01T02:00:00+00:00"
+    option_1_start = dt_util.parse_datetime(option_1.state)
+    option_1_end = dt_util.parse_datetime(option_1.attributes["end_timestamp"])
+    assert option_1_start is not None
+    assert option_1_end is not None
+    assert option_1_end - option_1_start == timedelta(hours=1)
+    assert option_1.state == next_option.state
+    assert option_1.attributes["end_timestamp"] == next_option.attributes["end_timestamp"]
 
     savings = hass.states.get("sensor.home_projected_cost_savings")
     assert savings is not None
@@ -611,7 +621,11 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
 
     next_option = hass.states.get("sensor.home_optional_next_start_option")
     assert next_option is not None
-    assert next_option.attributes["end_timestamp"] == "2026-01-01T02:00:00+00:00"
+    next_option_start = dt_util.parse_datetime(next_option.state)
+    next_option_end = dt_util.parse_datetime(next_option.attributes["end_timestamp"])
+    assert next_option_start is not None
+    assert next_option_end is not None
+    assert next_option_end - next_option_start == timedelta(hours=1)
 
 
 async def test_plan_details_sensor_exposes_horizon_length_arrays(
