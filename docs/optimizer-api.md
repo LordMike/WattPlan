@@ -222,7 +222,7 @@ Optional entities provide advisory start-time suggestions and do not change the 
 - `baseline_cost`: Baseline net energy cost across the horizon, including export revenue when `grid_export_price_per_kwh` is provided.
 - `projected_cost`: Projected net cost for the optimized schedule (`grid imports - grid export revenue`).
 - `projected_savings_cost`: `baseline_cost - projected_cost`.
-- `projected_savings_pct`: `(projected_savings_cost / baseline_cost) * 100`, or `0` when baseline is `0`.
+- `projected_savings_pct`: `(1 - projected_cost / baseline_cost) * 100`, which is equivalent to `(projected_savings_cost / baseline_cost) * 100` when `baseline_cost > 0`. The optimizer still emits the raw numeric result; Home Assistant sensors may choose not to expose extreme values as entity state.
 - `per_slot`: List with one object per timeslot (same index/order as input arrays), each containing:
   - `baseline_cost`
   - `projected_cost`
