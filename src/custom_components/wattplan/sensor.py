@@ -123,6 +123,8 @@ def _subentry_sensor_name(subentry_name: str, sensor_key: str) -> str:
         return f"({subentry_name}) Target"
     if sensor_key == "action":
         return f"({subentry_name}) Action"
+    if sensor_key == "next_action":
+        return f"({subentry_name}) Next Action"
     if sensor_key == "next_start_option":
         return f"({subentry_name}) Next Start Option"
     if sensor_key.startswith("option_") and sensor_key.endswith("_start"):
@@ -1039,6 +1041,9 @@ async def async_setup_entry(
                         coordinator,
                         subentry_id=subentry.subentry_id,
                         group="batteries",
+                        friendly_name=_subentry_sensor_name(
+                            subentry_name, "next_action"
+                        ),
                         object_id=f"{entry_slug}_{sub_slug}_next_action",
                         unique_id=(
                             f"{config_entry.entry_id}:{subentry.subentry_id}:next_action"
@@ -1063,6 +1068,9 @@ async def async_setup_entry(
                         coordinator,
                         subentry_id=subentry.subentry_id,
                         group="comforts",
+                        friendly_name=_subentry_sensor_name(
+                            subentry_name, "next_action"
+                        ),
                         object_id=f"{entry_slug}_{sub_slug}_next_action",
                         unique_id=(
                             f"{config_entry.entry_id}:{subentry.subentry_id}:next_action"
