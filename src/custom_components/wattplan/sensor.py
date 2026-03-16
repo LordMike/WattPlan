@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
@@ -59,6 +59,7 @@ BATTERY_CHARGE_SOURCE_LABELS: dict[str, str] = {
 }
 
 MAX_EXPOSED_PROJECTED_SAVINGS_PCT = 200.0
+ProjectionValueTransform = Callable[["ProjectionSensor", float], float | None]
 
 ENTRY_FRIENDLY_NAMES: dict[str, str] = {
     "status": "Status",
@@ -153,6 +154,15 @@ def _as_datetime(value: Any) -> datetime | None:
 def _friendly_charge_source_label(charge_source: str) -> str:
     """Return a user-facing charge source label for compact planner codes."""
     return BATTERY_CHARGE_SOURCE_LABELS.get(charge_source, charge_source)
+
+
+def _projected_savings_percentage_value_transform(
+    _sensor: ProjectionSensor, value: float
+) -> float | None:
+    """Hide implausibly large savings percentages from the entity state."""
+    if abs(value) > MAX_EXPOSED_PROJECTED_SAVINGS_PCT:
+        return None
+    return value
 
 
 class WattPlanCoordinatorSensor(CoordinatorEntity[WattPlanCoordinator], SensorEntity):
@@ -682,6 +692,7 @@ class ProjectionSensor(WattPlanCoordinatorSensor):
         *,
         projection_key: str,
         aggregate_mode: str = "horizon",
+        value_transform: ProjectionValueTransform | None = None,
         use_home_currency: bool = False,
         native_unit_of_measurement: str | None = None,
         **kwargs: Any,
@@ -690,6 +701,7 @@ class ProjectionSensor(WattPlanCoordinatorSensor):
         super().__init__(config_entry, coordinator, **kwargs)
         self._projection_key = projection_key
         self._aggregate_mode = aggregate_mode
+        self._value_transform = value_transform
         if use_home_currency:
             self._attr_native_unit_of_measurement = coordinator.hass.config.currency
             self._attr_suggested_display_precision = 2
@@ -715,10 +727,8 @@ class ProjectionSensor(WattPlanCoordinatorSensor):
         value = self._coerce_projection_value(series, self._projection_key)
         if value is None:
             return None
-        if self._projection_key == "projected_savings_pct" and abs(value) > (
-            MAX_EXPOSED_PROJECTED_SAVINGS_PCT
-        ):
-            return None
+        if self._value_transform is not None:
+            return self._value_transform(self, value)
         return value
 
     @property
@@ -916,6 +926,7 @@ async def async_setup_entry(
             config_entry,
             coordinator,
             projection_key="projected_savings_pct",
+            value_transform=_projected_savings_percentage_value_transform,
             aggregate_mode="horizon",
             friendly_name=_entry_sensor_name(
                 "projected_savings_percentage",
@@ -944,6 +955,7 @@ async def async_setup_entry(
             config_entry,
             coordinator,
             projection_key="projected_savings_pct",
+            value_transform=_projected_savings_percentage_value_transform,
             aggregate_mode="next_interval",
             friendly_name=_entry_sensor_name(
                 "projected_savings_percentage_this_interval",
