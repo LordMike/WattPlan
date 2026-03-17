@@ -39,10 +39,13 @@ from .coordinator_parts import (
     StageErrorKind,
     StageErrorState,
     TimingEntry,
-    parse_snapshot_datetime,
     snapshot_schema_id,
 )
-from .coordinator_logic import PlanningRequestBuilder, SourceStatusManager
+from .coordinator_logic import (
+    CoordinatorSnapshotStore,
+    PlanningRequestBuilder,
+    SourceStatusManager,
+)
 from .historical_on_off_provider import HistoricalOnOffProvider
 from .optimizer import OptimizationParams, optimize
 from .source_issues import (
@@ -117,6 +120,12 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             private=True,
         )
         self._snapshot_schema_id = snapshot_schema_id()
+        self._persistence = CoordinatorSnapshotStore(
+            self._snapshot_store,
+            entry_id=entry_id,
+            schema_id=self._snapshot_schema_id,
+            logger=_LOGGER,
+        )
         self._planning = PlanningRequestBuilder(
             hass,
             source_providers=self._source_providers,
@@ -1272,95 +1281,51 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
 
     def restore_payload(self) -> dict[str, Any] | None:
         """Return serialized coordinator state suitable for restore."""
-        if self._snapshot is None:
-            return None
-        return {
-            "schema_id": self._snapshot_schema_id,
-            "snapshot": self._snapshot.to_dict(),
-            "last_success_at": (
-                self._last_success_at.isoformat()
-                if self._last_success_at is not None
-                else None
-            ),
-            "last_duration_ms": self._last_duration_ms,
-            "last_run_timings": self._serialize_timings(self._last_run_timings),
-        }
+        return self._persistence.restore_payload(
+            snapshot=self._snapshot,
+            last_success_at=self._last_success_at,
+            last_duration_ms=self._last_duration_ms,
+            last_run_timings=self._last_run_timings,
+        )
 
     @callback
     def async_restore_payload(self, payload: dict[str, Any]) -> bool:
         """Restore coordinator state from serialized payload."""
-        if payload.get("schema_id") != self._snapshot_schema_id:
-            _LOGGER.debug(
-                "Discarding cached snapshot with mismatched schema "
-                "(entry_id=%s, cached=%s, current=%s)",
-                self._entry_id,
-                payload.get("schema_id"),
-                self._snapshot_schema_id,
-            )
-            return False
-        snapshot_payload = payload.get("snapshot")
-        if not isinstance(snapshot_payload, dict):
+        restored = self._persistence.async_restore_payload(payload)
+        if restored is None:
             return False
 
-        snapshot = CoordinatorSnapshot.from_dict(snapshot_payload)
-        if snapshot is None:
-            return False
-
-        self._snapshot = snapshot
+        self._snapshot = restored.snapshot
         self.data = self._snapshot
-        self._last_success_at = parse_snapshot_datetime(payload.get("last_success_at"))
-        self._last_duration_ms = (
-            int(payload["last_duration_ms"])
-            if payload.get("last_duration_ms") is not None
-            else None
-        )
-        self._last_run_timings = self._deserialize_timings(payload.get("last_run_timings"))
-        self._source_status.apply_restored_snapshot(snapshot)
+        self._last_success_at = restored.last_success_at
+        self._last_duration_ms = restored.last_duration_ms
+        self._last_run_timings = restored.last_run_timings
+        self._source_status.apply_restored_snapshot(restored.snapshot)
         # Keep restored entities available until the next scheduled cycle updates
         # the real execution timestamps.
         self._last_attempt_at = datetime.now(tz=UTC)
         self.async_update_listeners()
         return True
 
-    def _serialize_timings(
-        self, timings: list[TimingEntry] | None
-    ) -> list[list[str | int]] | None:
-        """Serialize timing entries for storage."""
-        if timings is None:
-            return None
-        return [[str(label), int(duration_ms)] for label, duration_ms in timings]
-
-    def _deserialize_timings(self, payload: Any) -> list[TimingEntry] | None:
-        """Deserialize stored timing entries."""
-        if not isinstance(payload, list):
-            return None
-        timings: list[TimingEntry] = []
-        for entry in payload:
-            if not isinstance(entry, list | tuple) or len(entry) != 2:
-                continue
-            label, duration_ms = entry
-            try:
-                timings.append((str(label), int(duration_ms)))
-            except (TypeError, ValueError):
-                continue
-        return timings or None
-
     async def async_restore_snapshot(self) -> bool:
         """Restore cached snapshot from storage for this config entry."""
-        if (payload := await self._snapshot_store.async_load()) is None:
+        if (restored := await self._persistence.async_restore_snapshot()) is None:
             return False
-        if not isinstance(payload, dict):
-            return False
-        restored = self.async_restore_payload(payload)
-        if restored:
-            _LOGGER.debug("Restored cached snapshot for entry_id=%s", self._entry_id)
-        else:
-            await self._snapshot_store.async_remove()
-            _LOGGER.debug("Discarded invalid cached snapshot for entry_id=%s", self._entry_id)
-        return restored
+        self._snapshot = restored.snapshot
+        self.data = self._snapshot
+        self._last_success_at = restored.last_success_at
+        self._last_duration_ms = restored.last_duration_ms
+        self._last_run_timings = restored.last_run_timings
+        self._source_status.apply_restored_snapshot(restored.snapshot)
+        self._last_attempt_at = datetime.now(tz=UTC)
+        self.async_update_listeners()
+        return True
 
     async def async_persist_snapshot(self) -> None:
         """Persist current snapshot cache for this config entry."""
-        if (entry_payload := self.restore_payload()) is None:
-            return
-        await self._snapshot_store.async_save(entry_payload)
+        await self._persistence.async_persist_snapshot(
+            snapshot=self._snapshot,
+            last_success_at=self._last_success_at,
+            last_duration_ms=self._last_duration_ms,
+            last_run_timings=self._last_run_timings,
+        )
