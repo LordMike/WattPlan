@@ -82,6 +82,54 @@ VALID_RESAMPLE_MODES = {
 VALID_EDGE_FILL_MODES = {EDGE_FILL_MODE_NONE, EDGE_FILL_MODE_HOLD}
 
 
+def _decoded_state_root(state: Any) -> dict[str, Any]:
+    """Return state attributes with decoded JSON state when available."""
+    root = dict(state.attributes)
+    with suppress(json.JSONDecodeError):
+        root["state_json"] = json.loads(state.state)
+    return root
+
+
+def _summarized_candidates(root: Any) -> list[dict[str, Any]]:
+    """Return auto-detect candidate summaries for diagnostics."""
+    return [
+        {
+            "path": summary.path or "<root>",
+            "row_count": summary.row_count,
+            "sample_type": summary.sample_type,
+            "timestamp_keys": list(summary.timestamp_keys),
+            "numeric_keys": list(summary.numeric_keys),
+            "compatible": summary.compatible,
+            "reason": summary.reason,
+        }
+        for summary in summarize_auto_detect_candidates(root)
+    ]
+
+
+def _split_service_name(service_name: str, *, label: str) -> tuple[str, str]:
+    """Return validated domain and service parts for a service adapter."""
+    try:
+        return service_name.split(".", 1)
+    except ValueError as err:
+        raise SourceProviderError(
+            "source_validation",
+            f"{label} service `{service_name}` is invalid",
+            details={"service": service_name},
+        ) from err
+
+
+async def _async_service_response(hass: HomeAssistant, service_name: str) -> Any:
+    """Call a no-argument service and return its response payload."""
+    domain, service = _split_service_name(service_name, label="Service")
+    return await hass.services.async_call(
+        domain,
+        service,
+        {},
+        blocking=True,
+        return_response=True,
+    )
+
+
 def source_mode(source_config: dict[str, Any]) -> str:
     """Return the configured source/provider mode."""
     mode = source_config.get(CONF_SOURCE_MODE)
@@ -252,10 +300,7 @@ class EntityAdapterPayloadProvider(BasePayloadProvider):
                 details={"source": self._source_name, "entity_id": entity_id},
             )
 
-        root = dict(state.attributes)
-        with suppress(json.JSONDecodeError):
-            root["state_json"] = json.loads(state.state)
-
+        root = _decoded_state_root(state)
         payload = resolve_nested_value(root, str(root_key))
         if payload is None:
             raise SourceProviderError(
@@ -297,21 +342,13 @@ class ServiceResponsePayloadProvider(BasePayloadProvider):
             )
 
         try:
-            domain, service = str(service_name).split(".", 1)
-        except ValueError as err:
+            response = await _async_service_response(self._hass, str(service_name))
+        except SourceProviderError as err:
             raise SourceProviderError(
                 "source_validation",
                 f"{self._source_name} service `{service_name}` is invalid",
                 details={"source": self._source_name, "service": str(service_name)},
             ) from err
-
-        response = await self._hass.services.async_call(
-            domain,
-            service,
-            {},
-            blocking=True,
-            return_response=True,
-        )
         payload = resolve_nested_value(response, str(root_key))
         if payload is None:
             raise SourceProviderError(
@@ -345,21 +382,8 @@ async def async_auto_detect_entity_adapter(
                 details={"entity_id": entity_id},
             )
 
-        root = dict(state.attributes)
-        with suppress(json.JSONDecodeError):
-            root["state_json"] = json.loads(state.state)
-        entity_candidates[entity_id] = [
-            {
-                "path": summary.path or "<root>",
-                "row_count": summary.row_count,
-                "sample_type": summary.sample_type,
-                "timestamp_keys": list(summary.timestamp_keys),
-                "numeric_keys": list(summary.numeric_keys),
-                "compatible": summary.compatible,
-                "reason": summary.reason,
-            }
-            for summary in summarize_auto_detect_candidates(root)
-        ]
+        root = _decoded_state_root(state)
+        entity_candidates[entity_id] = _summarized_candidates(root)
 
         detected = auto_detect_mapping(root)
         if detected is not None:
@@ -394,33 +418,14 @@ async def async_auto_detect_service_adapter(
 ) -> AdapterAutoDetectResult:
     """Return mapping inferred from a no-argument service response."""
     try:
-        domain, service = service_name.split(".", 1)
-    except ValueError as err:
+        response = await _async_service_response(hass, service_name)
+    except SourceProviderError as err:
         raise SourceProviderError(
             "source_validation",
             f"Service `{service_name}` is invalid",
             details={"service": service_name},
         ) from err
-
-    response = await hass.services.async_call(
-        domain,
-        service,
-        {},
-        blocking=True,
-        return_response=True,
-    )
-    candidates = [
-        {
-            "path": summary.path or "<root>",
-            "row_count": summary.row_count,
-            "sample_type": summary.sample_type,
-            "timestamp_keys": list(summary.timestamp_keys),
-            "numeric_keys": list(summary.numeric_keys),
-            "compatible": summary.compatible,
-            "reason": summary.reason,
-        }
-        for summary in summarize_auto_detect_candidates(response)
-    ]
+    candidates = _summarized_candidates(response)
     detected = auto_detect_mapping(response)
     if detected is None:
         raise SourceProviderError(
