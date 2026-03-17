@@ -562,8 +562,8 @@ class SourceStatusSensor(WattPlanCoordinatorSensor):
         }
 
 
-class ActionSensor(WattPlanCoordinatorSensor):
-    """Action sensor with next action timestamp attributes."""
+class SubentryActionSensor(WattPlanCoordinatorSensor):
+    """Base sensor for diagnostics keyed by subentry and action group."""
 
     _require_usable_plan = True
 
@@ -576,7 +576,7 @@ class ActionSensor(WattPlanCoordinatorSensor):
         group: str,
         **kwargs: Any,
     ) -> None:
-        """Initialize action sensor."""
+        """Initialize subentry action sensor."""
         super().__init__(config_entry, coordinator, **kwargs)
         self._subentry_id = subentry_id
         self._group = group
@@ -587,11 +587,14 @@ class ActionSensor(WattPlanCoordinatorSensor):
             return {}
         diagnostics = self.snapshot.diagnostics or {}
         group_data = diagnostics.get(self._group, {})
-        if isinstance(group_data, dict):
-            subentry_data = group_data.get(self._subentry_id, {})
-            if isinstance(subentry_data, dict):
-                return subentry_data
-        return {}
+        if not isinstance(group_data, dict):
+            return {}
+        subentry_data = group_data.get(self._subentry_id, {})
+        return subentry_data if isinstance(subentry_data, dict) else {}
+
+
+class ActionSensor(SubentryActionSensor):
+    """Action sensor with next action timestamp attributes."""
 
     @property
     def native_value(self) -> str | None:
@@ -613,37 +616,9 @@ class ActionSensor(WattPlanCoordinatorSensor):
         return attrs or None
 
 
-class NextActionSensor(WattPlanCoordinatorSensor):
+class NextActionSensor(SubentryActionSensor):
     """Disabled-by-default sensor exposing the next planned action."""
-
-    _require_usable_plan = True
     _attr_entity_registry_enabled_default = False
-
-    def __init__(
-        self,
-        config_entry: ConfigEntry,
-        coordinator: WattPlanCoordinator,
-        *,
-        subentry_id: str,
-        group: str,
-        **kwargs: Any,
-    ) -> None:
-        """Initialize next-action sensor."""
-        super().__init__(config_entry, coordinator, **kwargs)
-        self._subentry_id = subentry_id
-        self._group = group
-
-    def _action_data(self) -> dict[str, Any]:
-        """Return action data for this subentry from snapshot diagnostics."""
-        if not self.snapshot:
-            return {}
-        diagnostics = self.snapshot.diagnostics or {}
-        group_data = diagnostics.get(self._group, {})
-        if isinstance(group_data, dict):
-            subentry_data = group_data.get(self._subentry_id, {})
-            if isinstance(subentry_data, dict):
-                return subentry_data
-        return {}
 
     @property
     def native_value(self) -> str | None:
