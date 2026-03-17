@@ -704,7 +704,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         )
         timings.append(
             (
-                f"source: {CONF_SOURCE_IMPORT_PRICE}, fetching data",
+                "Import price source fetch",
                 _duration_ms(started_at),
             )
         )
@@ -726,7 +726,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             )
             timings.append(
                 (
-                    f"source: {CONF_SOURCE_EXPORT_PRICE}, fetching data",
+                    "Export price source fetch",
                     _duration_ms(started_at),
                 )
             )
@@ -749,7 +749,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             )
             timings.append(
                 (
-                    f"source: {CONF_SOURCE_USAGE}, fetching data",
+                    "Usage source fetch",
                     _duration_ms(started_at),
                 )
             )
@@ -772,7 +772,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             )
             timings.append(
                 (
-                    f"source: {CONF_SOURCE_PV}, fetching data",
+                    "PV source fetch",
                     _duration_ms(started_at),
                 )
             )
@@ -1557,7 +1557,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
 
         timings.append(
             (
-                "optimizer: calculate plan",
+                "Optimizer plan calculation",
                 int(
                     round(
                         float(
@@ -1829,7 +1829,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         if self._plan_details_enabled("plan_details"):
             started_at = time.monotonic()
             raw_details = self._build_plan_details_payload(request, result)
-            timing_entries.append(("plan: build details payload", _duration_ms(started_at)))
+            timing_entries.append(("Plan details payload build", _duration_ms(started_at)))
             diagnostics["plan_details"] = raw_details
 
         if self._plan_details_enabled("plan_details_hourly"):
@@ -1837,7 +1837,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 started_at = time.monotonic()
                 raw_details = self._build_plan_details_payload(request, result)
                 timing_entries.append(
-                    ("plan: build details payload", _duration_ms(started_at))
+                    ("Plan details payload build", _duration_ms(started_at))
                 )
             diagnostics["plan_details_hourly"] = self._aggregate_plan_details(
                 raw_details,
