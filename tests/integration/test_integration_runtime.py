@@ -890,7 +890,11 @@ async def test_plan_details_sensor_exposes_horizon_length_arrays(
     assert state.attributes["battery_battery_charge_source"] == ["g", "n", "n", "n"]
     assert state.attributes["comfort_comfort_enabled"] == [True, False, False, True]
     assert state.attributes["optional_optional_enabled"] == [False, True, True, False]
-    timings = state.attributes["timings"]
+    assert "timings" not in state.attributes
+
+    duration_state = hass.states.get("sensor.home_last_run_duration")
+    assert duration_state is not None
+    timings = duration_state.attributes["timings"]
     assert isinstance(timings, list)
     assert [entry[0] for entry in timings] == [
         "source: import_price, fetching data",
@@ -905,7 +909,8 @@ async def test_plan_details_sensor_exposes_horizon_length_arrays(
 
     hourly_state = hass.states.get("sensor.home_plan_details_hourly")
     assert hourly_state is not None
-    assert hourly_state.attributes["timings"] == timings
+    assert "timings" not in hourly_state.attributes
+    assert duration_state.attributes["timings"] == timings
 
 
 async def test_plan_details_timings_omit_unconfigured_sources(
@@ -950,7 +955,10 @@ async def test_plan_details_timings_omit_unconfigured_sources(
 
     state = hass.states.get("sensor.home_plan_details")
     assert state is not None
-    tasks = [entry[0] for entry in state.attributes["timings"]]
+    assert "timings" not in state.attributes
+    duration_state = hass.states.get("sensor.home_last_run_duration")
+    assert duration_state is not None
+    tasks = [entry[0] for entry in duration_state.attributes["timings"]]
     assert "source: import_price, fetching data" in tasks
     assert "source: export_price, fetching data" not in tasks
     assert "source: usage, fetching data" not in tasks
@@ -1038,7 +1046,10 @@ async def test_plan_details_timings_keep_merged_source_as_single_source_entry(
 
     state = hass.states.get("sensor.home_plan_details")
     assert state is not None
-    tasks = [entry[0] for entry in state.attributes["timings"]]
+    assert "timings" not in state.attributes
+    duration_state = hass.states.get("sensor.home_last_run_duration")
+    assert duration_state is not None
+    tasks = [entry[0] for entry in duration_state.attributes["timings"]]
     assert tasks.count("source: import_price, fetching data") == 1
     assert all("provider" not in task for task in tasks)
 

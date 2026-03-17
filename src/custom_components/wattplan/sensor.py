@@ -538,6 +538,21 @@ class LastRunDurationSensor(WattPlanCoordinatorSensor):
         """Return last cycle duration in milliseconds."""
         return self.coordinator.last_duration_ms
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return execution timing details for the latest planner run."""
+        if not self.snapshot:
+            return None
+        diagnostics = self.snapshot.diagnostics or {}
+        for details_key in ("plan_details", "plan_details_hourly"):
+            plan_details = diagnostics.get(details_key)
+            if not isinstance(plan_details, dict):
+                continue
+            timings = plan_details.get("timings")
+            if isinstance(timings, list):
+                return {"timings": timings}
+        return None
+
 
 class OptionalTimestampSensor(WattPlanCoordinatorSensor):
     """Timestamp sensor for optional load options."""
@@ -677,7 +692,9 @@ class PlanDetailsSensor(WattPlanCoordinatorSensor):
         plan_details = diagnostics.get(self._details_key)
         if not isinstance(plan_details, dict):
             return None
-        return plan_details
+        return {
+            key: value for key, value in plan_details.items() if key != "timings"
+        }
 
 
 class ProjectionSensor(WattPlanCoordinatorSensor):
