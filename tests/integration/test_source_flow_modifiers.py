@@ -988,7 +988,7 @@ async def test_config_flow_persists_pv_energy_provider_source(
         AsyncMock(return_value=[entry]),
     )
     monkeypatch.setattr(
-        "custom_components.wattplan.source_provider.async_get_energy_solar_forecast_platforms",
+        "custom_components.wattplan.source_providers.payloads.async_get_energy_solar_forecast_platforms",
         AsyncMock(
             return_value={
                 "forecast_solar": AsyncMock(
