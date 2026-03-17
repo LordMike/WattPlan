@@ -140,6 +140,18 @@ def _parse_datetime(value: Any) -> datetime | None:
     return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
+def _configured_source(
+    sources: dict[str, Any], source_key: str
+) -> dict[str, Any] | None:
+    """Return one source config when configured and enabled."""
+    source = sources.get(source_key)
+    if not isinstance(source, dict):
+        return None
+    if source.get(CONF_SOURCE_MODE) in {None, SOURCE_MODE_NOT_USED}:
+        return None
+    return source
+
+
 SCHEDULE_OFFSET = timedelta(seconds=2)
 
 
@@ -709,80 +721,43 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             )
         )
 
-        export_price_source = sources.get(CONF_SOURCE_EXPORT_PRICE, {})
-        export_price_values: list[float] | None
-        if (
-            isinstance(export_price_source, dict)
-            and export_price_source.get(CONF_SOURCE_MODE)
-            not in {None, SOURCE_MODE_NOT_USED}
-        ):
-            started_at = time.monotonic()
-            export_price_values = await self._async_resolve_optional_source(
-                entry=entry,
-                source_key=CONF_SOURCE_EXPORT_PRICE,
-                source_config=export_price_source,
-                window=window,
-                blocks_planning=False,
-            )
-            timings.append(
-                (
-                    "Export price source fetch",
-                    _duration_ms(started_at),
-                )
-            )
-        else:
-            export_price_values = None
+        export_price_source = _configured_source(sources, CONF_SOURCE_EXPORT_PRICE)
+        export_price_values = await self._async_optional_source_values(
+            entry=entry,
+            source_key=CONF_SOURCE_EXPORT_PRICE,
+            source_config=export_price_source,
+            window=window,
+            blocks_planning=False,
+            timing_label="Export price source fetch",
+            timings=timings,
+        )
 
-        usage_source = sources.get(CONF_SOURCE_USAGE, {})
-        usage_values: list[float] | None
-        if (
-            isinstance(usage_source, dict)
-            and usage_source.get(CONF_SOURCE_MODE) not in {None, SOURCE_MODE_NOT_USED}
-        ):
-            started_at = time.monotonic()
-            usage_values = await self._async_resolve_optional_source(
-                entry=entry,
-                source_key=CONF_SOURCE_USAGE,
-                source_config=usage_source,
-                window=window,
-                blocks_planning=True,
-            )
-            timings.append(
-                (
-                    "Usage source fetch",
-                    _duration_ms(started_at),
-                )
-            )
-        else:
-            usage_values = None
+        usage_source = _configured_source(sources, CONF_SOURCE_USAGE)
+        usage_values = await self._async_optional_source_values(
+            entry=entry,
+            source_key=CONF_SOURCE_USAGE,
+            source_config=usage_source,
+            window=window,
+            blocks_planning=True,
+            timing_label="Usage source fetch",
+            timings=timings,
+        )
 
-        pv_source = sources.get(CONF_SOURCE_PV, {})
-        pv_values: list[float] | None
-        if (
-            isinstance(pv_source, dict)
-            and pv_source.get(CONF_SOURCE_MODE) not in {None, SOURCE_MODE_NOT_USED}
-        ):
-            started_at = time.monotonic()
-            pv_values = await self._async_resolve_optional_source(
-                entry=entry,
-                source_key=CONF_SOURCE_PV,
-                source_config=pv_source,
-                window=window,
-                blocks_planning=False,
-            )
-            timings.append(
-                (
-                    "PV source fetch",
-                    _duration_ms(started_at),
-                )
-            )
-        else:
-            pv_values = None
+        pv_source = _configured_source(sources, CONF_SOURCE_PV)
+        pv_values = await self._async_optional_source_values(
+            entry=entry,
+            source_key=CONF_SOURCE_PV,
+            source_config=pv_source,
+            window=window,
+            blocks_planning=False,
+            timing_label="PV source fetch",
+            timings=timings,
+        )
 
         usage_forecast_points: list[dict[str, Any]] | None = None
         if (
             usage_values is not None
-            and isinstance(usage_source, dict)
+            and usage_source is not None
             and usage_source.get(CONF_SOURCE_MODE) == SOURCE_MODE_BUILT_IN
         ):
             usage_forecast_points = self._values_to_points(usage_values, window)
@@ -1025,6 +1000,32 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             },
             "usage_forecast_points": usage_forecast_points,
         }, timings)
+
+    async def _async_optional_source_values(
+        self,
+        *,
+        entry: ConfigEntry,
+        source_key: str,
+        source_config: dict[str, Any] | None,
+        window: SourceWindow,
+        blocks_planning: bool,
+        timing_label: str,
+        timings: list[TimingEntry],
+    ) -> list[float] | None:
+        """Resolve one optional source and append its timing when enabled."""
+        if source_config is None:
+            return None
+
+        started_at = time.monotonic()
+        values = await self._async_resolve_optional_source(
+            entry=entry,
+            source_key=source_key,
+            source_config=source_config,
+            window=window,
+            blocks_planning=blocks_planning,
+        )
+        timings.append((timing_label, _duration_ms(started_at)))
+        return values
 
     async def async_build_planner_input_export(self) -> dict[str, Any]:
         """Rebuild and return the current planning request for export."""
