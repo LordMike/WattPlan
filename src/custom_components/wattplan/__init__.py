@@ -181,6 +181,19 @@ def _resolve_run_entries(hass: HomeAssistant, call: ServiceCall) -> list[WattPla
     return loaded
 
 
+def _resolve_single_run_entry(
+    hass: HomeAssistant,
+    call: ServiceCall,
+    *,
+    label: str,
+) -> WattPlanConfigEntry:
+    """Resolve a single matching entry for service handlers that require one setup."""
+    matched_entries = _resolve_run_entries(hass, call)
+    if len(matched_entries) != 1:
+        raise ServiceValidationError(f"{label} requires exactly one matching WattPlan entry")
+    return matched_entries[0]
+
+
 def _battery_name_filter(call: ServiceCall) -> str:
     """Return the normalized battery selector from a service call."""
     battery_name = str(call.data.get(ATTR_BATTERY, "")).strip()
@@ -254,6 +267,33 @@ def _matching_battery_targets(
     return matches
 
 
+def _iter_target_runtime_data(
+    loaded_entries: dict[str, WattPlanConfigEntry],
+    matches: set[tuple[str, str]],
+) -> list[tuple[WattPlanRuntimeData, str]]:
+    """Return runtime targets for matched `(entry_id, subentry_id)` pairs."""
+    return [
+        (entry.runtime_data, subentry_id)
+        for entry_id, subentry_id in matches
+        if (entry := loaded_entries.get(entry_id)) is not None
+    ]
+
+
+def _format_service_export(
+    *,
+    payload_key: str,
+    payload: Any,
+    as_json_key: str,
+    as_json: bool,
+) -> dict[str, Any]:
+    """Return service response payload in native or compact JSON form."""
+    if as_json:
+        return {
+            as_json_key: json.dumps(payload, separators=(",", ":"), sort_keys=True)
+        }
+    return {payload_key: payload}
+
+
 async def _async_handle_set_target_service(
     hass: HomeAssistant, call: ServiceCall
 ) -> None:
@@ -263,21 +303,9 @@ async def _async_handle_set_target_service(
 
     reach_at = dt_util.as_utc(call.data[ATTR_REACH_AT])
     target_soc = float(call.data[ATTR_SOC_KWH])
-    for entry in hass.config_entries.async_entries(DOMAIN):
-        if entry.entry_id not in loaded_entries:
-            continue
-        runtime_data = entry.runtime_data
-        for match_entry_id, subentry_id in matches:
-            if match_entry_id != entry.entry_id:
-                continue
-            set_battery_target(
-                runtime_data,
-                subentry_id,
-                BatteryTarget(
-                soc_kwh=target_soc,
-                reach_at=reach_at,
-                ),
-            )
+    target = BatteryTarget(soc_kwh=target_soc, reach_at=reach_at)
+    for runtime_data, subentry_id in _iter_target_runtime_data(loaded_entries, matches):
+        set_battery_target(runtime_data, subentry_id, target)
 
 
 async def _async_handle_clear_target_service(
@@ -288,14 +316,8 @@ async def _async_handle_clear_target_service(
     matches = _matching_battery_targets(hass, call, loaded_entries=loaded_entries)
 
     cleared_any = False
-    for entry in hass.config_entries.async_entries(DOMAIN):
-        if entry.entry_id not in loaded_entries:
-            continue
-        runtime_data = entry.runtime_data
-        for match_entry_id, subentry_id in matches:
-            if match_entry_id != entry.entry_id:
-                continue
-            cleared_any = clear_battery_target(runtime_data, subentry_id) or cleared_any
+    for runtime_data, subentry_id in _iter_target_runtime_data(loaded_entries, matches):
+        cleared_any = clear_battery_target(runtime_data, subentry_id) or cleared_any
 
     if not cleared_any:
         raise ServiceValidationError("No active battery targets matched the provided selectors")
@@ -327,33 +349,21 @@ async def _async_handle_export_planner_input_service(
     hass: HomeAssistant, call: ServiceCall
 ) -> dict[str, Any]:
     """Rebuild and return the current planner model payload."""
-    matched_entries = _resolve_run_entries(hass, call)
-    if len(matched_entries) != 1:
-        raise ServiceValidationError(
-            "Planner input export requires exactly one matching WattPlan entry"
-        )
-
-    entry = matched_entries[0]
+    entry = _resolve_single_run_entry(hass, call, label="Planner input export")
     request = await entry.runtime_data.coordinator.async_build_planner_input_export()
-    model = request["optimizer_params"]
-    if call.data["as_json"]:
-        return {
-            "model_json": json.dumps(model, separators=(",", ":"), sort_keys=True)
-        }
-    return {"model": model}
+    return _format_service_export(
+        payload_key="model",
+        payload=request["optimizer_params"],
+        as_json_key="model_json",
+        as_json=call.data["as_json"],
+    )
 
 
 async def _async_handle_export_usage_forecast_debug_service(
     hass: HomeAssistant, call: ServiceCall
 ) -> dict[str, Any]:
     """Return raw built-in usage forecast debug data for one setup."""
-    matched_entries = _resolve_run_entries(hass, call)
-    if len(matched_entries) != 1:
-        raise ServiceValidationError(
-            "Usage forecast debug export requires exactly one matching WattPlan entry"
-        )
-
-    entry = matched_entries[0]
+    entry = _resolve_single_run_entry(hass, call, label="Usage forecast debug export")
     sources = entry.data.get(CONF_SOURCES, {})
     if not isinstance(sources, dict):
         raise ServiceValidationError("Source configuration is missing or invalid")
@@ -372,11 +382,12 @@ async def _async_handle_export_usage_forecast_debug_service(
         raise ServiceValidationError("Usage source is not configured as built in")
     request = await entry.runtime_data.coordinator.async_build_planner_input_export()
     debug_payload = await provider.async_debug_payload(request["window"])
-    if call.data["as_json"]:
-        return {
-            "debug_json": json.dumps(debug_payload, separators=(",", ":"), sort_keys=True)
-        }
-    return {"debug": debug_payload}
+    return _format_service_export(
+        payload_key="debug",
+        payload=debug_payload,
+        as_json_key="debug_json",
+        as_json=call.data["as_json"],
+    )
 
 
 SERVICE_SPECS = (
