@@ -1,6 +1,6 @@
 # WattPlan ![CI](https://github.com/LordMike/WattPlan/actions/workflows/ci.yml/badge.svg) ![License](https://img.shields.io/github/license/LordMike/WattPlan)
 
-![WattPlan logo](docs/pictures/logo.png)
+![WattPlan logo](src/custom_components/wattplan/brand/logo.png)
 
 **WattPlan** is a Home Assistant custom integration designed for planning energy use based on price, usage, PV production, and battery storage. It is intended for users who want both the integration and the optimizer source to reside in a single repository, with a release flow that produces HACS-ready artifacts.
 
