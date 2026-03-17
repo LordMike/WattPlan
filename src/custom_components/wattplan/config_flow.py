@@ -1921,7 +1921,251 @@ async def _async_resolve_source_for_review(
     return source, source_input
 
 
-class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
+class _SharedSourceFlow:
+    """Shared source-step helpers for setup and options flows."""
+
+    _last_source_available_count: int | None
+    _pending_source_key: str | None
+    _pending_source: dict[str, Any] | None
+    _pending_source_input: dict[str, Any] | None
+    _pending_source_step_id: str | None
+    _pending_source_summary: dict[str, Any] | None
+
+    def _core_data(self) -> dict[str, Any]:
+        """Return the active planner core data for this flow."""
+        raise NotImplementedError
+
+    def _stored_source(self, key: str) -> dict[str, Any]:
+        """Return the currently persisted source config for a source key."""
+        raise NotImplementedError
+
+    async def _async_default_source_step(self) -> ConfigFlowResult:
+        """Return the flow step used when no staged source is active."""
+        raise NotImplementedError
+
+    async def _async_commit_reviewed_source(
+        self, key: str, resolved_pending: dict[str, Any]
+    ) -> ConfigFlowResult:
+        """Persist one reviewed source and continue the flow."""
+        raise NotImplementedError
+
+    def _review_form_last_step(self, key: str) -> bool:
+        """Return whether the review form should be marked last-step."""
+        return False
+
+    def _source_description_placeholders(self, key: str) -> dict[str, str]:
+        """Return description placeholders for source steps."""
+        source_label = "Price"
+        if key == CONF_SOURCE_EXPORT_PRICE:
+            source_label = "Export price"
+        elif key == CONF_SOURCE_USAGE:
+            source_label = "Usage"
+        elif key == CONF_SOURCE_PV:
+            source_label = "PV"
+
+        core_data = self._core_data()
+        return {
+            "source_label": source_label,
+            "required_count": str(_expected_slots(core_data)),
+            "available_count": str(self._last_source_available_count or 0),
+            "slot_minutes": str(core_data[CONF_SLOT_MINUTES]),
+        }
+
+    async def _async_energy_provider_options(self) -> list[selector.SelectOptionDict]:
+        """Return Energy solar forecast providers as selector options."""
+        entries = await async_get_energy_solar_forecast_entries(self.hass)
+        return [
+            selector.SelectOptionDict(value=entry.entry_id, label=entry.title)
+            for entry in entries
+        ]
+
+    async def _async_include_energy_provider_mode(
+        self,
+        existing: dict[str, Any],
+        *,
+        include_energy_provider: bool,
+    ) -> bool:
+        """Return whether Energy provider should be offered in source mode."""
+        if not include_energy_provider:
+            return False
+        if existing.get(CONF_SOURCE_MODE) == SOURCE_MODE_ENERGY_PROVIDER:
+            return True
+        return bool(await self._async_energy_provider_options())
+
+    def _source_step_defaults(self, key: str) -> dict[str, Any]:
+        """Return defaults for the active source input step."""
+        if self._pending_source_key == key:
+            if self._pending_source_input is not None:
+                return _source_base_defaults(self._pending_source_input)
+            if self._pending_source is not None:
+                return _source_base_defaults(self._pending_source)
+        return _source_base_defaults(self._stored_source(key))
+
+    async def _async_refresh_pending_source_summary(
+        self,
+        key: str,
+        source: dict[str, Any],
+        source_input: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Rebuild the staged source summary for the current core data."""
+        self._pending_source_summary = await _async_source_summary(
+            self.hass,
+            core_data=self._core_data(),
+            key=key,
+            source=source,
+            source_input=source_input,
+            floor_to_slot=self._floor_to_slot,
+            validate_built_in_entity=self._validate_built_in_usage_entity,
+        )
+        return self._pending_source_summary
+
+    async def _async_prepare_source_review(
+        self,
+        key: str,
+        source: dict[str, Any],
+        *,
+        source_step_id: str,
+        source_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
+        """Stage one source for review before saving it."""
+        self._pending_source_key = key
+        self._pending_source = source
+        self._pending_source_input = source_input
+        self._pending_source_step_id = source_step_id
+        summary = await self._async_refresh_pending_source_summary(
+            key, source, source_input
+        )
+        self._pending_source_input = summary.get("resolved_source_input", source_input)
+        return await self.async_step_source_review()
+
+    async def async_step_source_review(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Review and confirm one staged source."""
+        if self._pending_source_key is None or self._pending_source is None:
+            return await self._async_default_source_step()
+
+        key = self._pending_source_key
+        pending = dict(self._pending_source)
+        summary = self._pending_source_summary or {}
+        resolved_pending = dict(summary.get("resolved_source", pending))
+        is_valid = bool(summary.get("is_valid", False))
+        defaults = {CONF_ACCEPT_SOURCE_SUMMARY: is_valid}
+        errors: dict[str, str] = (
+            {"base": str(summary["error_key"])}
+            if summary.get("error_key") is not None
+            else {}
+        )
+
+        if user_input is not None:
+            if not is_valid or not user_input[CONF_ACCEPT_SOURCE_SUMMARY]:
+                return await self._async_return_to_pending_source_step()
+            try:
+                await self._async_validate_source(key, resolved_pending)
+            except vol.Invalid as err:
+                errors["base"] = str(err)
+                summary = await self._async_refresh_pending_source_summary(
+                    key, pending, self._pending_source_input
+                )
+                resolved_pending = dict(summary.get("resolved_source", pending))
+                is_valid = bool(summary.get("is_valid", False))
+                defaults[CONF_ACCEPT_SOURCE_SUMMARY] = is_valid
+            else:
+                self._pending_source_key = None
+                self._pending_source = None
+                self._pending_source_input = None
+                self._pending_source_step_id = None
+                self._pending_source_summary = None
+                return await self._async_commit_reviewed_source(key, resolved_pending)
+
+        accept_note = await _async_config_translation(
+            self.hass,
+            "review_accept_note_valid" if is_valid else "review_accept_note_invalid",
+        )
+
+        return self.async_show_form(
+            step_id="source_review",
+            data_schema=self.add_suggested_values_to_schema(
+                _source_review_schema(defaults, include_accept=is_valid),
+                user_input or {},
+            ),
+            errors=errors,
+            description_placeholders={
+                **self._source_description_placeholders(key),
+                "raw_coverage_start": await _coverage_placeholder_text(
+                    self.hass,
+                    summary=summary,
+                    timezone_name=self.hass.config.time_zone,
+                    field="raw_coverage_start",
+                ),
+                "raw_coverage_end": await _coverage_placeholder_text(
+                    self.hass,
+                    summary=summary,
+                    timezone_name=self.hass.config.time_zone,
+                    field="raw_coverage_end",
+                ),
+                "raw_coverage_summary": str(summary.get("raw_coverage_summary", "")),
+                "adjusted_coverage_start": await _coverage_placeholder_text(
+                    self.hass,
+                    summary=summary,
+                    timezone_name=self.hass.config.time_zone,
+                    field="coverage_start",
+                ),
+                "adjusted_coverage_end": await _coverage_placeholder_text(
+                    self.hass,
+                    summary=summary,
+                    timezone_name=self.hass.config.time_zone,
+                    field="coverage_end",
+                ),
+                "adjusted_coverage_summary": str(summary.get("coverage_summary", "")),
+                "review_text": str(summary.get("review_text", "")),
+                "diagnostic_text": str(summary.get("diagnostic_text", "")),
+                "accept_note": accept_note,
+            },
+            last_step=self._review_form_last_step(key),
+        )
+
+    async def _async_return_to_pending_source_step(self) -> ConfigFlowResult:
+        """Return to the staged source input step."""
+        if self._pending_source_step_id is None:
+            return await self._async_default_source_step()
+        return await getattr(self, f"async_step_{self._pending_source_step_id}")()
+
+    async def _async_validate_source(self, key: str, source: dict[str, Any]) -> None:
+        """Validate source config against the current horizon."""
+        try:
+            self._last_source_available_count = await _async_validate_source_values(
+                self.hass,
+                core_data=self._core_data(),
+                key=key,
+                source=source,
+                floor_to_slot=self._floor_to_slot,
+                validate_built_in_entity=self._validate_built_in_usage_entity,
+            )
+        except SourceProviderError as err:
+            if available_count := err.details.get("available_count"):
+                self._last_source_available_count = int(available_count)
+            raise vol.Invalid(_invalid_key_from_source_error(err)) from err
+
+    def _validate_built_in_usage_entity(self, entity_id: str) -> None:
+        """Validate built-in usage entity metadata before forecasting."""
+        state = self.hass.states.get(entity_id)
+        if state is None:
+            raise vol.Invalid("entity_not_found")
+        if state.attributes.get("device_class") != "energy":
+            raise vol.Invalid("built_in_requires_energy_kwh")
+        if state.attributes.get("unit_of_measurement") != "kWh":
+            raise vol.Invalid("built_in_requires_energy_kwh")
+
+    def _floor_to_slot(self, value: datetime, slot_minutes: int) -> datetime:
+        """Floor datetime down to nearest slot boundary."""
+        seconds = int(value.timestamp())
+        slot_seconds = slot_minutes * 60
+        floored = (seconds // slot_seconds) * slot_seconds
+        return datetime.fromtimestamp(floored, tz=UTC)
+
+
+class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
     """Handle a config flow for WattPlan."""
 
     VERSION = 1
@@ -2437,183 +2681,28 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
             last_step=False,
         )
 
-    def _source_description_placeholders(self, key: str) -> dict[str, str]:
-        """Return description placeholders for source steps."""
-        source_label = "Price"
-        if key == CONF_SOURCE_EXPORT_PRICE:
-            source_label = "Export price"
-        elif key == CONF_SOURCE_USAGE:
-            source_label = "Usage"
-        elif key == CONF_SOURCE_PV:
-            source_label = "PV"
+    def _core_data(self) -> dict[str, Any]:
+        """Return planner core data for the setup flow."""
+        return self._core
 
-        return {
-            "source_label": source_label,
-            "required_count": str(_expected_slots(self._core)),
-            "available_count": str(self._last_source_available_count or 0),
-            "slot_minutes": str(self._core[CONF_SLOT_MINUTES]),
-        }
+    def _stored_source(self, key: str) -> dict[str, Any]:
+        """Return persisted setup-flow source data for a source key."""
+        return self._sources.get(key, {})
 
-    async def _async_energy_provider_options(self) -> list[selector.SelectOptionDict]:
-        """Return Energy solar forecast providers as selector options."""
-        entries = await async_get_energy_solar_forecast_entries(self.hass)
-        return [
-            selector.SelectOptionDict(value=entry.entry_id, label=entry.title)
-            for entry in entries
-        ]
+    async def _async_default_source_step(self) -> ConfigFlowResult:
+        """Return the first source step when review state is missing."""
+        return await self.async_step_source_price()
 
-    async def _async_include_energy_provider_mode(
-        self,
-        existing: dict[str, Any],
-        *,
-        include_energy_provider: bool,
-    ) -> bool:
-        """Return whether Energy provider should be offered in source mode."""
-        if not include_energy_provider:
-            return False
-        if existing.get(CONF_SOURCE_MODE) == SOURCE_MODE_ENERGY_PROVIDER:
-            return True
-        return bool(await self._async_energy_provider_options())
-
-    def _source_step_defaults(self, key: str) -> dict[str, Any]:
-        """Return defaults for the active source input step."""
-        if self._pending_source_key == key:
-            if self._pending_source_input is not None:
-                return _source_base_defaults(self._pending_source_input)
-            if self._pending_source is not None:
-                return _source_base_defaults(self._pending_source)
-        return _source_base_defaults(self._sources.get(key, {}))
-
-    async def _async_prepare_source_review(
-        self,
-        key: str,
-        source: dict[str, Any],
-        *,
-        source_step_id: str,
-        source_input: dict[str, Any] | None = None,
+    async def _async_commit_reviewed_source(
+        self, key: str, resolved_pending: dict[str, Any]
     ) -> ConfigFlowResult:
-        """Stage one source for review before saving it."""
-        self._pending_source_key = key
-        self._pending_source = source
-        self._pending_source_input = source_input
-        self._pending_source_step_id = source_step_id
-        self._pending_source_summary = await _async_source_summary(
-            self.hass,
-            core_data=self._core,
-            key=key,
-            source=source,
-            source_input=source_input,
-            floor_to_slot=self._floor_to_slot,
-            validate_built_in_entity=self._validate_built_in_usage_entity,
-        )
-        self._pending_source_input = self._pending_source_summary.get(
-            "resolved_source_input", source_input
-        )
-        return await self.async_step_source_review()
+        """Persist the reviewed source and continue setup."""
+        self._sources[key] = resolved_pending
+        return await self._async_after_source_saved(key)
 
-    async def async_step_source_review(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Review and confirm one staged source."""
-        if self._pending_source_key is None or self._pending_source is None:
-            return await self.async_step_source_price()
-
-        key = self._pending_source_key
-        pending = dict(self._pending_source)
-        summary = self._pending_source_summary or {}
-        resolved_pending = dict(summary.get("resolved_source", pending))
-        is_valid = bool(summary.get("is_valid", False))
-        defaults = {
-            CONF_ACCEPT_SOURCE_SUMMARY: is_valid,
-        }
-        errors: dict[str, str] = (
-            {"base": str(summary["error_key"])}
-            if summary.get("error_key") is not None
-            else {}
-        )
-        if user_input is not None:
-            if not is_valid:
-                return await self._async_return_to_pending_source_step()
-            if not user_input[CONF_ACCEPT_SOURCE_SUMMARY]:
-                return await self._async_return_to_pending_source_step()
-            try:
-                await self._async_validate_source(key, resolved_pending)
-            except vol.Invalid as err:
-                errors["base"] = str(err)
-                self._pending_source_summary = await _async_source_summary(
-                    self.hass,
-                    core_data=self._core,
-                    key=key,
-                    source=pending,
-                    source_input=self._pending_source_input,
-                    floor_to_slot=self._floor_to_slot,
-                    validate_built_in_entity=self._validate_built_in_usage_entity,
-                )
-                summary = self._pending_source_summary or {}
-                resolved_pending = dict(summary.get("resolved_source", pending))
-                is_valid = bool(summary.get("is_valid", False))
-                defaults[CONF_ACCEPT_SOURCE_SUMMARY] = is_valid
-            else:
-                self._sources[key] = resolved_pending
-                self._pending_source_key = None
-                self._pending_source = None
-                self._pending_source_input = None
-                self._pending_source_step_id = None
-                self._pending_source_summary = None
-                return await self._async_after_source_saved(key)
-
-        accept_note = await _async_config_translation(
-            self.hass,
-            "review_accept_note_valid" if is_valid else "review_accept_note_invalid",
-        )
-
-        return self.async_show_form(
-            step_id="source_review",
-            data_schema=self.add_suggested_values_to_schema(
-                _source_review_schema(defaults, include_accept=is_valid),
-                user_input or {},
-            ),
-            errors=errors,
-            description_placeholders={
-                **self._source_description_placeholders(key),
-                "raw_coverage_start": await _coverage_placeholder_text(
-                    self.hass,
-                    summary=summary,
-                    timezone_name=self.hass.config.time_zone,
-                    field="raw_coverage_start",
-                ),
-                "raw_coverage_end": await _coverage_placeholder_text(
-                    self.hass,
-                    summary=summary,
-                    timezone_name=self.hass.config.time_zone,
-                    field="raw_coverage_end",
-                ),
-                "raw_coverage_summary": str(summary.get("raw_coverage_summary", "")),
-                "adjusted_coverage_start": await _coverage_placeholder_text(
-                    self.hass,
-                    summary=summary,
-                    timezone_name=self.hass.config.time_zone,
-                    field="coverage_start",
-                ),
-                "adjusted_coverage_end": await _coverage_placeholder_text(
-                    self.hass,
-                    summary=summary,
-                    timezone_name=self.hass.config.time_zone,
-                    field="coverage_end",
-                ),
-                "adjusted_coverage_summary": str(summary.get("coverage_summary", "")),
-                "review_text": str(summary.get("review_text", "")),
-                "diagnostic_text": str(summary.get("diagnostic_text", "")),
-                "accept_note": accept_note,
-            },
-            last_step=self._is_final_source_step(key),
-        )
-
-    async def _async_return_to_pending_source_step(self) -> ConfigFlowResult:
-        """Return to the staged source input step."""
-        if self._pending_source_step_id is None:
-            return await self.async_step_source_price()
-        return await getattr(self, f"async_step_{self._pending_source_step_id}")()
+    def _review_form_last_step(self, key: str) -> bool:
+        """Return whether the source review is the final setup form."""
+        return self._is_final_source_step(key)
 
     async def _async_after_source_saved(self, key: str) -> ConfigFlowResult:
         """Continue to the next source or create the config entry."""
@@ -2670,41 +2759,7 @@ class WattPlanConfigFlow(ConfigFlow, domain=DOMAIN):
             last_step=True,
         )
 
-    async def _async_validate_source(self, key: str, source: dict[str, Any]) -> None:
-        """Validate source config against the current horizon."""
-        try:
-            self._last_source_available_count = await _async_validate_source_values(
-                self.hass,
-                core_data=self._core,
-                key=key,
-                source=source,
-                floor_to_slot=self._floor_to_slot,
-                validate_built_in_entity=self._validate_built_in_usage_entity,
-            )
-        except SourceProviderError as err:
-            if available_count := err.details.get("available_count"):
-                self._last_source_available_count = int(available_count)
-            raise vol.Invalid(_invalid_key_from_source_error(err)) from err
-
-    def _validate_built_in_usage_entity(self, entity_id: str) -> None:
-        """Validate built-in usage entity metadata before forecasting."""
-        state = self.hass.states.get(entity_id)
-        if state is None:
-            raise vol.Invalid("entity_not_found")
-        if state.attributes.get("device_class") != "energy":
-            raise vol.Invalid("built_in_requires_energy_kwh")
-        if state.attributes.get("unit_of_measurement") != "kWh":
-            raise vol.Invalid("built_in_requires_energy_kwh")
-
-    def _floor_to_slot(self, value: datetime, slot_minutes: int) -> datetime:
-        """Floor datetime down to nearest slot boundary."""
-        seconds = int(value.timestamp())
-        slot_seconds = slot_minutes * 60
-        floored = (seconds // slot_seconds) * slot_seconds
-        return datetime.fromtimestamp(floored, tz=UTC)
-
-
-class WattPlanOptionsFlow(OptionsFlowWithReload):
+class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
     """Handle WattPlan options flow."""
 
     _data: dict[str, Any]
@@ -3308,187 +3363,27 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
             last_step=False,
         )
 
-    def _source_description_placeholders(self, key: str) -> dict[str, str]:
-        """Return description placeholders for source steps."""
-        source_label = "Price"
-        if key == CONF_SOURCE_EXPORT_PRICE:
-            source_label = "Export price"
-        elif key == CONF_SOURCE_USAGE:
-            source_label = "Usage"
-        elif key == CONF_SOURCE_PV:
-            source_label = "PV"
+    def _core_data(self) -> dict[str, Any]:
+        """Return planner core data for the options flow."""
+        return self._data
 
-        return {
-            "source_label": source_label,
-            "required_count": str(_expected_slots(self._data)),
-            "available_count": str(self._last_source_available_count or 0),
-            "slot_minutes": str(self._data[CONF_SLOT_MINUTES]),
-        }
+    def _stored_source(self, key: str) -> dict[str, Any]:
+        """Return persisted options-flow source data for a source key."""
+        return self._data.get(CONF_SOURCES, {}).get(key, {})
 
-    async def _async_energy_provider_options(self) -> list[selector.SelectOptionDict]:
-        """Return Energy solar forecast providers as selector options."""
-        entries = await async_get_energy_solar_forecast_entries(self.hass)
-        return [
-            selector.SelectOptionDict(value=entry.entry_id, label=entry.title)
-            for entry in entries
-        ]
+    async def _async_default_source_step(self) -> ConfigFlowResult:
+        """Return the menu step when review state is missing."""
+        return await self.async_step_init()
 
-    async def _async_include_energy_provider_mode(
-        self,
-        existing: dict[str, Any],
-        *,
-        include_energy_provider: bool,
-    ) -> bool:
-        """Return whether Energy provider should be offered in source mode."""
-        if not include_energy_provider:
-            return False
-        if existing.get(CONF_SOURCE_MODE) == SOURCE_MODE_ENERGY_PROVIDER:
-            return True
-        return bool(await self._async_energy_provider_options())
-
-    def _source_step_defaults(self, key: str) -> dict[str, Any]:
-        """Return defaults for the active source input step."""
-        if self._pending_source_key == key:
-            if self._pending_source_input is not None:
-                return _source_base_defaults(self._pending_source_input)
-            if self._pending_source is not None:
-                return _source_base_defaults(self._pending_source)
-        return _source_base_defaults(self._data.get(CONF_SOURCES, {}).get(key, {}))
-
-    async def _async_prepare_source_review(
-        self,
-        key: str,
-        source: dict[str, Any],
-        *,
-        source_step_id: str,
-        source_input: dict[str, Any] | None = None,
+    async def _async_commit_reviewed_source(
+        self, key: str, resolved_pending: dict[str, Any]
     ) -> ConfigFlowResult:
-        """Stage one source for review before saving it."""
-        self._pending_source_key = key
-        self._pending_source = source
-        self._pending_source_input = source_input
-        self._pending_source_step_id = source_step_id
-        self._pending_source_summary = await _async_source_summary(
-            self.hass,
-            core_data=self._data,
-            key=key,
-            source=source,
-            source_input=source_input,
-            floor_to_slot=self._floor_to_slot,
-            validate_built_in_entity=self._validate_built_in_usage_entity,
-        )
-        self._pending_source_input = self._pending_source_summary.get(
-            "resolved_source_input", source_input
-        )
-        return await self.async_step_source_review()
-
-    async def async_step_source_review(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Review and confirm one staged source in options flow."""
-        if self._pending_source_key is None or self._pending_source is None:
-            return await self.async_step_init()
-
-        key = self._pending_source_key
-        pending = dict(self._pending_source)
-        summary = self._pending_source_summary or {}
-        resolved_pending = dict(summary.get("resolved_source", pending))
-        is_valid = bool(summary.get("is_valid", False))
-        defaults = {
-            CONF_ACCEPT_SOURCE_SUMMARY: is_valid,
-        }
-        errors: dict[str, str] = (
-            {"base": str(summary["error_key"])}
-            if summary.get("error_key") is not None
-            else {}
-        )
-        if user_input is not None:
-            if not is_valid:
-                return await self._async_return_to_pending_source_step()
-            if not user_input[CONF_ACCEPT_SOURCE_SUMMARY]:
-                return await self._async_return_to_pending_source_step()
-            try:
-                await self._async_validate_source(key, resolved_pending)
-            except vol.Invalid as err:
-                errors["base"] = str(err)
-                self._pending_source_summary = await _async_source_summary(
-                    self.hass,
-                    core_data=self._data,
-                    key=key,
-                    source=pending,
-                    source_input=self._pending_source_input,
-                    floor_to_slot=self._floor_to_slot,
-                    validate_built_in_entity=self._validate_built_in_usage_entity,
-                )
-                summary = self._pending_source_summary or {}
-                resolved_pending = dict(summary.get("resolved_source", pending))
-                is_valid = bool(summary.get("is_valid", False))
-                defaults[CONF_ACCEPT_SOURCE_SUMMARY] = is_valid
-            else:
-                sources = dict(self._data.get(CONF_SOURCES, {}))
-                sources[key] = resolved_pending
-                self._data[CONF_SOURCES] = sources
-                self.hass.config_entries.async_update_entry(
-                    self.config_entry, data=self._data
-                )
-                self._pending_source_key = None
-                self._pending_source = None
-                self._pending_source_input = None
-                self._pending_source_step_id = None
-                self._pending_source_summary = None
-                return await self.async_step_init()
-
-        accept_note = await _async_config_translation(
-            self.hass,
-            "review_accept_note_valid" if is_valid else "review_accept_note_invalid",
-        )
-
-        return self.async_show_form(
-            step_id="source_review",
-            data_schema=self.add_suggested_values_to_schema(
-                _source_review_schema(defaults, include_accept=is_valid),
-                user_input or {},
-            ),
-            errors=errors,
-            description_placeholders={
-                **self._source_description_placeholders(key),
-                "raw_coverage_start": await _coverage_placeholder_text(
-                    self.hass,
-                    summary=summary,
-                    timezone_name=self.hass.config.time_zone,
-                    field="raw_coverage_start",
-                ),
-                "raw_coverage_end": await _coverage_placeholder_text(
-                    self.hass,
-                    summary=summary,
-                    timezone_name=self.hass.config.time_zone,
-                    field="raw_coverage_end",
-                ),
-                "raw_coverage_summary": str(summary.get("raw_coverage_summary", "")),
-                "adjusted_coverage_start": await _coverage_placeholder_text(
-                    self.hass,
-                    summary=summary,
-                    timezone_name=self.hass.config.time_zone,
-                    field="coverage_start",
-                ),
-                "adjusted_coverage_end": await _coverage_placeholder_text(
-                    self.hass,
-                    summary=summary,
-                    timezone_name=self.hass.config.time_zone,
-                    field="coverage_end",
-                ),
-                "adjusted_coverage_summary": str(summary.get("coverage_summary", "")),
-                "review_text": str(summary.get("review_text", "")),
-                "diagnostic_text": str(summary.get("diagnostic_text", "")),
-                "accept_note": accept_note,
-            },
-        )
-
-    async def _async_return_to_pending_source_step(self) -> ConfigFlowResult:
-        """Return to the staged source input step."""
-        if self._pending_source_step_id is None:
-            return await self.async_step_init()
-        return await getattr(self, f"async_step_{self._pending_source_step_id}")()
+        """Persist the reviewed source and return to the options menu."""
+        sources = dict(self._data.get(CONF_SOURCES, {}))
+        sources[key] = resolved_pending
+        self._data[CONF_SOURCES] = sources
+        self.hass.config_entries.async_update_entry(self.config_entry, data=self._data)
+        return await self.async_step_init()
 
     async def async_step_battery_edit_select(
         self, user_input: dict[str, Any] | None = None
@@ -3716,41 +3611,6 @@ class WattPlanOptionsFlow(OptionsFlowWithReload):
             if _subentry_name(subentry).casefold() == wanted:
                 return True
         return False
-
-    async def _async_validate_source(self, key: str, source: dict[str, Any]) -> None:
-        """Validate source config against updated option state."""
-        try:
-            self._last_source_available_count = await _async_validate_source_values(
-                self.hass,
-                core_data=self._data,
-                key=key,
-                source=source,
-                floor_to_slot=self._floor_to_slot,
-                validate_built_in_entity=self._validate_built_in_usage_entity,
-            )
-        except SourceProviderError as err:
-            if available_count := err.details.get("available_count"):
-                self._last_source_available_count = int(available_count)
-            raise vol.Invalid(_invalid_key_from_source_error(err)) from err
-
-    def _validate_built_in_usage_entity(self, entity_id: str) -> None:
-        """Validate built-in usage entity metadata before forecasting."""
-        state = self.hass.states.get(entity_id)
-        if state is None:
-            raise vol.Invalid("entity_not_found")
-        if state.attributes.get("device_class") != "energy":
-            raise vol.Invalid("built_in_requires_energy_kwh")
-        if state.attributes.get("unit_of_measurement") != "kWh":
-            raise vol.Invalid("built_in_requires_energy_kwh")
-
-    def _floor_to_slot(self, value: datetime, slot_minutes: int) -> datetime:
-        """Floor datetime down to nearest slot boundary."""
-        seconds = int(value.timestamp())
-        slot_seconds = slot_minutes * 60
-        floored = (seconds // slot_seconds) * slot_seconds
-        return datetime.fromtimestamp(floored, tz=UTC)
-
-
 
 def _subentry_name_in_use(entry: ConfigEntry, name: str) -> bool:
     """Return True if the name is already used by a subentry."""
