@@ -181,110 +181,34 @@ def _resolve_run_entries(hass: HomeAssistant, call: ServiceCall) -> list[WattPla
     return loaded
 
 
-async def _async_handle_set_target_service(
-    hass: HomeAssistant, call: ServiceCall
-) -> None:
-    """Store a user target for one or more batteries."""
-    battery_name = call.data.get(ATTR_BATTERY, "").strip()
+def _battery_name_filter(call: ServiceCall) -> str:
+    """Return the normalized battery selector from a service call."""
+    battery_name = str(call.data.get(ATTR_BATTERY, "")).strip()
     if ATTR_BATTERY in call.data and not battery_name:
         raise ServiceValidationError("`battery` must not be empty")
+    return battery_name
 
-    entry_id_filter = call.data.get(ATTR_ENTRY_ID)
+
+def _matched_loaded_entries(
+    hass: HomeAssistant, entry_id_filter: str | None
+) -> dict[str, WattPlanConfigEntry]:
+    """Return loaded WattPlan entries keyed by entry ID."""
     matched_entries = _loaded_entries(hass, entry_id_filter)
     if not matched_entries:
         raise ServiceValidationError("No loaded WattPlan entries matched the filters")
-    loaded_entries: dict[str, WattPlanConfigEntry] = {
-        entry.entry_id: entry for entry in matched_entries
-    }
+    return {entry.entry_id: entry for entry in matched_entries}
 
-    name_matches: set[tuple[str, str]] = set()
-    entity_matches: set[tuple[str, str]] = set()
-    device_matches: set[tuple[str, str]] = set()
 
-    if battery_name:
-        for entry in loaded_entries.values():
-            for subentry in entry.subentries.values():
-                if subentry.subentry_type != SUBENTRY_TYPE_BATTERY:
-                    continue
-                if _subentry_name(subentry).casefold() != battery_name.casefold():
-                    continue
-                name_matches.add((entry.entry_id, subentry.subentry_id))
-
-    entity_registry = er.async_get(hass)
-    for entity_id in call.data.get(ATTR_ENTITY_ID, []):
-        entity_entry = entity_registry.async_get(entity_id)
-        if entity_entry is None:
-            raise ServiceValidationError(f"Entity `{entity_id}` was not found")
-        entry = loaded_entries.get(entity_entry.config_entry_id)
-        if entry is None:
-            continue
-        subentry_id = _subentry_id_from_entity_unique_id(entity_entry.unique_id)
-        if subentry_id is None:
-            continue
-        subentry = entry.subentries.get(subentry_id)
-        if subentry is None or subentry.subentry_type != SUBENTRY_TYPE_BATTERY:
-            continue
-        entity_matches.add((entry.entry_id, subentry_id))
-
-    for device_id in call.data.get(ATTR_DEVICE_ID, []):
-        for entity_entry in er.async_entries_for_device(
-            entity_registry, device_id, include_disabled_entities=True
-        ):
-            entry = loaded_entries.get(entity_entry.config_entry_id)
-            if entry is None:
-                continue
-            subentry_id = _subentry_id_from_entity_unique_id(entity_entry.unique_id)
-            if subentry_id is None:
-                continue
-            subentry = entry.subentries.get(subentry_id)
-            if subentry is None or subentry.subentry_type != SUBENTRY_TYPE_BATTERY:
-                continue
-            device_matches.add((entry.entry_id, subentry_id))
-
+def _matching_battery_targets(
+    hass: HomeAssistant,
+    call: ServiceCall,
+    *,
+    loaded_entries: dict[str, WattPlanConfigEntry],
+) -> set[tuple[str, str]]:
+    """Return `(entry_id, subentry_id)` targets matching service selectors."""
     matches: set[tuple[str, str]] = set()
-    matches.update(name_matches)
-    matches.update(entity_matches)
-    matches.update(device_matches)
+    battery_name = _battery_name_filter(call)
 
-    if not matches:
-        raise ServiceValidationError("No battery targets matched the provided selectors")
-
-    reach_at = dt_util.as_utc(call.data[ATTR_REACH_AT])
-    target_soc = float(call.data[ATTR_SOC_KWH])
-    for entry in hass.config_entries.async_entries(DOMAIN):
-        if entry.entry_id not in loaded_entries:
-            continue
-        runtime_data = entry.runtime_data
-        for match_entry_id, subentry_id in matches:
-            if match_entry_id != entry.entry_id:
-                continue
-            set_battery_target(
-                runtime_data,
-                subentry_id,
-                BatteryTarget(
-                soc_kwh=target_soc,
-                reach_at=reach_at,
-                ),
-            )
-
-
-async def _async_handle_clear_target_service(
-    hass: HomeAssistant, call: ServiceCall
-) -> None:
-    """Clear a user target for one or more batteries."""
-    battery_name = call.data.get(ATTR_BATTERY, "").strip()
-    if ATTR_BATTERY in call.data and not battery_name:
-        raise ServiceValidationError("`battery` must not be empty")
-
-    entry_id_filter = call.data.get(ATTR_ENTRY_ID)
-    matched_entries = _loaded_entries(hass, entry_id_filter)
-    if not matched_entries:
-        raise ServiceValidationError("No loaded WattPlan entries matched the filters")
-    loaded_entries: dict[str, WattPlanConfigEntry] = {
-        entry.entry_id: entry for entry in matched_entries
-    }
-
-    matches: set[tuple[str, str]] = set()
     if battery_name:
         for entry in loaded_entries.values():
             for subentry in entry.subentries.values():
@@ -327,6 +251,41 @@ async def _async_handle_clear_target_service(
 
     if not matches:
         raise ServiceValidationError("No battery targets matched the provided selectors")
+    return matches
+
+
+async def _async_handle_set_target_service(
+    hass: HomeAssistant, call: ServiceCall
+) -> None:
+    """Store a user target for one or more batteries."""
+    loaded_entries = _matched_loaded_entries(hass, call.data.get(ATTR_ENTRY_ID))
+    matches = _matching_battery_targets(hass, call, loaded_entries=loaded_entries)
+
+    reach_at = dt_util.as_utc(call.data[ATTR_REACH_AT])
+    target_soc = float(call.data[ATTR_SOC_KWH])
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        if entry.entry_id not in loaded_entries:
+            continue
+        runtime_data = entry.runtime_data
+        for match_entry_id, subentry_id in matches:
+            if match_entry_id != entry.entry_id:
+                continue
+            set_battery_target(
+                runtime_data,
+                subentry_id,
+                BatteryTarget(
+                soc_kwh=target_soc,
+                reach_at=reach_at,
+                ),
+            )
+
+
+async def _async_handle_clear_target_service(
+    hass: HomeAssistant, call: ServiceCall
+) -> None:
+    """Clear a user target for one or more batteries."""
+    loaded_entries = _matched_loaded_entries(hass, call.data.get(ATTR_ENTRY_ID))
+    matches = _matching_battery_targets(hass, call, loaded_entries=loaded_entries)
 
     cleared_any = False
     for entry in hass.config_entries.async_entries(DOMAIN):
@@ -420,6 +379,41 @@ async def _async_handle_export_usage_forecast_debug_service(
     return {"debug": debug_payload}
 
 
+SERVICE_SPECS = (
+    (SERVICE_SET_TARGET, _async_handle_set_target_service, SET_TARGET_SERVICE_SCHEMA, None),
+    (
+        SERVICE_CLEAR_TARGET,
+        _async_handle_clear_target_service,
+        CLEAR_TARGET_SERVICE_SCHEMA,
+        None,
+    ),
+    (
+        SERVICE_RUN_OPTIMIZE_NOW,
+        _async_handle_run_optimize_now_service,
+        RUN_NOW_SERVICE_SCHEMA,
+        None,
+    ),
+    (
+        SERVICE_RUN_PLAN_NOW,
+        _async_handle_run_plan_now_service,
+        RUN_NOW_SERVICE_SCHEMA,
+        None,
+    ),
+    (
+        SERVICE_EXPORT_PLANNER_INPUT,
+        _async_handle_export_planner_input_service,
+        EXPORT_PLANNER_INPUT_SERVICE_SCHEMA,
+        SupportsResponse.ONLY,
+    ),
+    (
+        SERVICE_EXPORT_USAGE_FORECAST_DEBUG,
+        _async_handle_export_usage_forecast_debug_service,
+        EXPORT_USAGE_FORECAST_DEBUG_SERVICE_SCHEMA,
+        SupportsResponse.ONLY,
+    ),
+)
+
+
 def _async_mark_runtime_updated(runtime_data: WattPlanRuntimeData) -> None:
     """Update runtime timestamp and notify listeners."""
     runtime_data.last_run_at = datetime.now(tz=UTC)
@@ -452,44 +446,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) -> 
     """Set up WattPlan from a config entry."""
     domain_data = hass.data.setdefault(DOMAIN, {})
     if not domain_data.get(DATA_SERVICE_REGISTERED, False):
-        hass.services.async_register(
-            DOMAIN,
-            SERVICE_SET_TARGET,
-            partial(_async_handle_set_target_service, hass),
-            schema=SET_TARGET_SERVICE_SCHEMA,
-        )
-        hass.services.async_register(
-            DOMAIN,
-            SERVICE_CLEAR_TARGET,
-            partial(_async_handle_clear_target_service, hass),
-            schema=CLEAR_TARGET_SERVICE_SCHEMA,
-        )
-        hass.services.async_register(
-            DOMAIN,
-            SERVICE_RUN_OPTIMIZE_NOW,
-            partial(_async_handle_run_optimize_now_service, hass),
-            schema=RUN_NOW_SERVICE_SCHEMA,
-        )
-        hass.services.async_register(
-            DOMAIN,
-            SERVICE_RUN_PLAN_NOW,
-            partial(_async_handle_run_plan_now_service, hass),
-            schema=RUN_NOW_SERVICE_SCHEMA,
-        )
-        hass.services.async_register(
-            DOMAIN,
-            SERVICE_EXPORT_PLANNER_INPUT,
-            partial(_async_handle_export_planner_input_service, hass),
-            schema=EXPORT_PLANNER_INPUT_SERVICE_SCHEMA,
-            supports_response=SupportsResponse.ONLY,
-        )
-        hass.services.async_register(
-            DOMAIN,
-            SERVICE_EXPORT_USAGE_FORECAST_DEBUG,
-            partial(_async_handle_export_usage_forecast_debug_service, hass),
-            schema=EXPORT_USAGE_FORECAST_DEBUG_SERVICE_SCHEMA,
-            supports_response=SupportsResponse.ONLY,
-        )
+        for service, handler, schema, supports_response in SERVICE_SPECS:
+            register_kwargs: dict[str, Any] = {"schema": schema}
+            if supports_response is not None:
+                register_kwargs["supports_response"] = supports_response
+            hass.services.async_register(
+                DOMAIN,
+                service,
+                partial(handler, hass),
+                **register_kwargs,
+            )
         domain_data[DATA_SERVICE_REGISTERED] = True
     domain_data[DATA_ENTRY_COUNT] = int(domain_data.get(DATA_ENTRY_COUNT, 0)) + 1
 
@@ -526,11 +492,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) ->
         int(domain_data[DATA_ENTRY_COUNT]) == 0
         and domain_data.get(DATA_SERVICE_REGISTERED, False)
     ):
-        hass.services.async_remove(DOMAIN, SERVICE_SET_TARGET)
-        hass.services.async_remove(DOMAIN, SERVICE_RUN_OPTIMIZE_NOW)
-        hass.services.async_remove(DOMAIN, SERVICE_RUN_PLAN_NOW)
-        hass.services.async_remove(DOMAIN, SERVICE_EXPORT_PLANNER_INPUT)
-        hass.services.async_remove(DOMAIN, SERVICE_EXPORT_USAGE_FORECAST_DEBUG)
+        for service, _handler, _schema, _supports_response in SERVICE_SPECS:
+            hass.services.async_remove(DOMAIN, service)
         domain_data[DATA_SERVICE_REGISTERED] = False
     return True
 
