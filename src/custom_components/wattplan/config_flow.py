@@ -2001,6 +2001,200 @@ class _SharedSourceFlow:
                 return _source_base_defaults(self._pending_source)
         return _source_base_defaults(self._stored_source(key))
 
+    async def _async_source_template_step(
+        self,
+        key: str,
+        user_input: dict[str, Any] | None,
+        *,
+        step_id: str,
+    ) -> ConfigFlowResult:
+        """Configure or edit a source using template mode."""
+        errors: dict[str, str] = {}
+        existing = self._source_step_defaults(key)
+        defaults = existing
+
+        if user_input is not None:
+            defaults = user_input
+            source = {
+                CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                CONF_PROVIDERS: [
+                    {
+                        CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                        CONF_TEMPLATE: user_input[CONF_TEMPLATE],
+                    }
+                ],
+                CONF_FIXUP_PROFILE: user_input[CONF_FIXUP_PROFILE],
+            }
+            source.update(user_input.get(SECTION_SOURCE_ADVANCED, {}))
+            return await self._async_prepare_source_review(
+                key, source, source_step_id=step_id
+            )
+
+        return self.async_show_form(
+            step_id=step_id,
+            data_schema=self.add_suggested_values_to_schema(
+                _source_template_schema(existing), defaults
+            ),
+            errors=errors,
+            description_placeholders=self._source_description_placeholders(key),
+            last_step=False,
+        )
+
+    async def _async_source_adapter_step(
+        self,
+        key: str,
+        user_input: dict[str, Any] | None,
+        *,
+        step_id: str,
+    ) -> ConfigFlowResult:
+        """Configure or edit a source using entity adapter mode."""
+        errors: dict[str, str] = {}
+        existing = self._source_step_defaults(key)
+        defaults = existing
+
+        if user_input is not None:
+            defaults = user_input
+            errors.update(_validate_source_adapter_input(user_input))
+            if not errors:
+                return await self._async_prepare_source_review(
+                    key,
+                    _source_from_entity_adapter_user_input(user_input),
+                    source_step_id=step_id,
+                    source_input=user_input,
+                )
+
+        return self.async_show_form(
+            step_id=step_id,
+            data_schema=self.add_suggested_values_to_schema(
+                _source_adapter_schema(existing), defaults
+            ),
+            errors=errors,
+            description_placeholders=self._source_description_placeholders(key),
+            last_step=False,
+        )
+
+    async def _async_source_service_step(
+        self,
+        key: str,
+        user_input: dict[str, Any] | None,
+        *,
+        step_id: str,
+    ) -> ConfigFlowResult:
+        """Configure or edit a source using service adapter mode."""
+        errors: dict[str, str] = {}
+        existing = self._source_step_defaults(key)
+        defaults = existing
+
+        if user_input is not None:
+            defaults = user_input
+            errors.update(_validate_service_adapter_input(user_input))
+            if not errors:
+                return await self._async_prepare_source_review(
+                    key,
+                    _source_from_service_adapter_user_input(user_input),
+                    source_step_id=step_id,
+                    source_input=user_input,
+                )
+
+        return self.async_show_form(
+            step_id=step_id,
+            data_schema=self.add_suggested_values_to_schema(
+                _source_service_schema(existing), defaults
+            ),
+            errors=errors,
+            description_placeholders=self._source_description_placeholders(key),
+            last_step=False,
+        )
+
+    async def _async_source_energy_provider_step(
+        self,
+        key: str,
+        user_input: dict[str, Any] | None,
+        *,
+        step_id: str,
+    ) -> ConfigFlowResult:
+        """Configure or edit a source using an Energy solar forecast provider."""
+        errors: dict[str, str] = {}
+        existing = self._source_step_defaults(key)
+        defaults = existing
+        provider_options = await self._async_energy_provider_options()
+
+        if user_input is not None:
+            defaults = user_input
+            source = {
+                CONF_SOURCE_MODE: SOURCE_MODE_ENERGY_PROVIDER,
+                CONF_PROVIDERS: [
+                    {
+                        CONF_SOURCE_MODE: SOURCE_MODE_ENERGY_PROVIDER,
+                        CONF_CONFIG_ENTRY_ID: user_input[CONF_CONFIG_ENTRY_ID],
+                    }
+                ],
+                CONF_FIXUP_PROFILE: FIXUP_PROFILE_EXTEND,
+            }
+            source.update(user_input.get(SECTION_SOURCE_ADVANCED, {}))
+            if not provider_options:
+                errors["base"] = "energy_provider_none_available"
+            else:
+                return await self._async_prepare_source_review(
+                    key, source, source_step_id=step_id
+                )
+
+        return self.async_show_form(
+            step_id=step_id,
+            data_schema=self.add_suggested_values_to_schema(
+                _source_energy_provider_schema(
+                    {
+                        CONF_FIXUP_PROFILE: FIXUP_PROFILE_EXTEND,
+                        CONF_EDGE_FILL_MODE: EDGE_FILL_MODE_HOLD,
+                        **existing,
+                    },
+                    provider_options=provider_options,
+                ),
+                defaults,
+            ),
+            errors=errors,
+            description_placeholders=self._source_description_placeholders(key),
+            last_step=False,
+        )
+
+    async def _async_source_built_in_step(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Configure or edit the built-in usage forecast source."""
+        errors: dict[str, str] = {}
+        existing = self._source_step_defaults(CONF_SOURCE_USAGE)
+        defaults = existing
+
+        if user_input is not None:
+            defaults = user_input
+            source = {
+                CONF_SOURCE_MODE: SOURCE_MODE_BUILT_IN,
+                CONF_PROVIDERS: [
+                    {
+                        CONF_SOURCE_MODE: SOURCE_MODE_BUILT_IN,
+                        CONF_WATTPLAN_ENTITY_ID: user_input[CONF_WATTPLAN_ENTITY_ID],
+                        CONF_HISTORY_DAYS: int(user_input[CONF_HISTORY_DAYS]),
+                    }
+                ],
+            }
+            return await self._async_prepare_source_review(
+                CONF_SOURCE_USAGE,
+                source,
+                source_step_id="source_usage_built_in",
+            )
+
+        return self.async_show_form(
+            step_id="source_usage_built_in",
+            data_schema=self.add_suggested_values_to_schema(
+                _source_built_in_schema(existing), defaults
+            ),
+            errors=errors,
+            description_placeholders=self._source_description_placeholders(
+                CONF_SOURCE_USAGE
+            ),
+            last_step=False,
+        )
+
     async def _async_refresh_pending_source_summary(
         self,
         key: str,
@@ -2387,7 +2581,7 @@ class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Configure price source template."""
-        return await self._async_step_source_template(
+        return await self._async_source_template_step(
             CONF_SOURCE_IMPORT_PRICE, user_input, step_id="source_price_template"
         )
 
@@ -2395,7 +2589,7 @@ class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Configure export price source template."""
-        return await self._async_step_source_template(
+        return await self._async_source_template_step(
             CONF_SOURCE_EXPORT_PRICE, user_input, step_id="source_export_price_template"
         )
 
@@ -2403,7 +2597,7 @@ class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Configure usage source template."""
-        return await self._async_step_source_template(
+        return await self._async_source_template_step(
             CONF_SOURCE_USAGE, user_input, step_id="source_usage_template"
         )
 
@@ -2411,47 +2605,8 @@ class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Configure PV source template."""
-        return await self._async_step_source_template(
+        return await self._async_source_template_step(
             CONF_SOURCE_PV, user_input, step_id="source_pv_template"
-        )
-
-    async def _async_step_source_template(
-        self,
-        key: str,
-        user_input: dict[str, Any] | None,
-        *,
-        step_id: str,
-    ) -> ConfigFlowResult:
-        """Configure source using template mode."""
-        errors: dict[str, str] = {}
-        existing = self._source_step_defaults(key)
-        defaults = existing
-
-        if user_input is not None:
-            defaults = user_input
-            source = {
-                CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                CONF_PROVIDERS: [
-                    {
-                        CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                        CONF_TEMPLATE: user_input[CONF_TEMPLATE],
-                    }
-                ],
-                CONF_FIXUP_PROFILE: user_input[CONF_FIXUP_PROFILE],
-            }
-            source.update(user_input.get(SECTION_SOURCE_ADVANCED, {}))
-            return await self._async_prepare_source_review(
-                key, source, source_step_id=step_id
-            )
-
-        return self.async_show_form(
-            step_id=step_id,
-            data_schema=self.add_suggested_values_to_schema(
-                _source_template_schema(existing), defaults
-            ),
-            errors=errors,
-            description_placeholders=self._source_description_placeholders(key),
-            last_step=False,
         )
 
     async def async_step_source_price_adapter(
@@ -2530,39 +2685,7 @@ class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Configure usage source built-in forecast mode."""
-        errors: dict[str, str] = {}
-        existing = self._source_step_defaults(CONF_SOURCE_USAGE)
-        defaults = existing
-
-        if user_input is not None:
-            defaults = user_input
-            source = {
-                CONF_SOURCE_MODE: SOURCE_MODE_BUILT_IN,
-                CONF_PROVIDERS: [
-                    {
-                        CONF_SOURCE_MODE: SOURCE_MODE_BUILT_IN,
-                        CONF_WATTPLAN_ENTITY_ID: user_input[CONF_WATTPLAN_ENTITY_ID],
-                        CONF_HISTORY_DAYS: int(user_input[CONF_HISTORY_DAYS]),
-                    }
-                ],
-            }
-            return await self._async_prepare_source_review(
-                CONF_SOURCE_USAGE,
-                source,
-                source_step_id="source_usage_built_in",
-            )
-
-        return self.async_show_form(
-            step_id="source_usage_built_in",
-            data_schema=self.add_suggested_values_to_schema(
-                _source_built_in_schema(existing), defaults
-            ),
-            errors=errors,
-            description_placeholders=self._source_description_placeholders(
-                CONF_SOURCE_USAGE
-            ),
-            last_step=False,
-        )
+        return await self._async_source_built_in_step(user_input)
 
     async def _async_step_source_adapter(
         self,
@@ -2572,30 +2695,7 @@ class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
         step_id: str,
     ) -> ConfigFlowResult:
         """Configure source using entity adapter mode."""
-        errors: dict[str, str] = {}
-        existing = self._source_step_defaults(key)
-        defaults = existing
-
-        if user_input is not None:
-            defaults = user_input
-            errors.update(_validate_source_adapter_input(user_input))
-            if not errors:
-                return await self._async_prepare_source_review(
-                    key,
-                    _source_from_entity_adapter_user_input(user_input),
-                    source_step_id=step_id,
-                    source_input=user_input,
-                )
-
-        return self.async_show_form(
-            step_id=step_id,
-            data_schema=self.add_suggested_values_to_schema(
-                _source_adapter_schema(existing), defaults
-            ),
-            errors=errors,
-            description_placeholders=self._source_description_placeholders(key),
-            last_step=False,
-        )
+        return await self._async_source_adapter_step(key, user_input, step_id=step_id)
 
     async def _async_step_source_service(
         self,
@@ -2605,30 +2705,7 @@ class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
         step_id: str,
     ) -> ConfigFlowResult:
         """Configure source using service adapter mode."""
-        errors: dict[str, str] = {}
-        existing = self._source_step_defaults(key)
-        defaults = existing
-
-        if user_input is not None:
-            defaults = user_input
-            errors.update(_validate_service_adapter_input(user_input))
-            if not errors:
-                return await self._async_prepare_source_review(
-                    key,
-                    _source_from_service_adapter_user_input(user_input),
-                    source_step_id=step_id,
-                    source_input=user_input,
-                )
-
-        return self.async_show_form(
-            step_id=step_id,
-            data_schema=self.add_suggested_values_to_schema(
-                _source_service_schema(existing), defaults
-            ),
-            errors=errors,
-            description_placeholders=self._source_description_placeholders(key),
-            last_step=False,
-        )
+        return await self._async_source_service_step(key, user_input, step_id=step_id)
 
     async def _async_step_source_energy_provider(
         self,
@@ -2638,47 +2715,8 @@ class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
         step_id: str,
     ) -> ConfigFlowResult:
         """Configure source using an Energy solar forecast provider."""
-        errors: dict[str, str] = {}
-        existing = self._source_step_defaults(key)
-        defaults = existing
-        provider_options = await self._async_energy_provider_options()
-
-        if user_input is not None:
-            defaults = user_input
-            source = {
-                CONF_SOURCE_MODE: SOURCE_MODE_ENERGY_PROVIDER,
-                CONF_PROVIDERS: [
-                    {
-                        CONF_SOURCE_MODE: SOURCE_MODE_ENERGY_PROVIDER,
-                        CONF_CONFIG_ENTRY_ID: user_input[CONF_CONFIG_ENTRY_ID],
-                    }
-                ],
-                CONF_FIXUP_PROFILE: FIXUP_PROFILE_EXTEND,
-            }
-            source.update(user_input.get(SECTION_SOURCE_ADVANCED, {}))
-            if not provider_options:
-                errors["base"] = "energy_provider_none_available"
-            else:
-                return await self._async_prepare_source_review(
-                    key, source, source_step_id=step_id
-                )
-
-        return self.async_show_form(
-            step_id=step_id,
-            data_schema=self.add_suggested_values_to_schema(
-                _source_energy_provider_schema(
-                    {
-                        CONF_FIXUP_PROFILE: FIXUP_PROFILE_EXTEND,
-                        CONF_EDGE_FILL_MODE: EDGE_FILL_MODE_HOLD,
-                        **existing,
-                    },
-                    provider_options=provider_options,
-                ),
-                defaults,
-            ),
-            errors=errors,
-            description_placeholders=self._source_description_placeholders(key),
-            last_step=False,
+        return await self._async_source_energy_provider_step(
+            key, user_input, step_id=step_id
         )
 
     def _core_data(self) -> dict[str, Any]:
@@ -3043,7 +3081,7 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Edit price source template in options."""
-        return await self._async_step_source_template_options(
+        return await self._async_source_template_step(
             CONF_SOURCE_IMPORT_PRICE,
             user_input,
             step_id="source_price_template",
@@ -3053,7 +3091,7 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Edit export price source template in options."""
-        return await self._async_step_source_template_options(
+        return await self._async_source_template_step(
             CONF_SOURCE_EXPORT_PRICE,
             user_input,
             step_id="source_export_price_template",
@@ -3063,7 +3101,7 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Edit usage source template in options."""
-        return await self._async_step_source_template_options(
+        return await self._async_source_template_step(
             CONF_SOURCE_USAGE,
             user_input,
             step_id="source_usage_template",
@@ -3073,56 +3111,17 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Edit PV source template in options."""
-        return await self._async_step_source_template_options(
+        return await self._async_source_template_step(
             CONF_SOURCE_PV,
             user_input,
             step_id="source_pv_template",
-        )
-
-    async def _async_step_source_template_options(
-        self,
-        key: str,
-        user_input: dict[str, Any] | None,
-        *,
-        step_id: str,
-    ) -> ConfigFlowResult:
-        """Edit one source in template mode from options."""
-        errors: dict[str, str] = {}
-        existing = self._source_step_defaults(key)
-        defaults = existing
-
-        if user_input is not None:
-            defaults = user_input
-            source = {
-                CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                CONF_PROVIDERS: [
-                    {
-                        CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                        CONF_TEMPLATE: user_input[CONF_TEMPLATE],
-                    }
-                ],
-                CONF_FIXUP_PROFILE: user_input[CONF_FIXUP_PROFILE],
-            }
-            source.update(user_input.get(SECTION_SOURCE_ADVANCED, {}))
-            return await self._async_prepare_source_review(
-                key, source, source_step_id=step_id
-            )
-
-        return self.async_show_form(
-            step_id=step_id,
-            data_schema=self.add_suggested_values_to_schema(
-                _source_template_schema(existing), defaults
-            ),
-            errors=errors,
-            description_placeholders=self._source_description_placeholders(key),
-            last_step=False,
         )
 
     async def async_step_source_price_adapter(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Edit price source adapter in options."""
-        return await self._async_step_source_adapter_options(
+        return await self._async_source_adapter_step(
             CONF_SOURCE_IMPORT_PRICE,
             user_input,
             step_id="source_price_adapter",
@@ -3132,7 +3131,7 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Edit export price source adapter in options."""
-        return await self._async_step_source_adapter_options(
+        return await self._async_source_adapter_step(
             CONF_SOURCE_EXPORT_PRICE,
             user_input,
             step_id="source_export_price_adapter",
@@ -3142,7 +3141,7 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Edit usage source adapter in options."""
-        return await self._async_step_source_adapter_options(
+        return await self._async_source_adapter_step(
             CONF_SOURCE_USAGE,
             user_input,
             step_id="source_usage_adapter",
@@ -3152,7 +3151,7 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Edit PV source adapter in options."""
-        return await self._async_step_source_adapter_options(
+        return await self._async_source_adapter_step(
             CONF_SOURCE_PV,
             user_input,
             step_id="source_pv_adapter",
@@ -3162,7 +3161,7 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Edit price source service adapter in options."""
-        return await self._async_step_source_service_options(
+        return await self._async_source_service_step(
             CONF_SOURCE_IMPORT_PRICE,
             user_input,
             step_id="source_price_service",
@@ -3172,7 +3171,7 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Edit export price source service adapter in options."""
-        return await self._async_step_source_service_options(
+        return await self._async_source_service_step(
             CONF_SOURCE_EXPORT_PRICE,
             user_input,
             step_id="source_export_price_service",
@@ -3182,7 +3181,7 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Edit usage source service adapter in options."""
-        return await self._async_step_source_service_options(
+        return await self._async_source_service_step(
             CONF_SOURCE_USAGE,
             user_input,
             step_id="source_usage_service",
@@ -3192,7 +3191,7 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Edit PV source service adapter in options."""
-        return await self._async_step_source_service_options(
+        return await self._async_source_service_step(
             CONF_SOURCE_PV,
             user_input,
             step_id="source_pv_service",
@@ -3202,7 +3201,7 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Edit PV Energy solar forecast provider in options."""
-        return await self._async_step_source_energy_provider_options(
+        return await self._async_source_energy_provider_step(
             CONF_SOURCE_PV,
             user_input,
             step_id="source_pv_energy_provider",
@@ -3212,156 +3211,7 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Edit usage source built-in forecast mode in options."""
-        errors: dict[str, str] = {}
-        existing = self._source_step_defaults(CONF_SOURCE_USAGE)
-        defaults = existing
-
-        if user_input is not None:
-            defaults = user_input
-            source = {
-                CONF_SOURCE_MODE: SOURCE_MODE_BUILT_IN,
-                CONF_PROVIDERS: [
-                    {
-                        CONF_SOURCE_MODE: SOURCE_MODE_BUILT_IN,
-                        CONF_WATTPLAN_ENTITY_ID: user_input[CONF_WATTPLAN_ENTITY_ID],
-                        CONF_HISTORY_DAYS: int(user_input[CONF_HISTORY_DAYS]),
-                    }
-                ],
-            }
-            return await self._async_prepare_source_review(
-                CONF_SOURCE_USAGE,
-                source,
-                source_step_id="source_usage_built_in",
-            )
-
-        return self.async_show_form(
-            step_id="source_usage_built_in",
-            data_schema=self.add_suggested_values_to_schema(
-                _source_built_in_schema(existing), defaults
-            ),
-            errors=errors,
-            description_placeholders=self._source_description_placeholders(
-                CONF_SOURCE_USAGE
-            ),
-            last_step=False,
-        )
-
-    async def _async_step_source_adapter_options(
-        self,
-        key: str,
-        user_input: dict[str, Any] | None,
-        *,
-        step_id: str,
-    ) -> ConfigFlowResult:
-        """Edit one source in entity adapter mode from options."""
-        errors: dict[str, str] = {}
-        existing = self._source_step_defaults(key)
-        defaults = existing
-
-        if user_input is not None:
-            defaults = user_input
-            errors.update(_validate_source_adapter_input(user_input))
-            if not errors:
-                return await self._async_prepare_source_review(
-                    key,
-                    _source_from_entity_adapter_user_input(user_input),
-                    source_step_id=step_id,
-                    source_input=user_input,
-                )
-
-        return self.async_show_form(
-            step_id=step_id,
-            data_schema=self.add_suggested_values_to_schema(
-                _source_adapter_schema(existing), defaults
-            ),
-            errors=errors,
-            description_placeholders=self._source_description_placeholders(key),
-            last_step=False,
-        )
-
-    async def _async_step_source_service_options(
-        self,
-        key: str,
-        user_input: dict[str, Any] | None,
-        *,
-        step_id: str,
-    ) -> ConfigFlowResult:
-        """Edit one source in service adapter mode from options."""
-        errors: dict[str, str] = {}
-        existing = self._source_step_defaults(key)
-        defaults = existing
-
-        if user_input is not None:
-            defaults = user_input
-            errors.update(_validate_service_adapter_input(user_input))
-            if not errors:
-                return await self._async_prepare_source_review(
-                    key,
-                    _source_from_service_adapter_user_input(user_input),
-                    source_step_id=step_id,
-                    source_input=user_input,
-                )
-
-        return self.async_show_form(
-            step_id=step_id,
-            data_schema=self.add_suggested_values_to_schema(
-                _source_service_schema(existing), defaults
-            ),
-            errors=errors,
-            description_placeholders=self._source_description_placeholders(key),
-            last_step=False,
-        )
-
-    async def _async_step_source_energy_provider_options(
-        self,
-        key: str,
-        user_input: dict[str, Any] | None,
-        *,
-        step_id: str,
-    ) -> ConfigFlowResult:
-        """Edit one source in Energy provider mode from options."""
-        errors: dict[str, str] = {}
-        existing = self._source_step_defaults(key)
-        defaults = existing
-        provider_options = await self._async_energy_provider_options()
-
-        if user_input is not None:
-            defaults = user_input
-            source = {
-                CONF_SOURCE_MODE: SOURCE_MODE_ENERGY_PROVIDER,
-                CONF_PROVIDERS: [
-                    {
-                        CONF_SOURCE_MODE: SOURCE_MODE_ENERGY_PROVIDER,
-                        CONF_CONFIG_ENTRY_ID: user_input[CONF_CONFIG_ENTRY_ID],
-                    }
-                ],
-                CONF_FIXUP_PROFILE: FIXUP_PROFILE_EXTEND,
-            }
-            source.update(user_input.get(SECTION_SOURCE_ADVANCED, {}))
-            if not provider_options:
-                errors["base"] = "energy_provider_none_available"
-            else:
-                return await self._async_prepare_source_review(
-                    key, source, source_step_id=step_id
-                )
-
-        return self.async_show_form(
-            step_id=step_id,
-            data_schema=self.add_suggested_values_to_schema(
-                _source_energy_provider_schema(
-                    {
-                        CONF_FIXUP_PROFILE: FIXUP_PROFILE_EXTEND,
-                        CONF_EDGE_FILL_MODE: EDGE_FILL_MODE_HOLD,
-                        **existing,
-                    },
-                    provider_options=provider_options,
-                ),
-                defaults,
-            ),
-            errors=errors,
-            description_placeholders=self._source_description_placeholders(key),
-            last_step=False,
-        )
+        return await self._async_source_built_in_step(user_input)
 
     def _core_data(self) -> dict[str, Any]:
         """Return planner core data for the options flow."""
