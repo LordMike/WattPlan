@@ -293,6 +293,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         self._last_attempt_at: datetime | None = None
         self._last_success_at: datetime | None = None
         self._last_duration_ms: int | None = None
+        self._last_run_timings: list[TimingEntry] | None = None
         self._next_refresh_at: datetime | None = None
 
         self._plan_error = StageErrorState()
@@ -383,6 +384,13 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
     def last_duration_ms(self) -> int | None:
         """Return duration in milliseconds for the last cycle attempt."""
         return self._last_duration_ms
+
+    @property
+    def last_run_timings(self) -> list[TimingEntry] | None:
+        """Return timing entries for the last planning run."""
+        if self._last_run_timings is None:
+            return None
+        return list(self._last_run_timings)
 
     @property
     def next_refresh_at(self) -> datetime | None:
@@ -526,6 +534,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         started = datetime.now(tz=UTC)
         total_started = time.monotonic()
         self._last_attempt_at = started
+        self._last_run_timings = None
 
         async with self._plan_lock:
             try:
@@ -539,9 +548,10 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                     request, planner_result, timings=timings
                 )
                 self._append_total_timing(
-                    planner_output=planner_output,
+                    timings=timings,
                     total_ms=_duration_ms(total_started),
                 )
+                self._last_run_timings = list(timings)
                 new_snapshot = self._project_snapshot(planner_output)
                 self._snapshot = new_snapshot
                 self.data = new_snapshot
@@ -694,7 +704,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         )
         timings.append(
             (
-                f"source: {CONF_SOURCE_IMPORT_PRICE}, fetching data",
+                "Import price source fetch",
                 _duration_ms(started_at),
             )
         )
@@ -716,7 +726,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             )
             timings.append(
                 (
-                    f"source: {CONF_SOURCE_EXPORT_PRICE}, fetching data",
+                    "Export price source fetch",
                     _duration_ms(started_at),
                 )
             )
@@ -739,7 +749,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             )
             timings.append(
                 (
-                    f"source: {CONF_SOURCE_USAGE}, fetching data",
+                    "Usage source fetch",
                     _duration_ms(started_at),
                 )
             )
@@ -762,7 +772,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             )
             timings.append(
                 (
-                    f"source: {CONF_SOURCE_PV}, fetching data",
+                    "PV source fetch",
                     _duration_ms(started_at),
                 )
             )
@@ -1547,7 +1557,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
 
         timings.append(
             (
-                "optimizer: calculate plan",
+                "Optimizer plan calculation",
                 int(
                     round(
                         float(
@@ -1635,24 +1645,16 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             "hold": "h",
         }.get(action, "h")
 
-    def _append_total_timing(
-        self, *, planner_output: dict[str, Any], total_ms: int
-    ) -> None:
-        """Append the final total timing entry to any emitted plan details payload."""
-        diagnostics = planner_output.get("diagnostics")
-        if not isinstance(diagnostics, dict):
-            return
-
-        for details_key in ("plan_details", "plan_details_hourly"):
-            payload = diagnostics.get(details_key)
-            if not isinstance(payload, dict):
-                continue
-            timings = payload.get("timings")
-            if not isinstance(timings, list):
-                continue
-            while timings and isinstance(timings[-1], tuple | list) and len(timings[-1]) == 2 and timings[-1][0] == "total":
-                timings.pop()
-            timings.append(("total", int(total_ms)))
+    def _append_total_timing(self, *, timings: list[TimingEntry], total_ms: int) -> None:
+        """Append the final total timing entry to one timing list."""
+        while (
+            timings
+            and isinstance(timings[-1], tuple | list)
+            and len(timings[-1]) == 2
+            and timings[-1][0] == "total"
+        ):
+            timings.pop()
+        timings.append(("total", int(total_ms)))
 
     def _planner_output_from_result(
         self,
@@ -1822,13 +1824,12 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         """Build only the plan detail payloads that are currently enabled."""
         diagnostics: dict[str, Any] = {}
         raw_details: dict[str, Any] | None = None
-        timing_entries = list(timings)
+        timing_entries = timings
 
         if self._plan_details_enabled("plan_details"):
             started_at = time.monotonic()
             raw_details = self._build_plan_details_payload(request, result)
-            timing_entries.append(("plan: build details payload", _duration_ms(started_at)))
-            raw_details["timings"] = list(timing_entries)
+            timing_entries.append(("Plan details payload build", _duration_ms(started_at)))
             diagnostics["plan_details"] = raw_details
 
         if self._plan_details_enabled("plan_details_hourly"):
@@ -1836,9 +1837,8 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 started_at = time.monotonic()
                 raw_details = self._build_plan_details_payload(request, result)
                 timing_entries.append(
-                    ("plan: build details payload", _duration_ms(started_at))
+                    ("Plan details payload build", _duration_ms(started_at))
                 )
-                raw_details["timings"] = list(timing_entries)
             diagnostics["plan_details_hourly"] = self._aggregate_plan_details(
                 raw_details,
                 target_slot_minutes=60,
@@ -1976,9 +1976,6 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
 
         for key, value in plan_details.items():
             if key in {"start_at", "slot_minutes", "slots"}:
-                continue
-            if key == "timings":
-                aggregated[key] = list(value) if isinstance(value, list) else value
                 continue
             if not isinstance(value, list):
                 aggregated[key] = value
@@ -2302,6 +2299,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 else None
             ),
             "last_duration_ms": self._last_duration_ms,
+            "last_run_timings": self._serialize_timings(self._last_run_timings),
         }
 
     @callback
@@ -2332,6 +2330,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             if payload.get("last_duration_ms") is not None
             else None
         )
+        self._last_run_timings = self._deserialize_timings(payload.get("last_run_timings"))
         planner_status = str(snapshot.planner_status)
         restored_status = planner_status if planner_status in {"ok", "degraded"} else "ok"
         self._overall_status = {
@@ -2354,6 +2353,29 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         self._last_attempt_at = datetime.now(tz=UTC)
         self.async_update_listeners()
         return True
+
+    def _serialize_timings(
+        self, timings: list[TimingEntry] | None
+    ) -> list[list[str | int]] | None:
+        """Serialize timing entries for storage."""
+        if timings is None:
+            return None
+        return [[str(label), int(duration_ms)] for label, duration_ms in timings]
+
+    def _deserialize_timings(self, payload: Any) -> list[TimingEntry] | None:
+        """Deserialize stored timing entries."""
+        if not isinstance(payload, list):
+            return None
+        timings: list[TimingEntry] = []
+        for entry in payload:
+            if not isinstance(entry, list | tuple) or len(entry) != 2:
+                continue
+            label, duration_ms = entry
+            try:
+                timings.append((str(label), int(duration_ms)))
+            except (TypeError, ValueError):
+                continue
+        return timings or None
 
     async def async_restore_snapshot(self) -> bool:
         """Restore cached snapshot from storage for this config entry."""

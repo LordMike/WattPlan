@@ -749,15 +749,35 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
                 },
             },
             "last_success_at": "2026-01-01T00:00:00+00:00",
-            "last_duration_ms": 123,
-        }
-    )
+                "last_duration_ms": 123,
+                "last_run_timings": [
+                ["Import price source fetch", 12],
+                ["Optimizer plan calculation", 34],
+                ["total", 46],
+                ],
+            }
+        )
 
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
     _assert_valid_state(hass, "sensor.home_status")
     _assert_valid_state(hass, "sensor.home_optional_next_start_option")
+    _assert_valid_state(hass, "sensor.home_last_run_duration")
+
+    duration_state = hass.states.get("sensor.home_last_run_duration")
+    assert duration_state is not None
+    restored_timings = duration_state.attributes["timings"]
+    assert isinstance(restored_timings, list)
+    assert [entry[0] for entry in restored_timings] == [
+        "Import price source fetch",
+        "Optimizer plan calculation",
+        "total",
+    ]
+    assert all(
+        isinstance(entry, list | tuple) and len(entry) == 2 for entry in restored_timings
+    )
+    assert all(isinstance(entry[1], int) for entry in restored_timings)
 
     next_option = hass.states.get("sensor.home_optional_next_start_option")
     assert next_option is not None
@@ -890,14 +910,18 @@ async def test_plan_details_sensor_exposes_horizon_length_arrays(
     assert state.attributes["battery_battery_charge_source"] == ["g", "n", "n", "n"]
     assert state.attributes["comfort_comfort_enabled"] == [True, False, False, True]
     assert state.attributes["optional_optional_enabled"] == [False, True, True, False]
-    timings = state.attributes["timings"]
+    assert "timings" not in state.attributes
+
+    duration_state = hass.states.get("sensor.home_last_run_duration")
+    assert duration_state is not None
+    timings = duration_state.attributes["timings"]
     assert isinstance(timings, list)
     assert [entry[0] for entry in timings] == [
-        "source: import_price, fetching data",
-        "source: usage, fetching data",
-        "source: pv, fetching data",
-        "optimizer: calculate plan",
-        "plan: build details payload",
+        "Import price source fetch",
+        "Usage source fetch",
+        "PV source fetch",
+        "Optimizer plan calculation",
+        "Plan details payload build",
         "total",
     ]
     assert all(isinstance(entry, list | tuple) and len(entry) == 2 for entry in timings)
@@ -905,7 +929,8 @@ async def test_plan_details_sensor_exposes_horizon_length_arrays(
 
     hourly_state = hass.states.get("sensor.home_plan_details_hourly")
     assert hourly_state is not None
-    assert hourly_state.attributes["timings"] == timings
+    assert "timings" not in hourly_state.attributes
+    assert duration_state.attributes["timings"] == timings
 
 
 async def test_plan_details_timings_omit_unconfigured_sources(
@@ -950,12 +975,15 @@ async def test_plan_details_timings_omit_unconfigured_sources(
 
     state = hass.states.get("sensor.home_plan_details")
     assert state is not None
-    tasks = [entry[0] for entry in state.attributes["timings"]]
-    assert "source: import_price, fetching data" in tasks
-    assert "source: export_price, fetching data" not in tasks
-    assert "source: usage, fetching data" not in tasks
-    assert "source: pv, fetching data" not in tasks
-    assert tasks[-2:] == ["plan: build details payload", "total"]
+    assert "timings" not in state.attributes
+    duration_state = hass.states.get("sensor.home_last_run_duration")
+    assert duration_state is not None
+    tasks = [entry[0] for entry in duration_state.attributes["timings"]]
+    assert "Import price source fetch" in tasks
+    assert "Export price source fetch" not in tasks
+    assert "Usage source fetch" not in tasks
+    assert "PV source fetch" not in tasks
+    assert tasks[-2:] == ["Plan details payload build", "total"]
 
 
 async def test_plan_details_timings_keep_merged_source_as_single_source_entry(
@@ -1038,8 +1066,11 @@ async def test_plan_details_timings_keep_merged_source_as_single_source_entry(
 
     state = hass.states.get("sensor.home_plan_details")
     assert state is not None
-    tasks = [entry[0] for entry in state.attributes["timings"]]
-    assert tasks.count("source: import_price, fetching data") == 1
+    assert "timings" not in state.attributes
+    duration_state = hass.states.get("sensor.home_last_run_duration")
+    assert duration_state is not None
+    tasks = [entry[0] for entry in duration_state.attributes["timings"]]
+    assert tasks.count("Import price source fetch") == 1
     assert all("provider" not in task for task in tasks)
 
 
