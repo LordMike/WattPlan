@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, fields, replace
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from enum import StrEnum
-import hashlib
-import json
 import logging
 import math
 import time
@@ -71,7 +68,18 @@ from .const import (
     SUBENTRY_TYPE_COMFORT,
     SUBENTRY_TYPE_OPTIONAL,
 )
-from .datetime_utils import parse_datetime_like
+from .coordinator_parts import (
+    CoordinatorSnapshot,
+    CycleTrigger,
+    EmitStageError,
+    PlanningStageError,
+    Stage,
+    StageErrorKind,
+    StageErrorState,
+    TimingEntry,
+    parse_snapshot_datetime,
+    snapshot_schema_id,
+)
 from .historical_on_off_provider import HistoricalOnOffProvider
 from .optimizer import OptimizationParams, optimize
 from .source_fixup import SourceFixupProvider, SourceHealthKind
@@ -108,8 +116,6 @@ PROFILE_SETTINGS = {
     },
 }
 
-type TimingEntry = tuple[str, int]
-
 
 def _duration_ms(started_at: float) -> int:
     """Return elapsed monotonic time in whole milliseconds."""
@@ -118,26 +124,7 @@ def _duration_ms(started_at: float) -> int:
 
 def _snapshot_schema_id() -> str:
     """Return schema identity for serialized snapshot cache."""
-    schema_descriptor = {
-        "fields": [
-            {
-                "name": field.name,
-                "type": str(field.type),
-            }
-            for field in fields(CoordinatorSnapshot)
-        ],
-    }
-    encoded = json.dumps(schema_descriptor, sort_keys=True, separators=(",", ":"))
-    digest = hashlib.sha256(encoded.encode()).hexdigest()[:16]
-    return f"CoordinatorSnapshot:{digest}"
-
-
-def _parse_datetime(value: Any) -> datetime | None:
-    """Parse a datetime-like restore value."""
-    parsed = parse_datetime_like(value)
-    if parsed is None:
-        return None
-    return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    return snapshot_schema_id()
 
 
 def _configured_source(
@@ -153,128 +140,6 @@ def _configured_source(
 
 
 SCHEDULE_OFFSET = timedelta(seconds=2)
-
-
-class CycleTrigger(StrEnum):
-    """Trigger source for plan and emit cycles."""
-
-    SCHEDULE = "schedule"
-    SERVICE = "service"
-
-
-class Stage(StrEnum):
-    """Coordinator stages."""
-
-    PLAN = "plan"
-    EMIT = "emit"
-
-
-class StageErrorKind(StrEnum):
-    """Classified stage failure reasons."""
-
-    LOCKED = "locked"
-    SOURCE_FETCH = "source_fetch"
-    SOURCE_PARSE = "source_parse"
-    SOURCE_VALIDATION = "source_validation"
-    PLANNER_INPUT = "planner_input"
-    PLANNER_EXECUTION = "planner_execution"
-    EMIT_NO_SNAPSHOT = "emit_no_snapshot"
-    EMIT_PROJECTION = "emit_projection"
-    INTERNAL = "internal"
-
-
-class PlanningStageError(Exception):
-    """Error raised for categorized planning stage failures."""
-
-    def __init__(
-        self,
-        kind: StageErrorKind,
-        message: str,
-        *,
-        details: dict[str, Any] | None = None,
-    ) -> None:
-        """Initialize planning stage error."""
-        super().__init__(message)
-        self.kind = kind
-        self.details = details or {}
-
-
-class EmitStageError(Exception):
-    """Error raised for categorized emission stage failures."""
-
-    def __init__(
-        self,
-        kind: StageErrorKind,
-        message: str,
-        *,
-        details: dict[str, Any] | None = None,
-    ) -> None:
-        """Initialize emit stage error."""
-        super().__init__(message)
-        self.kind = kind
-        self.details = details or {}
-
-
-@dataclass(frozen=True, slots=True)
-class CoordinatorSnapshot:
-    """Immutable snapshot produced by the planning stage."""
-
-    created_at: datetime
-    planner_status: str
-    planner_message: str | None = None
-    battery_charge_source: dict[str, str] | None = None
-    diagnostics: dict[str, Any] | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize snapshot for storage."""
-        return {
-            "created_at": self.created_at.isoformat(),
-            "planner_status": self.planner_status,
-            "planner_message": self.planner_message,
-            "battery_charge_source": self.battery_charge_source,
-            "diagnostics": self.diagnostics,
-        }
-
-    @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> CoordinatorSnapshot | None:
-        """Deserialize snapshot from storage payload."""
-        created_at = _parse_datetime(payload.get("created_at"))
-        planner_status = payload.get("planner_status")
-        if created_at is None or not isinstance(planner_status, str):
-            return None
-
-        planner_message = payload.get("planner_message")
-        if not isinstance(planner_message, str | type(None)):
-            return None
-
-        battery_charge_source = payload.get("battery_charge_source")
-        if not isinstance(battery_charge_source, dict | type(None)):
-            return None
-
-        diagnostics = payload.get("diagnostics")
-        if not isinstance(diagnostics, dict | type(None)):
-            return None
-
-        return cls(
-            created_at=created_at,
-            planner_status=planner_status,
-            planner_message=planner_message,
-            battery_charge_source=battery_charge_source,
-            diagnostics=diagnostics,
-        )
-
-
-@dataclass(slots=True)
-class StageErrorState:
-    """Runtime error state for one coordinator stage."""
-
-    has_error: bool = False
-    kind: StageErrorKind | None = None
-    message: str | None = None
-    at: datetime | None = None
-    details: dict[str, Any] | None = None
-    consecutive_failures: int = 0
-    skipped_locked_count: int = 0
 
 
 class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
@@ -337,7 +202,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             f"{DOMAIN}.snapshot.{entry_id}",
             private=True,
         )
-        self._snapshot_schema_id = _snapshot_schema_id()
+        self._snapshot_schema_id = snapshot_schema_id()
 
         if not self.scheduler_enabled:
             self._set_update_interval(None)
@@ -2325,7 +2190,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
 
         self._snapshot = snapshot
         self.data = self._snapshot
-        self._last_success_at = _parse_datetime(payload.get("last_success_at"))
+        self._last_success_at = parse_snapshot_datetime(payload.get("last_success_at"))
         self._last_duration_ms = (
             int(payload["last_duration_ms"])
             if payload.get("last_duration_ms") is not None
