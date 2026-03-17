@@ -1939,6 +1939,10 @@ class _SharedSourceFlow:
         """Return the currently persisted source config for a source key."""
         raise NotImplementedError
 
+    async def _async_handle_source_marked_not_used(self, key: str) -> ConfigFlowResult:
+        """Persist a not-used source choice and continue the flow."""
+        raise NotImplementedError
+
     async def _async_default_source_step(self) -> ConfigFlowResult:
         """Return the flow step used when no staged source is active."""
         raise NotImplementedError
@@ -1952,6 +1956,78 @@ class _SharedSourceFlow:
     def _review_form_last_step(self, key: str) -> bool:
         """Return whether the review form should be marked last-step."""
         return False
+
+    async def _async_branch_to_source_mode_step(
+        self,
+        key: str,
+        mode: str,
+        *,
+        include_built_in: bool,
+        include_energy_provider: bool,
+    ) -> ConfigFlowResult | None:
+        """Return the concrete step for a chosen source mode when supported."""
+        if mode == SOURCE_MODE_TEMPLATE:
+            if key == CONF_SOURCE_IMPORT_PRICE:
+                return await self.async_step_source_price_template()
+            if key == CONF_SOURCE_EXPORT_PRICE:
+                return await self.async_step_source_export_price_template()
+            if key == CONF_SOURCE_USAGE:
+                return await self.async_step_source_usage_template()
+            return await self.async_step_source_pv_template()
+
+        if mode == SOURCE_MODE_ENTITY_ADAPTER:
+            if key == CONF_SOURCE_IMPORT_PRICE:
+                return await self.async_step_source_price_adapter()
+            if key == CONF_SOURCE_EXPORT_PRICE:
+                return await self.async_step_source_export_price_adapter()
+            if key == CONF_SOURCE_USAGE:
+                return await self.async_step_source_usage_adapter()
+            return await self.async_step_source_pv_adapter()
+
+        if mode == SOURCE_MODE_SERVICE_ADAPTER:
+            if key == CONF_SOURCE_IMPORT_PRICE:
+                return await self.async_step_source_price_service()
+            if key == CONF_SOURCE_EXPORT_PRICE:
+                return await self.async_step_source_export_price_service()
+            if key == CONF_SOURCE_USAGE:
+                return await self.async_step_source_usage_service()
+            return await self.async_step_source_pv_service()
+
+        if include_energy_provider and mode == SOURCE_MODE_ENERGY_PROVIDER:
+            return await self.async_step_source_pv_energy_provider()
+
+        if include_built_in and mode == SOURCE_MODE_BUILT_IN:
+            return await self.async_step_source_usage_built_in()
+
+        return None
+
+    def _default_source_mode(
+        self,
+        existing: dict[str, Any],
+        *,
+        key: str,
+        include_not_used: bool,
+        include_built_in: bool,
+        include_energy_provider_option: bool,
+    ) -> str:
+        """Return the preferred default mode for one source selection step."""
+        default_mode = existing.get(
+            CONF_SOURCE_MODE,
+            _preferred_source_mode(
+                key,
+                include_not_used=include_not_used,
+                include_built_in=include_built_in,
+                include_energy_provider=include_energy_provider_option,
+            ),
+        )
+        if default_mode == SOURCE_MODE_NOT_USED and not include_not_used:
+            return SOURCE_MODE_TEMPLATE
+        if (
+            default_mode == SOURCE_MODE_ENERGY_PROVIDER
+            and not include_energy_provider_option
+        ):
+            return SOURCE_MODE_TEMPLATE
+        return default_mode
 
     def _source_description_placeholders(self, key: str) -> dict[str, str]:
         """Return description placeholders for source steps."""
@@ -2500,7 +2576,7 @@ class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
         step_id: str,
     ) -> ConfigFlowResult:
         """Select source mode and branch to mode specific step."""
-        existing = self._sources.get(key, {})
+        existing = self._stored_source(key)
         include_energy_provider_option = await self._async_include_energy_provider_mode(
             existing,
             include_energy_provider=include_energy_provider,
@@ -2509,61 +2585,27 @@ class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             mode = user_input[CONF_SOURCE_MODE]
-            if mode == SOURCE_MODE_TEMPLATE:
-                if key == CONF_SOURCE_IMPORT_PRICE:
-                    return await self.async_step_source_price_template()
-                if key == CONF_SOURCE_EXPORT_PRICE:
-                    return await self.async_step_source_export_price_template()
-                if key == CONF_SOURCE_USAGE:
-                    return await self.async_step_source_usage_template()
-                return await self.async_step_source_pv_template()
-
-            if mode == SOURCE_MODE_ENTITY_ADAPTER:
-                if key == CONF_SOURCE_IMPORT_PRICE:
-                    return await self.async_step_source_price_adapter()
-                if key == CONF_SOURCE_EXPORT_PRICE:
-                    return await self.async_step_source_export_price_adapter()
-                if key == CONF_SOURCE_USAGE:
-                    return await self.async_step_source_usage_adapter()
-                return await self.async_step_source_pv_adapter()
-
-            if mode == SOURCE_MODE_SERVICE_ADAPTER:
-                if key == CONF_SOURCE_IMPORT_PRICE:
-                    return await self.async_step_source_price_service()
-                if key == CONF_SOURCE_EXPORT_PRICE:
-                    return await self.async_step_source_export_price_service()
-                if key == CONF_SOURCE_USAGE:
-                    return await self.async_step_source_usage_service()
-                return await self.async_step_source_pv_service()
-
-            if include_energy_provider and mode == SOURCE_MODE_ENERGY_PROVIDER:
-                return await self.async_step_source_pv_energy_provider()
-
-            if include_built_in and mode == SOURCE_MODE_BUILT_IN:
-                return await self.async_step_source_usage_built_in()
+            branched = await self._async_branch_to_source_mode_step(
+                key,
+                mode,
+                include_built_in=include_built_in,
+                include_energy_provider=include_energy_provider,
+            )
+            if branched is not None:
+                return branched
 
             if include_not_used and mode == SOURCE_MODE_NOT_USED:
-                self._sources[key] = {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED}
-                return await self._async_after_source_saved(key)
+                return await self._async_handle_source_marked_not_used(key)
 
             errors["base"] = "invalid_source_mode"
 
-        default_mode = existing.get(
-            CONF_SOURCE_MODE,
-            _preferred_source_mode(
-                key,
-                include_not_used=include_not_used,
-                include_built_in=include_built_in,
-                include_energy_provider=include_energy_provider_option,
-            ),
+        default_mode = self._default_source_mode(
+            existing,
+            key=key,
+            include_not_used=include_not_used,
+            include_built_in=include_built_in,
+            include_energy_provider_option=include_energy_provider_option,
         )
-        if default_mode == SOURCE_MODE_NOT_USED and not include_not_used:
-            default_mode = SOURCE_MODE_TEMPLATE
-        if (
-            default_mode == SOURCE_MODE_ENERGY_PROVIDER
-            and not include_energy_provider_option
-        ):
-            default_mode = SOURCE_MODE_TEMPLATE
 
         return self.async_show_form(
             step_id=step_id,
@@ -2726,6 +2768,11 @@ class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
     def _stored_source(self, key: str) -> dict[str, Any]:
         """Return persisted setup-flow source data for a source key."""
         return self._sources.get(key, {})
+
+    async def _async_handle_source_marked_not_used(self, key: str) -> ConfigFlowResult:
+        """Persist a disabled source in setup flow and continue."""
+        self._sources[key] = {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED}
+        return await self._async_after_source_saved(key)
 
     async def _async_default_source_step(self) -> ConfigFlowResult:
         """Return the first source step when review state is missing."""
@@ -3001,8 +3048,7 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
     ) -> ConfigFlowResult:
         """Select source mode for options flow and branch."""
         errors: dict[str, str] = {}
-        sources = self._data.get(CONF_SOURCES, {})
-        existing = sources.get(key, {})
+        existing = self._stored_source(key)
         include_energy_provider_option = await self._async_include_energy_provider_mode(
             existing,
             include_energy_provider=include_energy_provider,
@@ -3010,65 +3056,30 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
 
         if user_input is not None:
             mode = user_input[CONF_SOURCE_MODE]
-
-            if mode == SOURCE_MODE_TEMPLATE:
-                if key == CONF_SOURCE_IMPORT_PRICE:
-                    return await self.async_step_source_price_template()
-                if key == CONF_SOURCE_EXPORT_PRICE:
-                    return await self.async_step_source_export_price_template()
-                if key == CONF_SOURCE_USAGE:
-                    return await self.async_step_source_usage_template()
-                return await self.async_step_source_pv_template()
-
-            if mode == SOURCE_MODE_ENTITY_ADAPTER:
-                if key == CONF_SOURCE_IMPORT_PRICE:
-                    return await self.async_step_source_price_adapter()
-                if key == CONF_SOURCE_EXPORT_PRICE:
-                    return await self.async_step_source_export_price_adapter()
-                if key == CONF_SOURCE_USAGE:
-                    return await self.async_step_source_usage_adapter()
-                return await self.async_step_source_pv_adapter()
-
-            if mode == SOURCE_MODE_SERVICE_ADAPTER:
-                if key == CONF_SOURCE_IMPORT_PRICE:
-                    return await self.async_step_source_price_service()
-                if key == CONF_SOURCE_EXPORT_PRICE:
-                    return await self.async_step_source_export_price_service()
-                if key == CONF_SOURCE_USAGE:
-                    return await self.async_step_source_usage_service()
-                return await self.async_step_source_pv_service()
-
-            if include_energy_provider and mode == SOURCE_MODE_ENERGY_PROVIDER:
-                return await self.async_step_source_pv_energy_provider()
-
-            if include_built_in and mode == SOURCE_MODE_BUILT_IN:
-                return await self.async_step_source_usage_built_in()
+            branched = await self._async_branch_to_source_mode_step(
+                key,
+                mode,
+                include_built_in=include_built_in,
+                include_energy_provider=include_energy_provider,
+            )
+            if branched is not None:
+                return branched
 
             if include_not_used and mode == SOURCE_MODE_NOT_USED:
-                sources[key] = {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED}
-                self._data[CONF_SOURCES] = sources
-                self.hass.config_entries.async_update_entry(self.config_entry, data=self._data)
-                return await self.async_step_init()
+                return await self._async_handle_source_marked_not_used(key)
 
             errors["base"] = "invalid_source_mode"
 
         return self.async_show_form(
             step_id=step_id,
             data_schema=_source_mode_schema(
-                existing.get(
-                    CONF_SOURCE_MODE,
-                    _preferred_source_mode(
-                        key,
-                        include_not_used=include_not_used,
-                        include_built_in=include_built_in,
-                        include_energy_provider=include_energy_provider_option,
-                    ),
-                )
-                if (
-                    existing.get(CONF_SOURCE_MODE) != SOURCE_MODE_ENERGY_PROVIDER
-                    or include_energy_provider_option
-                )
-                else SOURCE_MODE_TEMPLATE,
+                self._default_source_mode(
+                    existing,
+                    key=key,
+                    include_not_used=include_not_used,
+                    include_built_in=include_built_in,
+                    include_energy_provider_option=include_energy_provider_option,
+                ),
                 include_not_used=include_not_used,
                 include_built_in=include_built_in,
                 include_energy_provider=include_energy_provider_option,
@@ -3220,6 +3231,14 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
     def _stored_source(self, key: str) -> dict[str, Any]:
         """Return persisted options-flow source data for a source key."""
         return self._data.get(CONF_SOURCES, {}).get(key, {})
+
+    async def _async_handle_source_marked_not_used(self, key: str) -> ConfigFlowResult:
+        """Persist a disabled source in options flow and return to menu."""
+        sources = dict(self._data.get(CONF_SOURCES, {}))
+        sources[key] = {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED}
+        self._data[CONF_SOURCES] = sources
+        self.hass.config_entries.async_update_entry(self.config_entry, data=self._data)
+        return await self.async_step_init()
 
     async def _async_default_source_step(self) -> ConfigFlowResult:
         """Return the menu step when review state is missing."""
