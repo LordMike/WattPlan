@@ -7,6 +7,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
 
+from .common import _subentry_name
 from .source_shared import (
     CONF_CAPACITY_KWH,
     CONF_CHARGE_EFFICIENCY,
@@ -27,7 +28,6 @@ from .source_shared import (
     MAX_NAME_LENGTH,
     SECTION_BATTERY_ADVANCED,
     _optional_max_distinct_options,
-    _subentry_name,
     _validate_text_field,
 )
 

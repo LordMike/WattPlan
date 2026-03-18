@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
-import re
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -23,6 +22,13 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import section
 from homeassistant.helpers import selector, translation
 
+from .common import (
+    _expected_slots,
+    _format_number,
+    _normalize_name,
+    _subentry_display_title,
+    _subentry_name,
+)
 from ..const import (
     ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
     ADAPTER_TYPE_ATTRIBUTE_VALUES,
@@ -132,16 +138,6 @@ REVIEW_ACTION_EDIT = "edit"
 CONF_ACCEPT_SOURCE_SUMMARY = "accept_source_summary"
 
 
-def _normalize_name(value: str) -> str:
-    """Create a stable id from a name."""
-    return re.sub(r"[^a-z0-9]+", "_", value.casefold()).strip("_") or "item"
-
-
-def _format_number(value: float) -> str:
-    """Format a float-like value for compact display."""
-    return f"{float(value):g}"
-
-
 def _format_coverage_datetime(
     value: str | datetime, timezone_name: str | None
 ) -> str:
@@ -167,42 +163,6 @@ async def _coverage_placeholder_text(
     if int(summary.get("available_count", 0)) <= 0:
         return await _async_config_translation(hass, "review_no_data")
     return _format_coverage_datetime(summary.get(field, "Unknown"), timezone_name)
-
-
-def _subentry_display_title(subentry_type: str, data: dict[str, Any]) -> str:
-    """Build a concise display title for a subentry."""
-    name = data[CONF_NAME]
-    if subentry_type == SUBENTRY_TYPE_BATTERY:
-        return (
-            f"{name} ("
-            f"{_format_number(data[CONF_CAPACITY_KWH])} kWh, "
-            f"min {_format_number(data[CONF_MINIMUM_KWH])} kWh)"
-        )
-    if subentry_type == SUBENTRY_TYPE_COMFORT:
-        return (
-            f"{name} ("
-            f"{_format_number(data[CONF_TARGET_ON_HOURS_PER_WINDOW])}h/"
-            f"{_format_number(data[CONF_ROLLING_WINDOW_HOURS])}h, "
-            f"max off {_format_number(data[CONF_MAX_CONSECUTIVE_OFF_MINUTES])} min)"
-        )
-    if subentry_type == SUBENTRY_TYPE_OPTIONAL:
-        return (
-            f"{name} ("
-            f"{_format_number(data[CONF_DURATION_MINUTES])} min / "
-            f"{_format_number(data[CONF_RUN_WITHIN_HOURS])}h)"
-        )
-    return name
-
-
-def _subentry_name(subentry: Any) -> str:
-    """Return the semantic name of a subentry."""
-    return str(subentry.data.get(CONF_NAME, subentry.title))
-
-
-def _expected_slots(config: dict[str, Any]) -> int:
-    """Calculate expected slots for the configured horizon."""
-    return int(config[CONF_HOURS_TO_PLAN] * 60 / config[CONF_SLOT_MINUTES])
-
 
 def _source_modifier_fields(
     defaults: dict[str, Any],

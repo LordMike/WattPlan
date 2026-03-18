@@ -7,6 +7,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigSubentryFlow, SubentryFlowResult
 from homeassistant.const import CONF_NAME
 
+from .common import _normalize_name, _subentry_display_title
 from .forms import (
     _battery_form_defaults,
     _normalize_battery_input,
@@ -24,9 +25,7 @@ from .source_shared import (
     _battery_schema,
     _comfort_schema,
     _final_setup_schema,
-    _normalize_name,
     _optional_schema,
-    _subentry_display_title,
 )
 
 

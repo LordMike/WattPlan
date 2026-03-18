@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .common import _normalize_name, _subentry_display_title, _subentry_name
 from .forms import (
     _battery_form_defaults,
     _normalize_battery_input,
@@ -43,12 +44,9 @@ from .source_shared import (
     _core_schema,
     _final_setup_schema,
     _normalize_core_input,
-    _normalize_name,
     _optional_schema,
     _source_mode_schema,
     _source_mode_summary,
-    _subentry_display_title,
-    _subentry_name,
     _validate_core_data,
     callback,
     deepcopy,
