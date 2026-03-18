@@ -46,6 +46,7 @@ from .sensors import (
     UsageForecastSensor,
 )
 from .sensors.common import MAX_EXPOSED_PROJECTED_SAVINGS_PCT
+from .sensor_specs import ENTRY_SENSOR_SPECS, OPTIONAL_SOURCE_STATUS_SPECS
 
 ENTRY_FRIENDLY_NAMES: dict[str, str] = {
     "status": "Status",
@@ -194,65 +195,32 @@ def _entry_sensors(
             hours_to_plan=hours_to_plan,
         )
 
-    sensors: list[SensorEntity] = [
-        sensor_class(config_entry, coordinator, **extra_kwargs, **entry_kwargs(sensor_key))
-        for sensor_class, sensor_key, extra_kwargs in [
-            (StatusSensor, "status", {}),
-            (StatusMessageSensor, "status_message", {}),
-            (
-                SourceStatusSensor,
-                "import_price_status",
-                {"source_key": CONF_SOURCE_IMPORT_PRICE},
-            ),
-            (LastRunSensor, "last_run", {}),
-            (NextRunSensor, "next_run", {}),
-            (LastRunDurationSensor, "last_run_duration", {}),
-            (PlanDetailsSensor, "plan_details", {"details_key": "plan_details"}),
-            (
-                PlanDetailsSensor,
-                "plan_details_hourly",
-                {"details_key": "plan_details_hourly"},
-            ),
-            (
-                ProjectionSensor,
-                "projected_cost_savings",
-                {
-                    "projection_key": "projected_savings_cost",
-                    "aggregate_mode": "horizon",
-                    "use_home_currency": True,
-                },
-            ),
-            (
-                ProjectionSensor,
-                "projected_savings_percentage",
-                {
-                    "projection_key": "projected_savings_pct",
-                    "aggregate_mode": "horizon",
-                    "value_transform": _projected_savings_percentage_value_transform,
-                    "native_unit_of_measurement": "%",
-                },
-            ),
-            (
-                ProjectionSensor,
-                "projected_cost_savings_this_interval",
-                {
-                    "projection_key": "projected_savings_cost",
-                    "aggregate_mode": "next_interval",
-                    "use_home_currency": True,
-                },
-            ),
-            (
-                ProjectionSensor,
-                "projected_savings_percentage_this_interval",
-                {
-                    "projection_key": "projected_savings_pct",
-                    "aggregate_mode": "next_interval",
-                    "value_transform": _projected_savings_percentage_value_transform,
-                    "native_unit_of_measurement": "%",
-                },
-            ),
-        ]
-    ]
+    spec_classes = {
+        "status": StatusSensor,
+        "status_message": StatusMessageSensor,
+        "import_price_status": SourceStatusSensor,
+        "last_run": LastRunSensor,
+        "next_run": NextRunSensor,
+        "last_run_duration": LastRunDurationSensor,
+        "plan_details": PlanDetailsSensor,
+        "plan_details_hourly": PlanDetailsSensor,
+        "projected_cost_savings": ProjectionSensor,
+        "projected_savings_percentage": ProjectionSensor,
+        "projected_cost_savings_this_interval": ProjectionSensor,
+        "projected_savings_percentage_this_interval": ProjectionSensor,
+    }
+    sensors: list[SensorEntity] = []
+    for spec in ENTRY_SENSOR_SPECS:
+        extra_kwargs = dict(spec.extra_kwargs)
+        if spec.sensor_key in {
+            "projected_savings_percentage",
+            "projected_savings_percentage_this_interval",
+        }:
+            extra_kwargs["value_transform"] = _projected_savings_percentage_value_transform
+        sensor_class = spec_classes[spec.sensor_key]
+        sensors.append(
+            sensor_class(config_entry, coordinator, **extra_kwargs, **entry_kwargs(spec.sensor_key))
+        )
 
     return sensors
 
@@ -389,11 +357,7 @@ async def async_setup_entry(
         hours_to_plan=hours_to_plan,
     )
 
-    for source_key, sensor_key in (
-        (CONF_SOURCE_USAGE, "usage_status"),
-        (CONF_SOURCE_EXPORT_PRICE, "export_price_status"),
-        (CONF_SOURCE_PV, "pv_status"),
-    ):
+    for source_key, sensor_key in OPTIONAL_SOURCE_STATUS_SPECS:
         if _has_enabled_source(config_entry.data, source_key):
             sensors.append(
                 SourceStatusSensor(

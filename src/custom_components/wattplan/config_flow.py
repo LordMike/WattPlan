@@ -14,7 +14,7 @@ from .flows.subentries import (
     ComfortSubentryFlowHandler,
     OptionalSubentryFlowHandler,
 )
-from .flows.source_shared import async_get_energy_solar_forecast_entries
+from .source_providers import async_get_energy_solar_forecast_entries
 
 __all__ = [
     "BatterySubentryFlowHandler",

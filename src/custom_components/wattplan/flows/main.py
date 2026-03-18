@@ -14,6 +14,8 @@ from .forms import (
     _validate_comfort_data,
     _validate_optional_data,
 )
+from .persistence import SourceFlowPersistence
+from .state import SourceFlowState
 from .source_shared import (
     CONF_ACTION_EMISSION_ENABLED,
     CONF_HOURS_TO_PLAN,
@@ -63,12 +65,7 @@ class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
     _core: dict[str, Any]
     _entry_options: dict[str, Any]
     _sources: dict[str, dict[str, Any]]
-    _last_source_available_count: int | None = None
-    _pending_source_key: str | None = None
-    _pending_source: dict[str, Any] | None = None
-    _pending_source_input: dict[str, Any] | None = None
-    _pending_source_step_id: str | None = None
-    _pending_source_summary: dict[str, Any] | None = None
+    _source_state: SourceFlowState
 
     @staticmethod
     @callback
@@ -133,6 +130,7 @@ class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
                 }
                 self._core = normalized
                 self._sources = {}
+                self._source_state = SourceFlowState()
                 return await self.async_step_source_price()
 
         return self.async_show_form(
@@ -475,12 +473,7 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
     _data: dict[str, Any]
     _options: dict[str, Any]
     _selected_subentry_id: str | None
-    _last_source_available_count: int | None
-    _pending_source_key: str | None
-    _pending_source: dict[str, Any] | None
-    _pending_source_input: dict[str, Any] | None
-    _pending_source_step_id: str | None
-    _pending_source_summary: dict[str, Any] | None
+    _source_state: SourceFlowState
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize options flow."""
@@ -492,12 +485,7 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
             CONF_OPTIMIZER_PROFILE, OPTIMIZER_PROFILE_BALANCED
         )
         self._selected_subentry_id = None
-        self._last_source_available_count = None
-        self._pending_source_key = None
-        self._pending_source = None
-        self._pending_source_input = None
-        self._pending_source_step_id = None
-        self._pending_source_summary = None
+        self._source_state = SourceFlowState()
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None

@@ -17,11 +17,13 @@ from .forms import (
     _validate_comfort_data,
     _validate_optional_data,
 )
-from .source_shared import (
+from ..const import (
     CONF_SLOT_MINUTES,
     SUBENTRY_TYPE_BATTERY,
     SUBENTRY_TYPE_COMFORT,
     SUBENTRY_TYPE_OPTIONAL,
+)
+from .source_shared import (
     _battery_schema,
     _comfort_schema,
     _final_setup_schema,

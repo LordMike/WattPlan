@@ -29,6 +29,8 @@ from .common import (
     _subentry_display_title,
     _subentry_name,
 )
+from .persistence import SourceFlowPersistence
+from .state import SourceFlowState
 from ..const import (
     ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
     ADAPTER_TYPE_ATTRIBUTE_VALUES,
@@ -114,8 +116,19 @@ from ..const import (
 )
 from ..datetime_utils import parse_datetime_like
 from ..forecast_provider import ForecastProvider
-from ..source_pipeline import build_source_base_provider, build_source_value_provider
-from ..source_provider import (
+from ..source_config import (
+    async_prepare_entity_source_input,
+    async_prepare_service_source_input,
+    auto_detect_step_defaults,
+    build_source_base_provider,
+    build_source_value_provider,
+    default_modifier_values,
+    preferred_source_mode,
+    source_base_defaults,
+    staged_entity_source_input,
+    staged_service_source_input,
+)
+from ..source_providers import (
     async_auto_detect_entity_adapter,
     async_auto_detect_service_adapter,
     async_get_energy_solar_forecast_entries,
@@ -241,90 +254,6 @@ def _source_modifier_fields(
     }
 
 
-def _default_modifier_values() -> dict[str, str]:
-    """Return default advanced fixup settings."""
-    return {
-        CONF_AGGREGATION_MODE: AGGREGATION_MODE_FIRST,
-        CONF_CLAMP_MODE: CLAMP_MODE_NEAREST,
-        CONF_RESAMPLE_MODE: RESAMPLE_MODE_LINEAR,
-        CONF_EDGE_FILL_MODE: EDGE_FILL_MODE_HOLD,
-    }
-
-
-def _source_base_defaults(source: dict[str, Any]) -> dict[str, Any]:
-    """Return defaults for provider-specific input including fixup settings."""
-    provider = primary_provider_config(source)
-    defaults = {
-        **dict(provider),
-        **{
-            key: value
-            for key, value in source.items()
-            if key not in {CONF_PROVIDERS}
-        },
-    }
-    providers = source.get(CONF_PROVIDERS)
-    if isinstance(providers, list) and providers and source_mode(source) == SOURCE_MODE_ENTITY_ADAPTER:
-        defaults[CONF_WATTPLAN_ENTITY_ID] = [
-            provider[CONF_WATTPLAN_ENTITY_ID]
-            for provider in providers
-            if isinstance(provider, dict) and CONF_WATTPLAN_ENTITY_ID in provider
-        ]
-    return defaults
-
-
-def _preferred_source_mode(
-    key: str,
-    *,
-    include_not_used: bool,
-    include_built_in: bool = False,
-    include_energy_provider: bool = False,
-) -> str:
-    """Return the recommended default mode for the requested source step.
-
-    The mode selection step already tells users which path is preferred. This helper keeps
-    the form default aligned with that guidance instead of falling back based only on
-    whether "Not used" happens to be allowed on the step.
-    """
-    if key == CONF_SOURCE_IMPORT_PRICE:
-        return SOURCE_MODE_ENTITY_ADAPTER
-    if key == CONF_SOURCE_EXPORT_PRICE:
-        if include_not_used:
-            return SOURCE_MODE_NOT_USED
-        return SOURCE_MODE_ENTITY_ADAPTER
-    if key == CONF_SOURCE_USAGE:
-        if include_built_in:
-            return SOURCE_MODE_BUILT_IN
-        if include_not_used:
-            return SOURCE_MODE_NOT_USED
-        return SOURCE_MODE_ENTITY_ADAPTER
-    if key == CONF_SOURCE_PV:
-        if include_energy_provider:
-            return SOURCE_MODE_ENERGY_PROVIDER
-        if include_not_used:
-            return SOURCE_MODE_NOT_USED
-        return SOURCE_MODE_ENTITY_ADAPTER
-    return SOURCE_MODE_NOT_USED if include_not_used else SOURCE_MODE_TEMPLATE
-
-
-def _auto_detect_step_defaults(
-    user_input: dict[str, Any],
-    resolved_source: dict[str, Any],
-) -> dict[str, Any]:
-    """Return input defaults that preserve auto mode while showing resolved keys.
-
-    The review step stores the resolved source so validation and persistence use
-    explicit fields. When the user goes back, we still want the form to reflect
-    that auto-detect was the chosen workflow, while showing what it found.
-    """
-    defaults = dict(user_input)
-    provider = primary_provider_config(resolved_source)
-    defaults[CONF_NAME] = provider.get(CONF_NAME, "")
-    defaults[CONF_TIME_KEY] = provider.get(CONF_TIME_KEY, "")
-    defaults[CONF_VALUE_KEY] = provider.get(CONF_VALUE_KEY, "")
-    defaults[CONF_ADAPTER_TYPE] = ADAPTER_TYPE_AUTO_DETECT
-    return defaults
-
-
 def _source_fixup_fields(
     defaults: dict[str, Any],
     *,
@@ -357,11 +286,11 @@ def _source_fixup_fields(
     }
     if include_advanced:
         advanced_defaults = {
-            **_default_modifier_values(),
+            **default_modifier_values(),
             **{
                 key: value
                 for key, value in defaults.items()
-                if key in _default_modifier_values()
+                if key in default_modifier_values()
             },
         }
         schema[vol.Optional(SECTION_SOURCE_ADVANCED, default=advanced_defaults)] = section(
@@ -923,10 +852,10 @@ async def _async_source_summary(
         is_valid = False
         source_error = err
         if preview_source := _preview_source_from_auto_detect_error(source, err):
-            resolved_source = preview_source
-            has_preview_source = True
-            if source_input is not None:
-                resolved_input = _auto_detect_step_defaults(source_input, preview_source)
+                resolved_source = preview_source
+                has_preview_source = True
+                if source_input is not None:
+                    resolved_input = auto_detect_step_defaults(source_input, preview_source)
     else:
         is_valid = True
 
@@ -1703,148 +1632,6 @@ def _validate_service_adapter_input(data: dict[str, Any]) -> dict[str, str]:
     return errors
 
 
-async def _async_prepare_entity_source_input(
-    hass: HomeAssistant,
-    user_input: dict[str, Any],
-) -> dict[str, Any]:
-    """Return explicit entity adapter config, resolving auto-detect if needed."""
-    selected_entities = user_input[CONF_WATTPLAN_ENTITY_ID]
-    if isinstance(selected_entities, str):
-        entity_ids = [selected_entities]
-    else:
-        entity_ids = [str(entity_id) for entity_id in selected_entities]
-
-    adapter_type = str(user_input[CONF_ADAPTER_TYPE])
-    manual = user_input.get(SECTION_SOURCE_MANUAL, {})
-    if not isinstance(manual, dict):
-        manual = {}
-    root_key = str(manual.get(CONF_NAME, user_input.get(CONF_NAME, "")))
-    time_key = str(manual.get(CONF_TIME_KEY, user_input.get(CONF_TIME_KEY, "")))
-    value_key = str(manual.get(CONF_VALUE_KEY, user_input.get(CONF_VALUE_KEY, "")))
-
-    if adapter_type == ADAPTER_TYPE_AUTO_DETECT:
-        detected_list = await async_auto_detect_entity_adapter(hass, entity_ids)
-        providers = [
-            {
-                CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
-                CONF_WATTPLAN_ENTITY_ID: entity_id,
-                CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
-                CONF_NAME: detected.root_key,
-                CONF_TIME_KEY: detected.time_key,
-                CONF_VALUE_KEY: detected.value_key,
-            }
-            for entity_id, detected in zip(entity_ids, detected_list, strict=True)
-        ]
-    else:
-        providers = [
-            {
-                CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
-                CONF_WATTPLAN_ENTITY_ID: entity_id,
-                CONF_ADAPTER_TYPE: adapter_type,
-                CONF_NAME: root_key,
-                CONF_TIME_KEY: time_key,
-                CONF_VALUE_KEY: value_key,
-            }
-            for entity_id in entity_ids
-        ]
-
-    source = {
-        CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
-        CONF_PROVIDERS: providers,
-        CONF_FIXUP_PROFILE: user_input[CONF_FIXUP_PROFILE],
-    }
-    source.update(user_input.get(SECTION_SOURCE_ADVANCED, {}))
-    return source
-
-
-async def _async_prepare_service_source_input(
-    hass: HomeAssistant,
-    user_input: dict[str, Any],
-) -> dict[str, Any]:
-    """Return explicit service adapter config, resolving auto-detect if needed."""
-    adapter_type = str(user_input[CONF_ADAPTER_TYPE])
-    manual = user_input.get(SECTION_SOURCE_MANUAL, {})
-    if not isinstance(manual, dict):
-        manual = {}
-    root_key = str(manual.get(CONF_NAME, user_input.get(CONF_NAME, "")))
-    time_key = str(manual.get(CONF_TIME_KEY, user_input.get(CONF_TIME_KEY, "")))
-    value_key = str(manual.get(CONF_VALUE_KEY, user_input.get(CONF_VALUE_KEY, "")))
-    service_name = str(user_input[CONF_SERVICE])
-    resolved_adapter = adapter_type
-
-    if adapter_type == ADAPTER_TYPE_AUTO_DETECT:
-        detected = await async_auto_detect_service_adapter(hass, service_name)
-        resolved_adapter = ADAPTER_TYPE_SERVICE_RESPONSE
-        root_key = detected.root_key
-        time_key = detected.time_key
-        value_key = detected.value_key
-
-    source = {
-        CONF_SOURCE_MODE: SOURCE_MODE_SERVICE_ADAPTER,
-        CONF_PROVIDERS: [
-            {
-                CONF_SOURCE_MODE: SOURCE_MODE_SERVICE_ADAPTER,
-                CONF_SERVICE: service_name,
-                CONF_ADAPTER_TYPE: resolved_adapter,
-                CONF_NAME: root_key,
-                CONF_TIME_KEY: time_key,
-                CONF_VALUE_KEY: value_key,
-            }
-        ],
-        CONF_FIXUP_PROFILE: user_input[CONF_FIXUP_PROFILE],
-    }
-    source.update(user_input.get(SECTION_SOURCE_ADVANCED, {}))
-    return source
-
-
-def _source_from_entity_adapter_user_input(user_input: dict[str, Any]) -> dict[str, Any]:
-    """Return staged entity adapter config without resolving auto-detect."""
-    selected_entities = user_input[CONF_WATTPLAN_ENTITY_ID]
-    if isinstance(selected_entities, str):
-        entity_ids = [selected_entities]
-    else:
-        entity_ids = [str(entity_id) for entity_id in selected_entities]
-
-    manual = user_input.get(SECTION_SOURCE_MANUAL, {})
-    if not isinstance(manual, dict):
-        manual = {}
-
-    source = {
-        CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
-        CONF_WATTPLAN_ENTITY_ID: entity_ids,
-        CONF_ADAPTER_TYPE: str(user_input[CONF_ADAPTER_TYPE]),
-        CONF_NAME: str(manual.get(CONF_NAME, user_input.get(CONF_NAME, ""))),
-        CONF_TIME_KEY: str(manual.get(CONF_TIME_KEY, user_input.get(CONF_TIME_KEY, ""))),
-        CONF_VALUE_KEY: str(
-            manual.get(CONF_VALUE_KEY, user_input.get(CONF_VALUE_KEY, ""))
-        ),
-        CONF_FIXUP_PROFILE: user_input[CONF_FIXUP_PROFILE],
-    }
-    source.update(user_input.get(SECTION_SOURCE_ADVANCED, {}))
-    return source
-
-
-def _source_from_service_adapter_user_input(user_input: dict[str, Any]) -> dict[str, Any]:
-    """Return staged service adapter config without resolving auto-detect."""
-    manual = user_input.get(SECTION_SOURCE_MANUAL, {})
-    if not isinstance(manual, dict):
-        manual = {}
-
-    source = {
-        CONF_SOURCE_MODE: SOURCE_MODE_SERVICE_ADAPTER,
-        CONF_SERVICE: str(user_input[CONF_SERVICE]),
-        CONF_ADAPTER_TYPE: str(user_input[CONF_ADAPTER_TYPE]),
-        CONF_NAME: str(manual.get(CONF_NAME, user_input.get(CONF_NAME, ""))),
-        CONF_TIME_KEY: str(manual.get(CONF_TIME_KEY, user_input.get(CONF_TIME_KEY, ""))),
-        CONF_VALUE_KEY: str(
-            manual.get(CONF_VALUE_KEY, user_input.get(CONF_VALUE_KEY, ""))
-        ),
-        CONF_FIXUP_PROFILE: user_input[CONF_FIXUP_PROFILE],
-    }
-    source.update(user_input.get(SECTION_SOURCE_ADVANCED, {}))
-    return source
-
-
 async def _async_resolve_source_for_review(
     hass: HomeAssistant,
     *,
@@ -1861,9 +1648,11 @@ async def _async_resolve_source_for_review(
                 "Entity adapter source is missing staged input",
                 details={"source_mode": SOURCE_MODE_ENTITY_ADAPTER},
             )
-        resolved = await _async_prepare_entity_source_input(hass, source_input)
+        resolved = await async_prepare_entity_source_input(
+            hass, _flow_user_input(source_input)
+        )
         if source_input.get(CONF_ADAPTER_TYPE) == ADAPTER_TYPE_AUTO_DETECT:
-            return resolved, _auto_detect_step_defaults(source_input, resolved)
+            return resolved, auto_detect_step_defaults(source_input, resolved)
         return resolved, source_input
 
     if mode == SOURCE_MODE_SERVICE_ADAPTER:
@@ -1873,23 +1662,35 @@ async def _async_resolve_source_for_review(
                 "Service adapter source is missing staged input",
                 details={"source_mode": SOURCE_MODE_SERVICE_ADAPTER},
             )
-        resolved = await _async_prepare_service_source_input(hass, source_input)
+        resolved = await async_prepare_service_source_input(
+            hass, _flow_user_input(source_input)
+        )
         if source_input.get(CONF_ADAPTER_TYPE) == ADAPTER_TYPE_AUTO_DETECT:
-            return resolved, _auto_detect_step_defaults(source_input, resolved)
+            return resolved, auto_detect_step_defaults(source_input, resolved)
         return resolved, source_input
 
     return source, source_input
 
 
+def _flow_user_input(user_input: dict[str, Any]) -> dict[str, Any]:
+    """Translate flow-local section keys to canonical source-config helpers."""
+    translated = dict(user_input)
+    if SECTION_SOURCE_MANUAL in translated:
+        translated["manual"] = translated[SECTION_SOURCE_MANUAL]
+    if SECTION_SOURCE_ADVANCED in translated:
+        translated["advanced"] = translated[SECTION_SOURCE_ADVANCED]
+    return translated
+
+
 class _SharedSourceFlow:
     """Shared source-step helpers for setup and options flows."""
+    _source_state: SourceFlowState
 
-    _last_source_available_count: int | None
-    _pending_source_key: str | None
-    _pending_source: dict[str, Any] | None
-    _pending_source_input: dict[str, Any] | None
-    _pending_source_step_id: str | None
-    _pending_source_summary: dict[str, Any] | None
+    def _state(self) -> SourceFlowState:
+        """Return per-flow staged source state."""
+        if not hasattr(self, "_source_state"):
+            self._source_state = SourceFlowState()
+        return self._source_state
 
     def _core_data(self) -> dict[str, Any]:
         """Return the active planner core data for this flow."""
@@ -1898,6 +1699,24 @@ class _SharedSourceFlow:
     def _stored_source(self, key: str) -> dict[str, Any]:
         """Return the currently persisted source config for a source key."""
         raise NotImplementedError
+
+    def _source_persistence(self) -> SourceFlowPersistence:
+        """Return the persistence facade for this flow."""
+        return self  # type: ignore[return-value]
+
+    async def default_source_step(self) -> ConfigFlowResult:
+        """Adapter for persistence-backed default step handling."""
+        return await self._async_default_source_step()
+
+    async def commit_reviewed_source(
+        self, key: str, resolved_pending: dict[str, Any]
+    ) -> ConfigFlowResult:
+        """Adapter for persistence-backed source commit handling."""
+        return await self._async_commit_reviewed_source(key, resolved_pending)
+
+    def review_form_last_step(self, key: str) -> bool:
+        """Adapter for persistence-backed review-step handling."""
+        return self._review_form_last_step(key)
 
     async def _async_handle_source_marked_not_used(self, key: str) -> ConfigFlowResult:
         """Persist a not-used source choice and continue the flow."""
@@ -1926,40 +1745,14 @@ class _SharedSourceFlow:
         include_energy_provider: bool,
     ) -> ConfigFlowResult | None:
         """Return the concrete step for a chosen source mode when supported."""
-        if mode == SOURCE_MODE_TEMPLATE:
-            if key == CONF_SOURCE_IMPORT_PRICE:
-                return await self.async_step_source_price_template()
-            if key == CONF_SOURCE_EXPORT_PRICE:
-                return await self.async_step_source_export_price_template()
-            if key == CONF_SOURCE_USAGE:
-                return await self.async_step_source_usage_template()
-            return await self.async_step_source_pv_template()
-
-        if mode == SOURCE_MODE_ENTITY_ADAPTER:
-            if key == CONF_SOURCE_IMPORT_PRICE:
-                return await self.async_step_source_price_adapter()
-            if key == CONF_SOURCE_EXPORT_PRICE:
-                return await self.async_step_source_export_price_adapter()
-            if key == CONF_SOURCE_USAGE:
-                return await self.async_step_source_usage_adapter()
-            return await self.async_step_source_pv_adapter()
-
-        if mode == SOURCE_MODE_SERVICE_ADAPTER:
-            if key == CONF_SOURCE_IMPORT_PRICE:
-                return await self.async_step_source_price_service()
-            if key == CONF_SOURCE_EXPORT_PRICE:
-                return await self.async_step_source_export_price_service()
-            if key == CONF_SOURCE_USAGE:
-                return await self.async_step_source_usage_service()
-            return await self.async_step_source_pv_service()
-
-        if include_energy_provider and mode == SOURCE_MODE_ENERGY_PROVIDER:
-            return await self.async_step_source_pv_energy_provider()
-
-        if include_built_in and mode == SOURCE_MODE_BUILT_IN:
-            return await self.async_step_source_usage_built_in()
-
-        return None
+        step_id = SOURCE_STEP_REGISTRY.get(key, {}).get(mode)
+        if step_id is None:
+            return None
+        if mode == SOURCE_MODE_ENERGY_PROVIDER and not include_energy_provider:
+            return None
+        if mode == SOURCE_MODE_BUILT_IN and not include_built_in:
+            return None
+        return await getattr(self, f"async_step_{step_id}")()
 
     def _default_source_mode(
         self,
@@ -1973,7 +1766,7 @@ class _SharedSourceFlow:
         """Return the preferred default mode for one source selection step."""
         default_mode = existing.get(
             CONF_SOURCE_MODE,
-            _preferred_source_mode(
+            preferred_source_mode(
                 key,
                 include_not_used=include_not_used,
                 include_built_in=include_built_in,
@@ -2003,7 +1796,7 @@ class _SharedSourceFlow:
         return {
             "source_label": source_label,
             "required_count": str(_expected_slots(core_data)),
-            "available_count": str(self._last_source_available_count or 0),
+            "available_count": str(self._state().last_source_available_count or 0),
             "slot_minutes": str(core_data[CONF_SLOT_MINUTES]),
         }
 
@@ -2034,12 +1827,13 @@ class _SharedSourceFlow:
 
     def _source_step_defaults(self, key: str) -> dict[str, Any]:
         """Return defaults for the active source input step."""
-        if self._pending_source_key == key:
-            if self._pending_source_input is not None:
-                return _source_base_defaults(self._pending_source_input)
-            if self._pending_source is not None:
-                return _source_base_defaults(self._pending_source)
-        return _source_base_defaults(self._stored_source(key))
+        state = self._state()
+        if state.pending_source_key == key:
+            if state.pending_source_input is not None:
+                return source_base_defaults(state.pending_source_input)
+            if state.pending_source is not None:
+                return source_base_defaults(state.pending_source)
+        return source_base_defaults(self._stored_source(key))
 
     async def _async_source_template_step(
         self,
@@ -2098,7 +1892,7 @@ class _SharedSourceFlow:
             if not errors:
                 return await self._async_prepare_source_review(
                     key,
-                    _source_from_entity_adapter_user_input(user_input),
+                    staged_entity_source_input(_flow_user_input(user_input)),
                     source_step_id=step_id,
                     source_input=user_input,
                 )
@@ -2131,7 +1925,7 @@ class _SharedSourceFlow:
             if not errors:
                 return await self._async_prepare_source_review(
                     key,
-                    _source_from_service_adapter_user_input(user_input),
+                    staged_service_source_input(_flow_user_input(user_input)),
                     source_step_id=step_id,
                     source_input=user_input,
                 )
@@ -2242,7 +2036,8 @@ class _SharedSourceFlow:
         source_input: dict[str, Any] | None,
     ) -> dict[str, Any]:
         """Rebuild the staged source summary for the current core data."""
-        self._pending_source_summary = await _async_source_summary(
+        state = self._state()
+        state.pending_source_summary = await _async_source_summary(
             self.hass,
             core_data=self._core_data(),
             key=key,
@@ -2251,7 +2046,7 @@ class _SharedSourceFlow:
             floor_to_slot=self._floor_to_slot,
             validate_built_in_entity=self._validate_built_in_usage_entity,
         )
-        return self._pending_source_summary
+        return state.pending_source_summary
 
     async def _async_prepare_source_review(
         self,
@@ -2262,26 +2057,30 @@ class _SharedSourceFlow:
         source_input: dict[str, Any] | None = None,
     ) -> ConfigFlowResult:
         """Stage one source for review before saving it."""
-        self._pending_source_key = key
-        self._pending_source = source
-        self._pending_source_input = source_input
-        self._pending_source_step_id = source_step_id
+        state = self._state()
+        state.pending_source_key = key
+        state.pending_source = source
+        state.pending_source_input = source_input
+        state.pending_source_step_id = source_step_id
         summary = await self._async_refresh_pending_source_summary(
             key, source, source_input
         )
-        self._pending_source_input = summary.get("resolved_source_input", source_input)
+        state.pending_source_input = summary.get(
+            "resolved_source_input", source_input
+        )
         return await self.async_step_source_review()
 
     async def async_step_source_review(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Review and confirm one staged source."""
-        if self._pending_source_key is None or self._pending_source is None:
-            return await self._async_default_source_step()
+        state = self._state()
+        if state.pending_source_key is None or state.pending_source is None:
+            return await self._source_persistence().default_source_step()
 
-        key = self._pending_source_key
-        pending = dict(self._pending_source)
-        summary = self._pending_source_summary or {}
+        key = state.pending_source_key
+        pending = dict(state.pending_source)
+        summary = state.pending_source_summary or {}
         resolved_pending = dict(summary.get("resolved_source", pending))
         is_valid = bool(summary.get("is_valid", False))
         defaults = {CONF_ACCEPT_SOURCE_SUMMARY: is_valid}
@@ -2299,18 +2098,16 @@ class _SharedSourceFlow:
             except vol.Invalid as err:
                 errors["base"] = str(err)
                 summary = await self._async_refresh_pending_source_summary(
-                    key, pending, self._pending_source_input
+                    key, pending, state.pending_source_input
                 )
                 resolved_pending = dict(summary.get("resolved_source", pending))
                 is_valid = bool(summary.get("is_valid", False))
                 defaults[CONF_ACCEPT_SOURCE_SUMMARY] = is_valid
             else:
-                self._pending_source_key = None
-                self._pending_source = None
-                self._pending_source_input = None
-                self._pending_source_step_id = None
-                self._pending_source_summary = None
-                return await self._async_commit_reviewed_source(key, resolved_pending)
+                state.clear_pending_source()
+                return await self._source_persistence().commit_reviewed_source(
+                    key, resolved_pending
+                )
 
         accept_note = await _async_config_translation(
             self.hass,
@@ -2356,19 +2153,22 @@ class _SharedSourceFlow:
                 "diagnostic_text": str(summary.get("diagnostic_text", "")),
                 "accept_note": accept_note,
             },
-            last_step=self._review_form_last_step(key),
+            last_step=self._source_persistence().review_form_last_step(key),
         )
 
     async def _async_return_to_pending_source_step(self) -> ConfigFlowResult:
         """Return to the staged source input step."""
-        if self._pending_source_step_id is None:
-            return await self._async_default_source_step()
-        return await getattr(self, f"async_step_{self._pending_source_step_id}")()
+        state = self._state()
+        if state.pending_source_step_id is None:
+            return await self._source_persistence().default_source_step()
+        return await getattr(
+            self, f"async_step_{state.pending_source_step_id}"
+        )()
 
     async def _async_validate_source(self, key: str, source: dict[str, Any]) -> None:
         """Validate source config against the current horizon."""
         try:
-            self._last_source_available_count = await _async_validate_source_values(
+            self._state().last_source_available_count = await _async_validate_source_values(
                 self.hass,
                 core_data=self._core_data(),
                 key=key,
@@ -2378,7 +2178,7 @@ class _SharedSourceFlow:
             )
         except SourceProviderError as err:
             if available_count := err.details.get("available_count"):
-                self._last_source_available_count = int(available_count)
+                self._state().last_source_available_count = int(available_count)
             raise vol.Invalid(_invalid_key_from_source_error(err)) from err
 
     def _validate_built_in_usage_entity(self, entity_id: str) -> None:
@@ -2397,3 +2197,27 @@ class _SharedSourceFlow:
         slot_seconds = slot_minutes * 60
         floored = (seconds // slot_seconds) * slot_seconds
         return datetime.fromtimestamp(floored, tz=UTC)
+SOURCE_STEP_REGISTRY: dict[str, dict[str, str]] = {
+    CONF_SOURCE_IMPORT_PRICE: {
+        SOURCE_MODE_TEMPLATE: "source_price_template",
+        SOURCE_MODE_ENTITY_ADAPTER: "source_price_adapter",
+        SOURCE_MODE_SERVICE_ADAPTER: "source_price_service",
+    },
+    CONF_SOURCE_EXPORT_PRICE: {
+        SOURCE_MODE_TEMPLATE: "source_export_price_template",
+        SOURCE_MODE_ENTITY_ADAPTER: "source_export_price_adapter",
+        SOURCE_MODE_SERVICE_ADAPTER: "source_export_price_service",
+    },
+    CONF_SOURCE_USAGE: {
+        SOURCE_MODE_TEMPLATE: "source_usage_template",
+        SOURCE_MODE_ENTITY_ADAPTER: "source_usage_adapter",
+        SOURCE_MODE_SERVICE_ADAPTER: "source_usage_service",
+        SOURCE_MODE_BUILT_IN: "source_usage_built_in",
+    },
+    CONF_SOURCE_PV: {
+        SOURCE_MODE_TEMPLATE: "source_pv_template",
+        SOURCE_MODE_ENTITY_ADAPTER: "source_pv_adapter",
+        SOURCE_MODE_SERVICE_ADAPTER: "source_pv_service",
+        SOURCE_MODE_ENERGY_PROVIDER: "source_pv_energy_provider",
+    },
+}

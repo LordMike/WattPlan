@@ -8,7 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
 
 from .common import _subentry_name
-from .source_shared import (
+from ..const import (
     CONF_CAPACITY_KWH,
     CONF_CHARGE_EFFICIENCY,
     CONF_DISCHARGE_EFFICIENCY,
@@ -25,6 +25,8 @@ from .source_shared import (
     CONF_ROLLING_WINDOW_HOURS,
     CONF_RUN_WITHIN_HOURS,
     CONF_TARGET_ON_HOURS_PER_WINDOW,
+)
+from .source_shared import (
     MAX_NAME_LENGTH,
     SECTION_BATTERY_ADVANCED,
     _optional_max_distinct_options,
