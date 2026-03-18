@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-# ruff: noqa: F401,F403
+from typing import Any
+
 from .forms import (
     _battery_form_defaults,
     _normalize_battery_input,
@@ -12,12 +13,48 @@ from .forms import (
     _validate_comfort_data,
     _validate_optional_data,
 )
-from . import source_shared as _source_shared
-from .source_shared import *
-
-# The extracted flow classes still reference a large helper surface, including
-# underscore-prefixed helpers that `import *` intentionally skips.
-globals().update(vars(_source_shared))
+from .source_shared import (
+    CONF_ACTION_EMISSION_ENABLED,
+    CONF_HOURS_TO_PLAN,
+    CONF_NAME,
+    CONF_OPTIMIZER_PROFILE,
+    CONF_PLANNING_ENABLED,
+    CONF_SLOT_MINUTES,
+    CONF_SOURCES,
+    CONF_SOURCE_EXPORT_PRICE,
+    CONF_SOURCE_IMPORT_PRICE,
+    CONF_SOURCE_MODE,
+    CONF_SOURCE_PV,
+    CONF_SOURCE_USAGE,
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    ConfigSubentryFlow,
+    DOMAIN,
+    OPTIMIZER_PROFILE_BALANCED,
+    OptionsFlowWithReload,
+    SOURCE_MODE_NOT_USED,
+    SUBENTRY_TYPE_BATTERY,
+    SUBENTRY_TYPE_COMFORT,
+    SUBENTRY_TYPE_OPTIONAL,
+    _SharedSourceFlow,
+    _battery_schema,
+    _comfort_schema,
+    _core_schema,
+    _final_setup_schema,
+    _normalize_core_input,
+    _normalize_name,
+    _optional_schema,
+    _source_mode_schema,
+    _source_mode_summary,
+    _subentry_display_title,
+    _subentry_name,
+    _validate_core_data,
+    callback,
+    deepcopy,
+    selector,
+    vol,
+)
 
 class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
     """Handle a config flow for WattPlan."""

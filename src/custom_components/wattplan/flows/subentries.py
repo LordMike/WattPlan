@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.config_entries import ConfigEntry, ConfigSubentryFlow, SubentryFlowResult
+from homeassistant.config_entries import ConfigSubentryFlow, SubentryFlowResult
 from homeassistant.const import CONF_NAME
 
 from .forms import (
@@ -16,12 +16,18 @@ from .forms import (
     _validate_comfort_data,
     _validate_optional_data,
 )
-from . import source_shared as _source_shared
-from .source_shared import *
-
-# These handlers still rely on the shared schema and validation helpers,
-# including underscore-prefixed names.
-globals().update(vars(_source_shared))
+from .source_shared import (
+    CONF_SLOT_MINUTES,
+    SUBENTRY_TYPE_BATTERY,
+    SUBENTRY_TYPE_COMFORT,
+    SUBENTRY_TYPE_OPTIONAL,
+    _battery_schema,
+    _comfort_schema,
+    _final_setup_schema,
+    _normalize_name,
+    _optional_schema,
+    _subentry_display_title,
+)
 
 
 class BatterySubentryFlowHandler(ConfigSubentryFlow):
