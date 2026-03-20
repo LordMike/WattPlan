@@ -868,7 +868,7 @@ async def test_energy_provider_extends_horizon_from_previous_day(
         f"2026-01-01T{hour:02d}:00:00+00:00": hour * 100.0 for hour in range(24)
     }
     monkeypatch.setattr(
-        "custom_components.wattplan.source_provider.async_get_energy_solar_forecast_platforms",
+        "custom_components.wattplan.source_providers.payloads.async_get_energy_solar_forecast_platforms",
         AsyncMock(
             return_value={
                 "forecast_solar": AsyncMock(return_value={"wh_hours": wh_hours})

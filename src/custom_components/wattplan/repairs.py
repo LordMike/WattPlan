@@ -12,13 +12,14 @@ from homeassistant.helpers import issue_registry as ir
 
 from .const import DOMAIN
 from .datetime_utils import parse_datetime_like
-from .source_issues import (
-    _covered_hours,
+from .source_health_presenter import (
+    covered_hours,
+    source_consequence,
     source_display_name,
     source_display_title,
-    source_issue_id,
-    update_entry_source_with_fill_defaults,
+    stale_grace_note,
 )
+from .source_issues import source_issue_id, update_entry_source_with_fill_defaults
 
 
 class SourceIncompleteRepairFlow(RepairsFlow):
@@ -112,42 +113,20 @@ async def async_create_fix_flow(
     available_count = int(data.get("available_count", 0))
     required_count = int(data.get("required_count", 0))
     slot_minutes = int(entry.data.get("slot_minutes", 60)) if entry else 60
-    if expires_at := parse_datetime_like(data.get("expires_at")):
-        expires_dt = expires_at.astimezone()
-        expires_local = expires_dt.strftime("%Y-%m-%d %H:%M %Z")
-        now_local = datetime.now(tz=expires_dt.tzinfo)
-        total_minutes = max(int((expires_dt - now_local).total_seconds() // 60), 0)
-        hours, minutes = divmod(total_minutes, 60)
-        relative_until_failure = (
-            f"{hours} hours {minutes} minutes"
-            if hours and minutes
-            else f"{hours} hours"
-            if hours
-            else f"{minutes} minutes"
-        )
-        grace_note = (
-            f"WattPlan is still using the last successful {source_display_name(source_key)} "
-            f"data, but the first planning cycle that will fail is in "
-            f"{relative_until_failure} ({expires_local})."
-        )
-    else:
-        grace_note = (
-            f"The last successful {source_display_name(source_key)} data is no longer "
-            "available, so this source already affects the current plan."
-        )
-    consequence = (
-        "WattPlan will continue, but it will plan without solar contribution for the missing period."
-        if source_key == "pv"
-        else "WattPlan will stop producing new plans."
+    grace_note, _expires_placeholder = stale_grace_note(
+        source_key=source_key,
+        expires_at=parse_datetime_like(data.get("expires_at")),
+        slot_minutes=slot_minutes,
     )
+    consequence = source_consequence(source_key)
     return SourceIncompleteRepairFlow(
         entry_id,
         entry_title,
         source_key,
         available_count=available_count,
         required_count=required_count,
-        covered_hours=_covered_hours(available_count, slot_minutes),
-        required_hours=_covered_hours(required_count, slot_minutes),
+        covered_hours=covered_hours(available_count, slot_minutes),
+        required_hours=covered_hours(required_count, slot_minutes),
         grace_note=grace_note,
         consequence=consequence,
     )
