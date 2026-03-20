@@ -7,15 +7,10 @@ from .discovery import (
     async_get_energy_solar_forecast_entries,
     async_get_energy_solar_forecast_platforms,
 )
-from .providers import (
-    EnergySolarForecastSourceProvider,
-    MergedSourceProvider,
-    TemplateAdapterSourceProvider,
-)
+from .providers import MergedSourceProvider, TemplateAdapterSourceProvider
 
 __all__ = [
     "CONF_WATTPLAN_ENTITY_ID",
-    "EnergySolarForecastSourceProvider",
     "MergedSourceProvider",
     "TemplateAdapterSourceProvider",
     "async_auto_detect_entity_adapter",

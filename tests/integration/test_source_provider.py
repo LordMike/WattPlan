@@ -22,12 +22,14 @@ from custom_components.wattplan.const import (
     CONF_CLAMP_MODE,
     CONF_CONFIG_ENTRY_ID,
     CONF_EDGE_FILL_MODE,
+    CONF_FIXUP_PROFILE,
     CONF_PROVIDERS,
     CONF_RESAMPLE_MODE,
     CONF_SERVICE,
     CONF_SOURCE_MODE,
     CONF_TEMPLATE,
     EDGE_FILL_MODE_HOLD,
+    FIXUP_PROFILE_EXTEND,
     RESAMPLE_MODE_FORWARD_FILL,
     RESAMPLE_MODE_LINEAR,
     SOURCE_MODE_ENERGY_PROVIDER,
@@ -35,9 +37,9 @@ from custom_components.wattplan.const import (
     SOURCE_MODE_SERVICE_ADAPTER,
     SOURCE_MODE_TEMPLATE,
 )
+from custom_components.wattplan.source_config.provider import build_source_value_provider
 from custom_components.wattplan.source_pipeline import build_source_base_provider
 from custom_components.wattplan.source_provider import (
-    EnergySolarForecastSourceProvider,
     TemplateAdapterSourceProvider,
     async_auto_detect_entity_adapter,
     async_auto_detect_service_adapter,
@@ -383,7 +385,6 @@ async def test_merged_provider_tolerates_one_empty_entity_provider(
         {
             "price": float(index + 1),
             "start": f"2026-03-14T{index // 4:02d}:{(index % 4) * 15:02d}:00+00:00",
-            "end": f"2026-03-14T{index // 4:02d}:{((index % 4) + 1) * 15 if (index % 4) < 3 else 0:02d}:00+00:00",
         }
         for index in range(96)
     ]
@@ -398,7 +399,7 @@ async def test_merged_provider_tolerates_one_empty_entity_provider(
         {
             "available_at": "13:22:18",
             "forecast_data": False,
-            "prices": [{"end": "2026-03-15T00:00:00+01:00"}],
+            "prices": [{}],
         },
     )
 
@@ -770,7 +771,7 @@ async def test_clamp_mode_nearest_aligns_timestamps(hass: HomeAssistant) -> None
 
 
 async def test_resample_mode_forward_fill_fills_gaps(hass: HomeAssistant) -> None:
-    """Forward fill should fill interior missing slots."""
+    """Forward fill should preserve interval buckets and fill only true gaps."""
     payload = [
         {"start": "2026-01-01T00:00:00+00:00", "value": 1.0},
         {"start": "2026-01-01T00:30:00+00:00", "value": 3.0},
@@ -787,7 +788,7 @@ async def test_resample_mode_forward_fill_fills_gaps(hass: HomeAssistant) -> Non
 
     values = await provider.async_values(_window())
 
-    assert values == [1.0, 1.0, 3.0, 4.0]
+    assert values == [0.5, 0.5, 3.0, 4.0]
 
 
 async def test_edge_fill_mode_hold_fills_edges(hass: HomeAssistant) -> None:
@@ -876,14 +877,19 @@ async def test_energy_provider_extends_horizon_from_previous_day(
         ),
     )
 
-    provider = EnergySolarForecastSourceProvider(
+    provider = build_source_value_provider(
         hass,
-        source_name="pv",
+        source_key="pv",
         source_config={
             CONF_SOURCE_MODE: SOURCE_MODE_ENERGY_PROVIDER,
             CONF_CONFIG_ENTRY_ID: entry.entry_id,
-            CONF_CLAMP_MODE: CLAMP_MODE_NEAREST,
-            CONF_EDGE_FILL_MODE: EDGE_FILL_MODE_HOLD,
+            CONF_FIXUP_PROFILE: FIXUP_PROFILE_EXTEND,
+            CONF_PROVIDERS: [
+                {
+                    CONF_SOURCE_MODE: SOURCE_MODE_ENERGY_PROVIDER,
+                    CONF_CONFIG_ENTRY_ID: entry.entry_id,
+                }
+            ],
         },
     )
 
@@ -897,3 +903,59 @@ async def test_energy_provider_extends_horizon_from_previous_day(
 
     assert values[:4] == [0.0, 0.1, 0.2, 0.3]
     assert values[24:28] == [0.0, 0.1, 0.2, 0.3]
+
+
+async def test_energy_provider_splits_solcast_half_hour_energy_into_15_min_slots(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Energy provider should split Solcast 30-minute energy across 15-minute slots."""
+    entry = MockConfigEntry(
+        domain="forecast_solar",
+        entry_id="solar-entry",
+        title="Solcast",
+        state=ConfigEntryState.LOADED,
+    )
+    entry.async_unload = AsyncMock(return_value=True)
+    entry.add_to_hass(hass)
+
+    # Live Solcast snapshot from 2026-03-20, converted the same way the Energy
+    # platform does it: pv_estimate (kW average for the half-hour) * 500 => Wh.
+    wh_hours = {
+        "2026-03-20T09:00:00+00:00": 1446.0,  # 10:00 CET, 2.8928 kW * 0.5 h
+        "2026-03-20T09:30:00+00:00": 2002.0,  # 10:30 CET, 4.0047 kW * 0.5 h
+        "2026-03-20T10:00:00+00:00": 2480.0,  # 11:00 CET, 4.9605 kW * 0.5 h
+    }
+    monkeypatch.setattr(
+        "custom_components.wattplan.source_providers.payloads.async_get_energy_solar_forecast_platforms",
+        AsyncMock(
+            return_value={
+                "forecast_solar": AsyncMock(return_value={"wh_hours": wh_hours})
+            }
+        ),
+    )
+
+    provider = build_source_value_provider(
+        hass,
+        source_key="pv",
+        source_config={
+            CONF_SOURCE_MODE: SOURCE_MODE_ENERGY_PROVIDER,
+            CONF_CONFIG_ENTRY_ID: entry.entry_id,
+            CONF_FIXUP_PROFILE: FIXUP_PROFILE_EXTEND,
+            CONF_PROVIDERS: [
+                {
+                    CONF_SOURCE_MODE: SOURCE_MODE_ENERGY_PROVIDER,
+                    CONF_CONFIG_ENTRY_ID: entry.entry_id,
+                }
+            ],
+        },
+    )
+
+    values = await provider.async_values(
+        SourceWindow(
+            start_at=datetime(2026, 3, 20, 9, 0, tzinfo=UTC),
+            slot_minutes=15,
+            slots=6,
+        )
+    )
+
+    assert values == [0.723, 0.723, 1.001, 1.001, 1.24, 1.24]

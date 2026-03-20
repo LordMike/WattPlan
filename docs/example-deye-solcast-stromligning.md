@@ -126,15 +126,17 @@ Why this is a good fit:
 - it is a realistic source for a 48-hour solar-aware plan
 
 Suggested setup path:
-1. Choose **Entity attribute**
-2. Keep **Adapter type** on **Auto detect**
-3. Select `sensor.solcast_pv_forecast_forecast_today`
+1. Choose **Energy provider** when the Solcast integration is available in Home Assistant Energy
+2. Select the Solcast config entry
+3. Keep the default advanced processing unless you need a specific fixup policy
 4. Continue to review
 
-If you instead use explicit fields, the relevant Solcast structure is typically:
+If you instead use **Entity attribute**, the relevant Solcast structure is typically:
 - **Attribute path:** `detailedForecast`
 - **Timestamp key:** `period_start`
 - **Value key:** `pv_estimate`
+
+Use the entity-attribute path only when you intentionally want to map Solcast data directly. The Energy Provider path is the preferred setup because it reads the forecast intervals exposed through Home Assistant Energy and lets WattPlan convert them into planner slots.
 
 Expected result:
 - review should show enough usable intervals to cover the selected horizon
@@ -218,4 +220,3 @@ Only move to templates when the source you need is not already consumable throug
 - Service call
 - Built in
 - Energy provider
-

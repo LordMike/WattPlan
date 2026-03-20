@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 import logging
+import math
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -333,32 +334,170 @@ class TemplateAdapterSourceProvider(SourceProvider):
         slot_delta = timedelta(minutes=window.slot_minutes)
         start_at = self._as_utc(window.start_at)
         end_at = start_at + (slot_delta * window.slots)
+        snapped_points = self._snapped_points(points, start_at, slot_delta)
+        if len(snapped_points) != len({point_start for point_start, _value in snapped_points}):
+            known = self._point_slots(snapped_points, window, start_at, end_at, slot_delta)
+            return self._complete_slots(known)
 
+        intervals = self._intervals_from_points(snapped_points, slot_delta)
+        known = self._intervals_to_slots(
+            intervals=intervals,
+            window=window,
+            start_at=start_at,
+            end_at=end_at,
+            slot_delta=slot_delta,
+        )
+        return self._complete_slots(known)
+
+    def _snapped_points(
+        self,
+        points: list[tuple[datetime, float]],
+        start_at: datetime,
+        slot_delta: timedelta,
+    ) -> list[tuple[datetime, float]]:
+        """Return sorted points aligned to the configured slot boundaries."""
+        return sorted(
+            (
+                self._snap_timestamp(point_start, start_at, slot_delta),
+                value,
+            )
+            for point_start, value in points
+        )
+
+    def _point_slots(
+        self,
+        snapped_points: list[tuple[datetime, float]],
+        window: SourceWindow,
+        start_at: datetime,
+        end_at: datetime,
+        slot_delta: timedelta,
+    ) -> list[float | None]:
+        """Map timestamps to planner slots without interval distribution."""
         buckets: dict[int, list[float]] = {}
-        for point_start, value in points:
-            if self._clamp_mode == CLAMP_MODE_NEAREST:
-                slot_index = self._nearest_slot_index(point_start, start_at, slot_delta)
-                if slot_index < 0 or slot_index >= window.slots:
-                    continue
-            else:
-                if point_start < start_at or point_start >= end_at:
-                    continue
-                offset = point_start - start_at
-                if (offset.total_seconds() % slot_delta.total_seconds()) != 0:
-                    raise SourceProviderError(
-                        "source_validation",
-                        (
-                            f"{self._source_name} timestamp `{point_start.isoformat()}` "
-                            "is not aligned to slot boundaries"
-                        ),
-                        details={"source": self._source_name},
-                    )
-                slot_index = int(offset // slot_delta)
+        for point_start, value in snapped_points:
+            if point_start < start_at or point_start >= end_at:
+                continue
+            slot_index = int((point_start - start_at) // slot_delta)
             buckets.setdefault(slot_index, []).append(value)
+
         known: list[float | None] = [None] * window.slots
         for slot_index, slot_values in buckets.items():
             known[slot_index] = self._aggregate_values(slot_values)
-        return self._complete_slots(known)
+        return known
+
+    def _intervals_from_points(
+        self,
+        snapped_points: list[tuple[datetime, float]],
+        slot_delta: timedelta,
+    ) -> list[tuple[datetime, datetime, float]]:
+        """Return normalized [start, end) intervals for timestamped values."""
+        default_interval = self._default_interval(snapped_points, slot_delta)
+        intervals: list[tuple[datetime, datetime, float]] = []
+        for index, (point_start, value) in enumerate(snapped_points):
+            if index + 1 < len(snapped_points):
+                end_dt = snapped_points[index + 1][0]
+            else:
+                end_dt = point_start + default_interval
+
+            if end_dt <= point_start:
+                raise SourceProviderError(
+                    "source_validation",
+                    (
+                        f"{self._source_name} point interval starting at "
+                        f"`{point_start.isoformat()}` has a non-positive duration"
+                    ),
+                    details={"source": self._source_name},
+                )
+
+            intervals.append((point_start, end_dt, value))
+
+        return intervals
+
+    def _default_interval(
+        self,
+        points: list[tuple[datetime, float]],
+        slot_delta: timedelta,
+    ) -> timedelta:
+        """Return the inferred cadence for the trailing interval."""
+        durations_seconds: list[int] = []
+        for left, right in pairwise(points):
+            delta_seconds = int((right[0] - left[0]).total_seconds())
+            if delta_seconds > 0:
+                durations_seconds.append(delta_seconds)
+
+        if not durations_seconds:
+            return slot_delta
+
+        return timedelta(seconds=durations_seconds[-1])
+
+    def _intervals_to_slots(
+        self,
+        *,
+        intervals: list[tuple[datetime, datetime, float]],
+        window: SourceWindow,
+        start_at: datetime,
+        end_at: datetime,
+        slot_delta: timedelta,
+    ) -> list[float | None]:
+        """Distribute interval energy across overlapping planner slots."""
+        slot_seconds = slot_delta.total_seconds()
+        slot_values: dict[int, list[float]] = {}
+
+        for interval_start, interval_end, value in intervals:
+            if interval_end <= start_at or interval_start >= end_at:
+                continue
+
+            effective_start = max(interval_start, start_at)
+            effective_end = min(interval_end, end_at)
+            interval_seconds = (interval_end - interval_start).total_seconds()
+            first_slot = max(
+                0,
+                int(math.floor((effective_start - start_at).total_seconds() / slot_seconds)),
+            )
+            last_slot = min(
+                window.slots,
+                int(math.ceil((effective_end - start_at).total_seconds() / slot_seconds)),
+            )
+
+            for slot_index in range(first_slot, last_slot):
+                slot_start = start_at + (slot_delta * slot_index)
+                slot_end = slot_start + slot_delta
+                overlap_start = max(interval_start, slot_start)
+                overlap_end = min(interval_end, slot_end)
+                overlap_seconds = (overlap_end - overlap_start).total_seconds()
+                if overlap_seconds <= 0:
+                    continue
+                slot_values.setdefault(slot_index, []).append(
+                    value * (overlap_seconds / interval_seconds)
+                )
+
+        known: list[float | None] = [None] * window.slots
+        for slot_index, contributions in slot_values.items():
+            known[slot_index] = self._aggregate_values(contributions)
+        return known
+
+    def _snap_timestamp(
+        self,
+        value: datetime,
+        start_at: datetime,
+        slot_delta: timedelta,
+    ) -> datetime:
+        """Return timestamp aligned according to the configured clamp mode."""
+        if self._clamp_mode == CLAMP_MODE_NEAREST:
+            slot_index = self._nearest_slot_index(value, start_at, slot_delta)
+            return start_at + (slot_delta * slot_index)
+
+        offset = value - start_at
+        if (offset.total_seconds() % slot_delta.total_seconds()) != 0:
+            raise SourceProviderError(
+                "source_validation",
+                (
+                    f"{self._source_name} timestamp `{value.isoformat()}` "
+                    "is not aligned to slot boundaries"
+                ),
+                details={"source": self._source_name},
+            )
+        return value
 
     def _aggregation_mode(self, source_config: dict[str, Any]) -> str:
         """Return validated source aggregation mode."""
@@ -608,7 +747,7 @@ class MergedSourceProvider(TemplateAdapterSourceProvider):
             ]
 
         if mode == SOURCE_MODE_ENERGY_PROVIDER:
-            provider = EnergySolarForecastSourceProvider(
+            provider = TemplateAdapterSourceProvider(
                 self._hass,
                 source_name=self._source_name,
                 source_config=provider_source_config,
@@ -659,83 +798,7 @@ class MergedSourceProvider(TemplateAdapterSourceProvider):
         return mode or "provider"
 
 
-class EnergySolarForecastSourceProvider(TemplateAdapterSourceProvider):
-    """Source provider that extends Energy solar forecasts across the horizon."""
-
-    async def async_values(self, window: SourceWindow) -> list[float]:
-        """Return normalized Energy forecast values for the whole horizon."""
-        payload = await self._payload_provider.async_fetch_payload()
-        if not isinstance(payload, list) or not payload:
-            raise SourceProviderError(
-                "source_fetch",
-                f"{self._source_name} Energy provider returned no solar forecast",
-                details={
-                    "source": self._source_name,
-                    "provider_reason": "no_forecast",
-                },
-            )
-
-        base_slots = self._energy_payload_slots(payload, window)
-        base_window = SourceWindow(
-            start_at=window.start_at,
-            slot_minutes=window.slot_minutes,
-            slots=max(1, min(window.slots, base_slots)),
-        )
-        values = self._object_values(payload, base_window)
-        if len(values) >= window.slots:
-            return values[: window.slots]
-
-        day_slots = int((24 * 60) / window.slot_minutes)
-        if day_slots <= 0 or len(values) < day_slots:
-            raise SourceProviderError(
-                "source_validation",
-                (
-                    f"{self._source_name} Energy provider has {len(values)} usable "
-                    f"values, but at least {day_slots} are required before the "
-                    "daily repeat model can extend the horizon"
-                ),
-                details={
-                    "source": self._source_name,
-                    "available_count": len(values),
-                    "required_count": day_slots,
-                    "provider_reason": "not_enough_history",
-                },
-            )
-
-        completed = list(values)
-        while len(completed) < window.slots:
-            repeat_index = len(completed) - day_slots
-            completed.append(completed[repeat_index])
-        return completed[: window.slots]
-
-    def _energy_payload_slots(
-        self, payload: list[dict[str, Any]], window: SourceWindow
-    ) -> int:
-        """Return the known slot count covered by the Energy payload."""
-        start_at = self._as_utc(window.start_at)
-        slot_delta = timedelta(minutes=window.slot_minutes)
-        max_slot = 0
-        for point in payload:
-            point_start = parse_datetime_like(point.get("start"))
-            if point_start is None:
-                continue
-            point_start = self._as_utc(point_start)
-
-            if self._clamp_mode == CLAMP_MODE_NEAREST:
-                slot_index = self._nearest_slot_index(point_start, start_at, slot_delta)
-            else:
-                offset = point_start - start_at
-                if offset.total_seconds() < 0:
-                    continue
-                slot_index = int(offset // slot_delta)
-            if slot_index < 0:
-                continue
-            max_slot = max(max_slot, slot_index + 1)
-        return max_slot
-
-
 __all__ = [
-    "EnergySolarForecastSourceProvider",
     "MergedSourceProvider",
     "TemplateAdapterSourceProvider",
 ]

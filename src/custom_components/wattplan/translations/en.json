@@ -627,14 +627,14 @@
       },
       "source_pv_energy_provider": {
         "title": "PV source Energy provider",
-        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse a Home Assistant Energy solar forecast provider for PV data.\n\nSelect a loaded integration that exposes Energy solar forecast data. WattPlan converts the provider's hourly Wh forecast into kWh planner intervals and extends the horizon by repeating the value from 24 hours earlier.\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse a Home Assistant Energy solar forecast provider for PV data.\n\nSelect a loaded integration that exposes Energy solar forecast data. WattPlan reads the provider's native forecast intervals, converts them into planner intervals, and applies the selected fixup profile if the horizon needs extra coverage.\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
         "data": {
           "config_entry_id": "Energy provider",
           "fixup_profile": "Tail fill model"
         },
         "data_description": {
           "config_entry_id": "Choose the Home Assistant integration entry that should provide the solar forecast.",
-          "fixup_profile": "Energy provider mode always extends the horizon by repeating the value from 24 hours earlier."
+          "fixup_profile": "Choose how WattPlan handles missing tail coverage after converting the provider's native forecast intervals."
         },
         "sections": {
           "manual": {
@@ -1073,14 +1073,14 @@
       },
       "source_pv_energy_provider": {
         "title": "PV source Energy provider",
-        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse a Home Assistant Energy solar forecast provider for PV data.\n\nSelect a loaded integration that exposes Energy solar forecast data. WattPlan converts the provider's hourly Wh forecast into kWh planner intervals and extends the horizon by repeating the value from 24 hours earlier.\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse a Home Assistant Energy solar forecast provider for PV data.\n\nSelect a loaded integration that exposes Energy solar forecast data. WattPlan reads the provider's native forecast intervals, converts them into planner intervals, and applies the selected fixup profile if the horizon needs extra coverage.\n\nTarget intervals for this setup: {required_count} values at {slot_minutes}-minute intervals.",
         "data": {
           "config_entry_id": "Energy provider",
           "fixup_profile": "Tail fill model"
         },
         "data_description": {
           "config_entry_id": "Choose the Home Assistant integration entry that should provide the solar forecast.",
-          "fixup_profile": "Energy provider mode always extends the horizon by repeating the value from 24 hours earlier."
+          "fixup_profile": "Choose how WattPlan handles missing tail coverage after converting the provider's native forecast intervals."
         },
         "sections": {
           "advanced": {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Any
 
 from homeassistant.const import CONF_NAME
@@ -11,6 +12,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.template import Template
 
 from ..adapter_auto import resolve_nested_value
+from ..datetime_utils import parse_datetime_like
 from ..const import (
     ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
     ADAPTER_TYPE_ATTRIBUTE_VALUES,
@@ -261,9 +263,12 @@ class EnergySolarForecastPayloadProvider(BasePayloadProvider):
                 },
             )
 
-        points: list[dict[str, Any]] = []
+        rows: list[tuple[datetime, float]] = []
         for timestamp, value in sorted(wh_hours.items()):
             try:
+                start_dt = parse_datetime_like(timestamp)
+                if start_dt is None:
+                    raise ValueError
                 numeric_value = float(value) / 1000.0
             except (TypeError, ValueError) as err:
                 raise SourceProviderError(
@@ -278,8 +283,15 @@ class EnergySolarForecastPayloadProvider(BasePayloadProvider):
                         "provider_reason": "invalid_forecast",
                     },
                 ) from err
-            points.append({"start": str(timestamp), "value": numeric_value})
-        return points
+            rows.append((start_dt, numeric_value))
+
+        return [
+            {
+                "start": start_dt.isoformat(),
+                "value": numeric_value,
+            }
+            for start_dt, numeric_value in rows
+        ]
 
 
 __all__ = [

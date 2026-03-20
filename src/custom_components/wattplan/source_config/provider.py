@@ -33,7 +33,6 @@ from ..forecast_provider import ForecastProvider
 from ..source_fixup import SourceFixupProvider, effective_provider_config
 from ..source_providers import (
     CONF_WATTPLAN_ENTITY_ID,
-    EnergySolarForecastSourceProvider,
     MergedSourceProvider,
     TemplateAdapterSourceProvider,
     async_auto_detect_entity_adapter,
@@ -81,7 +80,7 @@ def build_source_base_provider(
             lookback_days=int(provider_config.get(CONF_HISTORY_DAYS, 14)),
         )
     if len(providers_config) == 1 and normalized.mode == SOURCE_MODE_ENERGY_PROVIDER:
-        return EnergySolarForecastSourceProvider(
+        return TemplateAdapterSourceProvider(
             hass,
             source_name=source_key,
             source_config=effective_provider_config({**source_config, **providers_config[0]}),

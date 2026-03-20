@@ -2,7 +2,6 @@
 
 from .source_providers import (
     CONF_WATTPLAN_ENTITY_ID,
-    EnergySolarForecastSourceProvider,
     MergedSourceProvider,
     TemplateAdapterSourceProvider,
     async_auto_detect_entity_adapter,
@@ -16,7 +15,6 @@ from .source_providers import (
 
 __all__ = [
     "CONF_WATTPLAN_ENTITY_ID",
-    "EnergySolarForecastSourceProvider",
     "MergedSourceProvider",
     "TemplateAdapterSourceProvider",
     "async_auto_detect_entity_adapter",
