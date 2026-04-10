@@ -37,7 +37,7 @@ The generated artifact is:
 - `main` branch / manual non-tag run: `dist/wattplan-<version>.zip`
 
 The tagged release artifact is the HACS release zip.
-It contains the Home Assistant integration payload from `src/custom_components/wattplan/`, but excludes the `utilities/` subtree so developer-only helper scripts are not shipped in the release package.
+It contains the Home Assistant integration payload from `custom_components/wattplan/`, rooted under `custom_components/` in the archive so HACS sees the standard repository layout. It excludes the `utilities/` subtree and Python cache artifacts so developer-only files are not shipped in the release package.
 
 For tagged commits, the workflow publishes the same zip in two places:
 

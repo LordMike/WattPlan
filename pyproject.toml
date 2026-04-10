@@ -19,7 +19,7 @@ test = [
 
 [tool.pytest.ini_options]
 addopts = "-ra"
-pythonpath = ["src"]
+pythonpath = ["."]
 testpaths = [
   "tests/integration",
   "tests/optimizer",
@@ -30,7 +30,6 @@ asyncio_mode = "auto"
 include-package-data = true
 
 [tool.setuptools.packages.find]
-where = ["src"]
 include = ["custom_components*"]
 namespaces = true
 

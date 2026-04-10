@@ -5,7 +5,7 @@ Prefer updating the integration, tests, and docs together when behavior changes.
 
 ## Do / Don't
 - Do: treat `WattPlan` as the canonical repo and `hass-core` as the runtime/test harness via symlink.
-- Do: keep `src/custom_components/wattplan/optimizer/` free of `homeassistant` imports.
+- Do: keep `custom_components/wattplan/optimizer/` free of `homeassistant` imports.
 - Do: update docs when workflows, release behavior, or architecture changes.
 - Don't: edit the backup copies under `hass-core/*/wattplan.pre-symlink-backup-*`.
 - Don't: reintroduce `vendor_poweroptim`; the optimizer lives under `optimizer/`.
@@ -20,7 +20,7 @@ Prefer updating the integration, tests, and docs together when behavior changes.
 ## Core workflows
 - Build: `python scripts/build_hacs_zip.py`
 - Test: `pytest`
-- Run: `PYTHONPATH=src pytest tests` or `PYTHONPATH=src ../hass-core/.venv/bin/pytest tests`
+- Run: `PYTHONPATH=. pytest tests` or `PYTHONPATH=. ../hass-core/.venv/bin/pytest tests`
 
 ## Testing in Codex
 - When running pytest from Codex, request elevated execution for each test run instead of using the default sandbox.
@@ -30,12 +30,12 @@ Prefer updating the integration, tests, and docs together when behavior changes.
 - The default `./scripts/run_tests.sh` wrapper already uses worktree-specific paths under `/tmp` for both the virtualenv and pytest `--basetemp`. Reuse that convention for Codex-created envs to avoid collisions across parallel worktrees.
 
 ## Repo conventions
-- Integration code lives in `src/custom_components/wattplan/`.
-- Optimizer code lives in `src/custom_components/wattplan/optimizer/`.
+- Integration code lives in `custom_components/wattplan/`.
+- Optimizer code lives in `custom_components/wattplan/optimizer/`.
 - Home Assistant integration tests live in `tests/integration/`.
 - Optimizer-only tests live in `tests/optimizer/`.
 - `hass-core/config/custom_components/wattplan` and `hass-core/tests/custom_components/wattplan` are symlinks into this repo.
-- Keep release packaging focused on the integration tree under `src/custom_components/wattplan/`.
+- Keep release packaging focused on the integration tree under `custom_components/wattplan/`.
 - The HA integration acquires four planner input series: import price, export price, usage, and PV.
 - Each source uses one configured provider mode, then passes through normalization/fixup to produce one value per planner slot before the optimizer runs.
 - Keep source acquisition behavior centered in `source_pipeline.py`, `source_provider.py`, `source_fixup.py`, and `coordinator.py`; preserve the rule that `optimizer/` stays free of `homeassistant` imports.

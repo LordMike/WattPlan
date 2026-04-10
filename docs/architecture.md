@@ -1,15 +1,15 @@
 # Architecture
 
 WattPlan is a single repository with two tightly related concerns:
-- The Home Assistant custom integration in `src/custom_components/wattplan/`
-- The optimizer implementation in `src/custom_components/wattplan/optimizer/`
+- The Home Assistant custom integration in `custom_components/wattplan/`
+- The optimizer implementation in `custom_components/wattplan/optimizer/`
 
 The repository is structured so the integration can be released as a normal HACS artifact while the optimizer stays co-located and versioned with the integration.
 
 ## Layout
-- `src/custom_components/wattplan/`
+- `custom_components/wattplan/`
   - Home Assistant entry points, config flow, coordinator, entities, source handling, repairs
-- `src/custom_components/wattplan/optimizer/`
+- `custom_components/wattplan/optimizer/`
   - Pure Python optimization models and solver code
 - `tests/integration/`
   - Home Assistant integration tests

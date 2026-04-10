@@ -27,7 +27,9 @@ def test_build_hacs_zip_uses_hacs_archive_layout(tmp_path) -> None:
     with zipfile.ZipFile(output_path) as archive:
         names = archive.namelist()
 
-    assert "manifest.json" in names
-    assert "__init__.py" in names
-    assert all("/" not in name or not name.startswith("custom_components/") for name in names)
-    assert all(not name.startswith("utilities/") for name in names)
+    assert "custom_components/wattplan/manifest.json" in names
+    assert "custom_components/wattplan/__init__.py" in names
+    assert all(name.startswith("custom_components/wattplan/") for name in names)
+    assert all("utilities/" not in name for name in names)
+    assert all("__pycache__/" not in name for name in names)
+    assert all(not name.endswith((".pyc", ".pyo")) for name in names)

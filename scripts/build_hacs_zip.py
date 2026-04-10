@@ -10,9 +10,11 @@ import zipfile
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-INTEGRATION_ROOT = REPO_ROOT / "src" / "custom_components" / "wattplan"
+CUSTOM_COMPONENTS_ROOT = REPO_ROOT / "custom_components"
+INTEGRATION_ROOT = CUSTOM_COMPONENTS_ROOT / "wattplan"
 MANIFEST_PATH = INTEGRATION_ROOT / "manifest.json"
 EXCLUDED_DIRECTORIES = {"utilities"}
+EXCLUDED_FILE_SUFFIXES = {".pyc", ".pyo"}
 
 
 def _manifest_version() -> str:
@@ -30,9 +32,14 @@ def _build_zip(output_path: Path) -> None:
         for file_path in sorted(INTEGRATION_ROOT.rglob("*")):
             if file_path.is_dir():
                 continue
+            if file_path.suffix in EXCLUDED_FILE_SUFFIXES:
+                continue
             if any(part in EXCLUDED_DIRECTORIES for part in file_path.relative_to(INTEGRATION_ROOT).parts):
                 continue
-            archive_name = file_path.relative_to(INTEGRATION_ROOT).as_posix()
+            relative_path = file_path.relative_to(REPO_ROOT)
+            if "__pycache__" in relative_path.parts:
+                continue
+            archive_name = relative_path.as_posix()
             archive.write(file_path, archive_name)
 
 

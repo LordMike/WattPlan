@@ -3,6 +3,7 @@
 ## Repository workflow
 
 Work from `WattPlan` as the source of truth.
+The repository now uses the HACS-standard layout, so the integration lives at `custom_components/wattplan/` at the repo root and tests import `custom_components` directly from the project root.
 
 ## Setup
 
