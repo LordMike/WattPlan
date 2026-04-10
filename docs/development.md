@@ -7,13 +7,13 @@ The repository now uses the HACS-standard layout, so the integration lives at `c
 
 ## Setup
 
-Install `uv`, then create a local virtualenv with the editable test
+Install `uv`, then create a local virtualenv with the test
 dependencies.
 
 ```bash
 uv venv --python python3.14 .venv
 . .venv/bin/activate
-uv pip install --python .venv/bin/python -e '.[test]'
+uv pip install --python .venv/bin/python '.[test]'
 ```
 
 Use Python 3.14.2 or newer. The pinned Home Assistant test stack currently
