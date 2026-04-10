@@ -502,7 +502,7 @@ def test_feed_in_prices_shift_pv_charging_to_lower_export_value_slots():
     )
 
 
-def test_hold_state_always_serializes_no_charge_source():
+def test_non_charge_states_always_serialize_no_charge_source():
     result = {
         "battery_states": optimizer.np.asarray([[0, 1, 2]], dtype=optimizer.np.float64),
         "battery_charge_grid": optimizer.np.asarray(
@@ -515,7 +515,7 @@ def test_hold_state_always_serializes_no_charge_source():
 
     assert optimizer._battery_schedule_charge_source(result, 0, 0) == 0
     assert optimizer._battery_schedule_charge_source(result, 0, 1) == 1
-    assert optimizer._battery_schedule_charge_source(result, 0, 2) == 2
+    assert optimizer._battery_schedule_charge_source(result, 0, 2) == 0
 
 
 def test_live_grid_export_benchmark_scenario_uses_real_15min_stromligning_values():

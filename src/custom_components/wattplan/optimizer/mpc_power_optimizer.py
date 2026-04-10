@@ -1222,7 +1222,7 @@ def _optional_entity_options(entity, grid_import_prices, baseline_net_import):
 def _battery_schedule_charge_source(result, battery_index: int, timeslot: int) -> int:
     """Return a normalized charge source bitmask for one battery schedule slot."""
     battery_state = int(result["battery_states"][battery_index, timeslot])
-    if battery_state == 0:
+    if battery_state != 1:
         return 0
 
     return int(
