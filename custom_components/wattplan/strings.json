@@ -1120,7 +1120,7 @@
         },
         "data_description": {
           "planning_enabled": "When enabled, optimization runs every {slot_minutes} minutes and publishes the new plan to WattPlan entities.",
-          "action_emission_enabled": "When enabled, action states like charge/discharge/hold are published every {slot_minutes} minutes."
+          "action_emission_enabled": "When enabled, action states like charge_grid/charge_pv/charge_grid_pv/discharge/hold are published every {slot_minutes} minutes."
         }
       },
       "battery_entities": {

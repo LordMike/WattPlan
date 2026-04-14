@@ -26,17 +26,12 @@ def assert_plan_invariants(result: dict[str, Any]) -> dict[str, Any]:
                 continue
 
             state = str(point.get("state", "hold"))
-            charge_source = int(point.get("charge_source", 0))
-
-            if state == "charge":
-                assert charge_source in {1, 2, 3}, (
-                    f"battery {entity.get('name')} schedule[{index}] is charge "
-                    f"but has invalid charge_source={charge_source}"
-                )
-            elif state in {"hold", "discharge"}:
-                assert charge_source == 0, (
-                    f"battery {entity.get('name')} schedule[{index}] is {state} "
-                    f"but has non-empty charge_source={charge_source}"
-                )
+            assert state in {
+                "hold",
+                "discharge",
+                "charge_grid",
+                "charge_pv",
+                "charge_grid_pv",
+            }, f"battery {entity.get('name')} schedule[{index}] has invalid state={state}"
 
     return result

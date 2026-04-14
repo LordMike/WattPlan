@@ -26,7 +26,6 @@ class CoordinatorSnapshot:
     created_at: datetime
     planner_status: str
     planner_message: str | None = None
-    battery_charge_source: dict[str, str] | None = None
     diagnostics: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -35,7 +34,6 @@ class CoordinatorSnapshot:
             "created_at": self.created_at.isoformat(),
             "planner_status": self.planner_status,
             "planner_message": self.planner_message,
-            "battery_charge_source": self.battery_charge_source,
             "diagnostics": self.diagnostics,
         }
 
@@ -51,10 +49,6 @@ class CoordinatorSnapshot:
         if not isinstance(planner_message, str | type(None)):
             return None
 
-        battery_charge_source = payload.get("battery_charge_source")
-        if not isinstance(battery_charge_source, dict | type(None)):
-            return None
-
         diagnostics = payload.get("diagnostics")
         if not isinstance(diagnostics, dict | type(None)):
             return None
@@ -63,7 +57,6 @@ class CoordinatorSnapshot:
             created_at=created_at,
             planner_status=planner_status,
             planner_message=planner_message,
-            battery_charge_source=battery_charge_source,
             diagnostics=diagnostics,
         )
 

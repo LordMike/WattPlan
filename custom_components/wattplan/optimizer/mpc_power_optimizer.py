@@ -1219,16 +1219,23 @@ def _optional_entity_options(entity, grid_import_prices, baseline_net_import):
     ]
 
 
-def _battery_schedule_charge_source(result, battery_index: int, timeslot: int) -> int:
-    """Return a normalized charge source bitmask for one battery schedule slot."""
+def _battery_schedule_state(result, battery_index: int, timeslot: int) -> str:
+    """Return the serialized battery action state for one schedule slot."""
     battery_state = int(result["battery_states"][battery_index, timeslot])
-    if battery_state != 1:
-        return 0
+    if battery_state == 0:
+        return "hold"
+    if battery_state == 2:
+        return "discharge"
 
-    return int(
+    charge_source = int(
         (1 if result["battery_charge_grid"][battery_index, timeslot] > EPSILON else 0)
         | (2 if result["battery_charge_pv"][battery_index, timeslot] > EPSILON else 0)
     )
+    return {
+        1: "charge_grid",
+        2: "charge_pv",
+        3: "charge_grid_pv",
+    }.get(charge_source, "hold")
 
 
 def optimize_internal(normalized: CalculationInput):
@@ -1317,7 +1324,6 @@ def optimize_internal(normalized: CalculationInput):
     )
 
     entities = []
-    battery_state_name = {0: "hold", 1: "charge", 2: "discharge"}
     for i, entity in enumerate(battery_entities):
         entities.append(
             {
@@ -1325,12 +1331,7 @@ def optimize_internal(normalized: CalculationInput):
                 "type": "battery",
                 "schedule": [
                     {
-                        "state": battery_state_name[
-                            int(result["battery_states"][i, t])
-                        ],
-                        "charge_source": _battery_schedule_charge_source(
-                            result, i, t
-                        ),
+                        "state": _battery_schedule_state(result, i, t),
                         "level": float(result["battery_levels"][i, t + 1]),
                     }
                     for t in range(total_steps)
