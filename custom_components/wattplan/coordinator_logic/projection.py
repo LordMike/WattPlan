@@ -41,8 +41,6 @@ class PlannerProjectionBuilder:
         batteries: dict[str, dict[str, Any]] = {}
         comforts: dict[str, dict[str, Any]] = {}
         optionals: dict[str, dict[str, Any]] = {}
-        battery_charge_source: dict[str, str] = {}
-
         name_maps = request["name_to_subentry"]
         for entity in result.get("entities", []):
             entity_name = str(entity.get("name"))
@@ -56,8 +54,6 @@ class PlannerProjectionBuilder:
                 if subentry_id is None:
                     continue
                 current = schedule[0]
-                current_source = self._map_charge_source(int(current.get("charge_source", 0)))
-                battery_charge_source[subentry_id] = current_source
                 next_change = self._next_change_point(
                     schedule,
                     key="state",
@@ -71,22 +67,14 @@ class PlannerProjectionBuilder:
                     if isinstance(next_point, dict)
                     else None
                 )
-                next_action_source = (
-                    self._map_charge_source(int(next_point.get("charge_source", 0)))
-                    if isinstance(next_point, dict)
-                    and str(next_point.get("state", "hold")) == "charge"
-                    else None
-                )
                 batteries[subentry_id] = {
                     "action": str(current.get("state", "hold")),
-                    "charge_source": current_source,
                     "next_action_timestamp": (
                         next_action_timestamp.isoformat()
                         if next_action_timestamp is not None
                         else None
                     ),
                     "next_action": next_action,
-                    "next_charge_source": next_action_source,
                 }
                 continue
 
@@ -155,7 +143,6 @@ class PlannerProjectionBuilder:
         return {
             "status": status,
             "message": message,
-            "battery_charge_source": battery_charge_source,
             "diagnostics": {
                 "batteries": batteries,
                 "comforts": comforts,
@@ -192,7 +179,6 @@ class PlannerProjectionBuilder:
                 if planner_output.get("message") is not None
                 else None
             ),
-            battery_charge_source=planner_output.get("battery_charge_source"),
             diagnostics=planner_output.get("diagnostics"),
         )
 
@@ -286,12 +272,6 @@ class PlannerProjectionBuilder:
                         schedule, horizon_slots, "level", default=0.0
                     )
                 )
-                plan_details[f"{key_base}_charge_source"] = [
-                    self._map_charge_source(int(value))
-                    for value in self._series_from_schedule(
-                        schedule, horizon_slots, "charge_source", default=0.0
-                    )
-                ]
                 continue
 
             if entity_type == "comfort":
@@ -388,14 +368,10 @@ class PlannerProjectionBuilder:
                     aggregated.append(round(sum(float(value) for value in chunk) / len(chunk), 2))
                 else:
                     aggregated.append(round(sum(float(value) for value in chunk), 2))
-            elif key.endswith("_charge_source"):
-                sources = {str(value) for value in chunk if isinstance(value, str)}
-                active_sources = sorted(source for source in sources if source != "n")
-                aggregated.append("".join(active_sources) if active_sources else "n")
             elif key.endswith("_action"):
                 actions = {str(value) for value in chunk if isinstance(value, str)}
                 active_actions = sorted(action for action in actions if action != "h")
-                aggregated.append("".join(active_actions) if active_actions else "h")
+                aggregated.append("+".join(active_actions) if active_actions else "h")
             else:
                 aggregated.append(chunk[-1])
         return aggregated
@@ -479,18 +455,11 @@ class PlannerProjectionBuilder:
                 )
         return None
 
-    def _map_charge_source(self, charge_source: int) -> str:
-        if charge_source == 1:
-            return "g"
-        if charge_source == 2:
-            return "p"
-        if charge_source == 3:
-            return "gp"
-        return "n"
-
     def _map_action_code(self, action: str) -> str:
         return {
-            "charge": "c",
+            "charge_grid": "c_g",
+            "charge_pv": "c_p",
+            "charge_grid_pv": "c_gp",
             "discharge": "d",
             "hold": "h",
         }.get(action, "h")

@@ -4,14 +4,22 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfEnergy
 
 from ..coordinator import WattPlanCoordinator
 from ..target_runtime import get_active_battery_target
 from .base import WattPlanCoordinatorSensor
-from .common import as_datetime, entry_device_info, friendly_charge_source_label
+from .common import as_datetime, entry_device_info
+
+BATTERY_ACTION_STATES = [
+    "hold",
+    "discharge",
+    "charge_grid",
+    "charge_pv",
+    "charge_grid_pv",
+]
 
 
 class SubentryActionSensor(WattPlanCoordinatorSensor):
@@ -32,6 +40,9 @@ class SubentryActionSensor(WattPlanCoordinatorSensor):
         super().__init__(config_entry, coordinator, **kwargs)
         self._subentry_id = subentry_id
         self._group = group
+        if group == "batteries":
+            self._attr_device_class = SensorDeviceClass.ENUM
+            self._attr_options = BATTERY_ACTION_STATES
 
     def _action_data(self) -> dict[str, Any]:
         """Return action data for this subentry from snapshot diagnostics."""
@@ -56,15 +67,7 @@ class ActionSensor(SubentryActionSensor):
     @property
     def extra_state_attributes(self) -> dict[str, str] | None:
         """Return action metadata."""
-        data = self._action_data()
-        attrs: dict[str, str] = {}
-        if self._group == "batteries" and (charge_source := data.get("charge_source")):
-            charge_source_code = str(charge_source)
-            attrs["charge_source"] = charge_source_code
-            attrs["charge_source_friendly"] = friendly_charge_source_label(
-                charge_source_code
-            )
-        return attrs or None
+        return None
 
 
 class NextActionSensor(SubentryActionSensor):
@@ -86,13 +89,6 @@ class NextActionSensor(SubentryActionSensor):
         timestamp = as_datetime(data.get("next_action_timestamp"))
         if timestamp is not None:
             attrs["timestamp"] = timestamp.isoformat()
-
-        if self._group == "batteries" and (charge_source := data.get("next_charge_source")):
-            charge_source_code = str(charge_source)
-            attrs["charge_source"] = charge_source_code
-            attrs["charge_source_friendly"] = friendly_charge_source_label(
-                charge_source_code
-            )
         return attrs or None
 
 

@@ -65,7 +65,7 @@ result = optimize(params)
 | `charge_efficiency` | `float` | No | `1.0` | Finite, `(0, 1]` | Fraction of charged energy that increases SoC. |
 | `discharge_efficiency` | `float` | No | `1.0` | Finite, `(0, 1]` | Fraction of discharged SoC energy delivered to load. |
 | `prefer_pv_surplus_charging` | `bool` | No | `false` | - | Route PV surplus into this battery instead of optimizing tiny export/recharge timing. |
-| `can_charge_from` | `int` | No | `2` | `0`, `1`, `2`, `3` | Charge-source flags (`1=GRID`, `2=PV`, `3=GRID|PV`; `0` means charging disabled). |
+| `can_charge_from` | `int` | No | `2` | `0`, `1`, `2`, `3` | Allowed charging-ingress flags (`1=GRID`, `2=PV`, `3=GRID|PV`; `0` means charging disabled). |
 
 **Curve Unit Note:**
 - `charge_curve_kwh` and `discharge_curve_kwh` are **kWh per slot**, not kW.
@@ -128,7 +128,7 @@ Optional entities provide advisory start-time suggestions and do not change the 
   "usage_kwh":             [1.2,  1.1,  1.0,  0.9,  1.0,  1.2,  1.3,  1.4],
   "rolling_window_slots": 96,
 
-  // Controllable storage: can charge/discharge/hold and absorb PV surplus.
+  // Controllable storage: can charge from grid/PV, discharge, or hold and absorb PV surplus.
   "battery_entities": [
     {
       "name": "home_battery",
@@ -214,7 +214,7 @@ Optional entities provide advisory start-time suggestions and do not change the 
 
 ### Notes on `entities` and `optional_entity_options`
 - `entities` is the actual optimized schedule.
-- Battery schedule points include `charge_source` flags (`0=none`, `1=GRID`, `2=PV`, `3=GRID|PV`) alongside `state` and `level`.
+- Battery schedule points encode charging source directly in `state`: `charge_grid`, `charge_pv`, `charge_grid_pv`, `discharge`, or `hold`.
 - `optional_entity_options` is advisory and computed on top of that baseline.
 - Optional entities do not affect each other and do not modify `entities`.
 

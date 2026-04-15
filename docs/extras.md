@@ -15,7 +15,9 @@ All of these are configured inside the WattPlan integration UI. WattPlan then ex
 
 ### What They Are
 Batteries model controllable storage. WattPlan plans battery behavior as:
-- `charge`
+- `charge_grid`
+- `charge_pv`
+- `charge_grid_pv`
 - `discharge`
 - `hold`
 
@@ -24,7 +26,7 @@ It also tracks battery targets and timing data so you can expose planned behavio
 ### When to Use Them
 Use a battery when:
 - You have a home battery or battery-backed inverter.
-- Your inverter or control stack can be told to charge, discharge, or hold.
+- Your inverter or control stack can be told to charge from grid or PV, discharge, or hold.
 - You want WattPlan to shift energy based on price, usage, and PV availability.
 
 ### How to Configure Them
@@ -47,11 +49,13 @@ The battery action sensor is the key one for control. Your automation should rea
 **Typical Pattern:**
 1. Create an automation that triggers when the WattPlan battery action entity changes.
 2. Read the action value from WattPlan.
-3. Map `charge`, `discharge`, or `hold` to your inverters controls.
+3. Map `charge_grid`, `charge_pv`, `charge_grid_pv`, `discharge`, or `hold` to your inverter's controls.
 4. Call the real inverter service, script, switch, or helper sequence.
 
 **Example Mapping Concept:**
-- `charge` -> Set inverter/battery system to charging mode.
+- `charge_grid` -> Set inverter/battery system to charge from the grid.
+- `charge_pv` -> Set inverter/battery system to charge from PV surplus.
+- `charge_grid_pv` -> Set inverter/battery system to allow charging from either grid or PV.
 - `discharge` -> Set inverter/battery system to discharge/export/self-consume mode.
 - `hold` -> Stop active charging/discharging and leave the battery neutral.
 
@@ -150,7 +154,9 @@ Usually no. WattPlan publishes the intended action or time suggestion. You conne
 
 ### How do I control a battery inverter with WattPlan?
 Use the WattPlan battery action entity as the planner output. Then create an automation that maps:
-- `charge`
+- `charge_grid`
+- `charge_pv`
+- `charge_grid_pv`
 - `discharge`
 - `hold`
 To whatever your inverter integration actually supports.
