@@ -91,7 +91,7 @@ def _battery_target_bounds_kwh(entity):
     }
 
 
-def _charge_source_permissions(entity):
+def _charge_ingress_permissions(entity):
     flags = int(entity.can_charge_from)
     return (
         bool(flags & int(ChargeSource.GRID)),
@@ -404,7 +404,7 @@ def _solve_mpc_step(
         capacity = float(entity.capacity_kwh)
         charge_eff = float(entity.charge_efficiency)
         discharge_eff = float(entity.discharge_efficiency)
-        can_charge_from_grid, can_charge_from_pv = _charge_source_permissions(entity)
+        can_charge_from_grid, can_charge_from_pv = _charge_ingress_permissions(entity)
         throughput_penalty = float(entity.throughput_cost_per_kwh)
         mode_switch_cost = float(entity.mode_switch_cost)
         previous_state = int(battery_states_now[b]) if battery_states_now.size else 0
@@ -676,7 +676,7 @@ def _apply_controls_step(
         charge_eff = float(entity.charge_efficiency)
         discharge_eff = float(entity.discharge_efficiency)
         action_deadband = float(entity.action_deadband_kwh)
-        can_charge_from_grid, can_charge_from_pv = _charge_source_permissions(entity)
+        can_charge_from_grid, can_charge_from_pv = _charge_ingress_permissions(entity)
 
         requested_grid = max(
             float(controls.get("charge_grid", np.zeros(num_battery))[i]), 0.0
@@ -1224,18 +1224,23 @@ def _battery_schedule_state(result, battery_index: int, timeslot: int) -> str:
     battery_state = int(result["battery_states"][battery_index, timeslot])
     if battery_state == 0:
         return "hold"
+    if battery_state == 1:
+        charge_ingress = int(
+            (1 if result["battery_charge_grid"][battery_index, timeslot] > EPSILON else 0)
+            | (2 if result["battery_charge_pv"][battery_index, timeslot] > EPSILON else 0)
+        )
+        if charge_ingress == 1:
+            return "charge_grid"
+        if charge_ingress == 2:
+            return "charge_pv"
+        if charge_ingress == 3:
+            return "charge_grid_pv"
+        raise ValueError(
+            "battery schedule serialization encountered charging state without charge ingress"
+        )
     if battery_state == 2:
         return "discharge"
-
-    charge_source = int(
-        (1 if result["battery_charge_grid"][battery_index, timeslot] > EPSILON else 0)
-        | (2 if result["battery_charge_pv"][battery_index, timeslot] > EPSILON else 0)
-    )
-    return {
-        1: "charge_grid",
-        2: "charge_pv",
-        3: "charge_grid_pv",
-    }.get(charge_source, "hold")
+    raise ValueError(f"battery schedule serialization encountered unknown state {battery_state}")
 
 
 def optimize_internal(normalized: CalculationInput):

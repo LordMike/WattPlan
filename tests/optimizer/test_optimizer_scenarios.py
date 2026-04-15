@@ -509,18 +509,35 @@ def test_feed_in_prices_shift_pv_charging_to_lower_export_value_slots():
 
 def test_battery_schedule_state_uses_source_specific_names():
     result = {
-        "battery_states": optimizer.np.asarray([[0, 1, 2]], dtype=optimizer.np.float64),
+        "battery_states": optimizer.np.asarray(
+            [[1, 1, 1, 0, 2]], dtype=optimizer.np.float64
+        ),
         "battery_charge_grid": optimizer.np.asarray(
-            [[1.0, 1.0, 0.0]], dtype=optimizer.np.float64
+            [[1.0, 0.0, 1.0, 0.0, 0.0]], dtype=optimizer.np.float64
         ),
         "battery_charge_pv": optimizer.np.asarray(
-            [[1.0, 0.0, 1.0]], dtype=optimizer.np.float64
+            [[0.0, 1.0, 1.0, 0.0, 0.0]], dtype=optimizer.np.float64
         ),
     }
 
-    assert optimizer._battery_schedule_state(result, 0, 0) == "hold"
-    assert optimizer._battery_schedule_state(result, 0, 1) == "charge_grid"
-    assert optimizer._battery_schedule_state(result, 0, 2) == "discharge"
+    assert optimizer._battery_schedule_state(result, 0, 0) == "charge_grid"
+    assert optimizer._battery_schedule_state(result, 0, 1) == "charge_pv"
+    assert optimizer._battery_schedule_state(result, 0, 2) == "charge_grid_pv"
+    assert optimizer._battery_schedule_state(result, 0, 3) == "hold"
+    assert optimizer._battery_schedule_state(result, 0, 4) == "discharge"
+
+
+def test_battery_schedule_state_rejects_charge_without_ingress():
+    result = {
+        "battery_states": optimizer.np.asarray([[1]], dtype=optimizer.np.float64),
+        "battery_charge_grid": optimizer.np.asarray([[0.0]], dtype=optimizer.np.float64),
+        "battery_charge_pv": optimizer.np.asarray([[0.0]], dtype=optimizer.np.float64),
+    }
+
+    with pytest.raises(
+        ValueError, match="charging state without charge ingress"
+    ):
+        optimizer._battery_schedule_state(result, 0, 0)
 
 
 def test_live_grid_export_benchmark_scenario_uses_real_15min_stromligning_values():
@@ -1154,7 +1171,7 @@ def test_validation_rejects_battery_target_slot_outside_horizon():
         optimizer.OptimizationParams(**payload)
 
 
-def test_validation_rejects_unknown_charge_source_bits():
+def test_validation_rejects_unknown_charge_ingress_bits():
     # Any bits outside GRID(1) and PV(2) must be rejected at validation time.
     payload = {
         "grid_import_price_per_kwh": [0.2, 0.2, 0.2, 0.2],

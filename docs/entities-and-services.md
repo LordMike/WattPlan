@@ -40,7 +40,7 @@ These exist once per configured battery:
 
 | Entity | Purpose |
 | --- | --- |
-| `sensor.<setup_slug>_<battery_name>_action` | Current planned action: `hold`, `discharge`, `charge_grid`, `charge_pv`, or `charge_grid_pv`. WattPlan updates this entity on its planning schedule so **your own automation can translate the planned action into a real inverter or battery command**. The state itself now encodes the charge source, so there is no separate `charge_source` attribute to inspect. |
+| `sensor.<setup_slug>_<battery_name>_action` | Current planned action: `hold`, `discharge`, `charge_grid`, `charge_pv`, or `charge_grid_pv`. WattPlan updates this entity on its planning schedule so **your own automation can translate the planned action into a real inverter or battery command**. The state itself now encodes the planned charging ingress, so there is no separate `charge_source` attribute to inspect. |
 | `sensor.<setup_slug>_<battery_name>_target` | User-supplied target SoC in kWh. Includes a `by` attribute with the requested deadline and returns `unknown` when no active target is set. |
 
 ## Comfort Load Entities

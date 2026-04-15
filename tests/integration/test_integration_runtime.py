@@ -499,7 +499,7 @@ async def test_projected_savings_percentage_becomes_unknown_when_extreme(
 async def test_battery_action_sensor_uses_source_specific_charge_state(
     hass: HomeAssistant,
 ) -> None:
-    """Battery action sensor should expose charge source in the state."""
+    """Battery action sensor should expose the chosen charging ingress in the state."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Home",
