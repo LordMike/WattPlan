@@ -20,6 +20,7 @@ from .const import (
     ATTR_BATTERY,
     ATTR_ENTRY_ID,
     ATTR_REACH_AT,
+    ATTR_RUN_OPTIMIZE,
     ATTR_SOC_KWH,
     CONF_SOURCE_MODE,
     CONF_SOURCE_USAGE,
@@ -49,6 +50,7 @@ SET_TARGET_SERVICE_SCHEMA = vol.Schema(
             vol.Required(ATTR_SOC_KWH): vol.All(vol.Coerce(float), vol.Range(min=0)),
             vol.Required(ATTR_REACH_AT): cv.datetime,
             vol.Optional(ATTR_ENTRY_ID): cv.string,
+            vol.Optional(ATTR_RUN_OPTIMIZE, default=True): cv.boolean,
         },
         cv.has_at_least_one_key(ATTR_BATTERY, ATTR_ENTITY_ID, ATTR_DEVICE_ID),
     )
@@ -61,6 +63,7 @@ CLEAR_TARGET_SERVICE_SCHEMA = vol.Schema(
             vol.Optional(ATTR_ENTITY_ID): cv.comp_entity_ids,
             vol.Optional(ATTR_DEVICE_ID): vol.All(cv.ensure_list, [cv.string]),
             vol.Optional(ATTR_ENTRY_ID): cv.string,
+            vol.Optional(ATTR_RUN_OPTIMIZE, default=True): cv.boolean,
         },
         cv.has_at_least_one_key(ATTR_BATTERY, ATTR_ENTITY_ID, ATTR_DEVICE_ID),
     )
@@ -246,6 +249,11 @@ async def async_handle_set_target_service(hass: HomeAssistant, call: ServiceCall
     )
     for runtime_data, subentry_id in _iter_target_runtime_data(loaded, matches):
         set_battery_target(runtime_data, subentry_id, target)
+    if call.data[ATTR_RUN_OPTIMIZE]:
+        for entry_id in {eid for eid, _ in matches}:
+            entry = loaded[entry_id]
+            await entry.runtime_data.coordinator.async_plan(trigger=CycleTrigger.SERVICE)
+            mark_runtime_updated(entry.runtime_data, when=datetime.now(tz=UTC))
 
 
 async def async_handle_clear_target_service(hass: HomeAssistant, call: ServiceCall) -> None:
@@ -256,6 +264,11 @@ async def async_handle_clear_target_service(hass: HomeAssistant, call: ServiceCa
         cleared_any = clear_battery_target(runtime_data, subentry_id) or cleared_any
     if not cleared_any:
         raise ServiceValidationError("No active battery targets matched the provided selectors")
+    if call.data[ATTR_RUN_OPTIMIZE]:
+        for entry_id in {eid for eid, _ in matches}:
+            entry = loaded[entry_id]
+            await entry.runtime_data.coordinator.async_plan(trigger=CycleTrigger.SERVICE)
+            mark_runtime_updated(entry.runtime_data, when=datetime.now(tz=UTC))
 
 
 async def async_handle_run_optimize_now_service(

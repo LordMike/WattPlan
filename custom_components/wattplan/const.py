@@ -12,6 +12,7 @@ ATTR_BATTERY = "battery"
 ATTR_SOC_KWH = "soc_kwh"
 ATTR_REACH_AT = "reach_at"
 ATTR_ENTRY_ID = "entry_id"
+ATTR_RUN_OPTIMIZE = "run_optimize"
 
 CONF_ACTION_EMISSION_ENABLED = "action_emission_enabled"
 CONF_ADAPTER_TYPE = "adapter_type"
