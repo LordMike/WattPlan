@@ -54,7 +54,7 @@ from custom_components.wattplan.const import (
     SUBENTRY_TYPE_COMFORT,
     SUBENTRY_TYPE_OPTIONAL,
 )
-from custom_components.wattplan.coordinator import STORAGE_VERSION, _snapshot_schema_id
+from custom_components.wattplan.coordinator import STORAGE_VERSION, CycleTrigger, _snapshot_schema_id
 from custom_components.wattplan.test_plan_invariants import assert_plan_invariants
 import pytest
 
@@ -1265,3 +1265,99 @@ async def test_clear_target_service_removes_active_battery_target(
     assert target_sensor is not None
     assert target_sensor.state == STATE_UNKNOWN
     assert target_sensor.attributes["by"] == "not_set"
+
+
+async def test_button_entities_registered_and_pressable(hass: HomeAssistant) -> None:
+    """Button entities appear in registry and pressing triggers a plan cycle."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: 60,
+            CONF_HOURS_TO_PLAN: 4,
+            CONF_SOURCES: {
+                CONF_SOURCE_IMPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [0.2, 0.25, 0.3, 0.35] }}",
+                },
+                CONF_SOURCE_USAGE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [1.0, 1.1, 1.0, 0.9] }}",
+                },
+            },
+        },
+        options={
+            CONF_PLANNING_ENABLED: False,
+            CONF_ACTION_EMISSION_ENABLED: False,
+        },
+    )
+    entry.add_to_hass(hass)
+
+    with patch("custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        entity_registry = er.async_get(hass)
+        optimize_entry = entity_registry.async_get("button.home_run_optimize_now")
+        plan_entry = entity_registry.async_get("button.home_run_plan_now")
+        assert optimize_entry is not None, "Run Optimize Now button not found in entity registry"
+        assert plan_entry is not None, "Run Plan Now button not found in entity registry"
+
+        from homeassistant.const import EntityCategory
+        assert optimize_entry.entity_category == EntityCategory.DIAGNOSTIC
+        assert plan_entry.entity_category == EntityCategory.DIAGNOSTIC
+
+        coordinator = entry.runtime_data.coordinator
+        snapshot_before = coordinator.snapshot
+
+        await hass.services.async_call(
+            "button",
+            "press",
+            {"entity_id": "button.home_run_optimize_now"},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+        assert coordinator.snapshot is not None, "Snapshot should exist after pressing Run Optimize Now"
+        assert coordinator.snapshot is not snapshot_before, "Pressing button should produce a new snapshot"
+
+
+async def test_button_optimize_raises_when_already_running(hass: HomeAssistant) -> None:
+    """Pressing the optimize button while a plan is running raises ServiceValidationError."""
+    from homeassistant.exceptions import ServiceValidationError as HAServiceValidationError
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: 60,
+            CONF_HOURS_TO_PLAN: 4,
+            CONF_SOURCES: {
+                CONF_SOURCE_IMPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [0.2, 0.25, 0.3, 0.35] }}",
+                },
+                CONF_SOURCE_USAGE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [1.0, 1.1, 1.0, 0.9] }}",
+                },
+            },
+        },
+        options={
+            CONF_PLANNING_ENABLED: False,
+            CONF_ACTION_EMISSION_ENABLED: False,
+        },
+    )
+    entry.add_to_hass(hass)
+
+    with patch("custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    coordinator = entry.runtime_data.coordinator
+
+    async with coordinator._plan_lock:
+        with pytest.raises(HAServiceValidationError):
+            await coordinator.async_plan(trigger=CycleTrigger.SERVICE)
