@@ -41,6 +41,7 @@ result = optimize(params)
 | `throughput_cost_per_kwh` | `float` | No | `0.0` | Finite, `>= 0` | Extra cost on charge/discharge throughput to reduce cycling. |
 | `action_deadband_kwh` | `float` | No | `0.0` | Finite, `>= 0` | Modeled flow commands smaller than this are treated as neutral flow. |
 | `mode_switch_cost` | `float` | No | `0.0` | Finite, `>= 0` | Extra cost on changing battery behavior between slots. |
+| `infer_battery_preserve_policy` | `bool` | No | `true` | - | Enables the model-backed counterfactual used to emit `preserve` battery policy states. When disabled, all `battery_preserve` booleans are `false` and non-grid-charging battery slots fall back to `self_consume`. |
 | `battery_entities` | `list[BatteryEntityParams]` | Yes | - | May be empty | Main controllable storage entities. |
 | `comfort_entities` | `list[ComfortEntityParams]` | Yes | - | May be empty | Required-but-shiftable comfort entities. |
 | `optional_entities` | `list[OptionalEntityParams]` | No | `[]` | Fully validated for feasibility | Advisory start-time options only. |
@@ -223,7 +224,9 @@ Battery schedule `state` values are inverter-control policies derived from the p
 
 PV surplus charging is implicit/normal battery behavior, not a primary action state. PV export is site-level and multi-battery-sensitive, so a dedicated PV export policy is deferred to a future site-level design.
 
-`grid_charge` is emitted when modeled grid charging for that battery is above the action deadband. `preserve` is emitted from a model-backed counterfactual check: when the optimizer chooses not to discharge a battery, WattPlan asks the same model whether forcing a small discharge from that battery for marginal unexpected load would be infeasible or make the objective worse than preserving the battery and importing that marginal energy. Modeled PV surplus is consumed first in that counterfactual, so PV export is not turned into a battery action state. If the forced-discharge alternative is worse, the slot is marked `preserve`; otherwise WattPlan emits `self_consume`. Forecast zero battery flow is not a preserve reason by itself.
+`grid_charge` is emitted when modeled grid charging for that battery is above the action deadband. `preserve` is emitted from a model-backed counterfactual check when `infer_battery_preserve_policy` is enabled: when the optimizer chooses not to discharge a battery, WattPlan asks the same model whether forcing a small discharge from that battery for marginal unexpected load would be infeasible or make the objective worse than preserving the battery and importing that marginal energy. Modeled PV surplus is consumed first in that counterfactual, so PV export is not turned into a battery action state. If the forced-discharge alternative is worse, the slot is marked `preserve`; otherwise WattPlan emits `self_consume`. Forecast zero battery flow is not a preserve reason by itself.
+
+If `infer_battery_preserve_policy` is disabled, the `battery_preserve` boolean array is always `false`. In that mode, the schedule still emits `grid_charge` for modeled grid charging, but otherwise emits `self_consume` for battery slots.
 
 ### Notes on `entities` and `optional_entity_options`
 - `entities` is the actual optimized schedule.

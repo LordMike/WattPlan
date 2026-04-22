@@ -869,6 +869,7 @@ def _run_mpc(
     battery_entities,
     comfort_entities,
     reuse_plan,
+    infer_battery_preserve_policy,
 ):
     num_battery = len(battery_entities)
     num_comfort = len(comfort_entities)
@@ -932,9 +933,10 @@ def _run_mpc(
                 "discharge": reuse_plan["battery_discharge"][:, t].copy(),
                 "comfort_on": reuse_plan["comfort_on"][:, t].copy(),
             }
-            battery_preserve[:, t] = reuse_plan["battery_preserve"][:, t].astype(
-                np.bool_
-            )
+            if infer_battery_preserve_policy:
+                battery_preserve[:, t] = reuse_plan["battery_preserve"][:, t].astype(
+                    np.bool_
+                )
             if num_comfort > 0:
                 comfort_lock_mode = reuse_plan["comfort_lock_mode"][:, t].astype(
                     np.int32
@@ -1011,79 +1013,84 @@ def _run_mpc(
                 "discharge": solve_result["discharge"],
                 "comfort_on": comfort_cmd,
             }
-            modeled_load = _slot_modeled_load_kwh(
-                t,
-                usage=usage,
-                comfort_entities=comfort_entities,
-                comfort_cmd=comfort_cmd,
-            )
-            pv_surplus = max(float(solar_input[t]) - modeled_load, 0.0)
-            for b, entity in enumerate(battery_entities):
-                action_deadband = max(float(entity.action_deadband_kwh), EPSILON)
-                if float(solve_result["charge_grid"][b]) > action_deadband:
-                    continue
-                if float(solve_result["discharge"][b]) > action_deadband:
-                    continue
+            if infer_battery_preserve_policy:
+                modeled_load = _slot_modeled_load_kwh(
+                    t,
+                    usage=usage,
+                    comfort_entities=comfort_entities,
+                    comfort_cmd=comfort_cmd,
+                )
+                pv_surplus = max(float(solar_input[t]) - modeled_load, 0.0)
+                for b, entity in enumerate(battery_entities):
+                    action_deadband = max(float(entity.action_deadband_kwh), EPSILON)
+                    if float(solve_result["charge_grid"][b]) > action_deadband:
+                        continue
+                    if float(solve_result["discharge"][b]) > action_deadband:
+                        continue
 
-                available = _battery_available_discharge_kwh(
-                    entity, float(battery_levels[b, t])
-                )
-                if (
-                    float(entity.minimum_kwh) > EPSILON
-                    and available <= action_deadband
-                ):
-                    battery_preserve[b, t] = True
-                    continue
+                    available = _battery_available_discharge_kwh(
+                        entity, float(battery_levels[b, t])
+                    )
+                    if (
+                        float(entity.minimum_kwh) > EPSILON
+                        and available <= action_deadband
+                    ):
+                        battery_preserve[b, t] = True
+                        continue
 
-                probe_kwh = _battery_preserve_probe_kwh(
-                    entity, float(battery_levels[b, t])
-                )
-                if probe_kwh <= action_deadband:
-                    continue
+                    probe_kwh = _battery_preserve_probe_kwh(
+                        entity, float(battery_levels[b, t])
+                    )
+                    if probe_kwh <= action_deadband:
+                        continue
 
-                # A preserve policy is about unexpected real load, not the
-                # forecast load already in the plan. If PV surplus exists, the
-                # marginal load would consume that PV first. Only the next
-                # probe-sized slice asks whether spending battery is worse than
-                # importing and preserving it for later value.
-                counterfactual_usage_h = usage_h.copy()
-                counterfactual_usage_h[0] += pv_surplus + probe_kwh
-                preserve_baseline_objective = (
-                    float(solve_result["objective_value"])
-                    + float(grid_export_prices[t]) * pv_surplus
-                    + float(prices[t]) * probe_kwh
-                )
-                counterfactual = _solve_mpc_step(
-                    base_timeslot=t,
-                    prices_h=prices[t : t + horizon],
-                    grid_export_prices_h=grid_export_prices[t : t + horizon],
-                    usage_h=counterfactual_usage_h,
-                    solar_h=solar_input[t : t + horizon],
-                    battery_entities=battery_entities,
-                    comfort_entities=[comfort_entities[i] for i in unlocked_indices],
-                    battery_levels_now=battery_levels[:, t],
-                    battery_states_now=(
-                        battery_states[:, t - 1]
-                        if t > 0
-                        else np.zeros(num_battery, dtype=np.int32)
-                    ),
-                    comfort_levels_now=comfort_levels[unlocked_indices, t]
-                    if unlocked_indices
-                    else np.zeros(0, dtype=np.float64),
-                    prev_comfort_on=prev_comfort_on[unlocked_indices]
-                    if unlocked_indices
-                    else np.zeros(0, dtype=np.float64),
-                    comfort_off_streaks_now=comfort_off_streaks[unlocked_indices, t]
-                    if unlocked_indices
-                    else np.zeros(0, dtype=np.float64),
-                    remaining_steps_total=total_steps - t,
-                    forced_discharge_first={b: probe_kwh},
-                )
-                if counterfactual is None or _objective_is_worse(
-                    counterfactual["objective_value"],
-                    preserve_baseline_objective,
-                ):
-                    battery_preserve[b, t] = True
+                    # A preserve policy is about unexpected real load, not the
+                    # forecast load already in the plan. If PV surplus exists, the
+                    # marginal load would consume that PV first. Only the next
+                    # probe-sized slice asks whether spending battery is worse than
+                    # importing and preserving it for later value.
+                    counterfactual_usage_h = usage_h.copy()
+                    counterfactual_usage_h[0] += pv_surplus + probe_kwh
+                    preserve_baseline_objective = (
+                        float(solve_result["objective_value"])
+                        + float(grid_export_prices[t]) * pv_surplus
+                        + float(prices[t]) * probe_kwh
+                    )
+                    counterfactual = _solve_mpc_step(
+                        base_timeslot=t,
+                        prices_h=prices[t : t + horizon],
+                        grid_export_prices_h=grid_export_prices[t : t + horizon],
+                        usage_h=counterfactual_usage_h,
+                        solar_h=solar_input[t : t + horizon],
+                        battery_entities=battery_entities,
+                        comfort_entities=[
+                            comfort_entities[i] for i in unlocked_indices
+                        ],
+                        battery_levels_now=battery_levels[:, t],
+                        battery_states_now=(
+                            battery_states[:, t - 1]
+                            if t > 0
+                            else np.zeros(num_battery, dtype=np.int32)
+                        ),
+                        comfort_levels_now=comfort_levels[unlocked_indices, t]
+                        if unlocked_indices
+                        else np.zeros(0, dtype=np.float64),
+                        prev_comfort_on=prev_comfort_on[unlocked_indices]
+                        if unlocked_indices
+                        else np.zeros(0, dtype=np.float64),
+                        comfort_off_streaks_now=comfort_off_streaks[
+                            unlocked_indices, t
+                        ]
+                        if unlocked_indices
+                        else np.zeros(0, dtype=np.float64),
+                        remaining_steps_total=total_steps - t,
+                        forced_discharge_first={b: probe_kwh},
+                    )
+                    if counterfactual is None or _objective_is_worse(
+                        counterfactual["objective_value"],
+                        preserve_baseline_objective,
+                    ):
+                        battery_preserve[b, t] = True
 
         if num_comfort > 0:
             comfort_lock_mode_series[:, t] = comfort_lock_mode.astype(np.float64)
@@ -1403,6 +1410,7 @@ def optimize_internal(normalized: CalculationInput):
         battery_entities,
         comfort_entities,
         reuse_plan,
+        normalized.infer_battery_preserve_policy,
     )
     execution_time = time.time() - start_time
 

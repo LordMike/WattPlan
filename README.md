@@ -26,7 +26,7 @@ This documentation is intended for Home Assistant users, energy enthusiasts, and
 8. Optionally configure a PV source if you have solar and want WattPlan to plan around it.
 9. Optionally configure an export price source if you have PV and want exported power to carry a value instead of defaulting to zero.
 10. Add [batteries, comfort loads, or optional loads](docs/extras.md) if you want WattPlan to control more than just forecasting.
-11. Make automations to apply the WattPlan actions, to your devices - such as setting batteries to charge, or starting your HVAC
+11. Make automations to apply the WattPlan actions to your devices, such as setting batteries to charge or starting your HVAC. See the [real-life examples](docs/extras.md#real-life-examples) for one battery policy automation pattern.
 
 ## Configuration Steps
 After installing WattPlan via HACS, configure the following:
@@ -47,7 +47,7 @@ After installing WattPlan via HACS, configure the following:
 ## Documentation
 - [docs/source-data.md](docs/source-data.md) - Source modes, data model, and how to feed WattPlan price, export price, usage, and PV data
 - [docs/example-deye-solcast-stromligning.md](docs/example-deye-solcast-stromligning.md) - Concrete end-to-end example using Strømligning, Deye, and Solcast
-- [docs/extras.md](docs/extras.md) - Batteries, comfort loads, optional loads, and how to wire WattPlan actions into your own automations
+- [docs/extras.md](docs/extras.md) - Batteries, comfort loads, optional loads, real-life examples, and how to wire WattPlan actions into your own automations
 - [docs/entities-and-services.md](docs/entities-and-services.md) - All exposed entities and services, including battery targets
 - [docs/optimizer-profiles.md](docs/optimizer-profiles.md) - What Aggressive, Balanced, and Conservative mean in practice
 - [docs/error-handling.md](docs/error-handling.md) - Health states, degraded operation, and what `ok`, `degraded`, and `failed` mean

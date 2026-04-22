@@ -40,7 +40,7 @@ These exist once per configured battery:
 
 | Entity | Purpose |
 | --- | --- |
-| `sensor.<setup_slug>_<battery_name>_action` | Current battery-control policy: `preserve`, `self_consume`, or `grid_charge`. WattPlan updates this entity on its planning schedule so **your own automation can translate the policy into a real inverter or battery command**. The state is a policy derived from the plan, not a raw forecast battery-flow value. |
+| `sensor.<setup_slug>_<battery_name>_action` | Current battery-control policy: `preserve`, `self_consume`, or `grid_charge`. WattPlan updates this entity on its planning schedule so **your own automation can translate the policy into a real inverter or battery command**. The state is a policy derived from the plan, not a raw forecast battery-flow value. See [extras.md](extras.md#real-life-examples) for automation examples. |
 | `sensor.<setup_slug>_<battery_name>_target` | User-supplied target SoC in kWh. Includes a `by` attribute with the requested deadline and returns `unknown` when no active target is set. |
 
 ## Comfort Load Entities

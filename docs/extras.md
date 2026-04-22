@@ -44,6 +44,8 @@ WattPlan exposes battery-related entities such as:
 
 The battery action sensor is the key one for control. Your automation should read that action and then translate it into the command model your inverter understands.
 
+See [Real Life Examples](#real-life-examples) for a concrete Home Assistant automation pattern.
+
 **Typical Pattern:**
 1. Create an automation that triggers when the WattPlan battery action entity changes.
 2. Read the action value from WattPlan.
@@ -63,7 +65,10 @@ PV surplus handling is not a battery action state in this version. PV export is 
 
 The exact translation depends on your inverter integration. WattPlan does not directly control every battery platform; it publishes the intended action and lets your automations bridge that to your actual system.
 
-### Solar Assistant/MQTT/Inverter Example
+## Real Life Examples
+The examples below show how WattPlan policy entities can be translated into real Home Assistant device controls. They are starting points, not universal recipes. Check your inverter, load controller, and integration behavior before applying an automation to real hardware.
+
+### Home Assistant to Solar Assistant MQTT to Deye-Compatible Inverter
 This example describes one practical setup: Home Assistant entities exposed by Solar Assistant over MQTT for a Deye-compatible inverter. It is not universal. Other inverter brands may map the same three WattPlan policies to different entities or services.
 
 In this style of setup, the inverter time-of-use schedule controls can be more reliable than direct mode controls. A time-of-use capacity point is used to allow or block battery discharge, and a grid charge point switch is used to enable scheduled grid charging. Max charge/current entities may also exist, but grid charge current can often be treated as a configured cap instead of being changed on every policy update.
@@ -83,6 +88,66 @@ Example time-of-use mapping:
 | `preserve` | High, for example `100%`, to prevent discharge | Off | Normal/static unless the setup needs otherwise |
 | `self_consume` | Normal minimum, for example `10%` | Off | Normal/static |
 | `grid_charge` | High, for example `100%`, to preserve while charging | On | Configured normal charging cap |
+
+Example automation:
+
+```yaml
+alias: Apply WattPlan battery policy
+mode: single
+triggers:
+  - trigger: state
+    entity_id: sensor.wattplan_house_battery_action
+conditions:
+  - condition: template
+    value_template: "{{ trigger.to_state.state in ['preserve', 'self_consume', 'grid_charge'] }}"
+actions:
+  - variables:
+      policy: "{{ trigger.to_state.state }}"
+      normal_minimum_soc: 10
+      preserve_soc: 100
+  - choose:
+      - alias: "preserve: block discharge, no grid charge"
+        conditions:
+          - condition: template
+            value_template: "{{ policy == 'preserve' }}"
+        sequence:
+          - action: switch.turn_off
+            target:
+              entity_id: switch.inverter_grid_charge_point_1
+          - action: number.set_value
+            target:
+              entity_id: number.inverter_tou_capacity_point_1
+            data:
+              value: "{{ preserve_soc }}"
+      - alias: "self_consume: allow discharge, no grid charge"
+        conditions:
+          - condition: template
+            value_template: "{{ policy == 'self_consume' }}"
+        sequence:
+          - action: switch.turn_off
+            target:
+              entity_id: switch.inverter_grid_charge_point_1
+          - action: number.set_value
+            target:
+              entity_id: number.inverter_tou_capacity_point_1
+            data:
+              value: "{{ normal_minimum_soc }}"
+      - alias: "grid_charge: block discharge, enable grid charge"
+        conditions:
+          - condition: template
+            value_template: "{{ policy == 'grid_charge' }}"
+        sequence:
+          - action: number.set_value
+            target:
+              entity_id: number.inverter_tou_capacity_point_1
+            data:
+              value: "{{ preserve_soc }}"
+          - action: switch.turn_on
+            target:
+              entity_id: switch.inverter_grid_charge_point_1
+```
+
+The charge-current and grid-charge-current entities are intentionally not part of this example's policy switch. In many setups those values are a configured cap, such as `80 A`, and do not need to be toggled every time WattPlan changes policy. If your own setup needs dynamic current limits, handle them as an extra device-specific rule around this core three-policy mapping.
 
 ## Comfort Loads
 
@@ -187,6 +252,8 @@ That might be:
 - A helper value
 - A select entity
 - A script that applies a complete inverter mode change.
+
+See [Real Life Examples](#real-life-examples) for one concrete mapping.
 
 ### Can I start with forecasts only and add extras later?
 Yes. That is the recommended path:

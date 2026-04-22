@@ -311,6 +311,14 @@ class OptimizationParams(BaseModel):
     mode_switch_cost: float = Field(
         0.0, description="Cost for switching between modeled charge/idle/discharge flow."
     )
+    infer_battery_preserve_policy: bool = Field(
+        True,
+        description=(
+            "When true, run the model-backed counterfactual used to emit battery "
+            "preserve policy states. When false, battery_preserve output flags "
+            "are always false."
+        ),
+    )
     battery_entities: List[BatteryEntityParams] = Field(
         ..., description="List of battery-like entities."
     )
@@ -552,6 +560,7 @@ class CalculationInput:
     solar_input: np.ndarray
     usage: np.ndarray
     rolling_window_slots: int
+    infer_battery_preserve_policy: bool
     battery_entities: List[BatteryEntity]
     comfort_entities: List[ComfortEntity]
     optional_entities: List[NormalizedOptionalEntity]
@@ -559,7 +568,12 @@ class CalculationInput:
     fingerprint: str
 
 
-def _entity_fingerprint(battery_entities, comfort_entities, rolling_window_slots):
+def _entity_fingerprint(
+    battery_entities,
+    comfort_entities,
+    rolling_window_slots,
+    infer_battery_preserve_policy,
+):
     # Reuse must only happen when the optimization problem is materially the
     # same. Battery targets change feasible early-slot decisions, so they must
     # participate in the fingerprint used to accept a previous state blob.
@@ -607,6 +621,7 @@ def _entity_fingerprint(battery_entities, comfort_entities, rolling_window_slots
             for e in comfort_entities
         ],
         "rolling_window_slots": int(rolling_window_slots),
+        "infer_battery_preserve_policy": bool(infer_battery_preserve_policy),
     }
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
@@ -812,7 +827,10 @@ def normalize_calculation_input(params: OptimizationParams):
         )
 
     fingerprint = _entity_fingerprint(
-        battery_entities, comfort_entities, params.rolling_window_slots
+        battery_entities,
+        comfort_entities,
+        params.rolling_window_slots,
+        params.infer_battery_preserve_policy,
     )
     state = _parse_state_blob(params.state)
 
@@ -823,6 +841,7 @@ def normalize_calculation_input(params: OptimizationParams):
         solar_input=solar_input,
         usage=usage,
         rolling_window_slots=int(params.rolling_window_slots),
+        infer_battery_preserve_policy=bool(params.infer_battery_preserve_policy),
         battery_entities=battery_entities,
         comfort_entities=comfort_entities,
         optional_entities=optional_entities,
