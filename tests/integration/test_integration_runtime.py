@@ -1309,7 +1309,7 @@ async def test_button_entities_registered_and_pressable(hass: HomeAssistant) -> 
         assert plan_entry.entity_category == EntityCategory.DIAGNOSTIC
 
         coordinator = entry.runtime_data.coordinator
-        assert coordinator.snapshot is None
+        snapshot_before = coordinator.snapshot
 
         await hass.services.async_call(
             "button",
@@ -1320,6 +1320,7 @@ async def test_button_entities_registered_and_pressable(hass: HomeAssistant) -> 
         await hass.async_block_till_done()
 
         assert coordinator.snapshot is not None, "Snapshot should exist after pressing Run Optimize Now"
+        assert coordinator.snapshot is not snapshot_before, "Pressing button should produce a new snapshot"
 
 
 async def test_button_optimize_raises_when_already_running(hass: HomeAssistant) -> None:
