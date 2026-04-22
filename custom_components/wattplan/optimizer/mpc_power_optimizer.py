@@ -3,6 +3,7 @@ import time
 import numpy as np
 
 from .models import (
+    BatteryEntity,
     CalculationInput,
     ChargeSource,
     OptimizationParams,
@@ -1219,28 +1220,118 @@ def _optional_entity_options(entity, grid_import_prices, baseline_net_import):
     ]
 
 
-def _battery_schedule_state(result, battery_index: int, timeslot: int) -> str:
-    """Return the serialized battery action state for one schedule slot."""
+def _battery_schedule_state(
+    result,
+    entity: BatteryEntity,
+    battery_index: int,
+    timeslot: int,
+    *,
+    usage=None,
+    solar_input=None,
+    comfort_entities=None,
+) -> str:
+    """Return the serialized battery policy state for one schedule slot."""
+    action_deadband = max(float(entity.action_deadband_kwh), EPSILON)
+    if result["battery_charge_grid"][battery_index, timeslot] > action_deadband:
+        return "grid_charge"
+    if _battery_should_preserve(
+        result,
+        entity,
+        battery_index,
+        timeslot,
+        usage=usage,
+        solar_input=solar_input,
+        comfort_entities=comfort_entities,
+        action_deadband=action_deadband,
+    ):
+        return "preserve"
+    return "self_consume"
+
+
+def _battery_should_preserve(
+    result,
+    entity: BatteryEntity,
+    battery_index: int,
+    timeslot: int,
+    *,
+    usage,
+    solar_input,
+    comfort_entities,
+    action_deadband: float,
+) -> bool:
+    """Return True when the model gives a positive reason to block discharge.
+
+    The optimizer does not currently expose a shadow price for stored battery
+    energy, so preserve is intentionally conservative. We only emit it for a
+    target/minimum constraint or when the plan faces load now, chooses not to
+    discharge this battery, and schedules that same battery to discharge later.
+    Neutral/PV-only slots stay self_consume so unexpected real load can still be
+    served by the inverter.
+    """
     battery_state = int(result["battery_states"][battery_index, timeslot])
-    if battery_state == 0:
-        return "hold"
-    if battery_state == 1:
-        charge_ingress = int(
-            (1 if result["battery_charge_grid"][battery_index, timeslot] > EPSILON else 0)
-            | (2 if result["battery_charge_pv"][battery_index, timeslot] > EPSILON else 0)
-        )
-        if charge_ingress == 1:
-            return "charge_grid"
-        if charge_ingress == 2:
-            return "charge_pv"
-        if charge_ingress == 3:
-            return "charge_grid_pv"
-        raise ValueError(
-            "battery schedule serialization encountered charging state without charge ingress"
-        )
     if battery_state == 2:
-        return "discharge"
-    raise ValueError(f"battery schedule serialization encountered unknown state {battery_state}")
+        return False
+
+    level = float(result["battery_levels"][battery_index, timeslot])
+    minimum_kwh = float(entity.minimum_kwh)
+    discharge_eff = float(entity.discharge_efficiency)
+    available_for_discharge = max(level - minimum_kwh, 0.0) * discharge_eff
+
+    if entity.target is not None and timeslot <= int(entity.target.timeslot):
+        target_floor = float(entity.target.soc_kwh) - float(entity.target.tolerance_kwh)
+        if (
+            entity.target.mode in {"at_least", "exact"}
+            and level <= target_floor + action_deadband
+        ):
+            return True
+
+    if minimum_kwh > EPSILON and available_for_discharge <= action_deadband:
+        return _slot_has_model_load(
+            result,
+            timeslot,
+            usage=usage,
+            solar_input=solar_input,
+            comfort_entities=comfort_entities,
+            action_deadband=action_deadband,
+        )
+
+    future_discharge = float(
+        np.sum(result["battery_discharge"][battery_index, timeslot + 1 :])
+    )
+    if future_discharge <= action_deadband:
+        return False
+    if result["battery_discharge"][battery_index, timeslot] > action_deadband:
+        return False
+    return _slot_has_model_load(
+        result,
+        timeslot,
+        usage=usage,
+        solar_input=solar_input,
+        comfort_entities=comfort_entities,
+        action_deadband=action_deadband,
+    )
+
+
+def _slot_has_model_load(
+    result,
+    timeslot: int,
+    *,
+    usage,
+    solar_input,
+    comfort_entities,
+    action_deadband: float,
+) -> bool:
+    """Return True when the modeled site has non-PV-covered load this slot."""
+    if usage is None or solar_input is None:
+        return False
+    comfort_load = 0.0
+    for i, comfort in enumerate(comfort_entities or []):
+        if result["comfort_enabled"][i, timeslot]:
+            comfort_load += float(comfort.power_usage_kwh)
+    modeled_load = (
+        float(usage[timeslot]) + comfort_load - float(solar_input[timeslot])
+    )
+    return modeled_load > action_deadband
 
 
 def optimize_internal(normalized: CalculationInput):
@@ -1336,7 +1427,15 @@ def optimize_internal(normalized: CalculationInput):
                 "type": "battery",
                 "schedule": [
                     {
-                        "state": _battery_schedule_state(result, i, t),
+                        "state": _battery_schedule_state(
+                            result,
+                            entity,
+                            i,
+                            t,
+                            usage=usage,
+                            solar_input=solar_input,
+                            comfort_entities=comfort_entities,
+                        ),
                         "level": float(result["battery_levels"][i, t + 1]),
                     }
                     for t in range(total_steps)

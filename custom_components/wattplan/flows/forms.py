@@ -85,9 +85,6 @@ def _battery_form_defaults(data: dict[str, Any]) -> dict[str, Any]:
     defaults[SECTION_BATTERY_ADVANCED] = {
         CONF_CHARGE_EFFICIENCY: defaults.get(CONF_CHARGE_EFFICIENCY, 0.9),
         CONF_DISCHARGE_EFFICIENCY: defaults.get(CONF_DISCHARGE_EFFICIENCY, 0.9),
-        CONF_PREFER_PV_SURPLUS_CHARGING: defaults.get(
-            CONF_PREFER_PV_SURPLUS_CHARGING, False
-        ),
     }
     return defaults
 

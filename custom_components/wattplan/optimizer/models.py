@@ -69,7 +69,7 @@ class BatteryEntityParams(BaseModel):
     )
     prefer_pv_surplus_charging: bool = Field(
         False,
-        description="Whether PV surplus should be preferentially stored here.",
+        description="Internal/deferred PV surplus sink hint; not a public action state.",
     )
     can_charge_from: int = Field(
         int(ChargeSource.PV),
@@ -306,10 +306,10 @@ class OptimizationParams(BaseModel):
         0.0, description="Additional cost applied to charging/discharging throughput."
     )
     action_deadband_kwh: float = Field(
-        0.0, description="Commands smaller than this are treated as hold."
+        0.0, description="Commands smaller than this are treated as neutral flow."
     )
     mode_switch_cost: float = Field(
-        0.0, description="Cost for switching between charge/hold/discharge behavior."
+        0.0, description="Cost for switching between modeled charge/idle/discharge flow."
     )
     battery_entities: List[BatteryEntityParams] = Field(
         ..., description="List of battery-like entities."

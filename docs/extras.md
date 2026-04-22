@@ -14,19 +14,17 @@ All of these are configured inside the WattPlan integration UI. WattPlan then ex
 ## Batteries
 
 ### What They Are
-Batteries model controllable storage. WattPlan plans battery behavior as:
-- `charge_grid`
-- `charge_pv`
-- `charge_grid_pv`
-- `discharge`
-- `hold`
+Batteries model controllable storage. WattPlan exposes each battery's action as an inverter-control policy:
+- `preserve`
+- `self_consume`
+- `grid_charge`
 
 It also tracks battery targets and timing data so you can expose planned behavior in the UI and automations.
 
 ### When to Use Them
 Use a battery when:
 - You have a home battery or battery-backed inverter.
-- Your inverter or control stack can be told to charge from grid or PV, discharge, or hold.
+- Your inverter or control stack can be told to allow/block battery discharge and enable/disable scheduled grid charging.
 - You want WattPlan to shift energy based on price, usage, and PV availability.
 
 ### How to Configure Them
@@ -49,17 +47,42 @@ The battery action sensor is the key one for control. Your automation should rea
 **Typical Pattern:**
 1. Create an automation that triggers when the WattPlan battery action entity changes.
 2. Read the action value from WattPlan.
-3. Map `charge_grid`, `charge_pv`, `charge_grid_pv`, `discharge`, or `hold` to your inverter's controls.
+3. Map `preserve`, `self_consume`, or `grid_charge` to your inverter's controls.
 4. Call the real inverter service, script, switch, or helper sequence.
 
-**Example Mapping Concept:**
-- `charge_grid` -> Set inverter/battery system to charge from the grid.
-- `charge_pv` -> Set inverter/battery system to charge from PV surplus.
-- `charge_grid_pv` -> Set inverter/battery system to allow charging from either grid or PV.
-- `discharge` -> Set inverter/battery system to discharge/export/self-consume mode.
-- `hold` -> Stop active charging/discharging and leave the battery neutral.
+### Battery Policy States
+The battery action sensor exposes policy, not raw measured or forecast battery flow. A slot where the plan shows no modeled battery delta often still emits `self_consume`, because the inverter should normally be allowed to cover real load that differs from the forecast.
+
+| Policy | Meaning |
+| --- | --- |
+| `preserve` | Save stored energy for future value or target constraints. Your automation should prevent this battery from discharging. PV charging may still be allowed by your inverter setup. |
+| `self_consume` | Normal battery operation. Allow this battery to cover real load. Do not request grid charging. This is the default policy when the plan has no positive reason to preserve or grid-charge. |
+| `grid_charge` | Request or allow grid charging for this battery and prevent the battery from being spent while doing so. |
+
+PV surplus handling is not a battery action state in this version. PV export is a site-level decision, especially with multiple batteries, and is deferred for a future site-level policy design. Treat PV charging as normal inverter behavior unless your own automation needs a different device-specific rule.
 
 The exact translation depends on your inverter integration. WattPlan does not directly control every battery platform; it publishes the intended action and lets your automations bridge that to your actual system.
+
+### Solar Assistant/MQTT/Inverter Example
+This example describes one practical setup: Home Assistant entities exposed by Solar Assistant over MQTT for a Deye-compatible inverter. It is not universal. Other inverter brands may map the same three WattPlan policies to different entities or services.
+
+In this style of setup, the inverter time-of-use schedule controls can be more reliable than direct mode controls. A time-of-use capacity point is used to allow or block battery discharge, and a grid charge point switch is used to enable scheduled grid charging. Max charge/current entities may also exist, but grid charge current can often be treated as a configured cap instead of being changed on every policy update.
+
+Generic policy mapping:
+
+| WattPlan policy | Discharge allowed | Grid charging | Battery charging from PV |
+| --- | --- | --- | --- |
+| `preserve` | No | Off | Allowed/normal |
+| `self_consume` | Yes | Off | Allowed/normal |
+| `grid_charge` | No | On | Allowed |
+
+Example time-of-use mapping:
+
+| WattPlan policy | Time-of-use capacity point | Grid charge point | Charge current |
+| --- | --- | --- | --- |
+| `preserve` | High, for example `100%`, to prevent discharge | Off | Normal/static unless the setup needs otherwise |
+| `self_consume` | Normal minimum, for example `10%` | Off | Normal/static |
+| `grid_charge` | High, for example `100%`, to preserve while charging | On | Configured normal charging cap |
 
 ## Comfort Loads
 
@@ -154,11 +177,9 @@ Usually no. WattPlan publishes the intended action or time suggestion. You conne
 
 ### How do I control a battery inverter with WattPlan?
 Use the WattPlan battery action entity as the planner output. Then create an automation that maps:
-- `charge_grid`
-- `charge_pv`
-- `charge_grid_pv`
-- `discharge`
-- `hold`
+- `preserve`
+- `self_consume`
+- `grid_charge`
 To whatever your inverter integration actually supports.
 
 That might be:

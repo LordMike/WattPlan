@@ -1120,7 +1120,7 @@
         },
         "data_description": {
           "planning_enabled": "When enabled, optimization runs every {slot_minutes} minutes and publishes the new plan to WattPlan entities.",
-          "action_emission_enabled": "When enabled, action states like charge_grid/charge_pv/charge_grid_pv/discharge/hold are published every {slot_minutes} minutes."
+          "action_emission_enabled": "When enabled, battery policy states like preserve/self_consume/grid_charge are published every {slot_minutes} minutes."
         }
       },
       "battery_entities": {
@@ -1460,13 +1460,11 @@
               "name": "Advanced battery behavior",
               "data": {
                 "charge_efficiency": "Charge efficiency",
-                "discharge_efficiency": "Discharge efficiency",
-                "prefer_pv_surplus_charging": "Prefer PV surplus charging"
+                "discharge_efficiency": "Discharge efficiency"
               },
               "data_description": {
                 "charge_efficiency": "Fraction of charging energy that ends up stored in the battery.",
-                "discharge_efficiency": "Fraction of stored energy that can be delivered when discharging.",
-                "prefer_pv_surplus_charging": "Recommended for EV batteries or batteries that should generally end up charged. When enabled, any available PV surplus is routed into this battery instead of timing small exports for later recharge."
+                "discharge_efficiency": "Fraction of stored energy that can be delivered when discharging."
               }
             }
           }
@@ -1498,13 +1496,11 @@
               "name": "Advanced battery behavior",
               "data": {
                 "charge_efficiency": "Charge efficiency",
-                "discharge_efficiency": "Discharge efficiency",
-                "prefer_pv_surplus_charging": "Prefer PV surplus charging"
+                "discharge_efficiency": "Discharge efficiency"
               },
               "data_description": {
                 "charge_efficiency": "Fraction of charging energy that ends up stored in the battery.",
-                "discharge_efficiency": "Fraction of stored energy that can be delivered when discharging.",
-                "prefer_pv_surplus_charging": "Recommended for EV batteries or batteries that should generally end up charged. When enabled, any available PV surplus is routed into this battery instead of timing small exports for later recharge."
+                "discharge_efficiency": "Fraction of stored energy that can be delivered when discharging."
               }
             }
           }

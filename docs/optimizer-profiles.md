@@ -55,16 +55,3 @@ Profiles do not raise the configured battery minimum.
 If you want more reserve left in a battery, set that battery's minimum energy directly in the battery configuration. Profiles only control how willing WattPlan is to move battery energy around.
 
 Profiles also do not replace battery targets. If you need a battery, such as an EV, to reach a specific level by a specific time, use a target. A common Home Assistant setup is an automation that sets a weekday morning target and adjusts it for holidays or other patterns.
-
-## PV surplus charging on individual batteries
-
-Each battery also has a separate `Prefer PV surplus charging` option.
-
-This is most useful for:
-- EV batteries
-- Charge-only batteries
-- Batteries that should generally trend toward being charged when solar surplus is available
-
-When enabled, WattPlan treats that battery as a sink for available PV surplus instead of trying to optimize small export-now / charge-later timing differences.
-
-This option is local to that battery. It does not change the global optimizer profile.

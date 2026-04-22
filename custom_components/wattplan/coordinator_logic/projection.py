@@ -63,12 +63,12 @@ class PlannerProjectionBuilder:
                 next_action_timestamp = next_change[0] if next_change is not None else None
                 next_point = next_change[1] if next_change is not None else None
                 next_action = (
-                    str(next_point.get("state", "hold"))
+                    str(next_point.get("state", "self_consume"))
                     if isinstance(next_point, dict)
                     else None
                 )
                 batteries[subentry_id] = {
-                    "action": str(current.get("state", "hold")),
+                    "action": str(current.get("state", "self_consume")),
                     "next_action_timestamp": (
                         next_action_timestamp.isoformat()
                         if next_action_timestamp is not None
@@ -264,7 +264,11 @@ class PlannerProjectionBuilder:
                 plan_details[f"{key_base}_action"] = [
                     self._map_action_code(str(action))
                     for action in self._series_from_schedule(
-                        schedule, horizon_slots, "state", default="hold", stringify=True
+                        schedule,
+                        horizon_slots,
+                        "state",
+                        default="self_consume",
+                        stringify=True,
                     )
                 ]
                 plan_details[f"{key_base}_level_kwh"] = self._rounded_series(
@@ -370,8 +374,8 @@ class PlannerProjectionBuilder:
                     aggregated.append(round(sum(float(value) for value in chunk), 2))
             elif key.endswith("_action"):
                 actions = {str(value) for value in chunk if isinstance(value, str)}
-                active_actions = sorted(action for action in actions if action != "h")
-                aggregated.append("+".join(active_actions) if active_actions else "h")
+                active_actions = sorted(action for action in actions if action != "sc")
+                aggregated.append("+".join(active_actions) if active_actions else "sc")
             else:
                 aggregated.append(chunk[-1])
         return aggregated
@@ -457,9 +461,7 @@ class PlannerProjectionBuilder:
 
     def _map_action_code(self, action: str) -> str:
         return {
-            "charge_grid": "c_g",
-            "charge_pv": "c_p",
-            "charge_grid_pv": "c_gp",
-            "discharge": "d",
-            "hold": "h",
-        }.get(action, "h")
+            "grid_charge": "gc",
+            "preserve": "p",
+            "self_consume": "sc",
+        }.get(action, "sc")

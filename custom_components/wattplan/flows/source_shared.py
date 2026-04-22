@@ -72,7 +72,6 @@ from ..const import (
     CONF_OPTIONS_COUNT,
     CONF_PLANNING_ENABLED,
     CONF_OPTIMIZER_PROFILE,
-    CONF_PREFER_PV_SURPLUS_CHARGING,
     CONF_PROVIDERS,
     CONF_RESAMPLE_MODE,
     CONF_ROLLING_WINDOW_HOURS,
@@ -1396,7 +1395,6 @@ def _battery_schema() -> vol.Schema:
                 default={
                     CONF_CHARGE_EFFICIENCY: 0.9,
                     CONF_DISCHARGE_EFFICIENCY: 0.9,
-                    CONF_PREFER_PV_SURPLUS_CHARGING: False,
                 },
             ): section(
                 vol.Schema(
@@ -1423,10 +1421,6 @@ def _battery_schema() -> vol.Schema:
                                 mode=selector.NumberSelectorMode.BOX,
                             )
                         ),
-                        vol.Required(
-                            CONF_PREFER_PV_SURPLUS_CHARGING,
-                            default=False,
-                        ): selector.BooleanSelector(),
                     }
                 ),
                 {"collapsed": True},
