@@ -42,7 +42,9 @@ It contains the Home Assistant integration payload from `custom_components/wattp
 For tagged commits, the workflow publishes the same zip in two places:
 
 - as a GitHub Actions workflow artifact
-- as a GitHub release asset on the tag's release page
+- as a GitHub release asset on the tag's draft release page
+
+GitHub releases created by the workflow are drafts by default. Review the generated release notes and attached `wattplan.zip`, then publish the release manually when it is ready.
 
 ## Prereleases
 
