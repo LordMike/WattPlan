@@ -15,7 +15,7 @@ from .coordinator import CycleTrigger, WattPlanCoordinator
 from .runtime import WattPlanConfigEntry, WattPlanRuntimeData, mark_runtime_updated
 from .services import SERVICE_SPECS
 
-PLATFORMS: list[Platform] = [Platform.SENSOR]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BUTTON]
 
 DATA_ENTRY_COUNT = "entry_count"
 DATA_SERVICE_REGISTERED = "service_registered"
