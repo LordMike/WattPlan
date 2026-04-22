@@ -20,6 +20,8 @@ except ImportError:
 MPC_HORIZON = 22
 EPSILON = 1e-6
 AVG_PRICE_SENTINEL = 1000.0
+PRESERVE_PROBE_MIN_KWH = 0.01
+PRESERVE_OBJECTIVE_TOLERANCE = 1e-7
 
 
 def piecewise_value_interpolated(level_array, curve):
@@ -125,6 +127,7 @@ def _build_reuse_plan(
     battery_charge_grid = previous_state.battery_charge_grid
     battery_charge_pv = previous_state.battery_charge_pv
     battery_discharge = previous_state.battery_discharge
+    battery_preserve = previous_state.battery_preserve
     comfort_on = previous_state.comfort_on
     comfort_lock_mode = previous_state.comfort_lock_mode
     comfort_lock_remaining = previous_state.comfort_lock_remaining
@@ -136,6 +139,8 @@ def _build_reuse_plan(
     if battery_charge_grid.shape[0] != num_battery:
         return None
     if battery_charge_pv.shape[0] != num_battery:
+        return None
+    if battery_preserve.shape[0] != num_battery:
         return None
     if comfort_on.shape[0] != num_comfort:
         return None
@@ -198,6 +203,9 @@ def _build_reuse_plan(
             :, best_offset : best_offset + best_overlap
         ],
         "battery_discharge": battery_discharge[
+            :, best_offset : best_offset + best_overlap
+        ],
+        "battery_preserve": battery_preserve[
             :, best_offset : best_offset + best_overlap
         ],
         "comfort_on": comfort_on[:, best_offset : best_offset + best_overlap],
@@ -300,9 +308,10 @@ def _solve_lp(objective, A_ub, b_ub, A_eq, b_eq, bounds, integrality=None):
     model_status = highs.getModelStatus()
 
     class _HighspyResult:
-        def __init__(self, success, x):
+        def __init__(self, success, x, objective_value=None):
             self.success = success
             self.x = x
+            self.objective_value = objective_value
 
     if model_status != highspy.HighsModelStatus.kOptimal:
         return _HighspyResult(False, None)
@@ -314,6 +323,7 @@ def _solve_lp(objective, A_ub, b_ub, A_eq, b_eq, bounds, integrality=None):
     return _HighspyResult(
         True,
         np.asarray(solution.col_value, dtype=np.float64),
+        float(highs.getObjectiveValue()),
     )
 
 
@@ -341,6 +351,7 @@ def _solve_mpc_step(
     prev_comfort_on,
     comfort_off_streaks_now,
     remaining_steps_total,
+    forced_discharge_first=None,
 ):
     horizon = len(prices_h)
     num_battery = len(battery_entities)
@@ -479,6 +490,17 @@ def _solve_mpc_step(
                     row[var["target_over"].start] = -1.0
                     A_ub.append(row)
                     b_ub.append(float(target["upper_kwh"]))
+
+        forced_discharge = (
+            0.0
+            if forced_discharge_first is None
+            else float(forced_discharge_first.get(b, 0.0))
+        )
+        if forced_discharge > EPSILON and horizon > 0:
+            row = np.zeros(n_vars, dtype=np.float64)
+            row[var["discharge"].start] = -1.0
+            A_ub.append(row)
+            b_ub.append(-forced_discharge)
 
     for c, entity in enumerate(comfort_entities):
         var = comfort_vars[c]
@@ -620,7 +642,47 @@ def _solve_mpc_step(
         "charge_pv": charge_pv_cmd,
         "discharge": discharge_cmd,
         "comfort_on": comfort_cmd,
+        "objective_value": float(result.objective_value),
     }
+
+
+def _battery_available_discharge_kwh(entity: BatteryEntity, level: float) -> float:
+    discharge_eff = float(entity.discharge_efficiency)
+    return max(float(level) - float(entity.minimum_kwh), 0.0) * discharge_eff
+
+
+def _battery_preserve_probe_kwh(entity: BatteryEntity, level: float) -> float:
+    _, discharge_limit = _battery_power_limits(entity, level)
+    available = _battery_available_discharge_kwh(entity, level)
+    action_deadband = max(float(entity.action_deadband_kwh), EPSILON)
+    requested_probe = max(action_deadband, PRESERVE_PROBE_MIN_KWH)
+    return min(available, discharge_limit, requested_probe)
+
+
+def _slot_uncovered_model_load_kwh(
+    timeslot: int,
+    *,
+    usage,
+    solar_input,
+    comfort_entities,
+    comfort_cmd,
+) -> float:
+    comfort_load = 0.0
+    for i, comfort in enumerate(comfort_entities):
+        if float(comfort_cmd[i]) >= 0.5:
+            comfort_load += float(comfort.power_usage_kwh)
+    return max(
+        float(usage[timeslot]) + comfort_load - float(solar_input[timeslot]),
+        0.0,
+    )
+
+
+def _objective_is_worse(counterfactual_objective, base_objective) -> bool:
+    tolerance = max(
+        PRESERVE_OBJECTIVE_TOLERANCE,
+        abs(float(base_objective)) * 1e-9,
+    )
+    return float(counterfactual_objective) > float(base_objective) + tolerance
 
 
 def _apply_controls_step(
@@ -825,6 +887,7 @@ def _run_mpc(
     battery_charge_grid = np.zeros((num_battery, total_steps), dtype=np.float64)
     battery_charge_pv = np.zeros((num_battery, total_steps), dtype=np.float64)
     battery_discharge = np.zeros((num_battery, total_steps), dtype=np.float64)
+    battery_preserve = np.zeros((num_battery, total_steps), dtype=np.bool_)
     grid_export = np.zeros(total_steps, dtype=np.float64)
     comfort_on = np.zeros((num_comfort, total_steps), dtype=np.float64)
     comfort_lock_mode_series = np.zeros((num_comfort, total_steps), dtype=np.float64)
@@ -873,6 +936,9 @@ def _run_mpc(
                 "discharge": reuse_plan["battery_discharge"][:, t].copy(),
                 "comfort_on": reuse_plan["comfort_on"][:, t].copy(),
             }
+            battery_preserve[:, t] = reuse_plan["battery_preserve"][:, t].astype(
+                np.bool_
+            )
             if num_comfort > 0:
                 comfort_lock_mode = reuse_plan["comfort_lock_mode"][:, t].astype(
                     np.int32
@@ -949,6 +1015,70 @@ def _run_mpc(
                 "discharge": solve_result["discharge"],
                 "comfort_on": comfort_cmd,
             }
+            uncovered_load = _slot_uncovered_model_load_kwh(
+                t,
+                usage=usage,
+                solar_input=solar_input,
+                comfort_entities=comfort_entities,
+                comfort_cmd=comfort_cmd,
+            )
+            for b, entity in enumerate(battery_entities):
+                action_deadband = max(float(entity.action_deadband_kwh), EPSILON)
+                if uncovered_load <= action_deadband:
+                    continue
+                if float(solve_result["charge_grid"][b]) > action_deadband:
+                    continue
+                if float(solve_result["discharge"][b]) > action_deadband:
+                    continue
+
+                available = _battery_available_discharge_kwh(
+                    entity, float(battery_levels[b, t])
+                )
+                if (
+                    float(entity.minimum_kwh) > EPSILON
+                    and available <= action_deadband
+                ):
+                    battery_preserve[b, t] = True
+                    continue
+
+                probe_kwh = min(
+                    _battery_preserve_probe_kwh(entity, float(battery_levels[b, t])),
+                    uncovered_load,
+                )
+                if probe_kwh <= action_deadband:
+                    continue
+
+                counterfactual = _solve_mpc_step(
+                    base_timeslot=t,
+                    prices_h=prices[t : t + horizon],
+                    grid_export_prices_h=grid_export_prices[t : t + horizon],
+                    usage_h=usage_h,
+                    solar_h=solar_input[t : t + horizon],
+                    battery_entities=battery_entities,
+                    comfort_entities=[comfort_entities[i] for i in unlocked_indices],
+                    battery_levels_now=battery_levels[:, t],
+                    battery_states_now=(
+                        battery_states[:, t - 1]
+                        if t > 0
+                        else np.zeros(num_battery, dtype=np.int32)
+                    ),
+                    comfort_levels_now=comfort_levels[unlocked_indices, t]
+                    if unlocked_indices
+                    else np.zeros(0, dtype=np.float64),
+                    prev_comfort_on=prev_comfort_on[unlocked_indices]
+                    if unlocked_indices
+                    else np.zeros(0, dtype=np.float64),
+                    comfort_off_streaks_now=comfort_off_streaks[unlocked_indices, t]
+                    if unlocked_indices
+                    else np.zeros(0, dtype=np.float64),
+                    remaining_steps_total=total_steps - t,
+                    forced_discharge_first={b: probe_kwh},
+                )
+                if counterfactual is None or _objective_is_worse(
+                    counterfactual["objective_value"],
+                    solve_result["objective_value"],
+                ):
+                    battery_preserve[b, t] = True
 
         if num_comfort > 0:
             comfort_lock_mode_series[:, t] = comfort_lock_mode.astype(np.float64)
@@ -1018,6 +1148,7 @@ def _run_mpc(
         "battery_charge_grid": battery_charge_grid,
         "battery_charge_pv": battery_charge_pv,
         "battery_discharge": battery_discharge,
+        "battery_preserve": battery_preserve,
         "grid_export": grid_export,
         "comfort_on": comfort_on,
         "comfort_lock_mode": comfort_lock_mode_series,
@@ -1225,113 +1356,14 @@ def _battery_schedule_state(
     entity: BatteryEntity,
     battery_index: int,
     timeslot: int,
-    *,
-    usage=None,
-    solar_input=None,
-    comfort_entities=None,
 ) -> str:
     """Return the serialized battery policy state for one schedule slot."""
     action_deadband = max(float(entity.action_deadband_kwh), EPSILON)
     if result["battery_charge_grid"][battery_index, timeslot] > action_deadband:
         return "grid_charge"
-    if _battery_should_preserve(
-        result,
-        entity,
-        battery_index,
-        timeslot,
-        usage=usage,
-        solar_input=solar_input,
-        comfort_entities=comfort_entities,
-        action_deadband=action_deadband,
-    ):
+    if bool(result["battery_preserve"][battery_index, timeslot]):
         return "preserve"
     return "self_consume"
-
-
-def _battery_should_preserve(
-    result,
-    entity: BatteryEntity,
-    battery_index: int,
-    timeslot: int,
-    *,
-    usage,
-    solar_input,
-    comfort_entities,
-    action_deadband: float,
-) -> bool:
-    """Return True when the model gives a positive reason to block discharge.
-
-    The optimizer does not currently expose a shadow price for stored battery
-    energy, so preserve is intentionally conservative. We only emit it for a
-    target/minimum constraint or when the plan faces load now, chooses not to
-    discharge this battery, and schedules that same battery to discharge later.
-    Neutral/PV-only slots stay self_consume so unexpected real load can still be
-    served by the inverter.
-    """
-    battery_state = int(result["battery_states"][battery_index, timeslot])
-    if battery_state == 2:
-        return False
-
-    level = float(result["battery_levels"][battery_index, timeslot])
-    minimum_kwh = float(entity.minimum_kwh)
-    discharge_eff = float(entity.discharge_efficiency)
-    available_for_discharge = max(level - minimum_kwh, 0.0) * discharge_eff
-
-    if entity.target is not None and timeslot <= int(entity.target.timeslot):
-        target_floor = float(entity.target.soc_kwh) - float(entity.target.tolerance_kwh)
-        if (
-            entity.target.mode in {"at_least", "exact"}
-            and level <= target_floor + action_deadband
-        ):
-            return True
-
-    if minimum_kwh > EPSILON and available_for_discharge <= action_deadband:
-        return _slot_has_model_load(
-            result,
-            timeslot,
-            usage=usage,
-            solar_input=solar_input,
-            comfort_entities=comfort_entities,
-            action_deadband=action_deadband,
-        )
-
-    future_discharge = float(
-        np.sum(result["battery_discharge"][battery_index, timeslot + 1 :])
-    )
-    if future_discharge <= action_deadband:
-        return False
-    if result["battery_discharge"][battery_index, timeslot] > action_deadband:
-        return False
-    return _slot_has_model_load(
-        result,
-        timeslot,
-        usage=usage,
-        solar_input=solar_input,
-        comfort_entities=comfort_entities,
-        action_deadband=action_deadband,
-    )
-
-
-def _slot_has_model_load(
-    result,
-    timeslot: int,
-    *,
-    usage,
-    solar_input,
-    comfort_entities,
-    action_deadband: float,
-) -> bool:
-    """Return True when the modeled site has non-PV-covered load this slot."""
-    if usage is None or solar_input is None:
-        return False
-    comfort_load = 0.0
-    for i, comfort in enumerate(comfort_entities or []):
-        if result["comfort_enabled"][i, timeslot]:
-            comfort_load += float(comfort.power_usage_kwh)
-    modeled_load = (
-        float(usage[timeslot]) + comfort_load - float(solar_input[timeslot])
-    )
-    return modeled_load > action_deadband
 
 
 def optimize_internal(normalized: CalculationInput):
@@ -1432,9 +1464,6 @@ def optimize_internal(normalized: CalculationInput):
                             entity,
                             i,
                             t,
-                            usage=usage,
-                            solar_input=solar_input,
-                            comfort_entities=comfort_entities,
                         ),
                         "level": float(result["battery_levels"][i, t + 1]),
                     }
@@ -1490,6 +1519,7 @@ def optimize_internal(normalized: CalculationInput):
         "battery_charge_grid": result["battery_charge_grid"].tolist(),
         "battery_charge_pv": result["battery_charge_pv"].tolist(),
         "battery_discharge": result["battery_discharge"].tolist(),
+        "battery_preserve": result["battery_preserve"].astype(bool).tolist(),
         "comfort_on": result["comfort_on"].tolist(),
         "comfort_lock_mode": result["comfort_lock_mode"].tolist(),
         "comfort_lock_remaining": result["comfort_lock_remaining"].tolist(),

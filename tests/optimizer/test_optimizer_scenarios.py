@@ -550,6 +550,9 @@ def test_battery_schedule_state_emits_policy_names():
         "battery_discharge": optimizer.np.asarray(
             [[0.0, 0.0, 0.0, 0.0, 1.0]], dtype=optimizer.np.float64
         ),
+        "battery_preserve": optimizer.np.asarray(
+            [[False, False, True, True, False]], dtype=optimizer.np.bool_
+        ),
         "comfort_enabled": optimizer.np.asarray(
             optimizer.np.zeros((0, 5)), dtype=optimizer.np.float64
         ),
@@ -558,18 +561,7 @@ def test_battery_schedule_state_emits_policy_names():
     assert optimizer._battery_schedule_state(result, entity, 0, 0) == "grid_charge"
     assert optimizer._battery_schedule_state(result, entity, 0, 1) == "self_consume"
     assert optimizer._battery_schedule_state(result, entity, 0, 2) == "grid_charge"
-    assert (
-        optimizer._battery_schedule_state(
-            result,
-            entity,
-            0,
-            3,
-            usage=optimizer.np.asarray([0.0, 0.0, 0.0, 1.0, 0.0]),
-            solar_input=optimizer.np.asarray([0.0, 0.0, 0.0, 0.0, 0.0]),
-            comfort_entities=[],
-        )
-        == "preserve"
-    )
+    assert optimizer._battery_schedule_state(result, entity, 0, 3) == "preserve"
     assert optimizer._battery_schedule_state(result, entity, 0, 4) == "self_consume"
 
 
@@ -604,6 +596,9 @@ def test_battery_schedule_state_defaults_pv_or_neutral_flow_to_self_consume():
         "battery_discharge": optimizer.np.asarray(
             [[0.0, 0.0]], dtype=optimizer.np.float64
         ),
+        "battery_preserve": optimizer.np.asarray(
+            [[False, False]], dtype=optimizer.np.bool_
+        ),
         "comfort_enabled": optimizer.np.asarray(
             optimizer.np.zeros((0, 2)), dtype=optimizer.np.float64
         ),
@@ -611,6 +606,64 @@ def test_battery_schedule_state_defaults_pv_or_neutral_flow_to_self_consume():
 
     assert optimizer._battery_schedule_state(result, entity, 0, 0) == "self_consume"
     assert optimizer._battery_schedule_state(result, entity, 0, 1) == "self_consume"
+
+
+def test_model_marks_preserve_when_forced_discharge_now_is_more_expensive():
+    payload = {
+        "grid_import_price_per_kwh": [0.10, 1.00, 1.00, 1.00],
+        "grid_export_price_per_kwh": [0.0, 0.0, 0.0, 0.0],
+        "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
+        "usage_kwh": [1.0, 1.0, 1.0, 1.0],
+        "battery_entities": [
+            {
+                "name": "battery",
+                "initial_kwh": 1.0,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 1.0,
+                "charge_curve_kwh": [0.0],
+                "discharge_curve_kwh": [1.0],
+                "can_charge_from": 0,
+            }
+        ],
+        "comfort_entities": [],
+    }
+
+    result = _run_optimizer(payload)
+    schedule = result["entities"][0]["schedule"]
+
+    assert schedule[0]["state"] == "preserve"
+    assert schedule[0]["level"] == pytest.approx(1.0)
+    assert schedule[1]["state"] == "self_consume"
+    assert schedule[1]["level"] == pytest.approx(0.0)
+
+
+def test_battery_target_does_not_create_preserve_policy_by_itself():
+    payload = {
+        "grid_import_price_per_kwh": [0.10, 0.10, 0.10, 0.10],
+        "grid_export_price_per_kwh": [0.0, 0.0, 0.0, 0.0],
+        "solar_input_kwh": [1.0, 1.0, 1.0, 1.0],
+        "usage_kwh": [0.0, 0.0, 0.0, 0.0],
+        "battery_entities": [
+            {
+                "name": "battery",
+                "initial_kwh": 0.5,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 1.0,
+                "target": {"timeslot": 3, "soc_kwh": 0.5},
+                "charge_curve_kwh": [1.0],
+                "discharge_curve_kwh": [1.0],
+                "can_charge_from": 2,
+            }
+        ],
+        "comfort_entities": [],
+    }
+
+    result = _run_optimizer(payload)
+
+    assert all(
+        point["state"] == "self_consume"
+        for point in result["entities"][0]["schedule"]
+    )
 
 
 def test_live_grid_export_benchmark_scenario_uses_real_15min_stromligning_values():

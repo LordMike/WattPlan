@@ -217,13 +217,13 @@ Battery schedule `state` values are inverter-control policies derived from the p
 
 | State | Meaning |
 | --- | --- |
-| `preserve` | Prevent this battery from discharging. This saves stored energy for target/minimum constraints or modeled future value. PV charging may still be allowed by the user's inverter setup. |
+| `preserve` | Prevent this battery from discharging. This saves stored energy when the optimizer shows that spending it now would make the plan worse or violate modeled constraints. PV charging may still be allowed by the user's inverter setup. |
 | `self_consume` | Normal battery operation. Allow this battery to cover real load. Do not request grid charging. This is also the default when the model has no positive reason to preserve or grid-charge. |
 | `grid_charge` | Request or allow grid charging for this battery and prevent the battery from being spent while doing so. |
 
 PV surplus charging is implicit/normal battery behavior, not a primary action state. PV export is site-level and multi-battery-sensitive, so a dedicated PV export policy is deferred to a future site-level design.
 
-The current preserve inference is intentionally conservative because the optimizer does not expose a shadow price for stored battery energy. `grid_charge` is emitted when modeled grid charging for that battery is above the action deadband. `preserve` is emitted only when a target/minimum constraint or future scheduled discharge gives a concrete model-backed reason to block discharge. Otherwise WattPlan emits `self_consume`, including slots with forecast zero battery flow.
+`grid_charge` is emitted when modeled grid charging for that battery is above the action deadband. `preserve` is emitted from a model-backed counterfactual check: when the slot has non-PV-covered modeled load and the optimizer chooses not to discharge a battery, WattPlan asks the same model whether forcing a small discharge from that battery now would be infeasible or make the objective worse. If so, the slot is marked `preserve`; otherwise WattPlan emits `self_consume`. Forecast zero battery flow is not a preserve reason by itself.
 
 ### Notes on `entities` and `optional_entity_options`
 - `entities` is the actual optimized schedule.

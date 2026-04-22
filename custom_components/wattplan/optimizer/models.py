@@ -538,6 +538,7 @@ class NormalizedState:
     battery_charge_grid: np.ndarray
     battery_charge_pv: np.ndarray
     battery_discharge: np.ndarray
+    battery_preserve: np.ndarray
     comfort_on: np.ndarray
     comfort_lock_mode: np.ndarray
     comfort_lock_remaining: np.ndarray
@@ -638,6 +639,10 @@ def _parse_state_blob(state_blob):
         battery_charge_grid = np.asarray(obj["battery_charge_grid"], dtype=np.float64)
         battery_charge_pv = np.asarray(obj["battery_charge_pv"], dtype=np.float64)
         battery_discharge = np.asarray(obj["battery_discharge"], dtype=np.float64)
+        battery_preserve = np.asarray(
+            obj.get("battery_preserve", np.zeros_like(battery_discharge)),
+            dtype=np.bool_,
+        )
         comfort_on = np.asarray(obj["comfort_on"], dtype=np.float64)
         comfort_lock_mode = np.asarray(obj["comfort_lock_mode"], dtype=np.float64)
         comfort_lock_remaining = np.asarray(
@@ -657,6 +662,8 @@ def _parse_state_blob(state_blob):
         battery_charge_grid = battery_charge_grid.reshape(0, num_steps)
     if battery_charge_pv.ndim == 1 and battery_charge_pv.size == 0:
         battery_charge_pv = battery_charge_pv.reshape(0, num_steps)
+    if battery_preserve.ndim == 1 and battery_preserve.size == 0:
+        battery_preserve = battery_preserve.reshape(0, num_steps)
     if comfort_on.ndim == 1 and comfort_on.size == 0:
         comfort_on = comfort_on.reshape(0, num_steps)
     if comfort_lock_mode.ndim == 1 and comfort_lock_mode.size == 0:
@@ -680,6 +687,8 @@ def _parse_state_blob(state_blob):
         raise ValueError("state.battery_charge_grid shape mismatch")
     if battery_charge_pv.ndim != 2 or battery_charge_pv.shape[1] != num_steps:
         raise ValueError("state.battery_charge_pv shape mismatch")
+    if battery_preserve.ndim != 2 or battery_preserve.shape[1] != num_steps:
+        raise ValueError("state.battery_preserve shape mismatch")
     if comfort_on.ndim != 2 or comfort_on.shape[1] != num_steps:
         raise ValueError("state.comfort_on shape mismatch")
     if comfort_lock_mode.ndim != 2 or comfort_lock_mode.shape[1] != num_steps:
@@ -714,6 +723,7 @@ def _parse_state_blob(state_blob):
         battery_charge_grid=battery_charge_grid,
         battery_charge_pv=battery_charge_pv,
         battery_discharge=battery_discharge,
+        battery_preserve=battery_preserve,
         comfort_on=comfort_on,
         comfort_lock_mode=comfort_lock_mode,
         comfort_lock_remaining=comfort_lock_remaining,

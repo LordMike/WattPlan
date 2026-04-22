@@ -55,7 +55,7 @@ The battery action sensor exposes policy, not raw measured or forecast battery f
 
 | Policy | Meaning |
 | --- | --- |
-| `preserve` | Save stored energy for future value or target constraints. Your automation should prevent this battery from discharging. PV charging may still be allowed by your inverter setup. |
+| `preserve` | Save stored energy because the model shows that spending it now would make the plan worse or violate constraints. Your automation should prevent this battery from discharging. PV charging may still be allowed by your inverter setup. |
 | `self_consume` | Normal battery operation. Allow this battery to cover real load. Do not request grid charging. This is the default policy when the plan has no positive reason to preserve or grid-charge. |
 | `grid_charge` | Request or allow grid charging for this battery and prevent the battery from being spent while doing so. |
 
