@@ -659,11 +659,10 @@ def _battery_preserve_probe_kwh(entity: BatteryEntity, level: float) -> float:
     return min(available, discharge_limit, requested_probe)
 
 
-def _slot_uncovered_model_load_kwh(
+def _slot_modeled_load_kwh(
     timeslot: int,
     *,
     usage,
-    solar_input,
     comfort_entities,
     comfort_cmd,
 ) -> float:
@@ -671,10 +670,7 @@ def _slot_uncovered_model_load_kwh(
     for i, comfort in enumerate(comfort_entities):
         if float(comfort_cmd[i]) >= 0.5:
             comfort_load += float(comfort.power_usage_kwh)
-    return max(
-        float(usage[timeslot]) + comfort_load - float(solar_input[timeslot]),
-        0.0,
-    )
+    return float(usage[timeslot]) + comfort_load
 
 
 def _objective_is_worse(counterfactual_objective, base_objective) -> bool:
@@ -1015,17 +1011,15 @@ def _run_mpc(
                 "discharge": solve_result["discharge"],
                 "comfort_on": comfort_cmd,
             }
-            uncovered_load = _slot_uncovered_model_load_kwh(
+            modeled_load = _slot_modeled_load_kwh(
                 t,
                 usage=usage,
-                solar_input=solar_input,
                 comfort_entities=comfort_entities,
                 comfort_cmd=comfort_cmd,
             )
+            pv_surplus = max(float(solar_input[t]) - modeled_load, 0.0)
             for b, entity in enumerate(battery_entities):
                 action_deadband = max(float(entity.action_deadband_kwh), EPSILON)
-                if uncovered_load <= action_deadband:
-                    continue
                 if float(solve_result["charge_grid"][b]) > action_deadband:
                     continue
                 if float(solve_result["discharge"][b]) > action_deadband:
@@ -1041,18 +1035,29 @@ def _run_mpc(
                     battery_preserve[b, t] = True
                     continue
 
-                probe_kwh = min(
-                    _battery_preserve_probe_kwh(entity, float(battery_levels[b, t])),
-                    uncovered_load,
+                probe_kwh = _battery_preserve_probe_kwh(
+                    entity, float(battery_levels[b, t])
                 )
                 if probe_kwh <= action_deadband:
                     continue
 
+                # A preserve policy is about unexpected real load, not the
+                # forecast load already in the plan. If PV surplus exists, the
+                # marginal load would consume that PV first. Only the next
+                # probe-sized slice asks whether spending battery is worse than
+                # importing and preserving it for later value.
+                counterfactual_usage_h = usage_h.copy()
+                counterfactual_usage_h[0] += pv_surplus + probe_kwh
+                preserve_baseline_objective = (
+                    float(solve_result["objective_value"])
+                    + float(grid_export_prices[t]) * pv_surplus
+                    + float(prices[t]) * probe_kwh
+                )
                 counterfactual = _solve_mpc_step(
                     base_timeslot=t,
                     prices_h=prices[t : t + horizon],
                     grid_export_prices_h=grid_export_prices[t : t + horizon],
-                    usage_h=usage_h,
+                    usage_h=counterfactual_usage_h,
                     solar_h=solar_input[t : t + horizon],
                     battery_entities=battery_entities,
                     comfort_entities=[comfort_entities[i] for i in unlocked_indices],
@@ -1076,7 +1081,7 @@ def _run_mpc(
                 )
                 if counterfactual is None or _objective_is_worse(
                     counterfactual["objective_value"],
-                    solve_result["objective_value"],
+                    preserve_baseline_objective,
                 ):
                     battery_preserve[b, t] = True
 

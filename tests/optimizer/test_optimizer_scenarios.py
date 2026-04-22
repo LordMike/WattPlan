@@ -637,6 +637,35 @@ def test_model_marks_preserve_when_forced_discharge_now_is_more_expensive():
     assert schedule[1]["level"] == pytest.approx(0.0)
 
 
+def test_model_marks_preserve_for_marginal_load_after_pv_surplus():
+    payload = {
+        "grid_import_price_per_kwh": [0.10, 1.00, 1.00, 1.00],
+        "grid_export_price_per_kwh": [0.0, 0.0, 0.0, 0.0],
+        "solar_input_kwh": [1.2, 0.0, 0.0, 0.0],
+        "usage_kwh": [1.0, 1.0, 1.0, 1.0],
+        "battery_entities": [
+            {
+                "name": "battery",
+                "initial_kwh": 1.0,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 1.0,
+                "charge_curve_kwh": [0.0],
+                "discharge_curve_kwh": [1.0],
+                "can_charge_from": 0,
+            }
+        ],
+        "comfort_entities": [],
+    }
+
+    result = _run_optimizer(payload)
+    schedule = result["entities"][0]["schedule"]
+
+    assert schedule[0]["state"] == "preserve"
+    assert schedule[0]["level"] == pytest.approx(1.0)
+    assert schedule[1]["state"] == "self_consume"
+    assert schedule[1]["level"] == pytest.approx(0.0)
+
+
 def test_battery_target_does_not_create_preserve_policy_by_itself():
     payload = {
         "grid_import_price_per_kwh": [0.10, 0.10, 0.10, 0.10],
@@ -664,6 +693,189 @@ def test_battery_target_does_not_create_preserve_policy_by_itself():
         point["state"] == "self_consume"
         for point in result["entities"][0]["schedule"]
     )
+
+
+def test_live_exported_deye_forecast_self_consumes_until_evening_discharge():
+    # Exported from wattplan.export_planner_input on 2026-04-22 for the live
+    # Home Assistant setup. Although the battery remains full until the evening
+    # price rise, the model says self-consume is still the correct policy: early
+    # marginal load is covered by PV surplus or can be recovered before the
+    # high-value discharge window.
+    payload = {
+        "grid_import_price_per_kwh": [
+            0.577338,
+            0.573134,
+            0.57986,
+            0.579954,
+            0.57958,
+            0.580234,
+            0.580421,
+            0.589296,
+            0.623019,
+            0.935472,
+            0.945374,
+            0.947523,
+            1.086435,
+            0.961442,
+            1.174247,
+            1.180226,
+            1.529327,
+            1.31017,
+            1.381634,
+            1.620503,
+            1.263274,
+            1.766701,
+            1.358,
+            1.180226,
+            1.160048,
+            1.337009,
+            0.861701,
+            0.861608,
+            0.692055,
+            0.846287,
+            0.674306,
+            0.66132,
+        ],
+        "grid_export_price_per_kwh": [
+            -0.002989,
+            -0.007193,
+            -0.000467,
+            -0.000374,
+            -0.000747,
+            -0.000093,
+            0.000093,
+            0.008968,
+            0.042692,
+            0.03662,
+            0.046522,
+            0.048671,
+            0.187582,
+            0.06259,
+            0.275395,
+            0.281374,
+            0.630475,
+            0.411317,
+            0.482782,
+            0.72165,
+            0.364422,
+            0.867849,
+            0.459147,
+            0.281374,
+            0.261195,
+            0.756682,
+            0.281374,
+            0.28128,
+            0.111727,
+            0.26596,
+            0.093978,
+            0.080993,
+        ],
+        "solar_input_kwh": [
+            4.749,
+            2.2255,
+            2.2255,
+            2.0435,
+            2.0435,
+            1.8395,
+            1.8395,
+            1.5905,
+            1.5905,
+            1.313,
+            1.313,
+            1.0025,
+            1.0025,
+            0.71,
+            0.71,
+            0.3945,
+            0.3945,
+            0.1235,
+            0.1235,
+            0.032,
+            0.032,
+            0.0095,
+            0.0095,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        ],
+        "usage_kwh": [
+            0.2169704598561457,
+            0.24453594597439476,
+            0.23539831744649636,
+            0.23312404106022935,
+            0.2298197857041873,
+            0.20621877304580288,
+            0.2215179470598735,
+            0.2548262595346826,
+            0.25221516533968485,
+            0.30891192422506575,
+            0.25971747314094706,
+            0.30657993534027406,
+            0.3442407494160655,
+            0.34868868240295475,
+            0.2307738647202011,
+            0.1994668734929886,
+            0.19826671285536,
+            0.2305931644980437,
+            0.21648351868157095,
+            0.20391384014856817,
+            0.19844142051051475,
+            0.24931453994647473,
+            0.19962354065757215,
+            0.19413691567983707,
+            0.20074486184872037,
+            0.20200322537291235,
+            0.25446272213855586,
+            0.20780401659467665,
+            0.2270879529659598,
+            0.3451252775276283,
+            0.2691395209923915,
+            0.23195316573769167,
+        ],
+        "rolling_window_slots": 24,
+        "throughput_cost_per_kwh": 0.02,
+        "action_deadband_kwh": 0.05,
+        "mode_switch_cost": 0.01,
+        "battery_entities": [
+            {
+                "name": "Battery",
+                "initial_kwh": 10.0,
+                "minimum_kwh": 1.0,
+                "capacity_kwh": 10.0,
+                "charge_efficiency": 0.9,
+                "discharge_efficiency": 0.9,
+                "charge_curve_kwh": [1.25],
+                "discharge_curve_kwh": [1.25],
+                "can_charge_from": 3,
+                "prefer_pv_surplus_charging": True,
+            }
+        ],
+        "comfort_entities": [],
+        "optional_entities": [
+            {
+                "name": "Hvidevarer",
+                "duration_timeslots": 8,
+                "start_after_timeslot": 0,
+                "start_before_timeslot": 32,
+                "energy_kwh": 2.0,
+                "options": 2,
+                "min_option_gap_timeslots": 4,
+            }
+        ],
+    }
+
+    result = _run_optimizer(payload)
+    schedule = result["entities"][0]["schedule"]
+
+    assert {point["state"] for point in schedule} == {"self_consume"}
+    assert all(point["level"] == pytest.approx(10.0) for point in schedule[:17])
+    assert schedule[17]["level"] < 10.0
 
 
 def test_live_grid_export_benchmark_scenario_uses_real_15min_stromligning_values():
