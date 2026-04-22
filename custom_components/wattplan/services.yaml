@@ -38,6 +38,13 @@ set_target:
       required: false
       selector:
         text:
+    run_optimize:
+      name: Run optimize
+      description: Trigger optimization immediately after setting the target so the change takes effect without waiting for the next scheduled cycle
+      required: false
+      default: true
+      selector:
+        boolean:
 
 clear_target:
   name: Clear battery target
@@ -61,6 +68,13 @@ clear_target:
       required: false
       selector:
         text:
+    run_optimize:
+      name: Run optimize
+      description: Trigger optimization immediately after clearing the target so the change takes effect without waiting for the next scheduled cycle
+      required: false
+      default: true
+      selector:
+        boolean:
 
 run_optimize_now:
   name: Run optimize now
