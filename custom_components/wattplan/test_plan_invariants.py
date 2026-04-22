@@ -25,13 +25,11 @@ def assert_plan_invariants(result: dict[str, Any]) -> dict[str, Any]:
             if not isinstance(point, dict):
                 continue
 
-            state = str(point.get("state", "hold"))
+            state = str(point.get("state", "self_consume"))
             assert state in {
-                "hold",
-                "discharge",
-                "charge_grid",
-                "charge_pv",
-                "charge_grid_pv",
+                "preserve",
+                "self_consume",
+                "grid_charge",
             }, f"battery {entity.get('name')} schedule[{index}] has invalid state={state}"
 
     return result

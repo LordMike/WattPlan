@@ -118,10 +118,10 @@ def _fake_optimize(_params: object) -> dict[str, object]:
                 "name": "battery",
                 "type": "battery",
                 "schedule": [
-                    {"state": "charge_grid", "level": 5.1},
-                    {"state": "hold", "level": 5.1},
-                    {"state": "hold", "level": 5.1},
-                    {"state": "discharge", "level": 4.9},
+                    {"state": "grid_charge", "level": 5.1},
+                    {"state": "self_consume", "level": 5.1},
+                    {"state": "self_consume", "level": 5.1},
+                    {"state": "self_consume", "level": 4.9},
                 ],
             },
             {
@@ -163,17 +163,17 @@ def _fake_optimize_with_target_behavior(params: object) -> dict[str, object]:
     battery = params.battery_entities[0]
     battery_schedule = (
         [
-            {"state": "charge_grid", "level": 6.5},
-            {"state": "charge_grid", "level": 8.0},
-            {"state": "hold", "level": 8.0},
-            {"state": "hold", "level": 8.0},
+            {"state": "grid_charge", "level": 6.5},
+            {"state": "grid_charge", "level": 8.0},
+            {"state": "self_consume", "level": 8.0},
+            {"state": "self_consume", "level": 8.0},
         ]
         if battery.target is not None
         else [
-            {"state": "hold", "level": 5.0},
-            {"state": "hold", "level": 5.0},
-            {"state": "hold", "level": 5.0},
-            {"state": "hold", "level": 5.0},
+            {"state": "self_consume", "level": 5.0},
+            {"state": "self_consume", "level": 5.0},
+            {"state": "self_consume", "level": 5.0},
+            {"state": "self_consume", "level": 5.0},
         ]
     )
     return {
@@ -437,7 +437,7 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
     battery_action = hass.states.get("sensor.home_battery_action")
     assert battery_action is not None
     assert battery_action.attributes["friendly_name"] == "(battery) Action"
-    assert battery_action.state == "charge_grid"
+    assert battery_action.state == "grid_charge"
     assert "next_action" not in battery_action.attributes
     assert "next_action_timestamp" not in battery_action.attributes
 
@@ -559,10 +559,10 @@ async def test_battery_action_sensor_uses_source_specific_charge_state(
                     "name": "battery",
                     "type": "battery",
                     "schedule": [
-                        {"state": "charge_grid_pv", "level": 5.2},
-                        {"state": "hold", "level": 5.2},
-                        {"state": "hold", "level": 5.2},
-                        {"state": "hold", "level": 5.2},
+                        {"state": "grid_charge", "level": 5.2},
+                        {"state": "self_consume", "level": 5.2},
+                        {"state": "self_consume", "level": 5.2},
+                        {"state": "self_consume", "level": 5.2},
                     ],
                 }
             ],
@@ -578,7 +578,7 @@ async def test_battery_action_sensor_uses_source_specific_charge_state(
 
     battery_action = hass.states.get("sensor.home_battery_action")
     assert battery_action is not None
-    assert battery_action.state == "charge_grid_pv"
+    assert battery_action.state == "grid_charge"
 
 
 async def test_battery_next_action_sensor_exposes_timestamp_and_state(
@@ -648,10 +648,10 @@ async def test_battery_next_action_sensor_exposes_timestamp_and_state(
                         "name": "battery",
                         "type": "battery",
                         "schedule": [
-                            {"state": "hold", "level": 5.0},
-                            {"state": "charge_grid_pv", "level": 5.2},
-                            {"state": "hold", "level": 5.2},
-                            {"state": "hold", "level": 5.2},
+                            {"state": "self_consume", "level": 5.0},
+                            {"state": "grid_charge", "level": 5.2},
+                            {"state": "self_consume", "level": 5.2},
+                            {"state": "self_consume", "level": 5.2},
                         ],
                     }
                 ],
@@ -667,7 +667,7 @@ async def test_battery_next_action_sensor_exposes_timestamp_and_state(
 
     next_action = hass.states.get("sensor.home_battery_next_action")
     assert next_action is not None
-    assert next_action.state == "charge_grid_pv"
+    assert next_action.state == "grid_charge"
     assert "timestamp" in next_action.attributes
 
 
@@ -899,7 +899,7 @@ async def test_plan_details_sensor_exposes_horizon_length_arrays(
     assert len(state.attributes["battery_battery_level_kwh"]) == 4
     assert len(state.attributes["comfort_comfort_enabled"]) == 4
     assert len(state.attributes["optional_optional_enabled"]) == 4
-    assert state.attributes["battery_battery_action"] == ["c_g", "h", "h", "d"]
+    assert state.attributes["battery_battery_action"] == ["gc", "sc", "sc", "sc"]
     assert state.attributes["comfort_comfort_enabled"] == [True, False, False, True]
     assert state.attributes["optional_optional_enabled"] == [False, True, True, False]
     assert "timings" not in state.attributes
@@ -1133,7 +1133,12 @@ async def test_battery_target_changes_plan_and_expires_after_deadline(
 
         plan_details = hass.states.get("sensor.home_plan_details")
         assert plan_details is not None
-        assert plan_details.attributes["battery_battery_action"] == ["h", "h", "h", "h"]
+        assert plan_details.attributes["battery_battery_action"] == [
+            "sc",
+            "sc",
+            "sc",
+            "sc",
+        ]
 
         target_at = dt_util.utcnow() + timedelta(hours=2)
         await hass.services.async_call(
@@ -1156,10 +1161,10 @@ async def test_battery_target_changes_plan_and_expires_after_deadline(
         plan_details = hass.states.get("sensor.home_plan_details")
         assert plan_details is not None
         assert plan_details.attributes["battery_battery_action"] == [
-            "c_g",
-            "c_g",
-            "h",
-            "h",
+            "gc",
+            "gc",
+            "sc",
+            "sc",
         ]
 
         expired_at = target_at + timedelta(minutes=1)
@@ -1183,10 +1188,10 @@ async def test_battery_target_changes_plan_and_expires_after_deadline(
             plan_details = hass.states.get("sensor.home_plan_details")
             assert plan_details is not None
             assert plan_details.attributes["battery_battery_action"] == [
-                "h",
-                "h",
-                "h",
-                "h",
+                "sc",
+                "sc",
+                "sc",
+                "sc",
             ]
 
 

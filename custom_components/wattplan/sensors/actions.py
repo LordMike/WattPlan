@@ -14,11 +14,9 @@ from .base import WattPlanCoordinatorSensor
 from .common import as_datetime, entry_device_info
 
 BATTERY_ACTION_STATES = [
-    "hold",
-    "discharge",
-    "charge_grid",
-    "charge_pv",
-    "charge_grid_pv",
+    "preserve",
+    "self_consume",
+    "grid_charge",
 ]
 
 

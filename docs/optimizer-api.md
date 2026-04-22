@@ -18,7 +18,7 @@ All time-indexed fields use **timeslots**.
 
 ## Conceptual Model
 The solve combines three kinds of entities:
-- **Battery Entities:** Controllable storage that can charge, discharge, or hold. They can absorb PV surplus when economically/physically allowed.
+- **Battery Entities:** Controllable storage with modeled charge/discharge flows and serialized policy states for inverter control.
 - **Comfort Entities:** Postponable-but-required comfort loads, such as heating or hot water that can be shifted, but should not violate minimum comfort.
 - **Optional Entities:** User suggestions for "might run" appliances, such as dishwashers or dryers. They are advisory only and do **not** affect the main optimized schedule. The output is a list of best candidate start timeslots.
 
@@ -39,8 +39,9 @@ result = optimize(params)
 | `usage_kwh` | `list[float]` | Yes* | `[]` | Must match `len(grid_import_price_per_kwh)`, finite, `>= 0` | Per-timeslot base load forecast (kWh per timeslot). |
 | `rolling_window_slots` | `int` | No | `24` | `>= 1` | Slot count used for comfort rolling-window ON accounting. |
 | `throughput_cost_per_kwh` | `float` | No | `0.0` | Finite, `>= 0` | Extra cost on charge/discharge throughput to reduce cycling. |
-| `action_deadband_kwh` | `float` | No | `0.0` | Finite, `>= 0` | Commands smaller than this are treated as hold. |
+| `action_deadband_kwh` | `float` | No | `0.0` | Finite, `>= 0` | Modeled flow commands smaller than this are treated as neutral flow. |
 | `mode_switch_cost` | `float` | No | `0.0` | Finite, `>= 0` | Extra cost on changing battery behavior between slots. |
+| `infer_battery_preserve_policy` | `bool` | No | `true` | - | Enables the model-backed counterfactual used to emit `preserve` battery policy states. When disabled, all `battery_preserve` booleans are `false` and non-grid-charging battery slots fall back to `self_consume`. |
 | `battery_entities` | `list[BatteryEntityParams]` | Yes | - | May be empty | Main controllable storage entities. |
 | `comfort_entities` | `list[ComfortEntityParams]` | Yes | - | May be empty | Required-but-shiftable comfort entities. |
 | `optional_entities` | `list[OptionalEntityParams]` | No | `[]` | Fully validated for feasibility | Advisory start-time options only. |
@@ -64,7 +65,7 @@ result = optimize(params)
 | `discharge_curve_kwh` | `list[float]` | Yes | - | Non-empty, finite, `>= 0` | Dischargeable energy per slot by SoC curve (kWh per slot). |
 | `charge_efficiency` | `float` | No | `1.0` | Finite, `(0, 1]` | Fraction of charged energy that increases SoC. |
 | `discharge_efficiency` | `float` | No | `1.0` | Finite, `(0, 1]` | Fraction of discharged SoC energy delivered to load. |
-| `prefer_pv_surplus_charging` | `bool` | No | `false` | - | Route PV surplus into this battery instead of optimizing tiny export/recharge timing. |
+| `prefer_pv_surplus_charging` | `bool` | No | `false` | - | Internal/deferred hint for routing PV surplus into this battery. This is not exposed as a battery action state and should not be used as a user-facing control contract. |
 | `can_charge_from` | `int` | No | `2` | `0`, `1`, `2`, `3` | Allowed charging-ingress flags (`1=GRID`, `2=PV`, `3=GRID|PV`; `0` means charging disabled). |
 
 **Curve Unit Note:**
@@ -128,7 +129,7 @@ Optional entities provide advisory start-time suggestions and do not change the 
   "usage_kwh":             [1.2,  1.1,  1.0,  0.9,  1.0,  1.2,  1.3,  1.4],
   "rolling_window_slots": 96,
 
-  // Controllable storage: can charge from grid/PV, discharge, or hold and absorb PV surplus.
+  // Controllable storage: the model tracks grid/PV charge and discharge flows.
   "battery_entities": [
     {
       "name": "home_battery",
@@ -212,9 +213,24 @@ Optional entities provide advisory start-time suggestions and do not change the 
 | `optional_entity_options` | `list[dict]` | Advisory start options per optional entity. |
 | `state` | `str` | Opaque base64 state for next call. |
 
+### Battery Policy States
+Battery schedule `state` values are inverter-control policies derived from the plan, not raw measured or forecast battery flows:
+
+| State | Meaning |
+| --- | --- |
+| `preserve` | Prevent this battery from discharging. This saves stored energy when the optimizer shows that spending it now would make the plan worse or violate modeled constraints. PV charging may still be allowed by the user's inverter setup. |
+| `self_consume` | Normal battery operation. Allow this battery to cover real load. Do not request grid charging. This is also the default when the model has no positive reason to preserve or grid-charge. |
+| `grid_charge` | Request or allow grid charging for this battery and prevent the battery from being spent while doing so. |
+
+PV surplus charging is implicit/normal battery behavior, not a primary action state. PV export is site-level and multi-battery-sensitive, so a dedicated PV export policy is deferred to a future site-level design.
+
+`grid_charge` is emitted when modeled grid charging for that battery is above the action deadband. `preserve` is emitted from a model-backed counterfactual check when `infer_battery_preserve_policy` is enabled: when the optimizer chooses not to discharge a battery, WattPlan asks the same model whether forcing a small discharge from that battery for marginal unexpected load would be infeasible or make the objective worse than preserving the battery and importing that marginal energy. Modeled PV surplus is consumed first in that counterfactual, so PV export is not turned into a battery action state. If the forced-discharge alternative is worse, the slot is marked `preserve`; otherwise WattPlan emits `self_consume`. Forecast zero battery flow is not a preserve reason by itself.
+
+If `infer_battery_preserve_policy` is disabled, the `battery_preserve` boolean array is always `false`. In that mode, the schedule still emits `grid_charge` for modeled grid charging, but otherwise emits `self_consume` for battery slots.
+
 ### Notes on `entities` and `optional_entity_options`
 - `entities` is the actual optimized schedule.
-- Battery schedule points encode charging source directly in `state`: `charge_grid`, `charge_pv`, `charge_grid_pv`, `discharge`, or `hold`.
+- Battery schedule points encode policy directly in `state`: `preserve`, `self_consume`, or `grid_charge`.
 - `optional_entity_options` is advisory and computed on top of that baseline.
 - Optional entities do not affect each other and do not modify `entities`.
 

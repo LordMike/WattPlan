@@ -116,8 +116,8 @@ def _fake_optimize_with_entities(params: Any) -> dict[str, object]:
             "name": _name_of(battery),
             "type": "battery",
             "schedule": [
-                {"state": "charge_grid", "level": 5.0},
-                {"state": "hold", "level": 5.0},
+                {"state": "grid_charge", "level": 5.0},
+                {"state": "self_consume", "level": 5.0},
             ],
         }
         for battery in battery_entities

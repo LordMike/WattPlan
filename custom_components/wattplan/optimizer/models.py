@@ -69,7 +69,7 @@ class BatteryEntityParams(BaseModel):
     )
     prefer_pv_surplus_charging: bool = Field(
         False,
-        description="Whether PV surplus should be preferentially stored here.",
+        description="Internal/deferred PV surplus sink hint; not a public action state.",
     )
     can_charge_from: int = Field(
         int(ChargeSource.PV),
@@ -306,10 +306,18 @@ class OptimizationParams(BaseModel):
         0.0, description="Additional cost applied to charging/discharging throughput."
     )
     action_deadband_kwh: float = Field(
-        0.0, description="Commands smaller than this are treated as hold."
+        0.0, description="Commands smaller than this are treated as neutral flow."
     )
     mode_switch_cost: float = Field(
-        0.0, description="Cost for switching between charge/hold/discharge behavior."
+        0.0, description="Cost for switching between modeled charge/idle/discharge flow."
+    )
+    infer_battery_preserve_policy: bool = Field(
+        True,
+        description=(
+            "When true, run the model-backed counterfactual used to emit battery "
+            "preserve policy states. When false, battery_preserve output flags "
+            "are always false."
+        ),
     )
     battery_entities: List[BatteryEntityParams] = Field(
         ..., description="List of battery-like entities."
@@ -538,6 +546,7 @@ class NormalizedState:
     battery_charge_grid: np.ndarray
     battery_charge_pv: np.ndarray
     battery_discharge: np.ndarray
+    battery_preserve: np.ndarray
     comfort_on: np.ndarray
     comfort_lock_mode: np.ndarray
     comfort_lock_remaining: np.ndarray
@@ -551,6 +560,7 @@ class CalculationInput:
     solar_input: np.ndarray
     usage: np.ndarray
     rolling_window_slots: int
+    infer_battery_preserve_policy: bool
     battery_entities: List[BatteryEntity]
     comfort_entities: List[ComfortEntity]
     optional_entities: List[NormalizedOptionalEntity]
@@ -558,7 +568,12 @@ class CalculationInput:
     fingerprint: str
 
 
-def _entity_fingerprint(battery_entities, comfort_entities, rolling_window_slots):
+def _entity_fingerprint(
+    battery_entities,
+    comfort_entities,
+    rolling_window_slots,
+    infer_battery_preserve_policy,
+):
     # Reuse must only happen when the optimization problem is materially the
     # same. Battery targets change feasible early-slot decisions, so they must
     # participate in the fingerprint used to accept a previous state blob.
@@ -606,6 +621,7 @@ def _entity_fingerprint(battery_entities, comfort_entities, rolling_window_slots
             for e in comfort_entities
         ],
         "rolling_window_slots": int(rolling_window_slots),
+        "infer_battery_preserve_policy": bool(infer_battery_preserve_policy),
     }
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
@@ -638,6 +654,10 @@ def _parse_state_blob(state_blob):
         battery_charge_grid = np.asarray(obj["battery_charge_grid"], dtype=np.float64)
         battery_charge_pv = np.asarray(obj["battery_charge_pv"], dtype=np.float64)
         battery_discharge = np.asarray(obj["battery_discharge"], dtype=np.float64)
+        battery_preserve = np.asarray(
+            obj.get("battery_preserve", np.zeros_like(battery_discharge)),
+            dtype=np.bool_,
+        )
         comfort_on = np.asarray(obj["comfort_on"], dtype=np.float64)
         comfort_lock_mode = np.asarray(obj["comfort_lock_mode"], dtype=np.float64)
         comfort_lock_remaining = np.asarray(
@@ -657,6 +677,8 @@ def _parse_state_blob(state_blob):
         battery_charge_grid = battery_charge_grid.reshape(0, num_steps)
     if battery_charge_pv.ndim == 1 and battery_charge_pv.size == 0:
         battery_charge_pv = battery_charge_pv.reshape(0, num_steps)
+    if battery_preserve.ndim == 1 and battery_preserve.size == 0:
+        battery_preserve = battery_preserve.reshape(0, num_steps)
     if comfort_on.ndim == 1 and comfort_on.size == 0:
         comfort_on = comfort_on.reshape(0, num_steps)
     if comfort_lock_mode.ndim == 1 and comfort_lock_mode.size == 0:
@@ -680,6 +702,8 @@ def _parse_state_blob(state_blob):
         raise ValueError("state.battery_charge_grid shape mismatch")
     if battery_charge_pv.ndim != 2 or battery_charge_pv.shape[1] != num_steps:
         raise ValueError("state.battery_charge_pv shape mismatch")
+    if battery_preserve.ndim != 2 or battery_preserve.shape[1] != num_steps:
+        raise ValueError("state.battery_preserve shape mismatch")
     if comfort_on.ndim != 2 or comfort_on.shape[1] != num_steps:
         raise ValueError("state.comfort_on shape mismatch")
     if comfort_lock_mode.ndim != 2 or comfort_lock_mode.shape[1] != num_steps:
@@ -714,6 +738,7 @@ def _parse_state_blob(state_blob):
         battery_charge_grid=battery_charge_grid,
         battery_charge_pv=battery_charge_pv,
         battery_discharge=battery_discharge,
+        battery_preserve=battery_preserve,
         comfort_on=comfort_on,
         comfort_lock_mode=comfort_lock_mode,
         comfort_lock_remaining=comfort_lock_remaining,
@@ -802,7 +827,10 @@ def normalize_calculation_input(params: OptimizationParams):
         )
 
     fingerprint = _entity_fingerprint(
-        battery_entities, comfort_entities, params.rolling_window_slots
+        battery_entities,
+        comfort_entities,
+        params.rolling_window_slots,
+        params.infer_battery_preserve_policy,
     )
     state = _parse_state_blob(params.state)
 
@@ -813,6 +841,7 @@ def normalize_calculation_input(params: OptimizationParams):
         solar_input=solar_input,
         usage=usage,
         rolling_window_slots=int(params.rolling_window_slots),
+        infer_battery_preserve_policy=bool(params.infer_battery_preserve_policy),
         battery_entities=battery_entities,
         comfort_entities=comfort_entities,
         optional_entities=optional_entities,
