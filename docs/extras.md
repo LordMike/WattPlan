@@ -69,9 +69,9 @@ The exact translation depends on your inverter integration. WattPlan does not di
 The examples below show how WattPlan policy entities can be translated into real Home Assistant device controls. They are starting points, not universal recipes. Check your inverter, load controller, and integration behavior before applying an automation to real hardware.
 
 ### Home Assistant to Solar Assistant MQTT to Deye-Compatible Inverter
-This example describes one practical setup: Home Assistant entities exposed by Solar Assistant over MQTT for a Deye-compatible inverter. It is not universal. Other inverter brands may map the same three WattPlan policies to different entities or services.
+This example describes one practical setup: Home Assistant entities exposed by [Solar Assistant](https://solar-assistant.io/) over MQTT for a Deye-compatible inverter, such as a [Deye SUN-12K](https://deye.com/da/product/sun-5-6-8-10-12k-sg04lp3-eu/). It is not universal. Other inverter brands may map the same three WattPlan policies to different entities or services.
 
-In this style of setup, the inverter time-of-use schedule controls can be more reliable than direct mode controls. A time-of-use capacity point is used to allow or block battery discharge, and a grid charge point switch is used to enable scheduled grid charging. Max charge/current entities may also exist, but grid charge current can often be treated as a configured cap instead of being changed on every policy update.
+In this style of setup, the inverter time-of-use schedule controls can be more reliable than direct mode controls. A time-of-use capacity point is used to allow or block battery discharge, and a grid charge point switch is used to enable scheduled grid charging.
 
 Generic policy mapping:
 
@@ -83,13 +83,14 @@ Generic policy mapping:
 
 Example time-of-use mapping:
 
-| WattPlan policy | Time-of-use capacity point | Grid charge point | Charge current |
-| --- | --- | --- | --- |
-| `preserve` | High, for example `100%`, to prevent discharge | Off | Normal/static unless the setup needs otherwise |
-| `self_consume` | Normal minimum, for example `10%` | Off | Normal/static |
-| `grid_charge` | High, for example `100%`, to preserve while charging | On | Configured normal charging cap |
+| WattPlan policy | Time-of-use capacity point | Grid charge point |
+| --- | --- | --- |
+| `preserve` | High, for example `100%`, to prevent discharge | Off |
+| `self_consume` | Normal minimum, for example `10%` | Off |
+| `grid_charge` | High, for example `100%`, to preserve while charging | On |
 
-Example automation:
+<details>
+<summary>Example automation</summary>
 
 ```yaml
 alias: Apply WattPlan battery policy
@@ -147,7 +148,7 @@ actions:
               entity_id: switch.inverter_grid_charge_point_1
 ```
 
-The charge-current and grid-charge-current entities are intentionally not part of this example's policy switch. In many setups those values are a configured cap, such as `80 A`, and do not need to be toggled every time WattPlan changes policy. If your own setup needs dynamic current limits, handle them as an extra device-specific rule around this core three-policy mapping.
+</details>
 
 ## Comfort Loads
 
