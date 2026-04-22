@@ -112,7 +112,7 @@ OPTIMIZER_PROFILE_BALANCED = "balanced"
 OPTIMIZER_PROFILE_CONSERVATIVE = "conservative"
 
 SLOT_MINUTE_OPTIONS: tuple[int, ...] = (15, 30, 60)
-HOURS_TO_PLAN_OPTIONS: tuple[int, ...] = (12, 24, 48, 72, 96, 120, 144, 168)
+HOURS_TO_PLAN_OPTIONS: tuple[int, ...] = (12, 24, 36, 48, 72, 96, 120, 144, 168)
 
 SUBENTRY_TYPE_BATTERY = "battery"
 SUBENTRY_TYPE_COMFORT = "comfort"
