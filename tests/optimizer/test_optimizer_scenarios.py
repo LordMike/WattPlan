@@ -723,12 +723,13 @@ def test_battery_target_does_not_create_preserve_policy_by_itself():
     )
 
 
-def test_live_exported_deye_forecast_self_consumes_until_evening_discharge():
+def test_live_exported_deye_low_pv_low_soc_flips_between_battery_policies():
     # Exported from wattplan.export_planner_input on 2026-04-22 for the live
-    # Home Assistant setup. Although the battery remains full until the evening
-    # price rise, the model says self-consume is still the correct policy: early
-    # marginal load is covered by PV surplus or can be recovered before the
-    # high-value discharge window.
+    # Home Assistant setup, then adjusted to model a mediocre PV day with the
+    # battery starting at 30% SoC. This is intentionally close to the real case
+    # we investigated: self-consume is normal operation, grid-charge is used to
+    # prepare for evening value, and preserve appears only once the battery is
+    # exhausted to its configured minimum.
     payload = {
         "grid_import_price_per_kwh": [
             0.577338,
@@ -799,29 +800,29 @@ def test_live_exported_deye_forecast_self_consumes_until_evening_discharge():
             0.080993,
         ],
         "solar_input_kwh": [
-            4.749,
-            2.2255,
-            2.2255,
-            2.0435,
-            2.0435,
-            1.8395,
-            1.8395,
-            1.5905,
-            1.5905,
-            1.313,
-            1.313,
-            1.0025,
-            1.0025,
-            0.71,
-            0.71,
-            0.3945,
-            0.3945,
-            0.1235,
-            0.1235,
-            0.032,
-            0.032,
-            0.0095,
-            0.0095,
+            0.4749,
+            0.22255,
+            0.22255,
+            0.20435,
+            0.20435,
+            0.18395,
+            0.18395,
+            0.15905,
+            0.15905,
+            0.1313,
+            0.1313,
+            0.10025,
+            0.10025,
+            0.071,
+            0.071,
+            0.03945,
+            0.03945,
+            0.01235,
+            0.01235,
+            0.0032,
+            0.0032,
+            0.00095,
+            0.00095,
             0.0,
             0.0,
             0.0,
@@ -873,7 +874,7 @@ def test_live_exported_deye_forecast_self_consumes_until_evening_discharge():
         "battery_entities": [
             {
                 "name": "Battery",
-                "initial_kwh": 10.0,
+                "initial_kwh": 3.0,
                 "minimum_kwh": 1.0,
                 "capacity_kwh": 10.0,
                 "charge_efficiency": 0.9,
@@ -901,9 +902,43 @@ def test_live_exported_deye_forecast_self_consumes_until_evening_discharge():
     result = _run_optimizer(payload)
     schedule = result["entities"][0]["schedule"]
 
-    assert {point["state"] for point in schedule} == {"self_consume"}
-    assert all(point["level"] == pytest.approx(10.0) for point in schedule[:17])
-    assert schedule[17]["level"] < 10.0
+    assert [point["state"] for point in schedule] == [
+        "self_consume",
+        "grid_charge",
+        "self_consume",
+        "self_consume",
+        "self_consume",
+        "self_consume",
+        "grid_charge",
+        "grid_charge",
+        "grid_charge",
+        "self_consume",
+        "self_consume",
+        "self_consume",
+        "self_consume",
+        "self_consume",
+        "self_consume",
+        "self_consume",
+        "self_consume",
+        "self_consume",
+        "self_consume",
+        "self_consume",
+        "self_consume",
+        "self_consume",
+        "self_consume",
+        "self_consume",
+        "self_consume",
+        "self_consume",
+        "self_consume",
+        "self_consume",
+        "self_consume",
+        "self_consume",
+        "preserve",
+        "preserve",
+    ]
+    assert schedule[0]["level"] > 3.0
+    assert schedule[8]["level"] > schedule[0]["level"]
+    assert schedule[29]["level"] == pytest.approx(1.0)
 
 
 def test_live_grid_export_benchmark_scenario_uses_real_15min_stromligning_values():
