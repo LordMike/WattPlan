@@ -53,15 +53,14 @@ class RunOptimizeNowButton(WattPlanButton):
         mark_runtime_updated(self._config_entry.runtime_data, when=datetime.now(tz=UTC))
 
 
-class RunPlanNowButton(WattPlanButton):
-    """Button that triggers an immediate emission (plan) cycle."""
+class RefreshSensorsButton(WattPlanButton):
+    """Button that refreshes HA sensor entities from the current plan."""
 
     _attr_icon = "mdi:lightning-bolt"
 
     async def async_press(self) -> None:
         """Run the emission stage immediately."""
         await self.coordinator.async_emit(trigger=CycleTrigger.SERVICE)
-        mark_runtime_updated(self._config_entry.runtime_data, when=datetime.now(tz=UTC))
 
 
 async def async_setup_entry(
@@ -82,12 +81,12 @@ async def async_setup_entry(
                 friendly_name="Run Optimize Now",
                 unique_id=f"{config_entry.entry_id}:entry:run_optimize_now",
             ),
-            RunPlanNowButton(
+            RefreshSensorsButton(
                 config_entry,
                 coordinator,
-                object_id=f"{entry_slug}_run_plan_now",
-                friendly_name="Run Plan Now",
-                unique_id=f"{config_entry.entry_id}:entry:run_plan_now",
+                object_id=f"{entry_slug}_refresh_sensors",
+                friendly_name="Refresh Sensors",
+                unique_id=f"{config_entry.entry_id}:entry:refresh_sensors",
             ),
         ]
     )

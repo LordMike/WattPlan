@@ -44,8 +44,8 @@ from custom_components.wattplan.const import (
     CONF_VALUE_KEY,
     DOMAIN,
     SERVICE_CLEAR_TARGET,
+    SERVICE_REFRESH_SENSORS,
     SERVICE_RUN_OPTIMIZE_NOW,
-    SERVICE_RUN_PLAN_NOW,
     SERVICE_SET_TARGET,
     SOURCE_MODE_ENTITY_ADAPTER,
     SOURCE_MODE_NOT_USED,
@@ -340,7 +340,7 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
         await hass.services.async_call(
             DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True
         )
-        await hass.services.async_call(DOMAIN, SERVICE_RUN_PLAN_NOW, {}, blocking=True)
+        await hass.services.async_call(DOMAIN, SERVICE_REFRESH_SENSORS, {}, blocking=True)
         await hass.async_block_till_done()
 
     _assert_valid_state(hass, "sensor.home_status")
@@ -1305,13 +1305,13 @@ async def test_button_entities_registered_and_pressable(hass: HomeAssistant) -> 
 
         entity_registry = er.async_get(hass)
         optimize_entry = entity_registry.async_get("button.home_run_optimize_now")
-        plan_entry = entity_registry.async_get("button.home_run_plan_now")
+        refresh_entry = entity_registry.async_get("button.home_refresh_sensors")
         assert optimize_entry is not None, "Run Optimize Now button not found in entity registry"
-        assert plan_entry is not None, "Run Plan Now button not found in entity registry"
+        assert refresh_entry is not None, "Refresh Sensors button not found in entity registry"
 
         from homeassistant.const import EntityCategory
         assert optimize_entry.entity_category == EntityCategory.DIAGNOSTIC
-        assert plan_entry.entity_category == EntityCategory.DIAGNOSTIC
+        assert refresh_entry.entity_category == EntityCategory.DIAGNOSTIC
 
         coordinator = entry.runtime_data.coordinator
         snapshot_before = coordinator.snapshot

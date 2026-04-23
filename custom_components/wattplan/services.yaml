@@ -93,9 +93,9 @@ run_optimize_now:
       selector:
         text:
 
-run_plan_now:
-  name: Run plan now
-  description: Emit current actions immediately for matching WattPlan setups
+refresh_sensors:
+  name: Refresh sensors
+  description: Re-emit the current plan's actions to HA sensor entities immediately for matching WattPlan setups
   fields:
     name:
       name: Setup name
