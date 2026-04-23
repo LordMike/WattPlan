@@ -413,7 +413,6 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 self.data = self._snapshot
 
                 self._clear_stage_error(Stage.EMIT)
-                self._last_success_at = datetime.now(tz=UTC)
                 if trigger is CycleTrigger.SERVICE:
                     self.async_update_listeners()
             except EmitStageError as err:

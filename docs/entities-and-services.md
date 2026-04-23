@@ -21,9 +21,9 @@ These exist once per WattPlan setup:
 | `sensor.<setup_slug>_usage_status` | Present when usage is configured. Usage source health: `ok`, `degraded`, or `failed`. |
 | `sensor.<setup_slug>_export_price_status` | Present when export price is configured. Export price source health: `ok`, `degraded`, or `failed`. |
 | `sensor.<setup_slug>_pv_status` | Present when PV is configured. PV source health: `ok`, `degraded`, or `failed`. |
-| `sensor.<setup_slug>_last_run` | Timestamp of the last successful planning cycle. |
+| `sensor.<setup_slug>_last_run` | Timestamp of the last successful optimize (plan calculation) cycle. |
 | `sensor.<setup_slug>_next_run` | Timestamp of the next scheduled planning cycle. |
-| `sensor.<setup_slug>_last_run_duration` | Duration of the last planning cycle in milliseconds. |
+| `sensor.<setup_slug>_last_run_duration` | Duration of the last optimize cycle in milliseconds. |
 | `sensor.<setup_slug>_projected_cost_savings` | Horizon-wide cost savings for the current plan. |
 | `sensor.<setup_slug>_projected_savings_percentage` | Horizon-wide savings percentage for the current plan. Uses `(1 - projected_cost / baseline_cost) * 100` and exposes the component costs as attributes. Returns `unknown` when the resulting percentage exceeds WattPlan's current sanity threshold. |
 | `sensor.<setup_slug>_projected_cost_savings_next_interval` | Disabled by default. Savings for the next planner interval only. |
@@ -66,14 +66,19 @@ Additional `option_N_start` entities appear when more options are configured.
 
 ## Services
 
+WattPlan operates in two distinct steps:
+
+1. **Optimize** (`run_optimize_now`) — runs the planner and calculates a new plan. This is the slow step that reads all energy sources and solves the optimization. Run it as often as you want fresh plans, but it can be infrequent if the optimizer is slow.
+2. **Refresh** (`refresh_sensors`) — reads the already-calculated plan and pushes the current slot's actions to HA sensor entities. This is fast and can be called frequently to keep action sensors up to date without re-running the optimizer.
+
 WattPlan exposes the following services:
 
 | Service | Purpose |
 | --- | --- |
 | `wattplan.set_target` | Set a battery target SoC that the optimizer should reach by a deadline. |
 | `wattplan.clear_target` | Remove the active target for one or more batteries. |
-| `wattplan.run_optimize_now` | Trigger a new planning cycle immediately. |
-| `wattplan.run_plan_now` | Emit actions immediately from the current plan. |
+| `wattplan.run_optimize_now` | Trigger a new planning (optimize) cycle immediately. |
+| `wattplan.refresh_sensors` | Re-emit the current plan's actions to HA sensor entities immediately. |
 | `wattplan.export_planner_input` | Rebuild and return the exact planner input for one WattPlan setup. |
 | `wattplan.export_usage_forecast_debug` | Return raw debug data for the built-in usage forecast source. |
 
@@ -140,9 +145,9 @@ Fields:
 - `entry_id`
   - Optional config entry filter.
 
-### `wattplan.run_plan_now`
+### `wattplan.refresh_sensors`
 
-Emit actions immediately from the current plan.
+Re-emit the current plan's actions to HA sensor entities immediately. Does not recalculate the plan — use `run_optimize_now` for that.
 
 Fields:
 

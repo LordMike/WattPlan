@@ -29,8 +29,8 @@ from .const import (
     SERVICE_CLEAR_TARGET,
     SERVICE_EXPORT_PLANNER_INPUT,
     SERVICE_EXPORT_USAGE_FORECAST_DEBUG,
+    SERVICE_REFRESH_SENSORS,
     SERVICE_RUN_OPTIMIZE_NOW,
-    SERVICE_RUN_PLAN_NOW,
     SERVICE_SET_TARGET,
     SOURCE_MODE_BUILT_IN,
     SUBENTRY_TYPE_BATTERY,
@@ -279,10 +279,9 @@ async def async_handle_run_optimize_now_service(
         mark_runtime_updated(entry.runtime_data, when=datetime.now(tz=UTC))
 
 
-async def async_handle_run_plan_now_service(hass: HomeAssistant, call: ServiceCall) -> None:
+async def async_handle_refresh_sensors_service(hass: HomeAssistant, call: ServiceCall) -> None:
     for entry in resolve_run_entries(hass, call):
         await entry.runtime_data.coordinator.async_emit(trigger=CycleTrigger.SERVICE)
-        mark_runtime_updated(entry.runtime_data, when=datetime.now(tz=UTC))
 
 
 async def async_handle_export_planner_input_service(
@@ -332,7 +331,7 @@ SERVICE_SPECS = (
     (SERVICE_SET_TARGET, async_handle_set_target_service, SET_TARGET_SERVICE_SCHEMA, None),
     (SERVICE_CLEAR_TARGET, async_handle_clear_target_service, CLEAR_TARGET_SERVICE_SCHEMA, None),
     (SERVICE_RUN_OPTIMIZE_NOW, async_handle_run_optimize_now_service, RUN_NOW_SERVICE_SCHEMA, None),
-    (SERVICE_RUN_PLAN_NOW, async_handle_run_plan_now_service, RUN_NOW_SERVICE_SCHEMA, None),
+    (SERVICE_REFRESH_SENSORS, async_handle_refresh_sensors_service, RUN_NOW_SERVICE_SCHEMA, None),
     (
         SERVICE_EXPORT_PLANNER_INPUT,
         async_handle_export_planner_input_service,

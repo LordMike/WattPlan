@@ -39,8 +39,8 @@ from custom_components.wattplan.const import (
     CONF_TARGET_ON_HOURS_PER_WINDOW,
     CONF_TEMPLATE,
     DOMAIN,
+    SERVICE_REFRESH_SENSORS,
     SERVICE_RUN_OPTIMIZE_NOW,
-    SERVICE_RUN_PLAN_NOW,
     SOURCE_MODE_TEMPLATE,
     SUBENTRY_TYPE_BATTERY,
     SUBENTRY_TYPE_COMFORT,
@@ -288,13 +288,13 @@ async def _run_optimize(
 async def _run_emit(
     hass: HomeAssistant, *, name: str | None = None, entry_id: str | None = None
 ) -> None:
-    """Call run_plan_now with optional filters."""
+    """Call refresh_sensors with optional filters."""
     payload: dict[str, Any] = {}
     if name is not None:
         payload[CONF_NAME] = name
     if entry_id is not None:
         payload["entry_id"] = entry_id
-    await hass.services.async_call(DOMAIN, SERVICE_RUN_PLAN_NOW, payload, blocking=True)
+    await hass.services.async_call(DOMAIN, SERVICE_REFRESH_SENSORS, payload, blocking=True)
 
 
 async def test_run_services_are_isolated_by_name(hass: HomeAssistant) -> None:
