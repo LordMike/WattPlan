@@ -65,10 +65,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) -> 
         coordinator=coordinator,
         last_run_at=datetime.now(tz=UTC),
     )
-    await coordinator.async_restore_snapshot()
+    had_snapshot = await coordinator.async_restore_snapshot()
     entry.async_on_unload(entry.add_update_listener(async_update_listener))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    await async_try_initial_plan(entry)
+    if not had_snapshot:
+        await async_try_initial_plan(entry)
     return True
 
 
