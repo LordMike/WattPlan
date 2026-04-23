@@ -21,7 +21,7 @@ These exist once per WattPlan setup:
 | `sensor.<setup_slug>_usage_status` | Present when usage is configured. Usage source health: `ok`, `degraded`, or `failed`. |
 | `sensor.<setup_slug>_export_price_status` | Present when export price is configured. Export price source health: `ok`, `degraded`, or `failed`. |
 | `sensor.<setup_slug>_pv_status` | Present when PV is configured. PV source health: `ok`, `degraded`, or `failed`. |
-| `sensor.<setup_slug>_last_run` | Timestamp of the last successful optimize (plan calculation) cycle. Does not update on sensor refresh. |
+| `sensor.<setup_slug>_last_run` | Timestamp of the last successful optimize (plan calculation) cycle. |
 | `sensor.<setup_slug>_next_run` | Timestamp of the next scheduled planning cycle. |
 | `sensor.<setup_slug>_last_run_duration` | Duration of the last optimize cycle in milliseconds. |
 | `sensor.<setup_slug>_projected_cost_savings` | Horizon-wide cost savings for the current plan. |
