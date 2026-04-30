@@ -222,13 +222,33 @@ class SourceStatusManager:
             "plan_created_at": snapshot.created_at.isoformat() if snapshot is not None else None,
         }
 
-    def mark_failed_status(self, err: Exception) -> None:
+    def mark_failed_status(
+        self, err: Exception, *, snapshot: CoordinatorSnapshot | None = None
+    ) -> None:
         """Mark the public health model as failed after a planning error."""
         existing_sources = [
             source_key.removeprefix("source_")
             for source_key, source_status in self._source_statuses.items()
             if source_status.get("status") == "failed"
         ]
+        if snapshot is not None:
+            self._overall_status = {
+                "status": "degraded",
+                "reason_codes": ["planner_failed_using_previous_plan"],
+                "reason_summary": f"Planning failed; using previous plan: {err}",
+                "affected_sources": existing_sources,
+                "critical_sources_failed": [
+                    source_key
+                    for source_key in existing_sources
+                    if source_key in {"import_price", "usage"}
+                ],
+                "is_stale": False,
+                "has_usable_plan": True,
+                "expires_at": None,
+                "plan_created_at": snapshot.created_at.isoformat(),
+            }
+            return
+
         self._overall_status = {
             "status": "failed",
             "reason_codes": ["planner_failed"],

@@ -54,7 +54,12 @@ from custom_components.wattplan.const import (
     SUBENTRY_TYPE_COMFORT,
     SUBENTRY_TYPE_OPTIONAL,
 )
-from custom_components.wattplan.coordinator import STORAGE_VERSION, CycleTrigger, _snapshot_schema_id
+from custom_components.wattplan.coordinator import (
+    STORAGE_VERSION,
+    CycleTrigger,
+    _snapshot_schema_id,
+)
+from custom_components.wattplan.coordinator_parts import PlanningStageError, StageErrorKind
 from custom_components.wattplan.test_plan_invariants import assert_plan_invariants
 import pytest
 
@@ -780,6 +785,161 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
     assert next_option_start is not None
     assert next_option_end is not None
     assert next_option_end - next_option_start == timedelta(hours=1)
+
+
+async def test_successful_plan_persists_completed_last_run(
+    hass: HomeAssistant,
+) -> None:
+    """Persist the successful run timestamp from the run that just completed."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: 60,
+            CONF_HOURS_TO_PLAN: 4,
+            CONF_SOURCES: {
+                CONF_SOURCE_IMPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [0.2, 0.25, 0.3, 0.35] }}",
+                },
+                CONF_SOURCE_USAGE: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
+                CONF_SOURCE_PV: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
+            },
+        },
+        options={
+            CONF_PLANNING_ENABLED: False,
+            CONF_ACTION_EMISSION_ENABLED: False,
+        },
+    )
+    entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.wattplan.coordinator.optimize",
+        side_effect=_fake_optimize,
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    coordinator = entry.runtime_data.coordinator
+    store = Store[dict[str, object]](
+        hass,
+        STORAGE_VERSION,
+        f"{DOMAIN}.snapshot.{entry.entry_id}",
+        private=True,
+    )
+    payload = await store.async_load()
+
+    assert payload is not None
+    assert payload["last_success_at"] == coordinator.last_success_at.isoformat()
+
+
+async def test_failed_plan_keeps_restored_snapshot_usable(
+    hass: HomeAssistant,
+) -> None:
+    """A failed follow-up plan should not make restored plan entities unavailable."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: 60,
+            CONF_HOURS_TO_PLAN: 4,
+            CONF_SOURCES: {
+                CONF_SOURCE_IMPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [0.2, 0.25, 0.3, 0.35] }}",
+                },
+                CONF_SOURCE_USAGE: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
+                CONF_SOURCE_PV: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
+            },
+        },
+        options={
+            CONF_PLANNING_ENABLED: False,
+            CONF_ACTION_EMISSION_ENABLED: False,
+        },
+        subentries_data=[
+            config_entries.ConfigSubentryData(
+                subentry_id="battery_sub",
+                subentry_type=SUBENTRY_TYPE_BATTERY,
+                title="battery",
+                unique_id="battery:battery",
+                data={
+                    CONF_NAME: "battery",
+                    CONF_SOC_SOURCE: "sensor.battery_soc",
+                    CONF_CAPACITY_KWH: 10.0,
+                    CONF_MINIMUM_KWH: 1.0,
+                    CONF_MAX_CHARGE_KW: 3.0,
+                    CONF_MAX_DISCHARGE_KW: 3.0,
+                    CONF_CHARGE_EFFICIENCY: 0.9,
+                    CONF_DISCHARGE_EFFICIENCY: 0.9,
+                    CONF_CAN_CHARGE_FROM_GRID: True,
+                    CONF_CAN_CHARGE_FROM_PV: True,
+                },
+            ),
+        ],
+    )
+    entry.add_to_hass(hass)
+
+    store = Store[dict[str, object]](
+        hass,
+        STORAGE_VERSION,
+        f"{DOMAIN}.snapshot.{entry.entry_id}",
+        private=True,
+    )
+    await store.async_save(
+        {
+            "schema_id": _snapshot_schema_id(),
+            "snapshot": {
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "planner_status": "planned",
+                "planner_message": "Restored plan",
+                "diagnostics": {
+                    "batteries": {
+                        "battery_sub": {
+                            "action": "grid_charge",
+                        }
+                    },
+                    "comforts": {},
+                    "optionals": {},
+                    "optimizer": {
+                        "suboptimal": False,
+                        "suboptimal_reasons": [],
+                    },
+                },
+            },
+            "last_success_at": "2026-01-01T00:00:00+00:00",
+            "last_duration_ms": 123,
+            "last_run_timings": [["total", 123]],
+        }
+    )
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    _assert_valid_state(hass, "sensor.home_battery_action")
+
+    coordinator = entry.runtime_data.coordinator
+    with patch.object(
+        coordinator,
+        "_async_build_planning_request",
+        side_effect=PlanningStageError(
+            StageErrorKind.PLANNER_INPUT,
+            "import_price source entity `sensor.missing` was not found",
+        ),
+    ):
+        with pytest.raises(PlanningStageError):
+            await coordinator.async_plan(trigger=CycleTrigger.SERVICE)
+        await hass.async_block_till_done()
+
+    status = hass.states.get("sensor.home_status")
+    assert status is not None
+    assert status.state == "degraded"
+    assert status.attributes["has_usable_plan"] is True
+    assert status.attributes["reason_codes"] == ["planner_failed_using_previous_plan"]
+
+    action = hass.states.get("sensor.home_battery_action")
+    assert action is not None
+    assert action.state == "grid_charge"
 
 
 async def test_plan_details_sensor_exposes_horizon_length_arrays(

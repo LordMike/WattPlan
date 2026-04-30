@@ -347,18 +347,18 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 new_snapshot = self._project_snapshot(planner_output)
                 self._snapshot = new_snapshot
                 self.data = new_snapshot
-                await self.async_persist_snapshot()
-                self._clear_stage_error(Stage.PLAN)
                 self._last_success_at = datetime.now(tz=UTC)
+                self._clear_stage_error(Stage.PLAN)
                 self._source_status.recompute_overall_status(
                     planner_output=planner_output,
                     snapshot=self._snapshot,
                 )
+                await self.async_persist_snapshot()
                 self._sync_source_issues(entry)
                 if trigger is CycleTrigger.SERVICE:
                     self.async_update_listeners()
             except PlanningStageError as err:
-                self._source_status.mark_failed_status(err)
+                self._source_status.mark_failed_status(err, snapshot=self._snapshot)
                 self._sync_source_issues(self._require_entry())
                 self._set_stage_error(
                     Stage.PLAN,
@@ -373,7 +373,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             except ServiceValidationError:
                 raise
             except Exception as err:
-                self._source_status.mark_failed_status(err)
+                self._source_status.mark_failed_status(err, snapshot=self._snapshot)
                 self._sync_source_issues(self._require_entry())
                 self._set_stage_error(
                     Stage.PLAN,

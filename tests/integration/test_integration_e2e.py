@@ -464,7 +464,7 @@ async def test_scheduler_runs_at_interval(hass: HomeAssistant) -> None:
         (
             {},
             RuntimeError("optimizer failed"),
-            "failed",
+            "degraded",
             None,
         ),
     ],
@@ -516,6 +516,8 @@ async def test_status_sensors_reflect_failures(
     assert battery_action is not None
     if expected_status == "failed":
         assert battery_action.state == STATE_UNAVAILABLE
+    elif patch_optimize is not None:
+        assert battery_action.state != STATE_UNAVAILABLE
 
 
 async def test_status_recovers_after_source_recovery(
