@@ -345,8 +345,21 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
         await hass.services.async_call(
             DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True
         )
+        await hass.async_block_till_done()
+        last_run_after_plan = hass.states.get("sensor.home_last_run")
+        duration_after_plan = hass.states.get("sensor.home_last_run_duration")
+        assert last_run_after_plan is not None
+        assert duration_after_plan is not None
+
         await hass.services.async_call(DOMAIN, SERVICE_REFRESH_SENSORS, {}, blocking=True)
         await hass.async_block_till_done()
+
+    last_run_after_refresh = hass.states.get("sensor.home_last_run")
+    duration_after_refresh = hass.states.get("sensor.home_last_run_duration")
+    assert last_run_after_refresh is not None
+    assert duration_after_refresh is not None
+    assert last_run_after_refresh.state == last_run_after_plan.state
+    assert duration_after_refresh.state == duration_after_plan.state
 
     _assert_valid_state(hass, "sensor.home_status")
     _assert_valid_state(hass, "sensor.home_last_run")

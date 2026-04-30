@@ -287,8 +287,6 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             return
 
         self._last_attempt_at = datetime.now(tz=UTC)
-        started = datetime.now(tz=UTC)
-
         if self._planning_enabled:
             try:
                 await self.async_plan(trigger=trigger)
@@ -310,10 +308,6 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                     trigger,
                     err,
                 )
-
-        self._last_duration_ms = int(
-            (datetime.now(tz=UTC) - started).total_seconds() * 1000
-        )
 
     async def async_plan(self, *, trigger: CycleTrigger) -> None:
         """Run the planning stage and replace the immutable snapshot."""
@@ -348,6 +342,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 self._snapshot = new_snapshot
                 self.data = new_snapshot
                 self._last_success_at = datetime.now(tz=UTC)
+                self._set_last_plan_duration(started)
                 self._clear_stage_error(Stage.PLAN)
                 self._source_status.recompute_overall_status(
                     planner_output=planner_output,
@@ -358,6 +353,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 if trigger is CycleTrigger.SERVICE:
                     self.async_update_listeners()
             except PlanningStageError as err:
+                self._set_last_plan_duration(started)
                 self._source_status.mark_failed_status(err, snapshot=self._snapshot)
                 self._sync_source_issues(self._require_entry())
                 self._set_stage_error(
@@ -371,8 +367,10 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 self.async_update_listeners()
                 raise
             except ServiceValidationError:
+                self._set_last_plan_duration(started)
                 raise
             except Exception as err:
+                self._set_last_plan_duration(started)
                 self._source_status.mark_failed_status(err, snapshot=self._snapshot)
                 self._sync_source_issues(self._require_entry())
                 self._set_stage_error(
@@ -384,10 +382,6 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 # availability changes without waiting for the next tick.
                 self.async_update_listeners()
                 raise
-            finally:
-                self._last_duration_ms = int(
-                    (datetime.now(tz=UTC) - started).total_seconds() * 1000
-                )
 
     async def async_emit(self, *, trigger: CycleTrigger) -> None:
         """Run the emission stage against the latest immutable snapshot."""
@@ -397,8 +391,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 raise ServiceValidationError("Emit run already in progress")
             return
 
-        started = datetime.now(tz=UTC)
-        self._last_attempt_at = started
+        self._last_attempt_at = datetime.now(tz=UTC)
 
         async with self._emit_lock:
             try:
@@ -442,10 +435,6 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 if trigger is CycleTrigger.SERVICE:
                     raise ServiceValidationError(str(err)) from err
                 raise
-            finally:
-                self._last_duration_ms = int(
-                    (datetime.now(tz=UTC) - started).total_seconds() * 1000
-                )
 
     def _require_snapshot(self) -> CoordinatorSnapshot:
         """Return current snapshot or raise if none is available."""
@@ -590,6 +579,12 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         ):
             timings.pop()
         timings.append(("total", int(total_ms)))
+
+    def _set_last_plan_duration(self, started: datetime) -> None:
+        """Store elapsed wall-clock time for the latest planning attempt."""
+        self._last_duration_ms = int(
+            (datetime.now(tz=UTC) - started).total_seconds() * 1000
+        )
 
     def _planner_output_from_result(
         self,
