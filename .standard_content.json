@@ -1,0 +1,14 @@
+{
+  "$schema": "https://github.com/LordMike/MBW.Tools.GhStandardContent/spec/StandardContent.json",
+  "meta": {
+    "repo": "LordMike/WattPlan",
+    "profiles": [
+      "standardContent"
+    ],
+    "files": [
+      ".gitattributes",
+      ".gitignore"
+    ],
+    "last_updated": "2026-05-06T11:07:21.9913772+00:00"
+  }
+}
