@@ -12,6 +12,15 @@ from homeassistant.util import slugify
 
 from ..const import DOMAIN
 from ..coordinator_parts import CoordinatorSnapshot, TimingEntry
+from .planning import (
+    BATTERY_SKIP_AVAILABILITY_UNAVAILABLE,
+    BATTERY_SKIP_SOC_UNAVAILABLE,
+)
+
+BATTERY_DEGRADED_SKIP_REASONS = {
+    BATTERY_SKIP_AVAILABILITY_UNAVAILABLE,
+    BATTERY_SKIP_SOC_UNAVAILABLE,
+}
 
 
 def _duration_ms(started_at: float) -> int:
@@ -42,6 +51,15 @@ class PlannerProjectionBuilder:
         comforts: dict[str, dict[str, Any]] = {}
         optionals: dict[str, dict[str, Any]] = {}
         name_maps = request["name_to_subentry"]
+        skipped_batteries = request.get("skipped_batteries", {})
+        if isinstance(skipped_batteries, dict):
+            batteries.update(
+                {
+                    str(subentry_id): dict(skip)
+                    for subentry_id, skip in skipped_batteries.items()
+                    if isinstance(skip, dict)
+                }
+            )
         for entity in result.get("entities", []):
             entity_name = str(entity.get("name"))
             entity_type = str(entity.get("type"))
@@ -134,17 +152,24 @@ class PlannerProjectionBuilder:
 
         is_suboptimal = bool(result.get("suboptimal", False))
         reasons = list(result.get("suboptimal_reasons", []))
-        status = "degraded" if is_suboptimal else "ok"
-        message = (
-            f"Plan solved with suboptimal constraints: {', '.join(reasons)}"
-            if is_suboptimal
-            else "Plan solved"
-        )
+        degraded_skipped_batteries = [
+            str(subentry_id)
+            for subentry_id, skip in batteries.items()
+            if str(skip.get("reason")) in BATTERY_DEGRADED_SKIP_REASONS
+        ]
+        status = "degraded" if is_suboptimal or degraded_skipped_batteries else "ok"
+        if is_suboptimal:
+            message = f"Plan solved with suboptimal constraints: {', '.join(reasons)}"
+        elif degraded_skipped_batteries:
+            message = "Plan solved with one or more batteries skipped"
+        else:
+            message = "Plan solved"
         return {
             "status": status,
             "message": message,
             "diagnostics": {
                 "batteries": batteries,
+                "skipped_batteries": skipped_batteries,
                 "comforts": comforts,
                 "optionals": optionals,
                 "sources": {

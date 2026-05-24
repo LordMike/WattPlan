@@ -1177,6 +1177,7 @@
         "data": {
           "name": "Name",
           "soc_source": "SoC source",
+          "availability_source": "Availability source",
           "capacity_kwh": "Capacity (kWh)",
           "minimum_kwh": "Minimum (kWh)",
           "max_charge_kw": "Max charge power (kW)",
@@ -1187,6 +1188,7 @@
         "data_description": {
           "name": "A friendly name for this battery in WattPlan entities and services.",
           "soc_source": "Entity that reports current battery state of charge.",
+          "availability_source": "Optional binary sensor for batteries that are not always plugged in or controllable, especially EV batteries. Leave empty to treat the battery as always available. When set, the sensor must be on before WattPlan may plan charge or discharge control for this battery.",
           "capacity_kwh": "Total usable battery capacity in kilowatt-hours.",
           "minimum_kwh": "Lowest allowed energy level for planning. For lithium batteries, a good starting point is about 10% of capacity, for example 1 kWh on a 10 kWh battery.",
           "max_charge_kw": "Maximum charging power the battery can accept. A reasonable starting point is about half the battery capacity in kW, for example 5 kW on a 10 kWh battery.",
@@ -1469,6 +1471,7 @@
           "data": {
             "name": "Name",
             "soc_source": "SoC source",
+            "availability_source": "Availability source",
             "capacity_kwh": "Capacity (kWh)",
             "minimum_kwh": "Minimum (kWh)",
             "max_charge_kw": "Max charge power (kW)",
@@ -1478,6 +1481,7 @@
           },
           "data_description": {
             "soc_source": "Entity reporting the current state of charge for this battery.",
+            "availability_source": "Optional binary sensor for batteries that are not always plugged in or controllable, especially EV batteries. Leave empty to treat the battery as always available. When set, the sensor must be on before WattPlan may plan charge or discharge control for this battery.",
             "capacity_kwh": "Total usable battery capacity.",
             "minimum_kwh": "Minimum energy that should remain in the battery. For lithium batteries, a good starting point is about 10% of capacity, for example 1 kWh on a 10 kWh battery.",
             "max_charge_kw": "Maximum charging power used by the planner. A reasonable starting point is about half the battery capacity in kW, for example 5 kW on a 10 kWh battery.",
@@ -1505,6 +1509,7 @@
           "data": {
             "name": "Name",
             "soc_source": "SoC source",
+            "availability_source": "Availability source",
             "capacity_kwh": "Capacity (kWh)",
             "minimum_kwh": "Minimum (kWh)",
             "max_charge_kw": "Max charge power (kW)",
@@ -1514,6 +1519,7 @@
           },
           "data_description": {
             "soc_source": "Entity reporting the current state of charge for this battery.",
+            "availability_source": "Optional binary sensor for batteries that are not always plugged in or controllable, especially EV batteries. Leave empty to treat the battery as always available. When set, the sensor must be on before WattPlan may plan charge or discharge control for this battery.",
             "capacity_kwh": "Total usable battery capacity.",
             "minimum_kwh": "Minimum energy that should remain in the battery. For lithium batteries, a good starting point is about 10% of capacity, for example 1 kWh on a 10 kWh battery.",
             "max_charge_kw": "Maximum charging power used by the planner. A reasonable starting point is about half the battery capacity in kW, for example 5 kW on a 10 kWh battery.",
