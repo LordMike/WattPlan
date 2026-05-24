@@ -27,6 +27,7 @@ This documentation is intended for Home Assistant users, energy enthusiasts, and
 9. Optionally configure an export price source if you have PV and want exported power to carry a value instead of defaulting to zero.
 10. Add [batteries, comfort loads, or optional loads](docs/extras.md) if you want WattPlan to control more than just forecasting.
 11. Make automations to apply the WattPlan actions to your devices, such as setting batteries to charge or starting your HVAC. See the [real-life examples](docs/extras.md#real-life-examples) for practical automation patterns.
+12. When the setup is operating, enable historical cost tracking in the WattPlan options flow if you want to measure whether it is actually improving cost over time. Historical tracking is disabled by default.
 
 ## Configuration Steps
 After installing WattPlan via HACS, configure the following:
@@ -35,12 +36,19 @@ After installing WattPlan via HACS, configure the following:
 - **PV Source**: Optional. Set up your solar production data source if applicable.
 - **Export Price Source**: Optional. If PV is configured, you can provide a value for exported power. Otherwise WattPlan treats export value as zero.
 - **Optional Loads**: Optional. Configure any additional loads you wish to manage, such as batteries or comfort loads.
+- **Historical Cost Tracking**: Optional and disabled by default. Enable it after the main setup is working, choose the cumulative kWh meters WattPlan should read, and enable the reference simulations you want to compare against.
+
+## Tracking Performance
+After WattPlan has been controlling or guiding your setup for about 30 days, compare the historical actual cost with one of the reference simulations. For many battery setups, start with `self_consumption` because it represents a simple PV-first battery strategy. `no_battery` is useful when you want to see the broader value of battery behavior at all.
+
+The easiest dashboard graph is one of the savings comparison sensors. After about a month, prefer a monthly sensor such as `sensor.<setup_slug>_historical_savings_vs_self_consumption_this_month`; use the daily sensor when you want day-by-day checks. These sensors are calculated as reference cost minus actual cost, so a value at or above `0` means actual behavior was cheaper than the reference. For a consistent gain, the graph should stay non-negative over the comparison period. If you graph the raw cost sensors instead, the actual cost should stay at or below the reference cost.
 
 ## Features
 - Home Assistant custom integration with HACS-ready release artifacts
 - Config-flow driven source setup for import price, export price, usage, and PV inputs
 - Battery, comfort-load, and optional-load planning
 - Planned actions are exposed as entities, so you can easily use the results to do automations
+- Optional historical cost tracking for comparing actual cost against simple reference scenarios
 - Battery targets can be set and cleared through WattPlan services
 - GitHub Actions for CI, tagged releases, prereleases, and `main` branch dev artifacts
 
