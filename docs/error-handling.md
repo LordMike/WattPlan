@@ -21,6 +21,10 @@ It also exposes attributes such as:
 - `affected_sources`
 - `is_stale`
 - `has_usable_plan`
+- `plan_created_at`
+- `expires_at`
+
+`plan_created_at` is when the active snapshot was created. On the overall status sensor, `expires_at` is the end of the current usable plan coverage from the optimizer horizon. If planning fails and WattPlan keeps using a previous snapshot, `expires_at` remains the retained plan's coverage end. When the active or retained plan passes that time, the overall status becomes `failed`, `is_stale` becomes `true`, and `has_usable_plan` becomes `false`.
 
 ### `ok`
 
@@ -41,6 +45,7 @@ Typical examples:
 - a non-critical source such as PV or export price is unavailable
 - a critical source is temporarily backed by stale cached data
 - the optimizer solved the plan with reduced confidence
+- planning failed, but a previous plan is retained and still covers the current time
 
 In practice, `degraded` means:
 
@@ -59,6 +64,7 @@ Typical examples:
 - import price failed and no usable fallback remains
 - configured usage forecast failed and no usable fallback remains
 - planning failed entirely
+- the active or retained plan no longer covers the current time
 - coordinator state has gone stale and the plan can no longer be trusted
 
 When this happens, plan-dependent entities become unavailable instead of continuing to show old plan values.
@@ -79,6 +85,8 @@ Each source sensor also uses:
 - `failed`
 
 These help answer which source is causing the overall status to change.
+
+On source status sensors, `expires_at` describes the coverage end for that source's data or stale fallback. Source fallback staleness can degrade a still-usable plan. Overall plan expiry is separate: once the plan coverage itself has passed, the main status sensor reports `failed`.
 
 ## Repairs vs Status Sensors
 
