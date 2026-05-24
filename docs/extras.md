@@ -37,7 +37,7 @@ Configure batteries through the WattPlan integration UI:
 
 This is a WattPlan UI flow. You do not configure batteries by editing YAML.
 
-You may also set an optional battery availability source. It must be a binary sensor whose `on` state means WattPlan may plan with the battery now. This keeps the model generic for batteries that are sometimes not usable, such as mobile or externally controlled storage, without adding device-specific states.
+You may also set an optional battery availability source. Leave it empty for fixed batteries that should always be treated as available. When set, it must be a binary sensor whose `on` state means WattPlan may currently control charge or discharge for this battery. This is mostly meant for EV batteries or other storage that is not always plugged in or controllable, without adding device-specific states.
 
 ### How to Use Them
 WattPlan exposes battery-related entities such as:

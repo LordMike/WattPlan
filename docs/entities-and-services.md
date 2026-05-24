@@ -48,7 +48,7 @@ These exist once per configured battery:
 | `sensor.<setup_slug>_<battery_name>_next_action` | Next planned battery-control policy change. Disabled by default. This is also unavailable when the battery is skipped for the current plan. |
 | `sensor.<setup_slug>_<battery_name>_target` | User-supplied target SoC in kWh. Includes a `by` attribute with the requested deadline and returns `unknown` when no active target is set. |
 
-Battery setup can optionally include an availability source. This is a binary sensor meaning "WattPlan may currently plan with this battery." If it is `off`, the battery is skipped without degrading status. If availability is unknown/unavailable, or if SoC is missing or non-numeric when the battery is expected to be usable, WattPlan skips only that battery and marks status degraded.
+Battery setup can optionally include an availability source. Leave it empty for batteries that should always be treated as available. When set, this is a binary sensor meaning "WattPlan may currently control charge or discharge for this battery." This is mostly meant for EV batteries or other storage that is not always plugged in or controllable. If it is `off`, the battery is skipped without degrading status. If availability is unknown/unavailable, or if SoC is missing or non-numeric when the battery is expected to be usable, WattPlan skips only that battery and marks status degraded.
 
 ## Comfort Load Entities
 
