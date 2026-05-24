@@ -34,6 +34,10 @@ These exist once per WattPlan setup:
 
 When `sensor.<setup_slug>_status` is `failed`, plan-dependent entities such as action sensors, plan details, projected savings, and usage forecast become unavailable rather than continuing to expose stale plan data.
 
+The overall status sensor is the canonical view of whether the current plan is usable. Its `plan_created_at` attribute is the snapshot creation time, and its `expires_at` attribute is the end of the current usable plan coverage from the optimizer horizon. If planning fails but WattPlan retains a previous snapshot, `expires_at` continues to describe that retained plan. Once the retained or active plan no longer covers the current time, the overall status becomes `failed`, `is_stale` becomes `true`, and `has_usable_plan` becomes `false`.
+
+Per-source status sensors explain input health. Their `expires_at` attribute describes the source data or fallback coverage for that source, not the whole plan. Stale fallback data from a source can make the overall status `degraded` while the plan is still usable; an expired overall plan is `failed`.
+
 ## Battery Entities
 
 These exist once per configured battery:
