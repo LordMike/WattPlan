@@ -7,7 +7,7 @@ from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfTime
+from homeassistant.const import EntityCategory, UnitOfTime
 
 from ..coordinator import WattPlanCoordinator
 from .base import WattPlanCoordinatorSensor
@@ -31,6 +31,8 @@ class NextRunSensor(WattPlanCoordinatorSensor):
 
     _require_snapshot = False
     _attr_device_class = TIMESTAMP_DEVICE_CLASS
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
 
     def __init__(
         self,
@@ -52,6 +54,8 @@ class LastRunDurationSensor(WattPlanCoordinatorSensor):
     """Last run duration sensor in milliseconds."""
 
     _require_snapshot = False
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
     _attr_native_unit_of_measurement = UnitOfTime.MILLISECONDS
     _attr_suggested_display_precision = 0
 

@@ -108,7 +108,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         self._emit_lock = asyncio.Lock()
         self._heartbeat_start_unsub: CALLBACK_TYPE | None = None
         self._heartbeat_interval_unsub: CALLBACK_TYPE | None = None
-        self._last_heartbeat_stale: bool | None = None
+        self._last_heartbeat_health: tuple[str, bool, bool] | None = None
         self._on_off_providers: dict[str, HistoricalOnOffProvider] = {}
         self._source_providers: dict[str, SourceProvider] = {}
         self._source_status = SourceStatusManager(hass)
@@ -693,7 +693,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         if self._heartbeat_interval_unsub is not None:
             self._heartbeat_interval_unsub()
             self._heartbeat_interval_unsub = None
-        self._last_heartbeat_stale = None
+        self._last_heartbeat_health = None
 
     @callback
     def _async_handle_first_heartbeat(self, _now: datetime) -> None:
@@ -708,24 +708,29 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
 
     @callback
     def _async_heartbeat(self, _now: datetime) -> None:
-        """Push listener updates only when staleness state changes."""
+        """Push listener updates only when derived health state changes."""
         if not self.scheduler_enabled:
             return
 
-        # Only notify entities when stale status flips so `available` can move
-        # between available/unavailable without forcing duplicate writes each
-        # interval when the coordinator is healthy.
-        is_stale = self.is_stale
-        if self._last_heartbeat_stale is None:
-            self._last_heartbeat_stale = is_stale
-            if is_stale:
+        # Only notify entities when the public health surface changes so
+        # `available` can move between available/unavailable without forcing
+        # duplicate writes each interval when the coordinator is healthy.
+        status = self.overall_status
+        health = (
+            str(status.get("status", "failed")),
+            bool(status.get("is_stale", False)),
+            bool(status.get("has_usable_plan", False)),
+        )
+        if self._last_heartbeat_health is None:
+            self._last_heartbeat_health = health
+            if status.get("status") != "ok":
                 self.async_update_listeners()
             return
 
-        if is_stale == self._last_heartbeat_stale:
+        if health == self._last_heartbeat_health:
             return
 
-        self._last_heartbeat_stale = is_stale
+        self._last_heartbeat_health = health
         self.async_update_listeners()
 
     def error_attributes(self) -> dict[str, Any]:
