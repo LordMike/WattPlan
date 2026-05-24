@@ -14,6 +14,13 @@ from custom_components.wattplan.const import (
     CONF_DURATION_MINUTES,
     CONF_ENERGY_KWH,
     CONF_EXPECTED_POWER_KW,
+    CONF_HISTORICAL_COST_TRACKING_ENABLED,
+    CONF_HISTORICAL_GRID_EXPORT_SENSOR,
+    CONF_HISTORICAL_GRID_IMPORT_SENSOR,
+    CONF_HISTORICAL_PV_SENSOR,
+    CONF_HISTORICAL_SIMULATE_NO_BATTERY,
+    CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION,
+    CONF_HISTORICAL_USAGE_SENSOR,
     CONF_HOURS_TO_PLAN,
     CONF_MAX_CHARGE_KW,
     CONF_MAX_CONSECUTIVE_OFF_MINUTES,
@@ -404,6 +411,7 @@ async def test_options_flow_add_core_and_one_of_each_asset(
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["type"] is FlowResultType.MENU
     assert "source_export_price" in result["menu_options"]
+    assert "historical_costs" in result["menu_options"]
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {"next_step_id": "planner_timers"}
@@ -439,9 +447,33 @@ async def test_options_flow_add_core_and_one_of_each_asset(
     )
     assert result["type"] is FlowResultType.MENU
 
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "historical_costs"}
+    )
+    assert result["type"] is FlowResultType.FORM
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_HISTORICAL_COST_TRACKING_ENABLED: True,
+            CONF_HISTORICAL_GRID_IMPORT_SENSOR: "sensor.grid_import_total",
+            CONF_HISTORICAL_GRID_EXPORT_SENSOR: "sensor.grid_export_total",
+            CONF_HISTORICAL_USAGE_SENSOR: "sensor.usage_total",
+            CONF_HISTORICAL_PV_SENSOR: "sensor.pv_total",
+            CONF_HISTORICAL_SIMULATE_NO_BATTERY: True,
+            CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION: False,
+        },
+    )
+    assert result["type"] is FlowResultType.MENU
+
     updated = hass.config_entries.async_get_entry(entry.entry_id)
     assert updated is not None
     assert updated.options[CONF_ACTION_EMISSION_ENABLED] is False
+    assert updated.options[CONF_HISTORICAL_COST_TRACKING_ENABLED] is True
+    assert (
+        updated.options[CONF_HISTORICAL_GRID_IMPORT_SENSOR]
+        == "sensor.grid_import_total"
+    )
+    assert updated.options[CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION] is False
     assert CONF_SOURCES in updated.data
 
     result = await hass.config_entries.subentries.async_init(

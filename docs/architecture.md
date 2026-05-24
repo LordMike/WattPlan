@@ -22,6 +22,7 @@ The main runtime center is the coordinator:
 - `coordinator.py`: Builds planner input, runs planning, tracks stage errors, and updates runtime entities.
 - `binary_sensor.py` / `sensor.py`: Expose planning state, diagnostics, and error scopes.
 - `source_pipeline.py`, `source_provider.py`, `source_fixup.py`: Resolve raw source data and normalize it into planner-ready values.
+- `historical_cost/`: Tracks opt-in historical cost facts in one HA Store per config entry and exposes daily/monthly cost and savings entities.
 
 ## Data Acquisition
 WattPlan acquires four planner input series:
@@ -52,6 +53,19 @@ After this, the coordinator holds four slot-aligned numeric arrays that are pass
 - `solar_input_kwh`
 
 Source health is tracked alongside the values. A source can be healthy, unavailable, or incomplete. Import price is required. Usage is optional to configure, but if configured and failing it blocks planning. PV and export price are non-blocking optional inputs; when unavailable, planning can continue with degraded assumptions.
+
+## Historical Cost Tracking
+
+Historical tracking runs independently from planner execution when enabled in options. It reads configured cumulative kWh meters for actual grid import, optional grid export, usage, and optional PV, then samples only completed slots aligned to the setup slot size.
+
+Storage uses `homeassistant.helpers.storage.Store` with a private per-entry key `wattplan.history.<entry_id>`. The retained data stores explicit UTC slot starts, one shared set of raw facts, self-consumption simulation outputs, and self-consumption SoC state. Records are pruned to a fixed 60 local days on load and save. Saves are delayed/coalesced and flushed on unload or Home Assistant stop.
+
+Scenarios are:
+- `actual`: measured grid import cost minus measured grid export value.
+- `no_battery`: recomputed from usage and PV facts without storing duplicate raw values.
+- `self_consumption`: PV serves usage first, surplus charges configured batteries in configured order, batteries discharge before grid import, with no grid charging, price awareness, or preserve behavior. Simulated grid import/export and SoC are stored so later battery config changes do not rewrite retained history.
+
+If a required meter is missing, non-numeric, or reset, or if Home Assistant skipped slots, WattPlan records a gap and resyncs cursors. It does not backfill recorder history or spread a multi-slot meter delta across varying prices.
 
 ## Planning Flow
 The high-level planning flow looks like this:

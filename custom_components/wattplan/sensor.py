@@ -38,14 +38,12 @@ from .sensors import (
     NextRunSensor,
     OptionalTimestampSensor,
     PlanDetailsSensor,
-    ProjectionSensor,
-    ProjectionValueTransform,
     SourceStatusSensor,
     StatusMessageSensor,
     StatusSensor,
     UsageForecastSensor,
 )
-from .sensors.common import MAX_EXPOSED_PROJECTED_SAVINGS_PCT
+from .sensors.historical import build_historical_sensors
 from .sensor_specs import ENTRY_SENSOR_SPECS, OPTIONAL_SOURCE_STATUS_SPECS
 
 ENTRY_FRIENDLY_NAMES: dict[str, str] = {
@@ -90,20 +88,6 @@ def _entry_sensor_name(
     sensor_key: str, *, slot_minutes: int, hours_to_plan: int
 ) -> str:
     """Return explicit entry-level sensor name."""
-    if sensor_key == "projected_cost_savings":
-        return f"Projected Cost Savings over {_duration_label(minutes=hours_to_plan * 60)}"
-    if sensor_key == "projected_savings_percentage":
-        return (
-            "Projected Savings Percentage over "
-            f"{_duration_label(minutes=hours_to_plan * 60)}"
-        )
-    if sensor_key == "projected_cost_savings_this_interval":
-        return f"Projected Cost Savings over {_duration_label(minutes=slot_minutes)}"
-    if sensor_key == "projected_savings_percentage_this_interval":
-        return (
-            "Projected Savings Percentage over "
-            f"{_duration_label(minutes=slot_minutes)}"
-        )
     return ENTRY_FRIENDLY_NAMES[sensor_key]
 
 
@@ -121,15 +105,6 @@ def _subentry_sensor_name(subentry_name: str, sensor_key: str) -> str:
         option_number = sensor_key[len("option_") : -len("_start")]
         return f"({subentry_name}) Option {option_number} Start"
     raise ValueError(f"Unsupported subentry sensor key: {sensor_key}")
-def _projected_savings_percentage_value_transform(
-    _sensor: ProjectionSensor, value: float
-) -> float | None:
-    """Hide implausibly large savings percentages from the entity state."""
-    if abs(value) > MAX_EXPOSED_PROJECTED_SAVINGS_PCT:
-        return None
-    return value
-
-
 def _entry_sensor_kwargs(
     config_entry: ConfigEntry,
     *,
@@ -204,19 +179,10 @@ def _entry_sensors(
         "last_run_duration": LastRunDurationSensor,
         "plan_details": PlanDetailsSensor,
         "plan_details_hourly": PlanDetailsSensor,
-        "projected_cost_savings": ProjectionSensor,
-        "projected_savings_percentage": ProjectionSensor,
-        "projected_cost_savings_this_interval": ProjectionSensor,
-        "projected_savings_percentage_this_interval": ProjectionSensor,
     }
     sensors: list[SensorEntity] = []
     for spec in ENTRY_SENSOR_SPECS:
         extra_kwargs = dict(spec.extra_kwargs)
-        if spec.sensor_key in {
-            "projected_savings_percentage",
-            "projected_savings_percentage_this_interval",
-        }:
-            extra_kwargs["value_transform"] = _projected_savings_percentage_value_transform
         sensor_class = spec_classes[spec.sensor_key]
         sensors.append(
             sensor_class(config_entry, coordinator, **extra_kwargs, **entry_kwargs(spec.sensor_key))
@@ -398,6 +364,15 @@ async def async_setup_entry(
                 runtime_data,
                 entry_slug=entry_slug,
                 subentry=subentry,
+            )
+        )
+
+    if runtime_data.historical_tracker is not None:
+        sensors.extend(
+            build_historical_sensors(
+                config_entry,
+                runtime_data.historical_tracker,
+                entry_slug=entry_slug,
             )
         )
 

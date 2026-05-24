@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 from custom_components.wattplan.const import (
@@ -18,6 +18,13 @@ from custom_components.wattplan.const import (
     CONF_ENERGY_KWH,
     CONF_EXPECTED_POWER_KW,
     CONF_HOURS_TO_PLAN,
+    CONF_HISTORICAL_COST_TRACKING_ENABLED,
+    CONF_HISTORICAL_GRID_EXPORT_SENSOR,
+    CONF_HISTORICAL_GRID_IMPORT_SENSOR,
+    CONF_HISTORICAL_PV_SENSOR,
+    CONF_HISTORICAL_SIMULATE_NO_BATTERY,
+    CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION,
+    CONF_HISTORICAL_USAGE_SENSOR,
     CONF_MAX_CHARGE_KW,
     CONF_MAX_CONSECUTIVE_OFF_MINUTES,
     CONF_MAX_DISCHARGE_KW,
@@ -34,6 +41,7 @@ from custom_components.wattplan.const import (
     CONF_SLOT_MINUTES,
     CONF_SOC_SOURCE,
     CONF_SOURCE_MODE,
+    CONF_SOURCE_EXPORT_PRICE,
     CONF_SOURCE_IMPORT_PRICE,
     CONF_SOURCE_PV,
     CONF_SOURCE_USAGE,
@@ -60,11 +68,18 @@ from custom_components.wattplan.coordinator import (
     _snapshot_schema_id,
 )
 from custom_components.wattplan.coordinator_parts import PlanningStageError, StageErrorKind
+from custom_components.wattplan.historical_cost.models import (
+    FLAG_METER_RESET,
+    FLAG_MISSING_IMPORT_PRICE,
+    RETENTION_DAYS,
+)
+from custom_components.wattplan.historical_cost.store import HistoricalCostStore
 from custom_components.wattplan.test_plan_invariants import assert_plan_invariants
 import pytest
 
 from homeassistant import config_entries
-from homeassistant.const import CONF_NAME, STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.components.sensor import SensorDeviceClass
+from homeassistant.const import CONF_NAME, STATE_UNAVAILABLE, STATE_UNKNOWN, UnitOfEnergy
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.storage import Store
@@ -251,8 +266,35 @@ def _assert_valid_state(hass: HomeAssistant, entity_id: str) -> None:
     assert state.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE), f"{entity_id} invalid"
 
 
+def _set_energy_meter(hass: HomeAssistant, entity_id: str, value: float | str) -> None:
+    """Set a cumulative kWh energy sensor state."""
+    hass.states.async_set(
+        entity_id,
+        str(value),
+        {
+            "device_class": SensorDeviceClass.ENERGY,
+            "unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR,
+        },
+    )
+
+
+def _historical_options() -> dict[str, object]:
+    """Return standard enabled historical tracking options."""
+    return {
+        CONF_PLANNING_ENABLED: False,
+        CONF_ACTION_EMISSION_ENABLED: False,
+        CONF_HISTORICAL_COST_TRACKING_ENABLED: True,
+        CONF_HISTORICAL_GRID_IMPORT_SENSOR: "sensor.grid_import_total",
+        CONF_HISTORICAL_GRID_EXPORT_SENSOR: "sensor.grid_export_total",
+        CONF_HISTORICAL_USAGE_SENSOR: "sensor.usage_total",
+        CONF_HISTORICAL_PV_SENSOR: "sensor.pv_total",
+        CONF_HISTORICAL_SIMULATE_NO_BATTERY: True,
+        CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION: True,
+    }
+
+
 async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
-    """Set up entry with one of each asset and assert projected entities have data."""
+    """Set up entry with one of each asset and assert runtime entities have data."""
     price_template = "{{ [0.2, 0.25, 0.3, 0.35] }}"
     usage_template = "{{ [1.0, 1.1, 1.0, 0.9] }}"
     pv_template = "{{ [0.0, 0.2, 0.3, 0.1] }}"
@@ -364,34 +406,19 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
     _assert_valid_state(hass, "sensor.home_status")
     _assert_valid_state(hass, "sensor.home_last_run")
     _assert_valid_state(hass, "sensor.home_last_run_duration")
-    _assert_valid_state(hass, "sensor.home_projected_cost_savings")
-    _assert_valid_state(hass, "sensor.home_projected_savings_percentage")
     _assert_valid_state(hass, "sensor.home_battery_action")
     _assert_valid_state(hass, "sensor.home_comfort_action")
     _assert_valid_state(hass, "sensor.home_optional_next_start_option")
     _assert_valid_state(hass, "sensor.home_optional_option_1_start")
 
     entity_registry = er.async_get(hass)
-    assert (
-        entity_registry.async_get("sensor.home_projected_cost_savings_this_interval")
-        is not None
-    )
-    assert (
-        entity_registry.async_get(
-            "sensor.home_projected_savings_percentage_this_interval"
-        )
-        is not None
-    )
-    assert (
-        entity_registry.async_get("sensor.home_projected_cost_savings_next_interval")
-        is None
-    )
-    assert (
-        entity_registry.async_get(
-            "sensor.home_projected_savings_percentage_next_interval"
-        )
-        is None
-    )
+    for entity_id in (
+        "sensor.home_projected_cost_savings",
+        "sensor.home_projected_savings_percentage",
+        "sensor.home_projected_cost_savings_this_interval",
+        "sensor.home_projected_savings_percentage_this_interval",
+    ):
+        assert entity_registry.async_get(entity_id) is None
 
     next_option = hass.states.get("sensor.home_optional_next_start_option")
     assert next_option is not None
@@ -411,47 +438,6 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
     assert option_1.state == next_option.state
     assert option_1.attributes["end_timestamp"] == next_option.attributes["end_timestamp"]
 
-    savings = hass.states.get("sensor.home_projected_cost_savings")
-    assert savings is not None
-    assert float(savings.state) == 3.0
-    assert savings.attributes["friendly_name"] == "Projected Cost Savings over 4h"
-    assert "span_start" in savings.attributes
-    assert "span_end" in savings.attributes
-    assert savings.attributes["total"] == 3.0
-    assert savings.attributes["values"] == [0.5, 1.0, 1.0, 0.5]
-
-    savings_pct = hass.states.get("sensor.home_projected_savings_percentage")
-    assert savings_pct is not None
-    assert float(savings_pct.state) == 24.0
-    assert savings_pct.attributes["span_start"] == savings.attributes["span_start"]
-    assert savings_pct.attributes["span_end"] == savings.attributes["span_end"]
-    assert savings_pct.attributes["total"] == 24.0
-    assert savings_pct.attributes["values"] == [25.0, 33.333333, 25.0, 14.285714]
-    assert savings_pct.attributes["formula"] == "(1 - projected_cost / baseline_cost) * 100"
-    assert savings_pct.attributes["baseline_cost"] == 12.5
-    assert savings_pct.attributes["projected_cost"] == 9.5
-    assert savings_pct.attributes["projected_savings_cost"] == 3.0
-    assert savings_pct.attributes["baseline_cost_values"] == [2.0, 3.0, 4.0, 3.5]
-    assert savings_pct.attributes["projected_cost_values"] == [1.5, 2.0, 3.0, 3.0]
-    assert savings_pct.attributes["projected_savings_cost_values"] == [0.5, 1.0, 1.0, 0.5]
-    assert savings_pct.attributes["max_exposed_percentage"] == 200.0
-    assert (
-        savings_pct.attributes["friendly_name"]
-        == "Projected Savings Percentage over 4h"
-    )
-
-    projected_cost_entry = entity_registry.async_get(
-        "sensor.home_projected_cost_savings_this_interval"
-    )
-    assert projected_cost_entry is not None
-    assert projected_cost_entry.original_name == "Projected Cost Savings over 1h"
-
-    projected_pct_entry = entity_registry.async_get(
-        "sensor.home_projected_savings_percentage_this_interval"
-    )
-    assert projected_pct_entry is not None
-    assert projected_pct_entry.original_name == "Projected Savings Percentage over 1h"
-
     battery_action = hass.states.get("sensor.home_battery_action")
     assert battery_action is not None
     assert battery_action.attributes["friendly_name"] == "(battery) Action"
@@ -468,10 +454,10 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
     assert option_1.attributes["friendly_name"] == "(optional) Option 1 Start"
 
 
-async def test_projected_savings_percentage_becomes_unknown_when_extreme(
+async def test_historical_cost_tracking_seeds_without_fake_first_slot(
     hass: HomeAssistant,
 ) -> None:
-    """Hide implausibly large projected savings percentages while keeping components."""
+    """First historical run should seed cursors without creating cost history."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Home",
@@ -482,36 +468,221 @@ async def test_projected_savings_percentage_becomes_unknown_when_extreme(
             CONF_SOURCES: {
                 CONF_SOURCE_IMPORT_PRICE: {
                     CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [0.2, 0.2, 0.2, 0.2] }}",
-                },
-                CONF_SOURCE_USAGE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
                     CONF_TEMPLATE: "{{ [1.0, 1.0, 1.0, 1.0] }}",
                 },
             },
         },
+        options=_historical_options(),
+    )
+    entry.add_to_hass(hass)
+    _set_energy_meter(hass, "sensor.grid_import_total", 100.0)
+    _set_energy_meter(hass, "sensor.grid_export_total", 10.0)
+    _set_energy_meter(hass, "sensor.usage_total", 200.0)
+    _set_energy_meter(hass, "sensor.pv_total", 50.0)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    tracker = entry.runtime_data.historical_tracker
+    assert tracker is not None
+    assert tracker.store.data["days"] == {}
+    assert hass.states.get("sensor.home_historical_actual_cost_today").state in {
+        STATE_UNAVAILABLE,
+        STATE_UNKNOWN,
+    }
+
+
+async def test_historical_cost_tracking_processes_scenarios_and_entities(
+    hass: HomeAssistant,
+) -> None:
+    """Historical tracker should aggregate actual, no-battery, and self-consumption costs."""
+    start = datetime(2026, 5, 24, 12, 0, tzinfo=UTC)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: 60,
+            CONF_HOURS_TO_PLAN: 4,
+            CONF_SOURCES: {
+                CONF_SOURCE_IMPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [1.0, 1.0, 1.0, 1.0] }}",
+                },
+                CONF_SOURCE_EXPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [0.1, 0.1, 0.1, 0.1] }}",
+                },
+            },
+        },
+        options=_historical_options(),
+        subentries_data=[
+            config_entries.ConfigSubentryData(
+                subentry_id="battery_sub",
+                subentry_type=SUBENTRY_TYPE_BATTERY,
+                title="battery",
+                unique_id="battery:battery",
+                data={
+                    CONF_NAME: "battery",
+                    CONF_SOC_SOURCE: "sensor.battery_soc",
+                    CONF_CAPACITY_KWH: 10.0,
+                    CONF_MINIMUM_KWH: 0.0,
+                    CONF_MAX_CHARGE_KW: 3.0,
+                    CONF_MAX_DISCHARGE_KW: 3.0,
+                    CONF_CHARGE_EFFICIENCY: 1.0,
+                    CONF_DISCHARGE_EFFICIENCY: 1.0,
+                    CONF_CAN_CHARGE_FROM_GRID: False,
+                    CONF_CAN_CHARGE_FROM_PV: True,
+                },
+            )
+        ],
+    )
+    entry.add_to_hass(hass)
+    _set_energy_meter(hass, "sensor.grid_import_total", 100.0)
+    _set_energy_meter(hass, "sensor.grid_export_total", 10.0)
+    _set_energy_meter(hass, "sensor.usage_total", 200.0)
+    _set_energy_meter(hass, "sensor.pv_total", 50.0)
+    hass.states.async_set(
+        "sensor.battery_soc",
+        "1.0",
+        {"unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR},
+    )
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    tracker = entry.runtime_data.historical_tracker
+    assert tracker is not None
+    tracker.store.update_metadata(
+        last_processed_slot=start - timedelta(hours=1),
+        last_meter_values={
+            "grid_import": 100.0,
+            "grid_export": 10.0,
+            "usage": 200.0,
+            "pv": 50.0,
+        },
+        meter_config={
+            "grid_import": "sensor.grid_import_total",
+            "grid_export": "sensor.grid_export_total",
+            "usage": "sensor.usage_total",
+            "pv": "sensor.pv_total",
+        },
+    )
+    tracker.store.update_simulation_soc({"battery_sub": 1.0})
+
+    _set_energy_meter(hass, "sensor.grid_import_total", 101.0)
+    _set_energy_meter(hass, "sensor.grid_export_total", 10.2)
+    _set_energy_meter(hass, "sensor.usage_total", 201.5)
+    _set_energy_meter(hass, "sensor.pv_total", 51.0)
+
+    await tracker.async_process_completed_slot(start + timedelta(hours=1, seconds=1))
+    await hass.async_block_till_done()
+
+    actual = hass.states.get("sensor.home_historical_actual_cost_today")
+    no_battery = hass.states.get("sensor.home_historical_no_battery_cost_today")
+    self_consumption = hass.states.get(
+        "sensor.home_historical_self_consumption_cost_today"
+    )
+    savings = hass.states.get("sensor.home_historical_savings_vs_no_battery_today")
+
+    assert actual is not None
+    assert float(actual.state) == pytest.approx(0.98)
+    assert actual.attributes["slots"] == 1
+    assert actual.attributes["missing_slots"] == 0
+    assert actual.attributes["scenario"] == "actual"
+    assert actual.attributes["retention_days"] == RETENTION_DAYS
+    assert no_battery is not None
+    assert float(no_battery.state) == pytest.approx(0.5)
+    assert self_consumption is not None
+    assert float(self_consumption.state) == pytest.approx(0.0)
+    assert savings is not None
+    assert float(savings.state) == pytest.approx(-0.48)
+
+    entity_registry = er.async_get(hass)
+    monthly = entity_registry.async_get(
+        "sensor.home_historical_actual_cost_this_month"
+    )
+    assert monthly is not None
+    assert monthly.disabled
+
+
+async def test_historical_cost_tracking_flags_meter_reset_and_missing_price(
+    hass: HomeAssistant,
+) -> None:
+    """Invalid deltas and missing prices should create gap records instead of costs."""
+    start = datetime(2026, 5, 24, 12, 0, tzinfo=UTC)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: 60,
+            CONF_HOURS_TO_PLAN: 4,
+            CONF_SOURCES: {
+                CONF_SOURCE_IMPORT_PRICE: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
+            },
+        },
         options={
-            CONF_PLANNING_ENABLED: False,
-            CONF_ACTION_EMISSION_ENABLED: False,
+            **_historical_options(),
+            CONF_HISTORICAL_GRID_EXPORT_SENSOR: None,
+            CONF_HISTORICAL_PV_SENSOR: None,
+            CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION: False,
         },
     )
     entry.add_to_hass(hass)
+    _set_energy_meter(hass, "sensor.grid_import_total", 100.0)
+    _set_energy_meter(hass, "sensor.usage_total", 200.0)
 
-    with patch(
-        "custom_components.wattplan.coordinator.optimize",
-        side_effect=_fake_optimize_with_extreme_savings,
-    ):
-        assert await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    tracker = entry.runtime_data.historical_tracker
+    assert tracker is not None
+    tracker.store.update_metadata(
+        last_processed_slot=start - timedelta(hours=1),
+        last_meter_values={
+            "grid_import": 100.0,
+            "grid_export": 0.0,
+            "usage": 200.0,
+            "pv": 0.0,
+        },
+        meter_config={
+            "grid_import": "sensor.grid_import_total",
+            "grid_export": None,
+            "usage": "sensor.usage_total",
+            "pv": None,
+        },
+    )
 
-    savings_pct = hass.states.get("sensor.home_projected_savings_percentage")
-    assert savings_pct is not None
-    assert savings_pct.state == STATE_UNKNOWN
-    assert savings_pct.attributes["total"] == 1500.0
-    assert savings_pct.attributes["baseline_cost"] == 0.1
-    assert savings_pct.attributes["projected_cost"] == -1.4
-    assert savings_pct.attributes["projected_savings_cost"] == 1.5
-    assert savings_pct.attributes["max_exposed_percentage"] == 200.0
+    _set_energy_meter(hass, "sensor.grid_import_total", 99.0)
+    _set_energy_meter(hass, "sensor.usage_total", 201.0)
+
+    await tracker.async_process_completed_slot(start + timedelta(hours=1, seconds=1))
+
+    day = tracker.store.data["days"]["2026-05-24"]
+    assert day["flags"] == [FLAG_METER_RESET | FLAG_MISSING_IMPORT_PRICE]
+    assert hass.states.get("sensor.home_historical_actual_cost_today").state in {
+        STATE_UNAVAILABLE,
+        STATE_UNKNOWN,
+    }
+
+
+async def test_historical_cost_store_prunes_old_days(hass: HomeAssistant) -> None:
+    """Historical store should keep only the fixed local-day retention window."""
+    store = HistoricalCostStore(
+        hass,
+        entry_id="history-entry",
+        slot_minutes=60,
+        currency="DKK",
+    )
+    await store.async_load()
+    store.data["days"] = {
+        "2026-03-01": {"starts": []},
+        "2026-05-01": {"starts": []},
+    }
+
+    store.prune(datetime(2026, 5, 24, 12, 0, tzinfo=UTC))
+
+    assert "2026-03-01" not in store.data["days"]
+    assert "2026-05-01" in store.data["days"]
 
 
 async def test_battery_action_sensor_uses_source_specific_charge_state(

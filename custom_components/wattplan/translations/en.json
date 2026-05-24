@@ -715,6 +715,7 @@
           "source_export_price": "Export price source",
           "source_usage": "Usage source",
           "source_pv": "Solar source",
+          "historical_costs": "Historical costs",
           "battery_entities": "Battery entities",
           "comfort_entities": "Comfort entities",
           "optional_entities": "Optional entities",
@@ -1121,6 +1122,23 @@
         "data_description": {
           "planning_enabled": "When enabled, optimization runs every {slot_minutes} minutes and publishes the new plan to WattPlan entities.",
           "action_emission_enabled": "When enabled, battery policy states like preserve/self_consume/grid_charge are published every {slot_minutes} minutes."
+        }
+      },
+      "historical_costs": {
+        "title": "Historical costs",
+        "description": "Track measured historical cost and simulated savings from completed slots. WattPlan stores 60 days in Home Assistant Store.",
+        "data": {
+          "historical_cost_tracking_enabled": "Enable historical cost tracking",
+          "historical_grid_import_sensor": "Grid import cumulative kWh sensor",
+          "historical_grid_export_sensor": "Grid export cumulative kWh sensor",
+          "historical_usage_sensor": "Usage cumulative kWh sensor",
+          "historical_pv_sensor": "PV cumulative kWh sensor",
+          "historical_simulate_no_battery": "Enable no-battery simulation",
+          "historical_simulate_self_consumption": "Enable self-consumption simulation"
+        },
+        "data_description": {
+          "historical_grid_export_sensor": "Optional. Leave unset when exported power should be treated as zero.",
+          "historical_pv_sensor": "Optional. Leave unset when PV is not part of this setup."
         }
       },
       "battery_entities": {

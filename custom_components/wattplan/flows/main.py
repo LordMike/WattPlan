@@ -18,6 +18,13 @@ from .persistence import SourceFlowPersistence
 from .state import SourceFlowState
 from .source_shared import (
     CONF_ACTION_EMISSION_ENABLED,
+    CONF_HISTORICAL_COST_TRACKING_ENABLED,
+    CONF_HISTORICAL_GRID_EXPORT_SENSOR,
+    CONF_HISTORICAL_GRID_IMPORT_SENSOR,
+    CONF_HISTORICAL_PV_SENSOR,
+    CONF_HISTORICAL_SIMULATE_NO_BATTERY,
+    CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION,
+    CONF_HISTORICAL_USAGE_SENSOR,
     CONF_HOURS_TO_PLAN,
     CONF_NAME,
     CONF_OPTIMIZER_PROFILE,
@@ -55,6 +62,69 @@ from .source_shared import (
     selector,
     vol,
 )
+from ..historical_cost.tracker import validate_energy_sensor
+
+
+def _historical_energy_selector() -> selector.EntitySelector:
+    """Return selector for cumulative kWh sensors."""
+    return selector.EntitySelector(
+        selector.EntitySelectorConfig(domain=["sensor"], device_class=["energy"])
+    )
+
+
+def _historical_costs_schema(defaults: dict[str, Any]) -> vol.Schema:
+    """Build the historical cost options schema."""
+    return vol.Schema(
+        {
+            vol.Required(
+                CONF_HISTORICAL_COST_TRACKING_ENABLED,
+                default=bool(
+                    defaults.get(CONF_HISTORICAL_COST_TRACKING_ENABLED, False)
+                ),
+            ): selector.BooleanSelector(),
+            vol.Optional(
+                CONF_HISTORICAL_GRID_IMPORT_SENSOR,
+                default=defaults.get(CONF_HISTORICAL_GRID_IMPORT_SENSOR),
+            ): _historical_energy_selector(),
+            vol.Optional(
+                CONF_HISTORICAL_GRID_EXPORT_SENSOR,
+                default=defaults.get(CONF_HISTORICAL_GRID_EXPORT_SENSOR),
+            ): _historical_energy_selector(),
+            vol.Optional(
+                CONF_HISTORICAL_USAGE_SENSOR,
+                default=defaults.get(CONF_HISTORICAL_USAGE_SENSOR),
+            ): _historical_energy_selector(),
+            vol.Optional(
+                CONF_HISTORICAL_PV_SENSOR,
+                default=defaults.get(CONF_HISTORICAL_PV_SENSOR),
+            ): _historical_energy_selector(),
+            vol.Required(
+                CONF_HISTORICAL_SIMULATE_NO_BATTERY,
+                default=bool(defaults.get(CONF_HISTORICAL_SIMULATE_NO_BATTERY, True)),
+            ): selector.BooleanSelector(),
+            vol.Required(
+                CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION,
+                default=bool(
+                    defaults.get(CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION, True)
+                ),
+            ): selector.BooleanSelector(),
+        }
+    )
+
+
+def _normalize_historical_options(user_input: dict[str, Any]) -> dict[str, Any]:
+    """Normalize historical cost options for storage."""
+    normalized = dict(user_input)
+    for key in (
+        CONF_HISTORICAL_GRID_IMPORT_SENSOR,
+        CONF_HISTORICAL_GRID_EXPORT_SENSOR,
+        CONF_HISTORICAL_USAGE_SENSOR,
+        CONF_HISTORICAL_PV_SENSOR,
+    ):
+        if not normalized.get(key):
+            normalized[key] = None
+    return normalized
+
 
 class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
     """Handle a config flow for WattPlan."""
@@ -498,6 +568,7 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
             "source_usage",
             "source_pv",
             "source_export_price",
+            "historical_costs",
         ]
 
         return self.async_show_menu(
@@ -568,6 +639,46 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
             description_placeholders={
                 "slot_minutes": str(self._data[CONF_SLOT_MINUTES])
             },
+        )
+
+    async def async_step_historical_costs(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Configure historical cost tracking."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            normalized = _normalize_historical_options(user_input)
+            if normalized[CONF_HISTORICAL_COST_TRACKING_ENABLED]:
+                for key in (
+                    CONF_HISTORICAL_GRID_IMPORT_SENSOR,
+                    CONF_HISTORICAL_USAGE_SENSOR,
+                ):
+                    if not normalized.get(key):
+                        errors[key] = "required"
+                for key in (
+                    CONF_HISTORICAL_GRID_IMPORT_SENSOR,
+                    CONF_HISTORICAL_GRID_EXPORT_SENSOR,
+                    CONF_HISTORICAL_USAGE_SENSOR,
+                    CONF_HISTORICAL_PV_SENSOR,
+                ):
+                    entity_id = normalized.get(key)
+                    if entity_id and not validate_energy_sensor(self.hass, entity_id):
+                        errors[key] = "invalid_energy_sensor"
+            if not errors:
+                self._options.update(normalized)
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry,
+                    options=self._options,
+                )
+                return await self.async_step_init()
+
+        return self.async_show_form(
+            step_id="historical_costs",
+            data_schema=self.add_suggested_values_to_schema(
+                _historical_costs_schema(self._options),
+                user_input or {},
+            ),
+            errors=errors,
         )
 
     async def async_step_battery_entities(

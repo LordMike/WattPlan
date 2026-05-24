@@ -24,15 +24,37 @@ These exist once per WattPlan setup:
 | `sensor.<setup_slug>_last_run` | Timestamp of the last successful optimize (plan calculation) cycle. |
 | `sensor.<setup_slug>_next_run` | Timestamp of the next scheduled planning cycle. |
 | `sensor.<setup_slug>_last_run_duration` | Duration of the last optimize cycle in milliseconds. |
-| `sensor.<setup_slug>_projected_cost_savings` | Horizon-wide cost savings for the current plan. |
-| `sensor.<setup_slug>_projected_savings_percentage` | Horizon-wide savings percentage for the current plan. Uses `(1 - projected_cost / baseline_cost) * 100` and exposes the component costs as attributes. Returns `unknown` when the resulting percentage exceeds WattPlan's current sanity threshold. |
-| `sensor.<setup_slug>_projected_cost_savings_next_interval` | Disabled by default. Savings for the next planner interval only. |
-| `sensor.<setup_slug>_projected_savings_percentage_next_interval` | Disabled by default. Savings percentage for the next planner interval only, with the same formula, attributes, and sanity-threshold behavior as the horizon sensor. |
 | `sensor.<setup_slug>_plan_details` | Disabled by default. Raw planner-detail payload at WattPlan's configured slot size. |
 | `sensor.<setup_slug>_plan_details_hourly` | Disabled by default. The same planner details, aggregated to hourly buckets. |
 | `sensor.<setup_slug>_usage_forecast` | Present when the built-in usage source is configured. Exposes the generated usage forecast. |
 
-When `sensor.<setup_slug>_status` is `failed`, plan-dependent entities such as action sensors, plan details, projected savings, and usage forecast become unavailable rather than continuing to expose stale plan data.
+When `sensor.<setup_slug>_status` is `failed`, plan-dependent entities such as action sensors, plan details, and usage forecast become unavailable rather than continuing to expose stale plan data.
+
+## Historical Cost Entities
+
+Historical cost tracking is opt-in from the WattPlan options flow. It uses Home Assistant Store storage owned by WattPlan, not recorder backfill or SQLite. The tracker samples completed slots from configured cumulative kWh meters and retains 60 local days.
+
+Enabled by default when historical tracking is enabled:
+
+| Entity | Purpose |
+| --- | --- |
+| `sensor.<setup_slug>_historical_actual_cost_today` | Measured grid import/export cost for today. |
+| `sensor.<setup_slug>_historical_no_battery_cost_today` | Simulated cost for today if the site had usage and PV but no batteries. |
+| `sensor.<setup_slug>_historical_self_consumption_cost_today` | Simulated cost for today with simple PV-first battery self-consumption. |
+| `sensor.<setup_slug>_historical_savings_vs_no_battery_today` | No-battery cost minus actual cost for today. |
+| `sensor.<setup_slug>_historical_savings_vs_self_consumption_today` | Self-consumption cost minus actual cost for today. |
+
+Disabled by default:
+
+| Entity | Purpose |
+| --- | --- |
+| `sensor.<setup_slug>_historical_actual_cost_this_month` | Measured grid import/export cost for the current local month. |
+| `sensor.<setup_slug>_historical_no_battery_cost_this_month` | No-battery simulated cost for the current local month. |
+| `sensor.<setup_slug>_historical_self_consumption_cost_this_month` | Self-consumption simulated cost for the current local month. |
+| `sensor.<setup_slug>_historical_savings_vs_no_battery_this_month` | No-battery savings for the current local month. |
+| `sensor.<setup_slug>_historical_savings_vs_self_consumption_this_month` | Self-consumption savings for the current local month. |
+
+Historical sensors use the Home Assistant currency as their unit and expose `tracking_started_at`, `last_complete_slot`, `slots`, `missing_slots`, `period_start`, `period_end`, `scenario`, and `retention_days` attributes. Missing meters, meter resets, missing prices, and skipped slots are counted as missing slots instead of being spread across price intervals.
 
 ## Battery Entities
 
