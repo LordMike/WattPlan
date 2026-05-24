@@ -74,6 +74,10 @@ WattPlan operates in two distinct steps:
 1. **Optimize** (`run_optimize_now`) — runs the planner and calculates a new plan. This is the slow step that reads all energy sources and solves the optimization. Run it as often as you want fresh plans, but it can be infrequent if the optimizer is slow.
 2. **Refresh** (`refresh_sensors`) — reads the already-calculated plan and pushes the current slot's actions to HA sensor entities. This is fast and can be called frequently to keep action sensors up to date without re-running the optimizer.
 
+By default, WattPlan schedules both steps on the configured planner interval. If you disable scheduled planning in Scheduler settings, fresh plan generation becomes your responsibility and you should call `wattplan.run_optimize_now` from your own automation or schedule. If you disable scheduled action emission, current-slot action publishing becomes your responsibility and you should call `wattplan.refresh_sensors` from your own automation or schedule. If you disable both, WattPlan has no automatic cadence.
+
+The current plan's `expires_at` remains the authoritative expiry timestamp. When automatic stages are disabled, WattPlan still uses that timestamp to decide whether a plan is fresh when it runs, but you own the trigger cadence for plan refreshes and entity/status updates.
+
 WattPlan exposes the following services:
 
 | Service | Purpose |
