@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 
 from custom_components.wattplan.const import (
     CONF_ACTION_EMISSION_ENABLED,
+    CONF_AVAILABILITY_SOURCE,
     CONF_CAN_CHARGE_FROM_GRID,
     CONF_CAN_CHARGE_FROM_PV,
     CONF_CAPACITY_KWH,
@@ -58,6 +59,7 @@ pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
 SECTION_BATTERY_ADVANCED = "advanced"
 CONF_ACCEPT_SOURCE_SUMMARY = "accept_source_summary"
+CONF_ACCEPT_MANUAL_SCHEDULING = "accept_manual_scheduling"
 
 
 def _series_template(hours: int) -> str:
@@ -74,6 +76,13 @@ def _default_source_mode(result: dict[str, Any]) -> str:
     """Extract the default source-mode value from a flow form schema."""
     schema = result["data_schema"].schema
     marker = next(key for key in schema if getattr(key, "schema", None) == CONF_SOURCE_MODE)
+    return marker.default()
+
+
+def _schema_default(result: dict[str, Any], field: str) -> Any:
+    """Extract a default value from a flow form schema."""
+    schema = result["data_schema"].schema
+    marker = next(key for key in schema if getattr(key, "schema", None) == field)
     return marker.default()
 
 
@@ -160,6 +169,17 @@ async def _create_basic_entry(hass: HomeAssistant) -> config_entries.ConfigEntry
     entry = hass.config_entries.async_entries(DOMAIN)[0]
     assert entry is not None
     return entry
+
+
+async def _open_planner_timers_options(
+    hass: HomeAssistant, entry: config_entries.ConfigEntry
+) -> dict[str, Any]:
+    """Open the scheduler settings options step."""
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] is FlowResultType.MENU
+    return await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "planner_timers"}
+    )
 
 
 async def test_form(hass: HomeAssistant, mock_setup_entry: AsyncMock) -> None:
@@ -424,6 +444,12 @@ async def test_options_flow_add_core_and_one_of_each_asset(
             CONF_ACTION_EMISSION_ENABLED: False,
         },
     )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "planner_timers_warning_action_emission"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_ACCEPT_MANUAL_SCHEDULING: True},
+    )
     assert result["type"] is FlowResultType.MENU
 
     result = await hass.config_entries.options.async_configure(
@@ -485,6 +511,7 @@ async def test_options_flow_add_core_and_one_of_each_asset(
         {
             CONF_NAME: "Car battery",
             CONF_SOC_SOURCE: "sensor.car_soc",
+            CONF_AVAILABILITY_SOURCE: "binary_sensor.car_available",
             CONF_CAPACITY_KWH: 70,
             CONF_MINIMUM_KWH: 10,
             CONF_MAX_CHARGE_KW: 11,
@@ -545,8 +572,138 @@ async def test_options_flow_add_core_and_one_of_each_asset(
     assert any(
         subentry.subentry_type == SUBENTRY_TYPE_BATTERY
         and subentry.title == "Car battery (70 kWh, min 10 kWh)"
+        and subentry.data[CONF_AVAILABILITY_SOURCE] == "binary_sensor.car_available"
         for subentry in updated.subentries.values()
     )
+
+
+async def test_options_planner_timers_both_enabled_saves_without_warning(
+    hass: HomeAssistant, mock_setup_entry: AsyncMock
+) -> None:
+    """Test enabled scheduler flags save without a warning step."""
+    entry = await _create_basic_entry(hass)
+
+    result = await _open_planner_timers_options(hass, entry)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "planner_timers"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_PLANNING_ENABLED: True,
+            CONF_ACTION_EMISSION_ENABLED: True,
+        },
+    )
+
+    assert result["type"] is FlowResultType.MENU
+    updated = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated is not None
+    assert updated.options[CONF_PLANNING_ENABLED] is True
+    assert updated.options[CONF_ACTION_EMISSION_ENABLED] is True
+
+
+async def test_options_planner_timers_planning_disabled_requires_acknowledgement(
+    hass: HomeAssistant, mock_setup_entry: AsyncMock
+) -> None:
+    """Test disabled scheduled planning routes through targeted acknowledgement."""
+    entry = await _create_basic_entry(hass)
+
+    result = await _open_planner_timers_options(hass, entry)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_PLANNING_ENABLED: False,
+            CONF_ACTION_EMISSION_ENABLED: True,
+        },
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "planner_timers_warning_planning"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_ACCEPT_MANUAL_SCHEDULING: False},
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "planner_timers"
+    assert _schema_default(result, CONF_PLANNING_ENABLED) is False
+    assert _schema_default(result, CONF_ACTION_EMISSION_ENABLED) is True
+    updated = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated is not None
+    assert updated.options[CONF_PLANNING_ENABLED] is True
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_PLANNING_ENABLED: False,
+            CONF_ACTION_EMISSION_ENABLED: True,
+        },
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "planner_timers_warning_planning"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_ACCEPT_MANUAL_SCHEDULING: True},
+    )
+    assert result["type"] is FlowResultType.MENU
+    updated = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated is not None
+    assert updated.options[CONF_PLANNING_ENABLED] is False
+    assert updated.options[CONF_ACTION_EMISSION_ENABLED] is True
+
+
+async def test_options_planner_timers_action_emission_disabled_requires_acknowledgement(
+    hass: HomeAssistant, mock_setup_entry: AsyncMock
+) -> None:
+    """Test disabled scheduled action emission routes through targeted acknowledgement."""
+    entry = await _create_basic_entry(hass)
+
+    result = await _open_planner_timers_options(hass, entry)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_PLANNING_ENABLED: True,
+            CONF_ACTION_EMISSION_ENABLED: False,
+        },
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "planner_timers_warning_action_emission"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_ACCEPT_MANUAL_SCHEDULING: True},
+    )
+
+    assert result["type"] is FlowResultType.MENU
+    updated = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated is not None
+    assert updated.options[CONF_PLANNING_ENABLED] is True
+    assert updated.options[CONF_ACTION_EMISSION_ENABLED] is False
+
+
+async def test_options_planner_timers_both_disabled_requires_acknowledgement(
+    hass: HomeAssistant, mock_setup_entry: AsyncMock
+) -> None:
+    """Test disabling all automatic scheduler behavior uses the both-disabled warning."""
+    entry = await _create_basic_entry(hass)
+
+    result = await _open_planner_timers_options(hass, entry)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_PLANNING_ENABLED: False,
+            CONF_ACTION_EMISSION_ENABLED: False,
+        },
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "planner_timers_warning_both"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_ACCEPT_MANUAL_SCHEDULING: True},
+    )
+
+    assert result["type"] is FlowResultType.MENU
+    updated = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated is not None
+    assert updated.options[CONF_PLANNING_ENABLED] is False
+    assert updated.options[CONF_ACTION_EMISSION_ENABLED] is False
 
 
 async def test_subentry_validation_errors(
@@ -577,6 +734,37 @@ async def test_subentry_validation_errors(
     )
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {CONF_MINIMUM_KWH: "battery_minimum_exceeds_capacity"}
+
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, SUBENTRY_TYPE_BATTERY), context={"source": "user"}
+    )
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"],
+        {
+            CONF_NAME: "Garage battery",
+            CONF_SOC_SOURCE: "sensor.garage_soc",
+            CONF_CAPACITY_KWH: 20,
+            CONF_MINIMUM_KWH: 5,
+            CONF_MAX_CHARGE_KW: 7,
+            CONF_MAX_DISCHARGE_KW: 7,
+            SECTION_BATTERY_ADVANCED: {
+                CONF_CHARGE_EFFICIENCY: 0.9,
+                CONF_DISCHARGE_EFFICIENCY: 0.9,
+            },
+            CONF_CAN_CHARGE_FROM_GRID: False,
+            CONF_CAN_CHARGE_FROM_PV: True,
+        },
+    )
+    result = await _finish_subentry_if_needed(hass, result)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    updated = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated is not None
+    battery = next(
+        subentry
+        for subentry in updated.subentries.values()
+        if subentry.data.get(CONF_NAME) == "Garage battery"
+    )
+    assert CONF_AVAILABILITY_SOURCE not in battery.data
 
     result = await hass.config_entries.subentries.async_init(
         (entry.entry_id, SUBENTRY_TYPE_OPTIONAL), context={"source": "user"}

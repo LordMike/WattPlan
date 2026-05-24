@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 from unittest.mock import patch
 
 from custom_components.wattplan.const import (
@@ -71,7 +71,6 @@ from custom_components.wattplan.coordinator_parts import PlanningStageError, Sta
 from custom_components.wattplan.historical_cost.models import (
     FLAG_METER_RESET,
     FLAG_MISSING_IMPORT_PRICE,
-    RETENTION_DAYS,
 )
 from custom_components.wattplan.historical_cost.store import HistoricalCostStore
 from custom_components.wattplan.test_plan_invariants import assert_plan_invariants
@@ -79,7 +78,13 @@ import pytest
 
 from homeassistant import config_entries
 from homeassistant.components.sensor import SensorDeviceClass
-from homeassistant.const import CONF_NAME, STATE_UNAVAILABLE, STATE_UNKNOWN, UnitOfEnergy
+from homeassistant.const import (
+    CONF_NAME,
+    EntityCategory,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+    UnitOfEnergy,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.storage import Store
@@ -293,6 +298,66 @@ def _historical_options() -> dict[str, object]:
     }
 
 
+async def test_runtime_diagnostic_sensors_disabled_by_default(
+    hass: HomeAssistant,
+) -> None:
+    """Register noisy runtime sensors disabled while keeping last run enabled."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: 60,
+            CONF_HOURS_TO_PLAN: 4,
+            CONF_SOURCES: {
+                CONF_SOURCE_IMPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [0.2, 0.25, 0.3, 0.35] }}",
+                },
+                CONF_SOURCE_USAGE: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
+                CONF_SOURCE_PV: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
+            },
+        },
+        options={
+            CONF_PLANNING_ENABLED: False,
+            CONF_ACTION_EMISSION_ENABLED: False,
+        },
+    )
+    entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.wattplan.coordinator.optimize",
+        side_effect=_fake_optimize,
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        await hass.services.async_call(
+            DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True
+        )
+        await hass.async_block_till_done()
+
+    entity_registry = er.async_get(hass)
+    last_run_entry = entity_registry.async_get("sensor.home_last_run")
+    next_run_entry = entity_registry.async_get("sensor.home_next_run")
+    duration_entry = entity_registry.async_get("sensor.home_last_run_duration")
+
+    assert last_run_entry is not None
+    assert last_run_entry.disabled_by is None
+    assert hass.states.get("sensor.home_last_run") is not None
+    _assert_valid_state(hass, "sensor.home_last_run")
+
+    assert next_run_entry is not None
+    assert next_run_entry.disabled_by == er.RegistryEntryDisabler.INTEGRATION
+    assert next_run_entry.entity_category == EntityCategory.DIAGNOSTIC
+    assert hass.states.get("sensor.home_next_run") is None
+
+    assert duration_entry is not None
+    assert duration_entry.disabled_by == er.RegistryEntryDisabler.INTEGRATION
+    assert duration_entry.entity_category == EntityCategory.DIAGNOSTIC
+    assert hass.states.get("sensor.home_last_run_duration") is None
+
+
 async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
     """Set up entry with one of each asset and assert runtime entities have data."""
     price_template = "{{ [0.2, 0.25, 0.3, 0.35] }}"
@@ -389,23 +454,17 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
         )
         await hass.async_block_till_done()
         last_run_after_plan = hass.states.get("sensor.home_last_run")
-        duration_after_plan = hass.states.get("sensor.home_last_run_duration")
         assert last_run_after_plan is not None
-        assert duration_after_plan is not None
 
         await hass.services.async_call(DOMAIN, SERVICE_REFRESH_SENSORS, {}, blocking=True)
         await hass.async_block_till_done()
 
     last_run_after_refresh = hass.states.get("sensor.home_last_run")
-    duration_after_refresh = hass.states.get("sensor.home_last_run_duration")
     assert last_run_after_refresh is not None
-    assert duration_after_refresh is not None
     assert last_run_after_refresh.state == last_run_after_plan.state
-    assert duration_after_refresh.state == duration_after_plan.state
 
     _assert_valid_state(hass, "sensor.home_status")
     _assert_valid_state(hass, "sensor.home_last_run")
-    _assert_valid_state(hass, "sensor.home_last_run_duration")
     _assert_valid_state(hass, "sensor.home_battery_action")
     _assert_valid_state(hass, "sensor.home_comfort_action")
     _assert_valid_state(hass, "sensor.home_optional_next_start_option")
@@ -589,7 +648,6 @@ async def test_historical_cost_tracking_processes_scenarios_and_entities(
     assert actual.attributes["slots"] == 1
     assert actual.attributes["missing_slots"] == 0
     assert actual.attributes["scenario"] == "actual"
-    assert actual.attributes["retention_days"] == RETENTION_DAYS
     assert no_battery is not None
     assert float(no_battery.state) == pytest.approx(0.5)
     assert self_consumption is not None
@@ -911,7 +969,7 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
         {
             "schema_id": _snapshot_schema_id(),
             "snapshot": {
-                "created_at": "2026-01-01T00:00:00+00:00",
+                "created_at": "2099-01-01T00:00:00+00:00",
                 "planner_status": "planned",
                 "planner_message": "Restored plan",
                 "diagnostics": {
@@ -928,21 +986,27 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
                     "optimizer": {
                         "suboptimal": False,
                         "suboptimal_reasons": [],
+                        "span_start": "2099-01-01T00:00:00+00:00",
+                        "span_end": "2099-01-01T04:00:00+00:00",
                     },
                 },
             },
-            "last_success_at": "2026-01-01T00:00:00+00:00",
-                "last_duration_ms": 123,
-                "last_run_timings": [
+            "last_success_at": "2099-01-01T00:00:00+00:00",
+            "last_duration_ms": 123,
+            "last_run_timings": [
                 ["Import price source fetch", 12],
                 ["Optimizer plan calculation", 34],
                 ["total", 46],
-                ],
-            }
-        )
+            ],
+        }
+    )
 
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    with patch(
+        "homeassistant.helpers.entity.Entity.entity_registry_enabled_default",
+        return_value=True,
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
 
     _assert_valid_state(hass, "sensor.home_status")
     _assert_valid_state(hass, "sensor.home_optional_next_start_option")
@@ -1075,7 +1139,7 @@ async def test_failed_plan_keeps_restored_snapshot_usable(
         {
             "schema_id": _snapshot_schema_id(),
             "snapshot": {
-                "created_at": "2026-01-01T00:00:00+00:00",
+                "created_at": "2099-01-01T00:00:00+00:00",
                 "planner_status": "planned",
                 "planner_message": "Restored plan",
                 "diagnostics": {
@@ -1089,10 +1153,12 @@ async def test_failed_plan_keeps_restored_snapshot_usable(
                     "optimizer": {
                         "suboptimal": False,
                         "suboptimal_reasons": [],
+                        "span_start": "2099-01-01T00:00:00+00:00",
+                        "span_end": "2099-01-01T04:00:00+00:00",
                     },
                 },
             },
-            "last_success_at": "2026-01-01T00:00:00+00:00",
+            "last_success_at": "2099-01-01T00:00:00+00:00",
             "last_duration_ms": 123,
             "last_run_timings": [["total", 123]],
         }
@@ -1120,10 +1186,144 @@ async def test_failed_plan_keeps_restored_snapshot_usable(
     assert status.state == "degraded"
     assert status.attributes["has_usable_plan"] is True
     assert status.attributes["reason_codes"] == ["planner_failed_using_previous_plan"]
+    assert status.attributes["expires_at"] == "2099-01-01T04:00:00+00:00"
 
     action = hass.states.get("sensor.home_battery_action")
     assert action is not None
     assert action.state == "grid_charge"
+
+
+async def test_retained_plan_expires_and_plan_entities_become_unavailable(
+    hass: HomeAssistant,
+) -> None:
+    """A retained previous plan should stop being usable after its coverage ends."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: 60,
+            CONF_HOURS_TO_PLAN: 4,
+            CONF_SOURCES: {
+                CONF_SOURCE_IMPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [0.2, 0.25, 0.3, 0.35] }}",
+                },
+                CONF_SOURCE_USAGE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [1.0, 1.1, 1.0, 0.9] }}",
+                },
+            },
+        },
+        options={
+            CONF_PLANNING_ENABLED: False,
+            CONF_ACTION_EMISSION_ENABLED: False,
+        },
+        subentries_data=[
+            config_entries.ConfigSubentryData(
+                subentry_id="battery_sub",
+                subentry_type=SUBENTRY_TYPE_BATTERY,
+                title="battery",
+                unique_id="battery:battery",
+                data={
+                    CONF_NAME: "battery",
+                    CONF_SOC_SOURCE: "sensor.battery_soc",
+                    CONF_CAPACITY_KWH: 10.0,
+                    CONF_MINIMUM_KWH: 1.0,
+                    CONF_MAX_CHARGE_KW: 3.0,
+                    CONF_MAX_DISCHARGE_KW: 3.0,
+                    CONF_CHARGE_EFFICIENCY: 0.9,
+                    CONF_DISCHARGE_EFFICIENCY: 0.9,
+                    CONF_CAN_CHARGE_FROM_GRID: True,
+                    CONF_CAN_CHARGE_FROM_PV: True,
+                },
+            ),
+        ],
+    )
+    entry.add_to_hass(hass)
+    hass.states.async_set("sensor.battery_soc", "5.0")
+
+    with patch("custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        await hass.services.async_call(
+            DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True
+        )
+        await hass.async_block_till_done()
+
+    coordinator = entry.runtime_data.coordinator
+    status = hass.states.get("sensor.home_status")
+    assert status is not None
+    assert status.state == "ok"
+    expires_at = dt_util.parse_datetime(status.attributes["expires_at"])
+    assert expires_at is not None
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> datetime:
+            expired_at = expires_at + timedelta(minutes=1)
+            return expired_at if tz is not None else expired_at.replace(tzinfo=None)
+
+    with patch(
+        "custom_components.wattplan.coordinator_logic.source_status.datetime",
+        FrozenDateTime,
+    ):
+        coordinator.async_update_listeners()
+        await hass.async_block_till_done()
+
+    status = hass.states.get("sensor.home_status")
+    assert status is not None
+    assert status.state == "failed"
+    assert status.attributes["reason_codes"] == ["plan_stale"]
+    assert status.attributes["is_stale"] is True
+    assert status.attributes["has_usable_plan"] is False
+
+    action = hass.states.get("sensor.home_battery_action")
+    assert action is not None
+    assert action.state == STATE_UNAVAILABLE
+
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    status = hass.states.get("sensor.home_status")
+    assert status is not None
+    assert status.state == "ok"
+
+    with patch.object(
+        coordinator,
+        "_async_build_planning_request",
+        side_effect=PlanningStageError(
+            StageErrorKind.PLANNER_INPUT,
+            "import_price source entity `sensor.missing` was not found",
+        ),
+    ):
+        with pytest.raises(PlanningStageError):
+            await coordinator.async_plan(trigger=CycleTrigger.SERVICE)
+        await hass.async_block_till_done()
+
+    status = hass.states.get("sensor.home_status")
+    assert status is not None
+    assert status.state == "degraded"
+    assert status.attributes["reason_codes"] == ["planner_failed_using_previous_plan"]
+    assert status.attributes["expires_at"] == expires_at.isoformat()
+    assert status.attributes["has_usable_plan"] is True
+
+    with patch(
+        "custom_components.wattplan.coordinator_logic.source_status.datetime",
+        FrozenDateTime,
+    ):
+        coordinator.async_update_listeners()
+        await hass.async_block_till_done()
+
+    status = hass.states.get("sensor.home_status")
+    assert status is not None
+    assert status.state == "failed"
+    assert status.attributes["reason_codes"] == ["plan_stale"]
+    assert status.attributes["is_stale"] is True
+    assert status.attributes["has_usable_plan"] is False
+
+    action = hass.states.get("sensor.home_battery_action")
+    assert action is not None
+    assert action.state == STATE_UNAVAILABLE
 
 
 async def test_plan_details_sensor_exposes_horizon_length_arrays(
@@ -1653,7 +1853,6 @@ async def test_button_entities_registered_and_pressable(hass: HomeAssistant) -> 
         assert optimize_entry is not None, "Run Optimize Now button not found in entity registry"
         assert refresh_entry is not None, "Refresh Sensors button not found in entity registry"
 
-        from homeassistant.const import EntityCategory
         assert optimize_entry.entity_category == EntityCategory.DIAGNOSTIC
         assert refresh_entry.entity_category == EntityCategory.DIAGNOSTIC
 

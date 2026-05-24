@@ -8,10 +8,17 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Callable
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_NAME
+from homeassistant.const import (
+    CONF_NAME,
+    STATE_OFF,
+    STATE_ON,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+)
 from homeassistant.core import HomeAssistant
 
 from ..const import (
+    CONF_AVAILABILITY_SOURCE,
     CONF_CAN_CHARGE_FROM_GRID,
     CONF_CAN_CHARGE_FROM_PV,
     CONF_CAPACITY_KWH,
@@ -74,6 +81,10 @@ PROFILE_SETTINGS = {
         "mode_switch_cost": 0.03,
     },
 }
+
+BATTERY_SKIP_NOT_AVAILABLE = "not_available_for_planning"
+BATTERY_SKIP_SOC_UNAVAILABLE = "soc_unavailable"
+BATTERY_SKIP_AVAILABILITY_UNAVAILABLE = "availability_unavailable"
 
 type SourceIssueRecorder = Callable[..., None]
 
@@ -185,6 +196,7 @@ class PlanningRequestBuilder:
 
         runtime_data = entry.runtime_data
         battery_entities: list[dict[str, Any]] = []
+        skipped_batteries: dict[str, dict[str, Any]] = {}
         comfort_entities: list[dict[str, Any]] = []
         optional_entities: list[dict[str, Any]] = []
 
@@ -199,11 +211,14 @@ class PlanningRequestBuilder:
                 name = str(subentry.data.get(CONF_NAME, subentry.title))
                 subentry_id = subentry.subentry_id
                 capacity_kwh = float(subentry.data[CONF_CAPACITY_KWH])
-                initial_kwh = self._battery_initial_kwh(
-                    str(subentry.data[CONF_SOC_SOURCE]),
-                    f"battery `{name}` SoC source",
+                initial_kwh, skip = self._resolve_battery_initial_kwh(
+                    subentry.data,
+                    name=name,
                     capacity_kwh=capacity_kwh,
                 )
+                if skip is not None:
+                    skipped_batteries[subentry_id] = skip
+                    continue
                 can_charge_from = (
                     (1 if bool(subentry.data.get(CONF_CAN_CHARGE_FROM_GRID, False)) else 0)
                     | (2 if bool(subentry.data.get(CONF_CAN_CHARGE_FROM_PV, True)) else 0)
@@ -381,6 +396,7 @@ class PlanningRequestBuilder:
                     "comforts": comfort_name_to_subentry,
                     "optionals": optional_name_to_subentry,
                 },
+                "skipped_batteries": skipped_batteries,
                 "usage_forecast_points": usage_forecast_points,
             },
             timings,
@@ -535,23 +551,90 @@ class PlanningRequestBuilder:
                 f"{label} state for `{entity_id}` is not numeric",
             ) from err
 
-    def _battery_initial_kwh(
-        self, entity_id: str, label: str, *, capacity_kwh: float
-    ) -> float:
-        """Return battery SoC normalized to kWh for the optimizer."""
-        state = self._hass.states.get(entity_id)
-        if state is None:
-            raise PlanningStageError(
-                StageErrorKind.PLANNER_INPUT,
-                f"{label} entity `{entity_id}` was not found",
+    def _resolve_battery_initial_kwh(
+        self,
+        data: dict[str, Any],
+        *,
+        name: str,
+        capacity_kwh: float,
+    ) -> tuple[float | None, dict[str, Any] | None]:
+        """Return battery initial kWh or skip diagnostics for this planning run."""
+        availability_source = str(data.get(CONF_AVAILABILITY_SOURCE) or "")
+        soc_source = str(data[CONF_SOC_SOURCE])
+        if availability_source:
+            availability = self._hass.states.get(availability_source)
+            if availability is None or availability.state in {
+                STATE_UNKNOWN,
+                STATE_UNAVAILABLE,
+            }:
+                return None, self._battery_skip(
+                    name=name,
+                    reason=BATTERY_SKIP_AVAILABILITY_UNAVAILABLE,
+                    availability_source=availability_source,
+                    soc_source=soc_source,
+                    degraded=True,
+                )
+            if availability.state == STATE_OFF:
+                return None, self._battery_skip(
+                    name=name,
+                    reason=BATTERY_SKIP_NOT_AVAILABLE,
+                    availability_source=availability_source,
+                    soc_source=soc_source,
+                    degraded=False,
+                )
+            if availability.state != STATE_ON:
+                return None, self._battery_skip(
+                    name=name,
+                    reason=BATTERY_SKIP_AVAILABILITY_UNAVAILABLE,
+                    availability_source=availability_source,
+                    soc_source=soc_source,
+                    degraded=True,
+                )
+
+        initial_kwh = self._battery_initial_kwh_if_available(
+            soc_source,
+            capacity_kwh=capacity_kwh,
+        )
+        if initial_kwh is None:
+            return None, self._battery_skip(
+                name=name,
+                reason=BATTERY_SKIP_SOC_UNAVAILABLE,
+                availability_source=availability_source or None,
+                soc_source=soc_source,
+                degraded=True,
             )
+        return initial_kwh, None
+
+    def _battery_skip(
+        self,
+        *,
+        name: str,
+        reason: str,
+        availability_source: str | None,
+        soc_source: str,
+        degraded: bool,
+    ) -> dict[str, Any]:
+        """Build stable diagnostics for a battery omitted from optimizer input."""
+        return {
+            "name": name,
+            "skipped": True,
+            "reason": reason,
+            "availability_source": availability_source,
+            "soc_source": soc_source,
+            "degraded": degraded,
+        }
+
+    def _battery_initial_kwh_if_available(
+        self, entity_id: str, *, capacity_kwh: float
+    ) -> float | None:
+        """Return battery SoC normalized to kWh, or None when unusable."""
+        state = self._hass.states.get(entity_id)
+        if state is None or state.state in {STATE_UNKNOWN, STATE_UNAVAILABLE}:
+            return None
         try:
             numeric_value = float(state.state)
-        except (TypeError, ValueError) as err:
-            raise PlanningStageError(
-                StageErrorKind.PLANNER_INPUT,
-                f"{label} state for `{entity_id}` is not numeric",
-            ) from err
+        except (TypeError, ValueError):
+            return None
         if state.attributes.get("unit_of_measurement") == "%":
             return max(0.0, min(capacity_kwh, (numeric_value / 100.0) * capacity_kwh))
         return numeric_value

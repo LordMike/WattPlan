@@ -55,7 +55,6 @@ class HistoricalPeriodSummary:
     period_start: str
     period_end: str
     scenario: str | None
-    retention_days: int
 
 
 class HistoricalCostStore:
@@ -252,7 +251,6 @@ class HistoricalCostStore:
             period_start=period_start.isoformat(),
             period_end=period_end.isoformat(),
             scenario=scenario,
-            retention_days=RETENTION_DAYS,
         )
 
     def _record_value(

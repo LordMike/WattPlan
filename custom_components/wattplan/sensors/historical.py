@@ -170,7 +170,6 @@ class HistoricalCostSensor(SensorEntity):
             "period_start": summary.period_start,
             "period_end": summary.period_end,
             "scenario": summary.scenario,
-            "retention_days": summary.retention_days,
         }
 
     def _summary(self):

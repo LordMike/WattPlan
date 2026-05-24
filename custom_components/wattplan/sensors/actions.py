@@ -53,6 +53,13 @@ class SubentryActionSensor(WattPlanCoordinatorSensor):
         subentry_data = group_data.get(self._subentry_id, {})
         return subentry_data if isinstance(subentry_data, dict) else {}
 
+    @property
+    def available(self) -> bool:
+        """Return whether this action sensor has current plan data."""
+        if not super().available:
+            return False
+        return not bool(self._action_data().get("skipped", False))
+
 
 class ActionSensor(SubentryActionSensor):
     """Action sensor with next action timestamp attributes."""

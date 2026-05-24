@@ -1126,7 +1126,7 @@
       },
       "historical_costs": {
         "title": "Historical costs",
-        "description": "Track measured historical cost and simulated savings from completed slots. WattPlan stores 60 days in Home Assistant Store.",
+        "description": "Track measured cost and compare it with simple reference scenarios from completed slots. Use this to see whether WattPlan is actually improving your setup over time.",
         "data": {
           "historical_cost_tracking_enabled": "Enable historical cost tracking",
           "historical_grid_import_sensor": "Grid import cumulative kWh sensor",
@@ -1137,8 +1137,43 @@
           "historical_simulate_self_consumption": "Enable self-consumption simulation"
         },
         "data_description": {
-          "historical_grid_export_sensor": "Optional. Leave unset when exported power should be treated as zero.",
-          "historical_pv_sensor": "Optional. Leave unset when PV is not part of this setup."
+          "historical_cost_tracking_enabled": "When enabled, WattPlan samples completed slots from the cumulative energy sensors below and exposes daily and monthly historical cost entities.",
+          "historical_grid_import_sensor": "Required when tracking is enabled. Select the total-increasing kWh sensor that measures energy imported from the grid.",
+          "historical_grid_export_sensor": "Optional. Select the total-increasing kWh sensor that measures energy exported to the grid. Leave empty when exported power should be treated as zero.",
+          "historical_usage_sensor": "Required when tracking is enabled. Select the total-increasing kWh sensor that measures total site usage or consumption.",
+          "historical_pv_sensor": "Optional. Select the total-increasing kWh sensor that measures PV production. Leave empty when PV is not part of this setup.",
+          "historical_simulate_no_battery": "When enabled, WattPlan also calculates a reference cost where usage is served by PV first and any remaining deficit or surplus goes directly to the grid.",
+          "historical_simulate_self_consumption": "When enabled, WattPlan also calculates a reference cost where PV serves usage first, PV surplus charges batteries, and batteries discharge before grid import."
+        }
+      },
+      "planner_timers_warning_planning": {
+        "title": "Manual planning acknowledgement",
+        "description": "Scheduled planning is disabled.\n\nWattPlan will not create fresh plans automatically. Fresh plan generation is now user-managed, and you must call `wattplan.run_optimize_now` from your own automation or schedule when you want WattPlan to read sources and calculate a new plan.",
+        "data": {
+          "accept_manual_scheduling": "I understand that I must schedule `wattplan.run_optimize_now` myself"
+        },
+        "data_description": {
+          "accept_manual_scheduling": "Leave this unchecked to return to Scheduler settings and adjust these options."
+        }
+      },
+      "planner_timers_warning_action_emission": {
+        "title": "Manual action publishing acknowledgement",
+        "description": "Scheduled action emission is disabled.\n\nWattPlan will not publish the current slot's battery and load actions automatically. Current-slot action publishing is now user-managed, and you must call `wattplan.refresh_sensors` from your own automation or schedule when you want action and status entities refreshed from the current plan.",
+        "data": {
+          "accept_manual_scheduling": "I understand that I must schedule `wattplan.refresh_sensors` myself"
+        },
+        "data_description": {
+          "accept_manual_scheduling": "Leave this unchecked to return to Scheduler settings and adjust these options."
+        }
+      },
+      "planner_timers_warning_both": {
+        "title": "Manual cadence acknowledgement",
+        "description": "Scheduled planning and scheduled action emission are disabled.\n\nWattPlan has no automatic cadence. You must drive both `wattplan.run_optimize_now` and `wattplan.refresh_sensors` from your own automations or schedules if you want fresh plans and timely entity and status updates.",
+        "data": {
+          "accept_manual_scheduling": "I understand that I must schedule both WattPlan services myself"
+        },
+        "data_description": {
+          "accept_manual_scheduling": "Leave this unchecked to return to Scheduler settings and adjust these options."
         }
       },
       "battery_entities": {
@@ -1165,6 +1200,7 @@
         "data": {
           "name": "Name",
           "soc_source": "SoC source",
+          "availability_source": "Availability source",
           "capacity_kwh": "Capacity (kWh)",
           "minimum_kwh": "Minimum (kWh)",
           "max_charge_kw": "Max charge power (kW)",
@@ -1175,6 +1211,7 @@
         "data_description": {
           "name": "A friendly name for this battery in WattPlan entities and services.",
           "soc_source": "Entity that reports current battery state of charge.",
+          "availability_source": "Optional binary sensor for batteries that are not always plugged in or controllable, especially EV batteries. Leave empty to treat the battery as always available. When set, the sensor must be on before WattPlan may plan charge or discharge control for this battery.",
           "capacity_kwh": "Total usable battery capacity in kilowatt-hours.",
           "minimum_kwh": "Lowest allowed energy level for planning. For lithium batteries, a good starting point is about 10% of capacity, for example 1 kWh on a 10 kWh battery.",
           "max_charge_kw": "Maximum charging power the battery can accept. A reasonable starting point is about half the battery capacity in kW, for example 5 kW on a 10 kWh battery.",
@@ -1457,6 +1494,7 @@
           "data": {
             "name": "Name",
             "soc_source": "SoC source",
+            "availability_source": "Availability source",
             "capacity_kwh": "Capacity (kWh)",
             "minimum_kwh": "Minimum (kWh)",
             "max_charge_kw": "Max charge power (kW)",
@@ -1466,6 +1504,7 @@
           },
           "data_description": {
             "soc_source": "Entity reporting the current state of charge for this battery.",
+            "availability_source": "Optional binary sensor for batteries that are not always plugged in or controllable, especially EV batteries. Leave empty to treat the battery as always available. When set, the sensor must be on before WattPlan may plan charge or discharge control for this battery.",
             "capacity_kwh": "Total usable battery capacity.",
             "minimum_kwh": "Minimum energy that should remain in the battery. For lithium batteries, a good starting point is about 10% of capacity, for example 1 kWh on a 10 kWh battery.",
             "max_charge_kw": "Maximum charging power used by the planner. A reasonable starting point is about half the battery capacity in kW, for example 5 kW on a 10 kWh battery.",
@@ -1493,6 +1532,7 @@
           "data": {
             "name": "Name",
             "soc_source": "SoC source",
+            "availability_source": "Availability source",
             "capacity_kwh": "Capacity (kWh)",
             "minimum_kwh": "Minimum (kWh)",
             "max_charge_kw": "Max charge power (kW)",
@@ -1502,6 +1542,7 @@
           },
           "data_description": {
             "soc_source": "Entity reporting the current state of charge for this battery.",
+            "availability_source": "Optional binary sensor for batteries that are not always plugged in or controllable, especially EV batteries. Leave empty to treat the battery as always available. When set, the sensor must be on before WattPlan may plan charge or discharge control for this battery.",
             "capacity_kwh": "Total usable battery capacity.",
             "minimum_kwh": "Minimum energy that should remain in the battery. For lithium batteries, a good starting point is about 10% of capacity, for example 1 kWh on a 10 kWh battery.",
             "max_charge_kw": "Maximum charging power used by the planner. A reasonable starting point is about half the battery capacity in kW, for example 5 kW on a 10 kWh battery.",

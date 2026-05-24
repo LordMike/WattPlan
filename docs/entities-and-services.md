@@ -22,8 +22,8 @@ These exist once per WattPlan setup:
 | `sensor.<setup_slug>_export_price_status` | Present when export price is configured. Export price source health: `ok`, `degraded`, or `failed`. |
 | `sensor.<setup_slug>_pv_status` | Present when PV is configured. PV source health: `ok`, `degraded`, or `failed`. |
 | `sensor.<setup_slug>_last_run` | Timestamp of the last successful optimize (plan calculation) cycle. |
-| `sensor.<setup_slug>_next_run` | Timestamp of the next scheduled planning cycle. |
-| `sensor.<setup_slug>_last_run_duration` | Duration of the last optimize cycle in milliseconds. |
+| `sensor.<setup_slug>_next_run` | Disabled by default. Timestamp of the next scheduled planning cycle. |
+| `sensor.<setup_slug>_last_run_duration` | Disabled by default. Duration of the last optimize cycle in milliseconds. |
 | `sensor.<setup_slug>_plan_details` | Disabled by default. Raw planner-detail payload at WattPlan's configured slot size. |
 | `sensor.<setup_slug>_plan_details_hourly` | Disabled by default. The same planner details, aggregated to hourly buckets. |
 | `sensor.<setup_slug>_usage_forecast` | Present when the built-in usage source is configured. Exposes the generated usage forecast. |
@@ -32,29 +32,35 @@ When `sensor.<setup_slug>_status` is `failed`, plan-dependent entities such as a
 
 ## Historical Cost Entities
 
-Historical cost tracking is opt-in from the WattPlan options flow. It uses Home Assistant Store storage owned by WattPlan, not recorder backfill or SQLite. The tracker samples completed slots from configured cumulative kWh meters and retains 60 local days.
+Historical cost tracking is opt-in from the WattPlan options flow. It adds entities that compare the measured cost of what actually happened with simple reference scenarios from the same completed slots.
 
 Enabled by default when historical tracking is enabled:
 
 | Entity | Purpose |
 | --- | --- |
-| `sensor.<setup_slug>_historical_actual_cost_today` | Measured grid import/export cost for today. |
-| `sensor.<setup_slug>_historical_no_battery_cost_today` | Simulated cost for today if the site had usage and PV but no batteries. |
-| `sensor.<setup_slug>_historical_self_consumption_cost_today` | Simulated cost for today with simple PV-first battery self-consumption. |
-| `sensor.<setup_slug>_historical_savings_vs_no_battery_today` | No-battery cost minus actual cost for today. |
-| `sensor.<setup_slug>_historical_savings_vs_self_consumption_today` | Self-consumption cost minus actual cost for today. |
+| `sensor.<setup_slug>_historical_actual_cost_today` | Actual measured net cost for the current local day. This is grid import cost minus grid export value after all planning, automation, manual control, or lack of control. |
+| `sensor.<setup_slug>_historical_no_battery_cost_today` | Reference cost for the current local day if usage was served by PV first, remaining usage came from the grid, PV surplus was exported, and batteries were ignored. |
+| `sensor.<setup_slug>_historical_self_consumption_cost_today` | Reference cost for the current local day if PV served usage first, PV surplus charged configured batteries, and batteries discharged before grid import. This is the more realistic baseline for many battery setups. |
+| `sensor.<setup_slug>_historical_savings_vs_no_battery_today` | No-battery reference cost minus actual cost for the current local day. Positive means actual behavior was cheaper than the no-battery reference. |
+| `sensor.<setup_slug>_historical_savings_vs_self_consumption_today` | Self-consumption reference cost minus actual cost for the current local day. Positive means actual behavior was cheaper than simple self-consumption. |
 
 Disabled by default:
 
 | Entity | Purpose |
 | --- | --- |
-| `sensor.<setup_slug>_historical_actual_cost_this_month` | Measured grid import/export cost for the current local month. |
-| `sensor.<setup_slug>_historical_no_battery_cost_this_month` | No-battery simulated cost for the current local month. |
-| `sensor.<setup_slug>_historical_self_consumption_cost_this_month` | Self-consumption simulated cost for the current local month. |
-| `sensor.<setup_slug>_historical_savings_vs_no_battery_this_month` | No-battery savings for the current local month. |
-| `sensor.<setup_slug>_historical_savings_vs_self_consumption_this_month` | Self-consumption savings for the current local month. |
+| `sensor.<setup_slug>_historical_actual_cost_this_month` | Actual measured net cost for the current local month. |
+| `sensor.<setup_slug>_historical_no_battery_cost_this_month` | No-battery reference cost for the current local month. |
+| `sensor.<setup_slug>_historical_self_consumption_cost_this_month` | Self-consumption reference cost for the current local month. |
+| `sensor.<setup_slug>_historical_savings_vs_no_battery_this_month` | No-battery reference cost minus actual cost for the current local month. |
+| `sensor.<setup_slug>_historical_savings_vs_self_consumption_this_month` | Self-consumption reference cost minus actual cost for the current local month. |
 
-Historical sensors use the Home Assistant currency as their unit and expose `tracking_started_at`, `last_complete_slot`, `slots`, `missing_slots`, `period_start`, `period_end`, `scenario`, and `retention_days` attributes. Missing meters, meter resets, missing prices, and skipped slots are counted as missing slots instead of being spread across price intervals.
+Historical sensors use the Home Assistant currency as their unit and expose `tracking_started_at`, `last_complete_slot`, `slots`, `missing_slots`, `period_start`, `period_end`, and `scenario` attributes. Missing meters, meter resets, missing prices, and skipped slots are counted as missing slots instead of being spread across price intervals.
+
+For most setups, compare actual cost with self-consumption cost first. That shows whether WattPlan's price-aware behavior is beating a simple PV-first battery strategy. The no-battery reference is useful when you want a broader view of what battery behavior contributed at all.
+
+The overall status sensor is the canonical view of whether the current plan is usable. Its `plan_created_at` attribute is the snapshot creation time, and its `expires_at` attribute is the end of the current usable plan coverage from the optimizer horizon. If planning fails but WattPlan retains a previous snapshot, `expires_at` continues to describe that retained plan. Once the retained or active plan no longer covers the current time, the overall status becomes `failed`, `is_stale` becomes `true`, and `has_usable_plan` becomes `false`.
+
+Per-source status sensors explain input health. Their `expires_at` attribute describes the source data or fallback coverage for that source, not the whole plan. Stale fallback data from a source can make the overall status `degraded` while the plan is still usable; an expired overall plan is `failed`.
 
 ## Battery Entities
 
@@ -62,8 +68,11 @@ These exist once per configured battery:
 
 | Entity | Purpose |
 | --- | --- |
-| `sensor.<setup_slug>_<battery_name>_action` | Current battery-control policy: `preserve`, `self_consume`, or `grid_charge`. WattPlan updates this entity on its planning schedule so **your own automation can translate the policy into a real inverter or battery command**. The state is a policy derived from the plan, not a raw forecast battery-flow value. See [extras.md](extras.md#real-life-examples) for automation examples. |
+| `sensor.<setup_slug>_<battery_name>_action` | Current battery-control policy: `preserve`, `self_consume`, or `grid_charge`. WattPlan updates this entity on its planning schedule so **your own automation can translate the policy into a real inverter or battery command**. The state is a policy derived from the plan, not a raw forecast battery-flow value. The entity is unavailable when that battery is skipped for the current plan. See [extras.md](extras.md#real-life-examples) for automation examples. |
+| `sensor.<setup_slug>_<battery_name>_next_action` | Next planned battery-control policy change. Disabled by default. This is also unavailable when the battery is skipped for the current plan. |
 | `sensor.<setup_slug>_<battery_name>_target` | User-supplied target SoC in kWh. Includes a `by` attribute with the requested deadline and returns `unknown` when no active target is set. |
+
+Battery setup can optionally include an availability source. Leave it empty for batteries that should always be treated as available. When set, this is a binary sensor meaning "WattPlan may currently control charge or discharge for this battery." This is mostly meant for EV batteries or other storage that is not always plugged in or controllable. If it is `off`, the battery is skipped without degrading status. If availability is unknown/unavailable, or if SoC is missing or non-numeric when the battery is expected to be usable, WattPlan skips only that battery and marks status degraded.
 
 ## Comfort Load Entities
 
@@ -79,10 +88,9 @@ These exist once per configured optional load:
 
 | Entity | Purpose |
 | --- | --- |
-| `sensor.<setup_slug>_<optional_name>_next_start_option` | First suggested start time. |
-| `sensor.<setup_slug>_<optional_name>_next_end_option` | End time of the first suggested option. |
-| `sensor.<setup_slug>_<optional_name>_option_1_start` | Start time for option 1. |
-| `sensor.<setup_slug>_<optional_name>_option_2_start` | Start time for option 2. |
+| `sensor.<setup_slug>_<optional_name>_next_start_option` | First suggested start time. Includes an `end_timestamp` attribute for the suggested end time. |
+| `sensor.<setup_slug>_<optional_name>_option_1_start` | Start time for option 1. Includes an `end_timestamp` attribute for the option end time. |
+| `sensor.<setup_slug>_<optional_name>_option_2_start` | Start time for option 2. Includes an `end_timestamp` attribute for the option end time. |
 
 Additional `option_N_start` entities appear when more options are configured.
 
@@ -92,6 +100,10 @@ WattPlan operates in two distinct steps:
 
 1. **Optimize** (`run_optimize_now`) — runs the planner and calculates a new plan. This is the slow step that reads all energy sources and solves the optimization. Run it as often as you want fresh plans, but it can be infrequent if the optimizer is slow.
 2. **Refresh** (`refresh_sensors`) — reads the already-calculated plan and pushes the current slot's actions to HA sensor entities. This is fast and can be called frequently to keep action sensors up to date without re-running the optimizer.
+
+By default, WattPlan schedules both steps on the configured planner interval. If you disable scheduled planning in Scheduler settings, fresh plan generation becomes your responsibility and you should call `wattplan.run_optimize_now` from your own automation or schedule. If you disable scheduled action emission, current-slot action publishing becomes your responsibility and you should call `wattplan.refresh_sensors` from your own automation or schedule. If you disable both, WattPlan has no automatic cadence.
+
+The current plan's `expires_at` remains the authoritative expiry timestamp. When automatic stages are disabled, WattPlan still uses that timestamp to decide whether a plan is fresh when it runs, but you own the trigger cadence for plan refreshes and entity/status updates.
 
 WattPlan exposes the following services:
 

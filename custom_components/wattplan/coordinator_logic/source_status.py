@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -15,7 +16,7 @@ from ..const import (
     CONF_SOURCE_USAGE,
     SOURCE_MODE_NOT_USED,
 )
-from ..coordinator_parts import CoordinatorSnapshot
+from ..coordinator_parts import CoordinatorSnapshot, parse_snapshot_datetime
 from ..source_fixup import SourceFixupProvider, SourceHealthKind, SourceHealthState
 from ..source_issues import (
     build_source_issue,
@@ -24,6 +25,15 @@ from ..source_issues import (
     sync_source_issues,
 )
 from ..source_types import SourceProvider
+from .planning import (
+    BATTERY_SKIP_AVAILABILITY_UNAVAILABLE,
+    BATTERY_SKIP_SOC_UNAVAILABLE,
+)
+
+BATTERY_STATUS_REASON_CODES = {
+    BATTERY_SKIP_AVAILABILITY_UNAVAILABLE: "battery_availability_unavailable",
+    BATTERY_SKIP_SOC_UNAVAILABLE: "battery_soc_unavailable",
+}
 
 
 class SourceStatusManager:
@@ -43,6 +53,23 @@ class SourceStatusManager:
     def overall_status(self, *, is_stale: bool) -> dict[str, Any]:
         """Return current top-level health payload."""
         payload = dict(self._overall_status)
+        now = datetime.now(tz=UTC)
+        expires_at = parse_snapshot_datetime(payload.get("expires_at"))
+        if expires_at is not None and now > expires_at:
+            payload.update(
+                {
+                    "status": "failed",
+                    "reason_codes": ["plan_stale"],
+                    "reason_summary": (
+                        "No usable plan is available because the plan no longer "
+                        "covers the current time"
+                    ),
+                    "has_usable_plan": False,
+                    "is_stale": True,
+                }
+            )
+            return payload
+
         if is_stale:
             payload.update(
                 {
@@ -50,7 +77,7 @@ class SourceStatusManager:
                     "reason_codes": ["coordinator_stale"],
                     "reason_summary": "No usable plan is available because coordinator state is stale",
                     "has_usable_plan": False,
-                    "is_stale": False,
+                    "is_stale": True,
                 }
             )
         return payload
@@ -176,6 +203,20 @@ class SourceStatusManager:
                     status = "degraded"
 
         optimizer = planner_output.get("diagnostics", {}).get("optimizer", {})
+        plan_expires_at = self._snapshot_plan_expires_at(snapshot)
+        skipped_batteries = planner_output.get("diagnostics", {}).get(
+            "skipped_batteries", {}
+        )
+        if status != "failed" and isinstance(skipped_batteries, dict):
+            for skip in skipped_batteries.values():
+                if not isinstance(skip, dict):
+                    continue
+                reason_code = BATTERY_STATUS_REASON_CODES.get(str(skip.get("reason")))
+                if reason_code is None:
+                    continue
+                status = "degraded"
+                if reason_code not in reason_codes:
+                    reason_codes.append(reason_code)
         if (
             status != "failed"
             and isinstance(optimizer, dict)
@@ -196,6 +237,13 @@ class SourceStatusManager:
                 reason_summary = (
                     f"Plan is available, but {affected_sources[0].replace('_', ' ')} is degraded"
                 )
+            elif any(
+                reason in reason_codes
+                for reason in BATTERY_STATUS_REASON_CODES.values()
+            ):
+                reason_summary = (
+                    "Plan is available, but one or more batteries were skipped"
+                )
             elif "optimizer_suboptimal" in reason_codes:
                 reason_summary = "Plan is available, but the optimizer returned a degraded result"
             else:
@@ -211,14 +259,7 @@ class SourceStatusManager:
             "critical_sources_failed": critical_sources_failed,
             "is_stale": is_stale,
             "has_usable_plan": has_usable_plan,
-            "expires_at": next(
-                (
-                    payload.get("expires_at")
-                    for payload in self._source_statuses.values()
-                    if payload.get("is_stale") and payload.get("expires_at")
-                ),
-                None,
-            ),
+            "expires_at": plan_expires_at.isoformat() if plan_expires_at else None,
             "plan_created_at": snapshot.created_at.isoformat() if snapshot is not None else None,
         }
 
@@ -232,6 +273,7 @@ class SourceStatusManager:
             if source_status.get("status") == "failed"
         ]
         if snapshot is not None:
+            plan_expires_at = self._snapshot_plan_expires_at(snapshot)
             self._overall_status = {
                 "status": "degraded",
                 "reason_codes": ["planner_failed_using_previous_plan"],
@@ -244,7 +286,7 @@ class SourceStatusManager:
                 ],
                 "is_stale": False,
                 "has_usable_plan": True,
-                "expires_at": None,
+                "expires_at": plan_expires_at.isoformat() if plan_expires_at else None,
                 "plan_created_at": snapshot.created_at.isoformat(),
             }
             return
@@ -269,6 +311,7 @@ class SourceStatusManager:
         """Set top-level status after restoring a cached snapshot."""
         planner_status = str(snapshot.planner_status)
         restored_status = planner_status if planner_status in {"ok", "degraded"} else "ok"
+        plan_expires_at = self._snapshot_plan_expires_at(snapshot)
         self._overall_status = {
             "status": restored_status,
             "reason_codes": [],
@@ -281,7 +324,7 @@ class SourceStatusManager:
             "critical_sources_failed": [],
             "is_stale": False,
             "has_usable_plan": True,
-            "expires_at": None,
+            "expires_at": plan_expires_at.isoformat() if plan_expires_at else None,
             "plan_created_at": snapshot.created_at.isoformat(),
         }
 
@@ -304,7 +347,9 @@ class SourceStatusManager:
                 "is_critical": is_critical,
                 "available_count": None,
                 "required_count": None,
-                "expires_at": None,
+                "expires_at": health.expires_at.isoformat()
+                if health is not None and health.expires_at
+                else None,
                 "provider_kind": provider_kind,
             }
 
@@ -370,6 +415,19 @@ class SourceStatusManager:
         if source_key == CONF_SOURCE_USAGE:
             return source_config.get(CONF_SOURCE_MODE) != SOURCE_MODE_NOT_USED
         return False
+
+    @staticmethod
+    def _snapshot_plan_expires_at(snapshot: CoordinatorSnapshot | None) -> datetime | None:
+        """Return the end of usable plan coverage from optimizer diagnostics."""
+        if snapshot is None:
+            return None
+        diagnostics = snapshot.diagnostics
+        if not isinstance(diagnostics, dict):
+            return None
+        optimizer = diagnostics.get("optimizer")
+        if not isinstance(optimizer, dict):
+            return None
+        return parse_snapshot_datetime(optimizer.get("span_end"))
 
     @staticmethod
     def _default_overall_status() -> dict[str, Any]:

@@ -46,6 +46,7 @@ from ..const import (
     CONF_ACTION_EMISSION_ENABLED,
     CONF_ADAPTER_TYPE,
     CONF_AGGREGATION_MODE,
+    CONF_AVAILABILITY_SOURCE,
     CONF_CAN_CHARGE_FROM_GRID,
     CONF_CAN_CHARGE_FROM_PV,
     CONF_CAPACITY_KWH,
@@ -1376,6 +1377,9 @@ def _battery_schema() -> vol.Schema:
                 selector.EntitySelectorConfig(
                     domain=["sensor"], device_class=["battery"]
                 )
+            ),
+            vol.Optional(CONF_AVAILABILITY_SOURCE): selector.EntitySelector(
+                selector.EntitySelectorConfig(domain=["binary_sensor"])
             ),
             vol.Required(CONF_CAPACITY_KWH, default=10): selector.NumberSelector(
                 selector.NumberSelectorConfig(
