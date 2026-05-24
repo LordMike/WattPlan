@@ -56,6 +56,9 @@ from .source_shared import (
     vol,
 )
 
+CONF_ACCEPT_MANUAL_SCHEDULING = "accept_manual_scheduling"
+
+
 class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
     """Handle a config flow for WattPlan."""
 
@@ -472,6 +475,7 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
 
     _data: dict[str, Any]
     _options: dict[str, Any]
+    _pending_timer_options: dict[str, Any] | None
     _selected_subentry_id: str | None
     _source_state: SourceFlowState
 
@@ -484,6 +488,7 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
         self._options.setdefault(
             CONF_OPTIMIZER_PROFILE, OPTIMIZER_PROFILE_BALANCED
         )
+        self._pending_timer_options = None
         self._selected_subentry_id = None
         self._source_state = SourceFlowState()
 
@@ -545,23 +550,30 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
     ) -> ConfigFlowResult:
         """Configure timer behavior flags."""
         if user_input is not None:
-            self._options.update(user_input)
-            self.hass.config_entries.async_update_entry(
-                self.config_entry, options=self._options
-            )
-            return await self.async_step_init()
+            self._pending_timer_options = dict(user_input)
+            if (
+                user_input[CONF_PLANNING_ENABLED]
+                and user_input[CONF_ACTION_EMISSION_ENABLED]
+            ):
+                return await self._async_commit_planner_timers()
+            return await self._async_show_planner_timers_warning()
 
+        return self._async_show_planner_timers_form()
+
+    def _async_show_planner_timers_form(self) -> ConfigFlowResult:
+        """Show the timer settings form."""
+        defaults = self._pending_timer_options or self._options
         return self.async_show_form(
             step_id="planner_timers",
             data_schema=vol.Schema(
                 {
                     vol.Required(
                         CONF_PLANNING_ENABLED,
-                        default=self._options[CONF_PLANNING_ENABLED],
+                        default=defaults[CONF_PLANNING_ENABLED],
                     ): selector.BooleanSelector(),
                     vol.Required(
                         CONF_ACTION_EMISSION_ENABLED,
-                        default=self._options[CONF_ACTION_EMISSION_ENABLED],
+                        default=defaults[CONF_ACTION_EMISSION_ENABLED],
                     ): selector.BooleanSelector(),
                 }
             ),
@@ -569,6 +581,74 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
                 "slot_minutes": str(self._data[CONF_SLOT_MINUTES])
             },
         )
+
+    async def _async_commit_planner_timers(self) -> ConfigFlowResult:
+        """Persist staged timer options and return to the options menu."""
+        if self._pending_timer_options is not None:
+            self._options.update(self._pending_timer_options)
+            self._pending_timer_options = None
+            self.hass.config_entries.async_update_entry(
+                self.config_entry, options=self._options
+            )
+        return await self.async_step_init()
+
+    async def _async_show_planner_timers_warning(self) -> ConfigFlowResult:
+        """Show the warning step matching the staged timer settings."""
+        if self._pending_timer_options is None:
+            return await self.async_step_init()
+
+        return self.async_show_form(
+            step_id=self._planner_timers_warning_step_id(),
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_ACCEPT_MANUAL_SCHEDULING,
+                        default=False,
+                    ): selector.BooleanSelector()
+                }
+            ),
+        )
+
+    def _planner_timers_warning_step_id(self) -> str:
+        """Return the warning step id for staged timer settings."""
+        assert self._pending_timer_options is not None
+        planning_enabled = self._pending_timer_options[CONF_PLANNING_ENABLED]
+        action_enabled = self._pending_timer_options[CONF_ACTION_EMISSION_ENABLED]
+        if not planning_enabled and not action_enabled:
+            return "planner_timers_warning_both"
+        if not planning_enabled:
+            return "planner_timers_warning_planning"
+        return "planner_timers_warning_action_emission"
+
+    async def _async_handle_planner_timers_warning(
+        self, user_input: dict[str, Any] | None
+    ) -> ConfigFlowResult:
+        """Handle manual scheduler acknowledgement."""
+        if self._pending_timer_options is None:
+            return await self.async_step_init()
+        if user_input is not None:
+            if user_input[CONF_ACCEPT_MANUAL_SCHEDULING]:
+                return await self._async_commit_planner_timers()
+            return self._async_show_planner_timers_form()
+        return await self._async_show_planner_timers_warning()
+
+    async def async_step_planner_timers_warning_planning(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Warn when scheduled planning is disabled."""
+        return await self._async_handle_planner_timers_warning(user_input)
+
+    async def async_step_planner_timers_warning_action_emission(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Warn when scheduled action emission is disabled."""
+        return await self._async_handle_planner_timers_warning(user_input)
+
+    async def async_step_planner_timers_warning_both(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Warn when all automatic scheduler behavior is disabled."""
+        return await self._async_handle_planner_timers_warning(user_input)
 
     async def async_step_battery_entities(
         self, user_input: dict[str, Any] | None = None

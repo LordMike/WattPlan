@@ -1123,6 +1123,36 @@
           "action_emission_enabled": "When enabled, battery policy states like preserve/self_consume/grid_charge are published every {slot_minutes} minutes."
         }
       },
+      "planner_timers_warning_planning": {
+        "title": "Manual planning acknowledgement",
+        "description": "Scheduled planning is disabled.\n\nWattPlan will not create fresh plans automatically. Fresh plan generation is now user-managed, and you must call `wattplan.run_optimize_now` from your own automation or schedule when you want WattPlan to read sources and calculate a new plan.",
+        "data": {
+          "accept_manual_scheduling": "I understand that I must schedule `wattplan.run_optimize_now` myself"
+        },
+        "data_description": {
+          "accept_manual_scheduling": "Leave this unchecked to return to Scheduler settings and adjust these options."
+        }
+      },
+      "planner_timers_warning_action_emission": {
+        "title": "Manual action publishing acknowledgement",
+        "description": "Scheduled action emission is disabled.\n\nWattPlan will not publish the current slot's battery and load actions automatically. Current-slot action publishing is now user-managed, and you must call `wattplan.refresh_sensors` from your own automation or schedule when you want action and status entities refreshed from the current plan.",
+        "data": {
+          "accept_manual_scheduling": "I understand that I must schedule `wattplan.refresh_sensors` myself"
+        },
+        "data_description": {
+          "accept_manual_scheduling": "Leave this unchecked to return to Scheduler settings and adjust these options."
+        }
+      },
+      "planner_timers_warning_both": {
+        "title": "Manual cadence acknowledgement",
+        "description": "Scheduled planning and scheduled action emission are disabled.\n\nWattPlan has no automatic cadence. You must drive both `wattplan.run_optimize_now` and `wattplan.refresh_sensors` from your own automations or schedules if you want fresh plans and timely entity and status updates.",
+        "data": {
+          "accept_manual_scheduling": "I understand that I must schedule both WattPlan services myself"
+        },
+        "data_description": {
+          "accept_manual_scheduling": "Leave this unchecked to return to Scheduler settings and adjust these options."
+        }
+      },
       "battery_entities": {
         "title": "Battery entities",
         "description": "Edit or remove configured batteries.",
