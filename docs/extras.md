@@ -37,12 +37,16 @@ Configure batteries through the WattPlan integration UI:
 
 This is a WattPlan UI flow. You do not configure batteries by editing YAML.
 
+You may also set an optional battery availability source. It must be a binary sensor whose `on` state means WattPlan may plan with the battery now. This keeps the model generic for batteries that are sometimes not usable, such as mobile or externally controlled storage, without adding device-specific states.
+
 ### How to Use Them
 WattPlan exposes battery-related entities such as:
 - A battery action sensor
 - A battery target sensor
 
 The battery action sensor is the key one for control. Your automation should read that action and then translate it into the command model your inverter understands.
+
+If a battery is skipped for the current plan, its action and next-action sensors are unavailable. The target sensor remains available because it represents your requested intent, not the current optimizer output. A battery skipped because its availability source is `off` does not degrade status; missing/untrusted availability or unusable SoC does.
 
 See [Real Life Examples](#real-life-examples) for a concrete Home Assistant automation pattern.
 

@@ -24,6 +24,15 @@ from ..source_issues import (
     sync_source_issues,
 )
 from ..source_types import SourceProvider
+from .planning import (
+    BATTERY_SKIP_AVAILABILITY_UNAVAILABLE,
+    BATTERY_SKIP_SOC_UNAVAILABLE,
+)
+
+BATTERY_STATUS_REASON_CODES = {
+    BATTERY_SKIP_AVAILABILITY_UNAVAILABLE: "battery_availability_unavailable",
+    BATTERY_SKIP_SOC_UNAVAILABLE: "battery_soc_unavailable",
+}
 
 
 class SourceStatusManager:
@@ -176,6 +185,19 @@ class SourceStatusManager:
                     status = "degraded"
 
         optimizer = planner_output.get("diagnostics", {}).get("optimizer", {})
+        skipped_batteries = planner_output.get("diagnostics", {}).get(
+            "skipped_batteries", {}
+        )
+        if status != "failed" and isinstance(skipped_batteries, dict):
+            for skip in skipped_batteries.values():
+                if not isinstance(skip, dict):
+                    continue
+                reason_code = BATTERY_STATUS_REASON_CODES.get(str(skip.get("reason")))
+                if reason_code is None:
+                    continue
+                status = "degraded"
+                if reason_code not in reason_codes:
+                    reason_codes.append(reason_code)
         if (
             status != "failed"
             and isinstance(optimizer, dict)
@@ -195,6 +217,13 @@ class SourceStatusManager:
             elif affected_sources:
                 reason_summary = (
                     f"Plan is available, but {affected_sources[0].replace('_', ' ')} is degraded"
+                )
+            elif any(
+                reason in reason_codes
+                for reason in BATTERY_STATUS_REASON_CODES.values()
+            ):
+                reason_summary = (
+                    "Plan is available, but one or more batteries were skipped"
                 )
             elif "optimizer_suboptimal" in reason_codes:
                 reason_summary = "Plan is available, but the optimizer returned a degraded result"

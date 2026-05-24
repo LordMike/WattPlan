@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 
 from custom_components.wattplan.const import (
     CONF_ACTION_EMISSION_ENABLED,
+    CONF_AVAILABILITY_SOURCE,
     CONF_CAN_CHARGE_FROM_GRID,
     CONF_CAN_CHARGE_FROM_PV,
     CONF_CAPACITY_KWH,
@@ -453,6 +454,7 @@ async def test_options_flow_add_core_and_one_of_each_asset(
         {
             CONF_NAME: "Car battery",
             CONF_SOC_SOURCE: "sensor.car_soc",
+            CONF_AVAILABILITY_SOURCE: "binary_sensor.car_available",
             CONF_CAPACITY_KWH: 70,
             CONF_MINIMUM_KWH: 10,
             CONF_MAX_CHARGE_KW: 11,
@@ -513,6 +515,7 @@ async def test_options_flow_add_core_and_one_of_each_asset(
     assert any(
         subentry.subentry_type == SUBENTRY_TYPE_BATTERY
         and subentry.title == "Car battery (70 kWh, min 10 kWh)"
+        and subentry.data[CONF_AVAILABILITY_SOURCE] == "binary_sensor.car_available"
         for subentry in updated.subentries.values()
     )
 
@@ -545,6 +548,37 @@ async def test_subentry_validation_errors(
     )
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {CONF_MINIMUM_KWH: "battery_minimum_exceeds_capacity"}
+
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, SUBENTRY_TYPE_BATTERY), context={"source": "user"}
+    )
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"],
+        {
+            CONF_NAME: "Garage battery",
+            CONF_SOC_SOURCE: "sensor.garage_soc",
+            CONF_CAPACITY_KWH: 20,
+            CONF_MINIMUM_KWH: 5,
+            CONF_MAX_CHARGE_KW: 7,
+            CONF_MAX_DISCHARGE_KW: 7,
+            SECTION_BATTERY_ADVANCED: {
+                CONF_CHARGE_EFFICIENCY: 0.9,
+                CONF_DISCHARGE_EFFICIENCY: 0.9,
+            },
+            CONF_CAN_CHARGE_FROM_GRID: False,
+            CONF_CAN_CHARGE_FROM_PV: True,
+        },
+    )
+    result = await _finish_subentry_if_needed(hass, result)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    updated = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated is not None
+    battery = next(
+        subentry
+        for subentry in updated.subentries.values()
+        if subentry.data.get(CONF_NAME) == "Garage battery"
+    )
+    assert CONF_AVAILABILITY_SOURCE not in battery.data
 
     result = await hass.config_entries.subentries.async_init(
         (entry.entry_id, SUBENTRY_TYPE_OPTIONAL), context={"source": "user"}

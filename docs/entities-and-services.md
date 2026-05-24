@@ -40,8 +40,11 @@ These exist once per configured battery:
 
 | Entity | Purpose |
 | --- | --- |
-| `sensor.<setup_slug>_<battery_name>_action` | Current battery-control policy: `preserve`, `self_consume`, or `grid_charge`. WattPlan updates this entity on its planning schedule so **your own automation can translate the policy into a real inverter or battery command**. The state is a policy derived from the plan, not a raw forecast battery-flow value. See [extras.md](extras.md#real-life-examples) for automation examples. |
+| `sensor.<setup_slug>_<battery_name>_action` | Current battery-control policy: `preserve`, `self_consume`, or `grid_charge`. WattPlan updates this entity on its planning schedule so **your own automation can translate the policy into a real inverter or battery command**. The state is a policy derived from the plan, not a raw forecast battery-flow value. The entity is unavailable when that battery is skipped for the current plan. See [extras.md](extras.md#real-life-examples) for automation examples. |
+| `sensor.<setup_slug>_<battery_name>_next_action` | Next planned battery-control policy change. Disabled by default. This is also unavailable when the battery is skipped for the current plan. |
 | `sensor.<setup_slug>_<battery_name>_target` | User-supplied target SoC in kWh. Includes a `by` attribute with the requested deadline and returns `unknown` when no active target is set. |
+
+Battery setup can optionally include an availability source. This is a binary sensor meaning "WattPlan may currently plan with this battery." If it is `off`, the battery is skipped without degrading status. If availability is unknown/unavailable, or if SoC is missing or non-numeric when the battery is expected to be usable, WattPlan skips only that battery and marks status degraded.
 
 ## Comfort Load Entities
 

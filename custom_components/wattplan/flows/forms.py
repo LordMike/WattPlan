@@ -9,6 +9,7 @@ from homeassistant.const import CONF_NAME
 
 from .common import _subentry_name
 from ..const import (
+    CONF_AVAILABILITY_SOURCE,
     CONF_CAPACITY_KWH,
     CONF_CHARGE_EFFICIENCY,
     CONF_DISCHARGE_EFFICIENCY,
@@ -73,6 +74,8 @@ def _normalize_battery_input(user_input: dict[str, Any]) -> dict[str, Any]:
     """Flatten battery advanced settings into subentry data."""
     data = dict(user_input)
     data.update(data.pop(SECTION_BATTERY_ADVANCED, {}))
+    if not data.get(CONF_AVAILABILITY_SOURCE):
+        data.pop(CONF_AVAILABILITY_SOURCE, None)
     data.setdefault(CONF_CHARGE_EFFICIENCY, 0.9)
     data.setdefault(CONF_DISCHARGE_EFFICIENCY, 0.9)
     data.setdefault(CONF_PREFER_PV_SURPLUS_CHARGING, False)

@@ -24,11 +24,22 @@ class StatusSensor(WattPlanCoordinatorSensor):
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return status context."""
         status = self.coordinator.overall_status
+        diagnostics = self.snapshot.diagnostics if self.snapshot is not None else {}
+        skipped_batteries = {}
+        if isinstance(diagnostics, dict):
+            skipped = diagnostics.get("skipped_batteries", {})
+            if isinstance(skipped, dict):
+                skipped_batteries = {
+                    str(subentry_id): dict(payload)
+                    for subentry_id, payload in skipped.items()
+                    if isinstance(payload, dict)
+                }
         return {
             "reason_codes": list(status.get("reason_codes", [])),
             "reason_summary": str(status.get("reason_summary", "")),
             "affected_sources": list(status.get("affected_sources", [])),
             "critical_sources_failed": list(status.get("critical_sources_failed", [])),
+            "skipped_batteries": skipped_batteries,
             "is_stale": bool(status.get("is_stale", False)),
             "has_usable_plan": bool(status.get("has_usable_plan", False)),
             "plan_created_at": status.get("plan_created_at"),
