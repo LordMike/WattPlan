@@ -1150,8 +1150,8 @@
           "historical_grid_export_sensor": "Optional. Select the total-increasing kWh sensor that measures energy exported to the grid. Leave empty when exported power should be treated as zero.",
           "historical_usage_sensor": "Required when tracking is enabled. Select the total-increasing kWh sensor that measures total site usage or consumption.",
           "historical_pv_sensor": "Optional. Select the total-increasing kWh sensor that measures PV production. Leave empty when PV is not part of this setup.",
-          "historical_simulate_no_battery": "When enabled, WattPlan also calculates a reference cost where usage is served by PV first and any remaining deficit or surplus goes directly to the grid.\n\nThis scenario can be used to determine if WattPlan is helpful by comparing measured cost against a simple setup with no battery scheduling benefit.",
-          "historical_simulate_self_consumption": "When enabled, WattPlan also calculates a reference cost where PV serves usage first, PV surplus charges batteries, and batteries discharge before grid import.\n\nThis scenario can be used to determine if WattPlan is helpful by comparing measured cost against a common rule-based battery strategy that prioritizes local solar use."
+          "historical_simulate_no_battery": "When enabled, WattPlan also calculates a reference cost where usage is served by PV first and any remaining deficit or surplus goes directly to the grid.\n\nThis scenario can be used to determine if WattPlan is helpful by comparing measured cost against a setup with no batteries at all.",
+          "historical_simulate_self_consumption": "When enabled, WattPlan also calculates a reference cost where PV serves usage first, PV surplus charges batteries, and batteries discharge before grid import.\n\nThis scenario can be used to determine if WattPlan is helpful by comparing measured cost against a common rule-based battery strategy with no scheduling benefit."
         }
       },
       "planner_timers_warning_planning": {

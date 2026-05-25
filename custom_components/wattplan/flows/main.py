@@ -744,7 +744,11 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
             enabled = bool(user_input[CONF_HISTORICAL_COST_TRACKING_ENABLED])
             self._options[CONF_HISTORICAL_COST_TRACKING_ENABLED] = enabled
             if not enabled:
-                return self.async_create_entry(title="", data=self._options)
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry,
+                    options=self._options,
+                )
+                return self.async_create_entry(title="", data=None)
             return await self.async_step_historical_costs_settings()
 
         return self.async_show_form(
@@ -783,7 +787,11 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
                     errors[key] = "invalid_energy_sensor"
             if not errors:
                 self._options.update(normalized)
-                return self.async_create_entry(title="", data=self._options)
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry,
+                    options=self._options,
+                )
+                return self.async_create_entry(title="", data=None)
 
         return self.async_show_form(
             step_id="historical_costs_settings",
