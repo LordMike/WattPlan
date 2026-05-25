@@ -1,0 +1,10 @@
+{
+  "domain": "wattplan_testbed",
+  "name": "WattPlan Testbed",
+  "codeowners": ["@lordmike"],
+  "config_flow": true,
+  "documentation": "https://github.com/LordMike/WattPlan",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "version": "0.1.0"
+}

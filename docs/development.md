@@ -71,6 +71,25 @@ If you want a dedicated local venv for just that smoke test, create
 `sandbox/ha_hello_world/.venv` and point the runner at it with
 `WATTPLAN_HA_VENV`.
 
+## Home Assistant testbed
+
+Use the disposable HA testbed when you need to inspect WattPlan against live fake
+entities and recorder history:
+
+```bash
+python scripts/testbed.py --config /tmp/wattplan-ha-testbed/default bootstrap
+python scripts/testbed.py --config /tmp/wattplan-ha-testbed/default add-demo-assets
+python scripts/testbed.py --config /tmp/wattplan-ha-testbed/default stop
+../hass-core/.venv/bin/python scripts/testbed_backfill.py --config /tmp/wattplan-ha-testbed/default --days 14
+python scripts/testbed.py --config /tmp/wattplan-ha-testbed/default configure-wattplan-demo
+```
+
+See [Home Assistant Testbed](testbed.md) for the generated entities, battery
+runtime controls, recorder backfill behavior, and expected command order. The
+testbed root entry has only a name and update interval; price import/export are
+modeled as two separate price subentries, and source entities expose current
+state plus a fixed 24-hour `future_values` list.
+
 ## Packaging
 
 Build a local HACS artifact:

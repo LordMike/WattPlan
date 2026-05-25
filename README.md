@@ -51,6 +51,7 @@ After installing WattPlan via HACS, configure the following:
 - [docs/entities-and-services.md](docs/entities-and-services.md) - All exposed entities and services, including battery targets
 - [docs/optimizer-profiles.md](docs/optimizer-profiles.md) - What Aggressive, Balanced, and Conservative mean in practice
 - [docs/error-handling.md](docs/error-handling.md) - Health states, degraded operation, and what `ok`, `degraded`, and `failed` mean
+- [docs/testbed.md](docs/testbed.md) - Disposable Home Assistant testbed with separate import/export price sources, PV, load history, batteries, and fixed 24-hour `future_values`
 - [docs/development.md](docs/development.md) - Local setup with `uv`, local test env caveats, optional symlink workflow, packaging
 - [docs/architecture.md](docs/architecture.md) - Code layout, runtime boundaries, planning flow
 - [docs/release.md](docs/release.md) - Tags, prereleases, dev artifacts, GitHub release assets

@@ -1,0 +1,228 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add WattPlan testbed",
+        "description": "Create a disposable fake-data source for WattPlan development. The testbed always generates 24 hours of future values.",
+        "data": {
+          "name": "Name",
+          "update_interval_minutes": "Update interval (minutes)"
+        },
+        "data_description": {
+          "name": "Name used for the testbed device and generated entity IDs.",
+          "update_interval_minutes": "Interval between generated current and future values. This also controls the spacing of the 24-hour future value list."
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "configure": {
+        "title": "Configure WattPlan testbed",
+        "description": "Update root testbed settings. Existing subentries keep their asset-specific settings.",
+        "data": {
+          "name": "Name",
+          "update_interval_minutes": "Update interval (minutes)"
+        },
+        "data_description": {
+          "name": "Name used for the testbed device and generated entity IDs.",
+          "update_interval_minutes": "Interval between generated current and future values. This also controls the spacing of the 24-hour future value list."
+        }
+      }
+    }
+  },
+  "config_subentries": {
+    "price": {
+      "entry_type": "Price source",
+      "initiate_flow": {
+        "user": "Add price source"
+      },
+      "step": {
+        "user": {
+          "title": "Add price source",
+          "description": "Create one simulated price sensor. Use separate price sources for import and export prices.",
+          "data": {
+            "name": "Name",
+            "base_offset": "Base price",
+            "factor": "Shape factor",
+            "noise": "Noise",
+            "phase_hours": "Phase shift (hours)",
+            "seed": "Seed"
+          },
+          "data_description": {
+            "base_offset": "Base price in the Home Assistant currency per kWh.",
+            "factor": "Multiplier for the daily price curve.",
+            "noise": "Amount of deterministic variation added to the curve.",
+            "phase_hours": "Shift the daily curve earlier or later.",
+            "seed": "Stable seed for deterministic variation."
+          }
+        },
+        "reconfigure": {
+          "title": "Edit price source",
+          "description": "Update one simulated price source.",
+          "data": {
+            "name": "Name",
+            "base_offset": "Base price",
+            "factor": "Shape factor",
+            "noise": "Noise",
+            "phase_hours": "Phase shift (hours)",
+            "seed": "Seed"
+          },
+          "data_description": {
+            "base_offset": "Base price in the Home Assistant currency per kWh.",
+            "factor": "Multiplier for the daily price curve.",
+            "noise": "Amount of deterministic variation added to the curve.",
+            "phase_hours": "Shift the daily curve earlier or later.",
+            "seed": "Stable seed for deterministic variation."
+          }
+        }
+      },
+      "abort": {
+        "reconfigure_successful": "Changes saved"
+      }
+    },
+    "pv": {
+      "entry_type": "PV source",
+      "initiate_flow": {
+        "user": "Add PV source"
+      },
+      "step": {
+        "user": {
+          "title": "Add PV source",
+          "description": "Create one simulated PV power sensor and Home Assistant Energy solar forecast provider.",
+          "data": {
+            "name": "Name",
+            "peak_kwh": "Peak power (kW)",
+            "cloud_factor": "Cloud factor",
+            "factor": "Scale factor",
+            "phase_hours": "Phase shift (hours)",
+            "seed": "Seed"
+          },
+          "data_description": {
+            "peak_kwh": "Maximum generated power near midday.",
+            "cloud_factor": "How much deterministic cloud variation reduces production.",
+            "factor": "Additional multiplier applied to generated power.",
+            "phase_hours": "Shift the daylight curve earlier or later.",
+            "seed": "Stable seed for deterministic variation."
+          }
+        },
+        "reconfigure": {
+          "title": "Edit PV source",
+          "description": "Update one simulated PV source.",
+          "data": {
+            "name": "Name",
+            "peak_kwh": "Peak power (kW)",
+            "cloud_factor": "Cloud factor",
+            "factor": "Scale factor",
+            "phase_hours": "Phase shift (hours)",
+            "seed": "Seed"
+          },
+          "data_description": {
+            "peak_kwh": "Maximum generated power near midday.",
+            "cloud_factor": "How much deterministic cloud variation reduces production.",
+            "factor": "Additional multiplier applied to generated power.",
+            "phase_hours": "Shift the daylight curve earlier or later.",
+            "seed": "Stable seed for deterministic variation."
+          }
+        }
+      },
+      "abort": {
+        "reconfigure_successful": "Changes saved"
+      }
+    },
+    "load": {
+      "entry_type": "Load source",
+      "initiate_flow": {
+        "user": "Add load source"
+      },
+      "step": {
+        "user": {
+          "title": "Add load source",
+          "description": "Create one simulated load power sensor and cumulative load energy sensor.",
+          "data": {
+            "name": "Name",
+            "profile": "Profile",
+            "factor": "Scale factor",
+            "noise": "Noise",
+            "phase_hours": "Phase shift (hours)",
+            "initial_total_kwh": "Initial energy total (kWh)",
+            "seed": "Seed"
+          },
+          "data_description": {
+            "profile": "Base load shape before scaling.",
+            "factor": "Multiplier applied to generated load power.",
+            "noise": "Amount of deterministic variation added to load power.",
+            "phase_hours": "Shift the morning and evening load peaks.",
+            "initial_total_kwh": "Starting value for the cumulative energy sensor.",
+            "seed": "Stable seed for deterministic variation."
+          }
+        },
+        "reconfigure": {
+          "title": "Edit load source",
+          "description": "Update one simulated load source.",
+          "data": {
+            "name": "Name",
+            "profile": "Profile",
+            "factor": "Scale factor",
+            "noise": "Noise",
+            "phase_hours": "Phase shift (hours)",
+            "initial_total_kwh": "Initial energy total (kWh)",
+            "seed": "Seed"
+          },
+          "data_description": {
+            "profile": "Base load shape before scaling.",
+            "factor": "Multiplier applied to generated load power.",
+            "noise": "Amount of deterministic variation added to load power.",
+            "phase_hours": "Shift the morning and evening load peaks.",
+            "initial_total_kwh": "Starting value for the cumulative energy sensor.",
+            "seed": "Stable seed for deterministic variation."
+          }
+        }
+      },
+      "abort": {
+        "reconfigure_successful": "Changes saved"
+      }
+    },
+    "battery": {
+      "entry_type": "Battery",
+      "initiate_flow": {
+        "user": "Add battery"
+      },
+      "step": {
+        "user": {
+          "title": "Add battery",
+          "description": "Create one simulated battery SoC and availability pair.",
+          "data": {
+            "name": "Name",
+            "capacity_kwh": "Capacity (kWh)",
+            "default_soc_pct": "Default SoC (%)",
+            "seed": "Seed"
+          },
+          "data_description": {
+            "capacity_kwh": "Battery capacity used for historical SoC variation.",
+            "default_soc_pct": "Initial state of charge.",
+            "seed": "Stable seed for deterministic variation."
+          }
+        },
+        "reconfigure": {
+          "title": "Edit battery",
+          "description": "Update one simulated battery.",
+          "data": {
+            "name": "Name",
+            "capacity_kwh": "Capacity (kWh)",
+            "default_soc_pct": "Default SoC (%)",
+            "seed": "Seed"
+          },
+          "data_description": {
+            "capacity_kwh": "Battery capacity used for historical SoC variation.",
+            "default_soc_pct": "Initial state of charge.",
+            "seed": "Stable seed for deterministic variation."
+          }
+        }
+      },
+      "abort": {
+        "reconfigure_successful": "Changes saved"
+      }
+    }
+  }
+}
