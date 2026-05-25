@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from homeassistant.components.sensor import SensorDeviceClass
+from homeassistant.const import UnitOfEnergy
+from homeassistant.helpers import entity_registry as er
+
 from .common import _normalize_name, _subentry_display_title, _subentry_name
 from .forms import (
     _battery_form_defaults,
@@ -26,6 +30,7 @@ from .source_shared import (
     CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION,
     CONF_HISTORICAL_USAGE_SENSOR,
     CONF_HOURS_TO_PLAN,
+    CONF_CONFIG_ENTRY_ID,
     CONF_NAME,
     CONF_OPTIMIZER_PROFILE,
     CONF_PLANNING_ENABLED,
@@ -44,6 +49,9 @@ from .source_shared import (
     OPTIMIZER_PROFILE_BALANCED,
     OptionsFlowWithReload,
     SOURCE_MODE_NOT_USED,
+    SOURCE_MODE_BUILT_IN,
+    SOURCE_MODE_ENERGY_PROVIDER,
+    SOURCE_MODE_ENTITY_ADAPTER,
     SUBENTRY_TYPE_BATTERY,
     SUBENTRY_TYPE_COMFORT,
     SUBENTRY_TYPE_OPTIONAL,
@@ -63,6 +71,10 @@ from .source_shared import (
     vol,
 )
 from ..historical_cost.tracker import validate_energy_sensor
+from ..source_providers import CONF_WATTPLAN_ENTITY_ID, source_mode, source_providers
+
+
+ENERGY_STATE_CLASSES = {"total", "total_increasing"}
 
 
 def _historical_energy_selector() -> selector.EntitySelector:
@@ -139,6 +151,128 @@ def _historical_status_label(options: dict[str, Any]) -> str:
     if options.get(CONF_HISTORICAL_COST_TRACKING_ENABLED, False):
         return "Enabled"
     return "Disabled"
+
+
+def _is_cumulative_energy_sensor(hass, entity_id: str | None) -> bool:
+    """Return whether an entity is a currently loaded cumulative kWh sensor."""
+    if not entity_id or not str(entity_id).startswith("sensor."):
+        return False
+    state = hass.states.get(str(entity_id))
+    if state is None:
+        return False
+    device_class = state.attributes.get("device_class")
+    if device_class not in {SensorDeviceClass.ENERGY, "energy"}:
+        return False
+    unit = state.attributes.get("unit_of_measurement")
+    if unit not in {UnitOfEnergy.KILO_WATT_HOUR, "kWh"}:
+        return False
+    return state.attributes.get("state_class") in ENERGY_STATE_CLASSES
+
+
+def _is_power_sensor(hass, entity_id: str | None) -> bool:
+    """Return whether an entity is a currently loaded power sensor."""
+    if not entity_id or not str(entity_id).startswith("sensor."):
+        return False
+    state = hass.states.get(str(entity_id))
+    if state is None:
+        return False
+    return state.attributes.get("device_class") in {SensorDeviceClass.POWER, "power"}
+
+
+def _single_candidate(candidates: set[str]) -> str | None:
+    """Return one candidate only when discovery found an unambiguous match."""
+    if len(candidates) != 1:
+        return None
+    return next(iter(candidates))
+
+
+def _energy_sibling_for_entity(hass, entity_id: str) -> str | None:
+    """Return the only cumulative energy sensor on the same device, if any."""
+    registry = er.async_get(hass)
+    entry = registry.async_get(entity_id)
+    if entry is None or entry.device_id is None:
+        return None
+    candidates = {
+        sibling.entity_id
+        for sibling in er.async_entries_for_device(
+            registry, entry.device_id, include_disabled_entities=False
+        )
+        if sibling.entity_id != entity_id
+        and _is_cumulative_energy_sensor(hass, sibling.entity_id)
+    }
+    return _single_candidate(candidates)
+
+
+def _energy_entity_for_config_entry(hass, config_entry_id: str | None) -> str | None:
+    """Return the only cumulative energy sensor owned by a config entry, if any."""
+    if not config_entry_id:
+        return None
+    registry = er.async_get(hass)
+    candidates = {
+        entry.entity_id
+        for entry in er.async_entries_for_config_entry(registry, str(config_entry_id))
+        if _is_cumulative_energy_sensor(hass, entry.entity_id)
+    }
+    return _single_candidate(candidates)
+
+
+def _energy_entity_for_source_entity(hass, entity_id: str | None) -> str | None:
+    """Return a historical meter candidate from a configured source entity."""
+    if not entity_id:
+        return None
+    entity_id = str(entity_id)
+    if _is_cumulative_energy_sensor(hass, entity_id):
+        return entity_id
+    if _is_power_sensor(hass, entity_id):
+        return _energy_sibling_for_entity(hass, entity_id)
+    return None
+
+
+def _energy_entity_for_source_provider(
+    hass,
+    provider_config: dict[str, Any],
+) -> str | None:
+    """Return a historical meter candidate from one source provider config."""
+    mode = source_mode(provider_config)
+    if mode in {SOURCE_MODE_BUILT_IN, SOURCE_MODE_ENTITY_ADAPTER}:
+        return _energy_entity_for_source_entity(
+            hass, provider_config.get(CONF_WATTPLAN_ENTITY_ID)
+        )
+    if mode == SOURCE_MODE_ENERGY_PROVIDER:
+        return _energy_entity_for_config_entry(
+            hass, provider_config.get(CONF_CONFIG_ENTRY_ID)
+        )
+    return None
+
+
+def _energy_entity_for_source(hass, source_config: dict[str, Any] | None) -> str | None:
+    """Return a historical meter candidate from a complete source config."""
+    if not isinstance(source_config, dict):
+        return None
+    candidates = {
+        candidate
+        for provider_config in source_providers(source_config)
+        if isinstance(provider_config, dict)
+        for candidate in [_energy_entity_for_source_provider(hass, provider_config)]
+        if candidate
+    }
+    return _single_candidate(candidates)
+
+
+def _discovered_historical_meter_defaults(hass, data: dict[str, Any]) -> dict[str, str]:
+    """Return unambiguous historical meter defaults from configured sources."""
+    sources = data.get(CONF_SOURCES, {})
+    if not isinstance(sources, dict):
+        return {}
+
+    defaults: dict[str, str] = {}
+    usage = _energy_entity_for_source(hass, sources.get(CONF_SOURCE_USAGE))
+    if usage:
+        defaults[CONF_HISTORICAL_USAGE_SENSOR] = usage
+    pv = _energy_entity_for_source(hass, sources.get(CONF_SOURCE_PV))
+    if pv:
+        defaults[CONF_HISTORICAL_PV_SENSOR] = pv
+    return defaults
 
 
 CONF_ACCEPT_MANUAL_SCHEDULING = "accept_manual_scheduling"
@@ -560,6 +694,7 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
 
     _data: dict[str, Any]
     _options: dict[str, Any]
+    _historical_suggest_discovered: bool
     _pending_timer_options: dict[str, Any] | None
     _selected_subentry_id: str | None
     _source_state: SourceFlowState
@@ -573,6 +708,7 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
         self._options.setdefault(
             CONF_OPTIMIZER_PROFILE, OPTIMIZER_PROFILE_BALANCED
         )
+        self._historical_suggest_discovered = False
         self._pending_timer_options = None
         self._selected_subentry_id = None
         self._source_state = SourceFlowState()
@@ -741,7 +877,11 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
     ) -> ConfigFlowResult:
         """Show historical cost tracking intro and enabled toggle."""
         if user_input is not None:
+            was_enabled = bool(
+                self._options.get(CONF_HISTORICAL_COST_TRACKING_ENABLED, False)
+            )
             enabled = bool(user_input[CONF_HISTORICAL_COST_TRACKING_ENABLED])
+            self._historical_suggest_discovered = enabled and not was_enabled
             self._options[CONF_HISTORICAL_COST_TRACKING_ENABLED] = enabled
             if not enabled:
                 self.hass.config_entries.async_update_entry(
@@ -767,6 +907,7 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
     ) -> ConfigFlowResult:
         """Configure historical cost tracking settings."""
         errors: dict[str, str] = {}
+        defaults = self._historical_costs_settings_defaults()
         if user_input is not None:
             normalized = _normalize_historical_options(user_input)
             normalized[CONF_HISTORICAL_COST_TRACKING_ENABLED] = True
@@ -796,11 +937,23 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
         return self.async_show_form(
             step_id="historical_costs_settings",
             data_schema=self.add_suggested_values_to_schema(
-                _historical_costs_settings_schema(self._options),
+                _historical_costs_settings_schema(defaults),
                 user_input or {},
             ),
             errors=errors,
         )
+
+    def _historical_costs_settings_defaults(self) -> dict[str, Any]:
+        """Return defaults for the historical costs settings form."""
+        defaults = dict(self._options)
+        if not self._historical_suggest_discovered:
+            return defaults
+        for key, value in _discovered_historical_meter_defaults(
+            self.hass, self._data
+        ).items():
+            if not defaults.get(key):
+                defaults[key] = value
+        return defaults
 
     async def async_step_battery_entities(
         self, user_input: dict[str, Any] | None = None

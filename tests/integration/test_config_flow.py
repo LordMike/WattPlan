@@ -5,6 +5,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 from custom_components.wattplan.const import (
+    CONF_CONFIG_ENTRY_ID,
     CONF_ACTION_EMISSION_ENABLED,
     CONF_AVAILABILITY_SOURCE,
     CONF_CAN_CHARGE_FROM_GRID,
@@ -38,22 +39,30 @@ from custom_components.wattplan.const import (
     CONF_SLOT_MINUTES,
     CONF_SOC_SOURCE,
     CONF_SOURCE_MODE,
+    CONF_SOURCE_PV,
+    CONF_SOURCE_USAGE,
     CONF_SOURCES,
     CONF_TARGET_ON_HOURS_PER_WINDOW,
     CONF_TEMPLATE,
     DOMAIN,
+    SOURCE_MODE_BUILT_IN,
+    SOURCE_MODE_ENTITY_ADAPTER,
+    SOURCE_MODE_ENERGY_PROVIDER,
     SOURCE_MODE_NOT_USED,
     SOURCE_MODE_TEMPLATE,
     SUBENTRY_TYPE_BATTERY,
     SUBENTRY_TYPE_COMFORT,
     SUBENTRY_TYPE_OPTIONAL,
 )
+from custom_components.wattplan.source_providers import CONF_WATTPLAN_ENTITY_ID
 import pytest
 
 from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers import device_registry as dr, entity_registry as er
+from tests.common import MockConfigEntry
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
@@ -84,6 +93,52 @@ def _schema_default(result: dict[str, Any], field: str) -> Any:
     schema = result["data_schema"].schema
     marker = next(key for key in schema if getattr(key, "schema", None) == field)
     return marker.default()
+
+
+def _set_energy_sensor(hass: HomeAssistant, entity_id: str, value: str = "1.0") -> None:
+    """Set a cumulative kWh sensor state."""
+    hass.states.async_set(
+        entity_id,
+        value,
+        {
+            "device_class": "energy",
+            "unit_of_measurement": "kWh",
+            "state_class": "total_increasing",
+        },
+    )
+
+
+def _register_sensor_on_device(
+    hass: HomeAssistant,
+    config_entry: config_entries.ConfigEntry,
+    *,
+    device_id: str,
+    entity_id: str,
+    device_class: str,
+    unit: str,
+) -> None:
+    """Register a test sensor on a device and set its current state."""
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=config_entry.entry_id,
+        identifiers={("test", device_id)},
+    )
+    entry = er.async_get(hass).async_get_or_create(
+        "sensor",
+        "test",
+        entity_id,
+        config_entry=config_entry,
+        device_id=device.id,
+        suggested_object_id=entity_id.removeprefix("sensor."),
+        original_device_class=device_class,
+        unit_of_measurement=unit,
+    )
+    attributes = {
+        "device_class": device_class,
+        "unit_of_measurement": unit,
+    }
+    if device_class == "energy":
+        attributes["state_class"] = "total_increasing"
+    hass.states.async_set(entry.entity_id, "1.0", attributes)
 
 
 async def _finish_setup_if_needed(
@@ -611,6 +666,168 @@ async def test_historical_costs_disabled_intro_closes_flow(
     updated = hass.config_entries.async_get_entry(entry.entry_id)
     assert updated is not None
     assert updated.options[CONF_HISTORICAL_COST_TRACKING_ENABLED] is False
+
+
+async def test_historical_costs_prefills_discovered_source_meters(
+    hass: HomeAssistant, mock_setup_entry: AsyncMock
+) -> None:
+    """First-time historical enablement should suggest unambiguous meters."""
+    entry = await _create_basic_entry(hass)
+    source_entry = MockConfigEntry(domain="test", entry_id="source-entry")
+    source_entry.add_to_hass(hass)
+    _set_energy_sensor(hass, "sensor.house_usage_total")
+    _register_sensor_on_device(
+        hass,
+        source_entry,
+        device_id="pv-inverter",
+        entity_id="sensor.pv_power",
+        device_class="power",
+        unit="W",
+    )
+    _register_sensor_on_device(
+        hass,
+        source_entry,
+        device_id="pv-inverter",
+        entity_id="sensor.pv_energy_total",
+        device_class="energy",
+        unit="kWh",
+    )
+    hass.config_entries.async_update_entry(
+        entry,
+        data={
+            **entry.data,
+            CONF_SOURCES: {
+                **entry.data[CONF_SOURCES],
+                CONF_SOURCE_USAGE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_BUILT_IN,
+                    CONF_WATTPLAN_ENTITY_ID: "sensor.house_usage_total",
+                },
+                CONF_SOURCE_PV: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+                    CONF_WATTPLAN_ENTITY_ID: "sensor.pv_power",
+                },
+            },
+        },
+    )
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "historical_costs"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_HISTORICAL_COST_TRACKING_ENABLED: True},
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "historical_costs_settings"
+    assert (
+        _schema_default(result, CONF_HISTORICAL_USAGE_SENSOR)
+        == "sensor.house_usage_total"
+    )
+    assert _schema_default(result, CONF_HISTORICAL_PV_SENSOR) == "sensor.pv_energy_total"
+    assert _schema_default(result, CONF_HISTORICAL_GRID_IMPORT_SENSOR) is None
+    assert _schema_default(result, CONF_HISTORICAL_GRID_EXPORT_SENSOR) is None
+
+
+async def test_historical_costs_prefills_energy_provider_owned_meter(
+    hass: HomeAssistant, mock_setup_entry: AsyncMock
+) -> None:
+    """Energy-provider sources should suggest one owned cumulative meter."""
+    entry = await _create_basic_entry(hass)
+    solar_entry = MockConfigEntry(domain="forecast_solar", entry_id="solar-entry")
+    solar_entry.add_to_hass(hass)
+    _register_sensor_on_device(
+        hass,
+        solar_entry,
+        device_id="solar-system",
+        entity_id="sensor.solar_power",
+        device_class="power",
+        unit="W",
+    )
+    _register_sensor_on_device(
+        hass,
+        solar_entry,
+        device_id="solar-system",
+        entity_id="sensor.solar_energy_total",
+        device_class="energy",
+        unit="kWh",
+    )
+    hass.config_entries.async_update_entry(
+        entry,
+        data={
+            **entry.data,
+            CONF_SOURCES: {
+                **entry.data[CONF_SOURCES],
+                CONF_SOURCE_PV: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_ENERGY_PROVIDER,
+                    CONF_CONFIG_ENTRY_ID: solar_entry.entry_id,
+                },
+            },
+        },
+    )
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "historical_costs"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_HISTORICAL_COST_TRACKING_ENABLED: True},
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "historical_costs_settings"
+    assert (
+        _schema_default(result, CONF_HISTORICAL_PV_SENSOR)
+        == "sensor.solar_energy_total"
+    )
+
+
+async def test_historical_costs_does_not_prefill_existing_blank_option(
+    hass: HomeAssistant, mock_setup_entry: AsyncMock
+) -> None:
+    """Already-enabled historical settings should keep intentionally blank fields."""
+    entry = await _create_basic_entry(hass)
+    _set_energy_sensor(hass, "sensor.house_usage_total")
+    _set_energy_sensor(hass, "sensor.pv_energy_total")
+    hass.config_entries.async_update_entry(
+        entry,
+        data={
+            **entry.data,
+            CONF_SOURCES: {
+                **entry.data[CONF_SOURCES],
+                CONF_SOURCE_USAGE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_BUILT_IN,
+                    CONF_WATTPLAN_ENTITY_ID: "sensor.house_usage_total",
+                },
+                CONF_SOURCE_PV: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+                    CONF_WATTPLAN_ENTITY_ID: "sensor.pv_energy_total",
+                },
+            },
+        },
+        options={
+            **entry.options,
+            CONF_HISTORICAL_COST_TRACKING_ENABLED: True,
+            CONF_HISTORICAL_GRID_IMPORT_SENSOR: "sensor.grid_import_total",
+            CONF_HISTORICAL_USAGE_SENSOR: "sensor.house_usage_total",
+            CONF_HISTORICAL_PV_SENSOR: None,
+        },
+    )
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "historical_costs"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_HISTORICAL_COST_TRACKING_ENABLED: True},
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "historical_costs_settings"
+    assert _schema_default(result, CONF_HISTORICAL_PV_SENSOR) is None
 
 
 async def test_options_planner_timers_both_enabled_saves_without_warning(
