@@ -553,9 +553,11 @@ async def test_historical_cost_tracking_seeds_without_fake_first_slot(
 
 async def test_historical_cost_tracking_processes_scenarios_and_entities(
     hass: HomeAssistant,
+    freezer,
 ) -> None:
     """Historical tracker should aggregate actual, no-battery, and self-consumption costs."""
     start = datetime(2026, 5, 24, 12, 0, tzinfo=UTC)
+    freezer.move_to(start + timedelta(hours=1, seconds=2))
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Home",
@@ -665,9 +667,11 @@ async def test_historical_cost_tracking_processes_scenarios_and_entities(
 
 async def test_historical_cost_tracking_flags_meter_reset_and_missing_price(
     hass: HomeAssistant,
+    freezer,
 ) -> None:
     """Invalid deltas and missing prices should create gap records instead of costs."""
     start = datetime(2026, 5, 24, 12, 0, tzinfo=UTC)
+    freezer.move_to(start + timedelta(hours=1, seconds=2))
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Home",
