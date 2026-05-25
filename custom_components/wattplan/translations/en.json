@@ -1126,9 +1126,18 @@
       },
       "historical_costs": {
         "title": "Historical costs",
-        "description": "Track measured cost and compare it with simple reference scenarios from completed slots. Use this to see whether WattPlan is actually improving your setup over time.",
+        "description": "Track measured cost and compare it with simple reference scenarios from completed slots. Use this to see whether WattPlan is actually improving your setup over time.\n\nCurrent status: **{current_status}**",
         "data": {
-          "historical_cost_tracking_enabled": "Enable historical cost tracking",
+          "historical_cost_tracking_enabled": "Enable historical cost tracking"
+        },
+        "data_description": {
+          "historical_cost_tracking_enabled": "When enabled, WattPlan samples completed slots from cumulative energy sensors and exposes daily and monthly historical cost entities."
+        }
+      },
+      "historical_costs_settings": {
+        "title": "Historical cost settings",
+        "description": "Select the cumulative energy sensors WattPlan should sample for completed slots, then choose which reference scenarios to calculate.",
+        "data": {
           "historical_grid_import_sensor": "Grid import cumulative kWh sensor",
           "historical_grid_export_sensor": "Grid export cumulative kWh sensor",
           "historical_usage_sensor": "Usage cumulative kWh sensor",
@@ -1137,13 +1146,12 @@
           "historical_simulate_self_consumption": "Enable self-consumption simulation"
         },
         "data_description": {
-          "historical_cost_tracking_enabled": "When enabled, WattPlan samples completed slots from the cumulative energy sensors below and exposes daily and monthly historical cost entities.",
           "historical_grid_import_sensor": "Required when tracking is enabled. Select the total-increasing kWh sensor that measures energy imported from the grid.",
           "historical_grid_export_sensor": "Optional. Select the total-increasing kWh sensor that measures energy exported to the grid. Leave empty when exported power should be treated as zero.",
           "historical_usage_sensor": "Required when tracking is enabled. Select the total-increasing kWh sensor that measures total site usage or consumption.",
           "historical_pv_sensor": "Optional. Select the total-increasing kWh sensor that measures PV production. Leave empty when PV is not part of this setup.",
-          "historical_simulate_no_battery": "When enabled, WattPlan also calculates a reference cost where usage is served by PV first and any remaining deficit or surplus goes directly to the grid.",
-          "historical_simulate_self_consumption": "When enabled, WattPlan also calculates a reference cost where PV serves usage first, PV surplus charges batteries, and batteries discharge before grid import."
+          "historical_simulate_no_battery": "When enabled, WattPlan also calculates a reference cost where usage is served by PV first and any remaining deficit or surplus goes directly to the grid.\n\nThis scenario can be used to determine if WattPlan is helpful by comparing measured cost against a simple setup with no battery scheduling benefit.",
+          "historical_simulate_self_consumption": "When enabled, WattPlan also calculates a reference cost where PV serves usage first, PV surplus charges batteries, and batteries discharge before grid import.\n\nThis scenario can be used to determine if WattPlan is helpful by comparing measured cost against a common rule-based battery strategy that prioritizes local solar use."
         }
       },
       "planner_timers_warning_planning": {

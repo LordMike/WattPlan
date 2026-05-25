@@ -477,10 +477,18 @@ async def test_options_flow_add_core_and_one_of_each_asset(
         result["flow_id"], {"next_step_id": "historical_costs"}
     )
     assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "historical_costs"
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         {
             CONF_HISTORICAL_COST_TRACKING_ENABLED: True,
+        },
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "historical_costs_settings"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
             CONF_HISTORICAL_GRID_IMPORT_SENSOR: "sensor.grid_import_total",
             CONF_HISTORICAL_GRID_EXPORT_SENSOR: "sensor.grid_export_total",
             CONF_HISTORICAL_USAGE_SENSOR: "sensor.usage_total",
@@ -489,7 +497,8 @@ async def test_options_flow_add_core_and_one_of_each_asset(
             CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION: False,
         },
     )
-    assert result["type"] is FlowResultType.MENU
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
 
     updated = hass.config_entries.async_get_entry(entry.entry_id)
     assert updated is not None
@@ -575,6 +584,33 @@ async def test_options_flow_add_core_and_one_of_each_asset(
         and subentry.data[CONF_AVAILABILITY_SOURCE] == "binary_sensor.car_available"
         for subentry in updated.subentries.values()
     )
+
+
+async def test_historical_costs_disabled_intro_closes_flow(
+    hass: HomeAssistant, mock_setup_entry: AsyncMock
+) -> None:
+    """Historical cost intro should save disabled and close without details."""
+    entry = await _create_basic_entry(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] is FlowResultType.MENU
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "historical_costs"}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "historical_costs"
+    assert _schema_default(result, CONF_HISTORICAL_COST_TRACKING_ENABLED) is False
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_HISTORICAL_COST_TRACKING_ENABLED: False},
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+
+    updated = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated is not None
+    assert updated.options[CONF_HISTORICAL_COST_TRACKING_ENABLED] is False
 
 
 async def test_options_planner_timers_both_enabled_saves_without_warning(

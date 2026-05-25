@@ -73,7 +73,7 @@ def _historical_energy_selector() -> selector.EntitySelector:
 
 
 def _historical_costs_schema(defaults: dict[str, Any]) -> vol.Schema:
-    """Build the historical cost options schema."""
+    """Build the historical cost intro schema."""
     return vol.Schema(
         {
             vol.Required(
@@ -82,6 +82,14 @@ def _historical_costs_schema(defaults: dict[str, Any]) -> vol.Schema:
                     defaults.get(CONF_HISTORICAL_COST_TRACKING_ENABLED, False)
                 ),
             ): selector.BooleanSelector(),
+        }
+    )
+
+
+def _historical_costs_settings_schema(defaults: dict[str, Any]) -> vol.Schema:
+    """Build the historical cost settings schema."""
+    return vol.Schema(
+        {
             vol.Optional(
                 CONF_HISTORICAL_GRID_IMPORT_SENSOR,
                 default=defaults.get(CONF_HISTORICAL_GRID_IMPORT_SENSOR),
@@ -124,6 +132,13 @@ def _normalize_historical_options(user_input: dict[str, Any]) -> dict[str, Any]:
         if not normalized.get(key):
             normalized[key] = None
     return normalized
+
+
+def _historical_status_label(options: dict[str, Any]) -> str:
+    """Return a user-facing historical tracking status label."""
+    if options.get(CONF_HISTORICAL_COST_TRACKING_ENABLED, False):
+        return "Enabled"
+    return "Disabled"
 
 
 CONF_ACCEPT_MANUAL_SCHEDULING = "accept_manual_scheduling"
@@ -724,38 +739,56 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
     async def async_step_historical_costs(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Configure historical cost tracking."""
-        errors: dict[str, str] = {}
+        """Show historical cost tracking intro and enabled toggle."""
         if user_input is not None:
-            normalized = _normalize_historical_options(user_input)
-            if normalized[CONF_HISTORICAL_COST_TRACKING_ENABLED]:
-                for key in (
-                    CONF_HISTORICAL_GRID_IMPORT_SENSOR,
-                    CONF_HISTORICAL_USAGE_SENSOR,
-                ):
-                    if not normalized.get(key):
-                        errors[key] = "required"
-                for key in (
-                    CONF_HISTORICAL_GRID_IMPORT_SENSOR,
-                    CONF_HISTORICAL_GRID_EXPORT_SENSOR,
-                    CONF_HISTORICAL_USAGE_SENSOR,
-                    CONF_HISTORICAL_PV_SENSOR,
-                ):
-                    entity_id = normalized.get(key)
-                    if entity_id and not validate_energy_sensor(self.hass, entity_id):
-                        errors[key] = "invalid_energy_sensor"
-            if not errors:
-                self._options.update(normalized)
-                self.hass.config_entries.async_update_entry(
-                    self.config_entry,
-                    options=self._options,
-                )
-                return await self.async_step_init()
+            enabled = bool(user_input[CONF_HISTORICAL_COST_TRACKING_ENABLED])
+            self._options[CONF_HISTORICAL_COST_TRACKING_ENABLED] = enabled
+            if not enabled:
+                return self.async_create_entry(title="", data=self._options)
+            return await self.async_step_historical_costs_settings()
 
         return self.async_show_form(
             step_id="historical_costs",
             data_schema=self.add_suggested_values_to_schema(
                 _historical_costs_schema(self._options),
+                user_input or {},
+            ),
+            description_placeholders={
+                "current_status": _historical_status_label(self._options),
+            },
+        )
+
+    async def async_step_historical_costs_settings(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Configure historical cost tracking settings."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            normalized = _normalize_historical_options(user_input)
+            normalized[CONF_HISTORICAL_COST_TRACKING_ENABLED] = True
+            for key in (
+                CONF_HISTORICAL_GRID_IMPORT_SENSOR,
+                CONF_HISTORICAL_USAGE_SENSOR,
+            ):
+                if not normalized.get(key):
+                    errors[key] = "required"
+            for key in (
+                CONF_HISTORICAL_GRID_IMPORT_SENSOR,
+                CONF_HISTORICAL_GRID_EXPORT_SENSOR,
+                CONF_HISTORICAL_USAGE_SENSOR,
+                CONF_HISTORICAL_PV_SENSOR,
+            ):
+                entity_id = normalized.get(key)
+                if entity_id and not validate_energy_sensor(self.hass, entity_id):
+                    errors[key] = "invalid_energy_sensor"
+            if not errors:
+                self._options.update(normalized)
+                return self.async_create_entry(title="", data=self._options)
+
+        return self.async_show_form(
+            step_id="historical_costs_settings",
+            data_schema=self.add_suggested_values_to_schema(
+                _historical_costs_settings_schema(self._options),
                 user_input or {},
             ),
             errors=errors,
