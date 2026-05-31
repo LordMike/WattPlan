@@ -339,11 +339,18 @@ class HistoricalCostTracker:
             return None
 
     async def _async_export_price(self, slot_start: datetime) -> float | None:
-        """Return export price, with zero export value when no export meter is configured."""
+        """Return export price, defaulting disabled export value to zero."""
         if not self._meter_config().get("grid_export"):
             return 0.0
-        price = await self._async_price(CONF_SOURCE_EXPORT_PRICE, slot_start)
-        return price
+        sources = self.entry.data.get(CONF_SOURCES, {})
+        source_config = (
+            sources.get(CONF_SOURCE_EXPORT_PRICE, {}) if isinstance(sources, dict) else {}
+        )
+        if not isinstance(source_config, dict):
+            return 0.0
+        if source_config.get(CONF_SOURCE_MODE) in {None, SOURCE_MODE_NOT_USED}:
+            return 0.0
+        return await self._async_price(CONF_SOURCE_EXPORT_PRICE, slot_start)
 
     def _source_provider(
         self,
