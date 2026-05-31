@@ -159,7 +159,10 @@ class HistoricalCostTracker:
                 )
             return
         if completed_slot != last_processed + self._interval:
-            await self._async_append_gap(completed_slot, FLAG_GAP)
+            missing_slot = last_processed + self._interval
+            while missing_slot <= completed_slot:
+                await self._async_append_gap(missing_slot, FLAG_GAP)
+                missing_slot += self._interval
             await self._async_seed(now, processed_slot=completed_slot)
             self._notify()
             return

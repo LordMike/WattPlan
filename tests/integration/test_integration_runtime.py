@@ -69,6 +69,7 @@ from custom_components.wattplan.coordinator import (
 )
 from custom_components.wattplan.coordinator_parts import PlanningStageError, StageErrorKind
 from custom_components.wattplan.historical_cost.models import (
+    FLAG_GAP,
     FLAG_METER_RESET,
     FLAG_MISSING_IMPORT_PRICE,
 )
@@ -1913,3 +1914,67 @@ async def test_button_optimize_raises_when_already_running(hass: HomeAssistant) 
     async with coordinator._plan_lock:
         with pytest.raises(HAServiceValidationError):
             await coordinator.async_plan(trigger=CycleTrigger.SERVICE)
+
+
+async def test_historical_cost_tracking_records_each_skipped_slot(
+    hass: HomeAssistant,
+    freezer,
+) -> None:
+    """Skipped historical intervals should create one gap record per slot."""
+    start = datetime(2026, 5, 24, 12, 0, tzinfo=UTC)
+    freezer.move_to(start + timedelta(hours=3, seconds=2))
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: 60,
+            CONF_HOURS_TO_PLAN: 4,
+            CONF_SOURCES: {
+                CONF_SOURCE_IMPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [1.0, 1.0, 1.0, 1.0] }}",
+                },
+            },
+        },
+        options={
+            **_historical_options(),
+            CONF_HISTORICAL_GRID_EXPORT_SENSOR: None,
+            CONF_HISTORICAL_PV_SENSOR: None,
+            CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION: False,
+        },
+    )
+    entry.add_to_hass(hass)
+    _set_energy_meter(hass, "sensor.grid_import_total", 100.0)
+    _set_energy_meter(hass, "sensor.usage_total", 200.0)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    tracker = entry.runtime_data.historical_tracker
+    assert tracker is not None
+    tracker.store.update_metadata(
+        last_processed_slot=start - timedelta(hours=1),
+        last_meter_values={
+            "grid_import": 100.0,
+            "grid_export": 0.0,
+            "usage": 200.0,
+            "pv": 0.0,
+        },
+        meter_config={
+            "grid_import": "sensor.grid_import_total",
+            "grid_export": None,
+            "usage": "sensor.usage_total",
+            "pv": None,
+        },
+    )
+
+    await tracker.async_process_completed_slot(start + timedelta(hours=3, seconds=1))
+
+    day = tracker.store.data["days"]["2026-05-24"]
+    assert day["starts"] == [
+        "2026-05-24T12:00:00Z",
+        "2026-05-24T13:00:00Z",
+        "2026-05-24T14:00:00Z",
+    ]
+    assert day["flags"] == [FLAG_GAP, FLAG_GAP, FLAG_GAP]
+    assert tracker.store.last_processed_slot() == start + timedelta(hours=2)
