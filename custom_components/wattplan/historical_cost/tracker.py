@@ -148,6 +148,15 @@ class HistoricalCostTracker:
             await self._async_seed(now)
             return
         if completed_slot <= last_processed:
+            if (
+                completed_slot == last_processed
+                and self.store.data.pop("meter_cursor_seeded", False)
+            ):
+                current_meters, _flags = self._read_meter_values()
+                self.store.update_metadata(
+                    last_meter_values=current_meters,
+                    meter_config=self._meter_config(),
+                )
             return
         if completed_slot != last_processed + self._interval:
             await self._async_append_gap(completed_slot, FLAG_GAP)
@@ -193,6 +202,7 @@ class HistoricalCostTracker:
             last_meter_values=current_meters,
             meter_config=self._meter_config(),
         )
+        self.store.data.pop("meter_cursor_seeded", None)
         self._notify()
 
     async def _async_timer(self, now: datetime) -> None:
@@ -227,7 +237,7 @@ class HistoricalCostTracker:
     ) -> None:
         """Seed meter cursors and self-consumption SoC without creating a slot."""
         meters, _flags = self._read_meter_values()
-        seed_slot = processed_slot or (self._floor_to_slot(now) - self._interval)
+        seed_slot = processed_slot or self._floor_to_slot(now)
         if self.scenario_enabled("self_consumption"):
             self._seed_self_consumption_soc()
         self.store.update_metadata(
@@ -235,6 +245,8 @@ class HistoricalCostTracker:
             last_meter_values=meters,
             meter_config=self._meter_config(),
         )
+        if processed_slot is None:
+            self.store.data["meter_cursor_seeded"] = True
         self._schedule_next(now)
 
     async def _async_append_gap(self, slot_start: datetime, flags: int) -> None:
