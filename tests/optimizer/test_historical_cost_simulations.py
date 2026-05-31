@@ -70,3 +70,27 @@ def test_self_consumption_uses_batteries_in_configured_order() -> None:
     assert discharged.grid_import == pytest.approx(0.0)
     assert discharged.soc_by_battery["first"] == pytest.approx(0.0)
     assert discharged.soc_by_battery["second"] == pytest.approx(0.0)
+
+
+def test_self_consumption_discharge_limit_is_delivered_energy() -> None:
+    """Discharge power limit should cap delivered energy, not SoC draw."""
+    result = simulate_self_consumption_slot(
+        usage=1.0,
+        pv=0.0,
+        batteries=[
+            BatterySimulationConfig(
+                subentry_id="battery",
+                minimum_kwh=0.0,
+                capacity_kwh=2.0,
+                max_charge_kwh=1.0,
+                max_discharge_kwh=1.0,
+                charge_efficiency=1.0,
+                discharge_efficiency=0.8,
+                can_charge_from_pv=True,
+            )
+        ],
+        soc_by_battery={"battery": 2.0},
+    )
+
+    assert result.grid_import == pytest.approx(0.0)
+    assert result.soc_by_battery["battery"] == pytest.approx(0.75)

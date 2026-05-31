@@ -95,7 +95,7 @@ def simulate_self_consumption_slot(
         current_soc = _clamp_soc(next_soc.get(battery.subentry_id, battery.minimum_kwh), battery)
         efficiency = max(battery.discharge_efficiency, 0.000001)
         available_output = max(current_soc - battery.minimum_kwh, 0.0) * efficiency
-        max_output = battery.max_discharge_kwh * efficiency
+        max_output = battery.max_discharge_kwh
         output = min(deficit, available_output, max_output)
         if output <= 0.0:
             next_soc[battery.subentry_id] = current_soc
