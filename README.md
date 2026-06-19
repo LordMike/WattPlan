@@ -67,5 +67,3 @@ Use [Historical Cost Tracking](docs/historical-cost-tracking.md) to compare meas
 While WattPlan is designed to optimize energy usage effectively, there are scenarios where it may not be the best fit:
 - Users with highly variable energy prices may find it challenging to predict optimal usage.
 - Integration with certain legacy systems may require additional configuration or may not be supported.
-
-## Status
