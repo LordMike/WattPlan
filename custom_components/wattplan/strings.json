@@ -1126,7 +1126,7 @@
       },
       "historical_costs": {
         "title": "Historical costs",
-        "description": "Track measured cost and compare it with simple reference scenarios from completed slots. Use this to see whether WattPlan is actually improving your setup over time.\n\nCurrent status: **{current_status}**",
+        "description": "Track measured cost and compare it with simple reference scenarios from completed slots. Use this to see whether WattPlan is actually improving your setup over time.\n\nRead the historical cost guide before enabling this: [Open historical cost guide](https://github.com/LordMike/WattPlan/blob/main/docs/historical-cost-tracking.md).\n\nCurrent status: **{current_status}**",
         "data": {
           "historical_cost_tracking_enabled": "Enable historical cost tracking"
         },
@@ -1136,7 +1136,7 @@
       },
       "historical_costs_settings": {
         "title": "Historical cost settings",
-        "description": "Select the cumulative energy sensors WattPlan should sample for completed slots, then choose which reference scenarios to calculate.",
+        "description": "Select the cumulative energy sensors WattPlan should sample for completed slots, then choose which reference scenarios to calculate.\n\nNeed help choosing sensors or reading the resulting numbers? [Open historical cost guide](https://github.com/LordMike/WattPlan/blob/main/docs/historical-cost-tracking.md).",
         "data": {
           "historical_grid_import_sensor": "Grid import cumulative kWh sensor",
           "historical_grid_export_sensor": "Grid export cumulative kWh sensor",

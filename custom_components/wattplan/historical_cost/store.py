@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+import math
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -183,6 +184,52 @@ class HistoricalCostStore:
             for subentry_id, soc in soc_by_battery.items()
         }
 
+    def remember_price_series(
+        self,
+        *,
+        start_at: datetime,
+        slot_minutes: int,
+        import_prices: list[float],
+        export_prices: list[float],
+    ) -> None:
+        """Retain normalized planner price values by UTC slot start."""
+        if int(slot_minutes) != self.slot_minutes:
+            return
+        cache = self.data.setdefault("price_cache", {})
+        if not isinstance(cache, dict):
+            cache = {}
+            self.data["price_cache"] = cache
+
+        interval = timedelta(minutes=self.slot_minutes)
+        changed = False
+        for index, raw_import_price in enumerate(import_prices):
+            import_price = _finite_float(raw_import_price)
+            if import_price is None:
+                continue
+            slot_start = start_at.astimezone(UTC) + (interval * index)
+            export_price = _finite_float(
+                export_prices[index] if index < len(export_prices) else 0.0
+            )
+            if export_price is None:
+                continue
+            cache[_utc_iso(slot_start)] = {
+                "import_price": import_price,
+                "export_price": export_price,
+            }
+            changed = True
+        if changed:
+            self.mark_dirty()
+
+    def cached_price(self, slot_start: datetime, kind: str) -> float | None:
+        """Return a retained planner price for one UTC slot, if available."""
+        cache = self.data.get("price_cache")
+        if not isinstance(cache, dict):
+            return None
+        entry = cache.get(_utc_iso(slot_start))
+        if not isinstance(entry, dict):
+            return None
+        return _finite_float(entry.get(f"{kind}_price"))
+
     def append_slot(self, record: SlotRecord) -> None:
         """Append one slot fact record to retained history."""
         local_day = self._local_date(record.start).isoformat()
@@ -208,20 +255,32 @@ class HistoricalCostStore:
         self.mark_dirty()
 
     def prune(self, now: datetime) -> None:
-        """Drop retained local days outside the fixed retention window."""
+        """Drop retained local days and cached prices outside the retention window."""
         days = self.data.setdefault("days", {})
         if not isinstance(days, dict):
             self.data["days"] = {}
-            return
         cutoff = self._local_date(now) - timedelta(days=RETENTION_DAYS - 1)
-        for key in list(days):
-            try:
-                day = date.fromisoformat(str(key))
-            except ValueError:
-                del days[key]
+        if isinstance(days, dict):
+            for key in list(days):
+                try:
+                    day = date.fromisoformat(str(key))
+                except ValueError:
+                    del days[key]
+                    continue
+                if day < cutoff:
+                    del days[key]
+
+        cache = self.data.setdefault("price_cache", {})
+        if not isinstance(cache, dict):
+            self.data["price_cache"] = {}
+            return
+        for key in list(cache):
+            parsed = dt_util.parse_datetime(str(key))
+            if parsed is None:
+                del cache[key]
                 continue
-            if day < cutoff:
-                del days[key]
+            if self._local_date(parsed.astimezone(UTC)) < cutoff:
+                del cache[key]
 
     def summary(
         self,
@@ -433,10 +492,23 @@ class HistoricalCostStore:
             migrated["last_meter_values"] = {}
         if not isinstance(migrated.get("meter_config"), dict):
             migrated["meter_config"] = {}
+        if not isinstance(migrated.get("price_cache"), dict):
+            migrated["price_cache"] = {}
         if not isinstance(migrated.get("days"), dict):
             migrated["days"] = {}
         if not isinstance(migrated.get("simulation_state"), dict):
             migrated["simulation_state"] = {}
+        for slot_key, price_payload in list(migrated["price_cache"].items()):
+            if not isinstance(price_payload, dict):
+                del migrated["price_cache"][slot_key]
+                continue
+            import_price = _finite_float(price_payload.get("import_price"))
+            export_price = _finite_float(price_payload.get("export_price"))
+            if import_price is None or export_price is None:
+                del migrated["price_cache"][slot_key]
+                continue
+            price_payload["import_price"] = import_price
+            price_payload["export_price"] = export_price
         for day_key, day_payload in list(migrated["days"].items()):
             if not isinstance(day_payload, dict):
                 del migrated["days"][day_key]
@@ -458,6 +530,16 @@ def _optional_float_at(payload: dict[str, Any], key: str, index: int) -> float |
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _finite_float(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed):
+        return None
+    return parsed
 
 
 def _utc_iso(value: datetime) -> str:

@@ -352,6 +352,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 planner_result = await self._async_run_optimizer(
                     request, entry.runtime_data, timings=timings
                 )
+                self._remember_historical_price_series(entry, request)
                 planner_output = self._planner_output_from_result(
                     request, planner_result, timings=timings
                 )
@@ -490,6 +491,29 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         request, _timings = await self._async_build_planning_request(entry)
         return request
 
+    def _remember_historical_price_series(
+        self,
+        entry: ConfigEntry,
+        request: dict[str, Any],
+    ) -> None:
+        """Send successful planner price inputs to historical tracking."""
+        historical_tracker = getattr(entry.runtime_data, "historical_tracker", None)
+        if historical_tracker is None:
+            return
+        optimizer_params = request["optimizer_params"]
+        try:
+            historical_tracker.remember_price_series(
+                start_at=request["window"].start_at,
+                slot_minutes=int(request["slot_minutes"]),
+                import_prices=list(optimizer_params["grid_import_price_per_kwh"]),
+                export_prices=list(optimizer_params["grid_export_price_per_kwh"]),
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning(
+                "Failed to retain historical planner prices (entry_id=%s): %s",
+                self._entry_id,
+                err,
+            )
 
     def _sync_source_issues(self, entry: ConfigEntry) -> None:
         """Publish the current source issue set to the repairs dashboard."""

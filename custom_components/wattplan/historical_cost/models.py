@@ -87,6 +87,7 @@ def default_store_payload(
         "last_processed_slot": None,
         "last_meter_values": {},
         "meter_config": {},
+        "price_cache": {},
         "days": {},
         "simulation_state": {
             "self_consumption": {
@@ -99,4 +100,3 @@ def default_store_payload(
 def empty_day_payload() -> dict[str, list[Any]]:
     """Return an empty day payload with all expected arrays."""
     return {key: [] for key in DAY_ARRAY_KEYS}
-

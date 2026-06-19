@@ -27,7 +27,7 @@ This documentation is intended for Home Assistant users, energy enthusiasts, and
 9. Optionally configure an export price source if you have PV and want exported power to carry a value instead of defaulting to zero.
 10. Add [batteries, comfort loads, or optional loads](docs/extras.md) if you want WattPlan to control more than just forecasting.
 11. Make automations to apply the WattPlan actions to your devices, such as setting batteries to charge or starting your HVAC. See the [real-life examples](docs/extras.md#real-life-examples) for practical automation patterns.
-12. When the setup is operating, enable historical cost tracking in the WattPlan options flow if you want to measure whether it is actually improving cost over time. Historical tracking is disabled by default.
+12. When the setup is operating, optionally enable [historical cost tracking](docs/historical-cost-tracking.md) if you want to measure whether it is actually improving cost over time.
 
 ## Configuration Steps
 After installing WattPlan via HACS, configure the following:
@@ -36,12 +36,10 @@ After installing WattPlan via HACS, configure the following:
 - **PV Source**: Optional. Set up your solar production data source if applicable.
 - **Export Price Source**: Optional. If PV is configured, you can provide a value for exported power. Otherwise WattPlan treats export value as zero.
 - **Optional Loads**: Optional. Configure any additional loads you wish to manage, such as batteries or comfort loads.
-- **Historical Cost Tracking**: Optional and disabled by default. Enable it after the main setup is working, choose the cumulative kWh meters WattPlan should read, and enable the reference simulations you want to compare against.
+- **Historical Cost Tracking**: Optional and disabled by default. See [Historical Cost Tracking](docs/historical-cost-tracking.md) for setup requirements and how to read the numbers.
 
 ## Tracking Performance
-After WattPlan has been controlling or guiding your setup for about 30 days, compare the historical actual cost with one of the reference simulations. For many battery setups, start with `self_consumption` because it represents a simple PV-first battery strategy. `no_battery` is useful when you want to see the broader value of battery behavior at all.
-
-The easiest dashboard graph is one of the savings comparison sensors. After about a month, prefer a monthly sensor such as `sensor.<setup_slug>_historical_savings_vs_self_consumption_this_month`; use the daily sensor when you want day-by-day checks. These sensors are calculated as reference cost minus actual cost, so a value at or above `0` means actual behavior was cheaper than the reference. For a consistent gain, the graph should stay non-negative over the comparison period. If you graph the raw cost sensors instead, the actual cost should stay at or below the reference cost.
+Use [Historical Cost Tracking](docs/historical-cost-tracking.md) to compare measured cost against reference scenarios and understand whether positive or negative savings values are good or bad.
 
 ## Features
 - Home Assistant custom integration with HACS-ready release artifacts
@@ -54,9 +52,10 @@ The easiest dashboard graph is one of the savings comparison sensors. After abou
 
 ## Documentation
 - [docs/source-data.md](docs/source-data.md) - Source modes, data model, and how to feed WattPlan price, export price, usage, and PV data
+- [docs/historical-cost-tracking.md](docs/historical-cost-tracking.md) - Historical setup requirements, scenarios, entities, and how to read savings values
 - [docs/example-deye-solcast-stromligning.md](docs/example-deye-solcast-stromligning.md) - Concrete end-to-end example using Strømligning, Deye, and Solcast
 - [docs/extras.md](docs/extras.md) - Batteries, comfort loads, optional loads, real-life examples, and how to wire WattPlan actions into your own automations
-- [docs/entities-and-services.md](docs/entities-and-services.md) - All exposed entities and services, including battery targets
+- [docs/entities-and-services.md](docs/entities-and-services.md) - Planner, battery, load entities, services, and battery targets
 - [docs/optimizer-profiles.md](docs/optimizer-profiles.md) - What Aggressive, Balanced, and Conservative mean in practice
 - [docs/error-handling.md](docs/error-handling.md) - Health states, degraded operation, and what `ok`, `degraded`, and `failed` mean
 - [docs/development.md](docs/development.md) - Local setup with `uv`, local test env caveats, optional symlink workflow, packaging

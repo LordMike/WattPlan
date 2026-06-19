@@ -30,34 +30,6 @@ These exist once per WattPlan setup:
 
 When `sensor.<setup_slug>_status` is `failed`, plan-dependent entities such as action sensors, plan details, and usage forecast become unavailable rather than continuing to expose stale plan data.
 
-## Historical Cost Entities
-
-Historical cost tracking is opt-in from the WattPlan options flow. It adds entities that compare the measured cost of what actually happened with simple reference scenarios from the same completed slots.
-
-Enabled by default when historical tracking is enabled:
-
-| Entity | Purpose |
-| --- | --- |
-| `sensor.<setup_slug>_historical_actual_cost_today` | Actual measured net cost for the current local day. This is grid import cost minus grid export value after all planning, automation, manual control, or lack of control. |
-| `sensor.<setup_slug>_historical_no_battery_cost_today` | Reference cost for the current local day if usage was served by PV first, remaining usage came from the grid, PV surplus was exported, and batteries were ignored. |
-| `sensor.<setup_slug>_historical_self_consumption_cost_today` | Reference cost for the current local day if PV served usage first, PV surplus charged configured batteries, and batteries discharged before grid import. This is the more realistic baseline for many battery setups. |
-| `sensor.<setup_slug>_historical_savings_vs_no_battery_today` | No-battery reference cost minus actual cost for the current local day. Positive means actual behavior was cheaper than the no-battery reference. |
-| `sensor.<setup_slug>_historical_savings_vs_self_consumption_today` | Self-consumption reference cost minus actual cost for the current local day. Positive means actual behavior was cheaper than simple self-consumption. |
-
-Disabled by default:
-
-| Entity | Purpose |
-| --- | --- |
-| `sensor.<setup_slug>_historical_actual_cost_this_month` | Actual measured net cost for the current local month. |
-| `sensor.<setup_slug>_historical_no_battery_cost_this_month` | No-battery reference cost for the current local month. |
-| `sensor.<setup_slug>_historical_self_consumption_cost_this_month` | Self-consumption reference cost for the current local month. |
-| `sensor.<setup_slug>_historical_savings_vs_no_battery_this_month` | No-battery reference cost minus actual cost for the current local month. |
-| `sensor.<setup_slug>_historical_savings_vs_self_consumption_this_month` | Self-consumption reference cost minus actual cost for the current local month. |
-
-Historical sensors use the Home Assistant currency as their unit and expose `tracking_started_at`, `last_complete_slot`, `slots`, `missing_slots`, `period_start`, `period_end`, and `scenario` attributes. Missing meters, meter resets, missing prices, and skipped slots are counted as missing slots instead of being spread across price intervals.
-
-For most setups, compare actual cost with self-consumption cost first. That shows whether WattPlan's price-aware behavior is beating a simple PV-first battery strategy. The no-battery reference is useful when you want a broader view of what battery behavior contributed at all.
-
 The overall status sensor is the canonical view of whether the current plan is usable. Its `plan_created_at` attribute is the snapshot creation time, and its `expires_at` attribute is the end of the current usable plan coverage from the optimizer horizon. If planning fails but WattPlan retains a previous snapshot, `expires_at` continues to describe that retained plan. Once the retained or active plan no longer covers the current time, the overall status becomes `failed`, `is_stale` becomes `true`, and `has_usable_plan` becomes `false`.
 
 Per-source status sensors explain input health. Their `expires_at` attribute describes the source data or fallback coverage for that source, not the whole plan. Stale fallback data from a source can make the overall status `degraded` while the plan is still usable; an expired overall plan is `failed`.

@@ -136,6 +136,23 @@ class HistoricalCostTracker:
             )
         return False
 
+    def remember_price_series(
+        self,
+        *,
+        start_at: datetime,
+        slot_minutes: int,
+        import_prices: list[float],
+        export_prices: list[float],
+    ) -> None:
+        """Retain normalized planner prices for later historical slot processing."""
+        self.store.remember_price_series(
+            start_at=start_at,
+            slot_minutes=slot_minutes,
+            import_prices=import_prices,
+            export_prices=export_prices,
+        )
+        self._notify()
+
     async def async_process_completed_slot(
         self,
         now: datetime | None = None,
@@ -314,6 +331,15 @@ class HistoricalCostTracker:
 
     async def _async_price(self, source_key: str, slot_start: datetime) -> float | None:
         """Fetch one configured price value for a slot."""
+        cache_kind = {
+            CONF_SOURCE_IMPORT_PRICE: "import",
+            CONF_SOURCE_EXPORT_PRICE: "export",
+        }.get(source_key)
+        if cache_kind is not None:
+            cached = self.store.cached_price(slot_start, cache_kind)
+            if cached is not None:
+                return cached
+
         sources = self.entry.data.get(CONF_SOURCES, {})
         source_config = sources.get(source_key, {}) if isinstance(sources, dict) else {}
         if not isinstance(source_config, dict):

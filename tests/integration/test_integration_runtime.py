@@ -17,6 +17,7 @@ from custom_components.wattplan.const import (
     CONF_DURATION_MINUTES,
     CONF_ENERGY_KWH,
     CONF_EXPECTED_POWER_KW,
+    CONF_FIXUP_PROFILE,
     CONF_HOURS_TO_PLAN,
     CONF_HISTORICAL_COST_TRACKING_ENABLED,
     CONF_HISTORICAL_GRID_EXPORT_SENSOR,
@@ -55,6 +56,7 @@ from custom_components.wattplan.const import (
     SERVICE_REFRESH_SENSORS,
     SERVICE_RUN_OPTIMIZE_NOW,
     SERVICE_SET_TARGET,
+    FIXUP_PROFILE_STRICT,
     SOURCE_MODE_ENTITY_ADAPTER,
     SOURCE_MODE_NOT_USED,
     SOURCE_MODE_TEMPLATE,
@@ -703,7 +705,10 @@ async def test_refresh_sensors_service_processes_historical_costs(
     _set_energy_meter(hass, "sensor.usage_total", 200.0)
     _set_energy_meter(hass, "sensor.pv_total", 50.0)
 
-    with patch("custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize):
+    with patch(
+        "custom_components.wattplan.coordinator.optimize",
+        side_effect=_fake_optimize,
+    ):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
         await entry.runtime_data.coordinator.async_plan(trigger=CycleTrigger.SERVICE)
@@ -734,6 +739,124 @@ async def test_refresh_sensors_service_processes_historical_costs(
     await hass.services.async_call(DOMAIN, SERVICE_REFRESH_SENSORS, {}, blocking=True)
     await hass.async_block_till_done()
 
+    actual = hass.states.get("sensor.home_historical_actual_cost_today")
+    assert actual is not None
+    assert float(actual.state) == pytest.approx(0.98)
+
+
+async def test_historical_cost_uses_cached_planner_prices_after_forecast_rolls(
+    hass: HomeAssistant,
+    freezer,
+) -> None:
+    """Completed historical slots should use retained prices from successful plans."""
+    start = datetime(2026, 5, 24, 12, 0, tzinfo=UTC)
+    freezer.move_to(start + timedelta(seconds=2))
+
+    def _points(first: datetime, values: list[float]) -> list[dict[str, object]]:
+        return [
+            {
+                "start": (first + timedelta(hours=index)).isoformat(),
+                "value": value,
+            }
+            for index, value in enumerate(values)
+        ]
+
+    hass.states.async_set(
+        "sensor.import_price_forecast",
+        "ok",
+        {"prices": _points(start, [1.0, 1.1, 1.2, 1.3])},
+    )
+    hass.states.async_set(
+        "sensor.export_price_forecast",
+        "ok",
+        {"prices": _points(start, [0.1, 0.11, 0.12, 0.13])},
+    )
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: 60,
+            CONF_HOURS_TO_PLAN: 4,
+            CONF_SOURCES: {
+                CONF_SOURCE_IMPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+                    "entity_id": "sensor.import_price_forecast",
+                    CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
+                    CONF_NAME: "prices",
+                    CONF_TIME_KEY: "start",
+                    CONF_VALUE_KEY: "value",
+                    CONF_FIXUP_PROFILE: FIXUP_PROFILE_STRICT,
+                },
+                CONF_SOURCE_EXPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+                    "entity_id": "sensor.export_price_forecast",
+                    CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
+                    CONF_NAME: "prices",
+                    CONF_TIME_KEY: "start",
+                    CONF_VALUE_KEY: "value",
+                    CONF_FIXUP_PROFILE: FIXUP_PROFILE_STRICT,
+                },
+            },
+        },
+        options=_historical_options(),
+    )
+    entry.add_to_hass(hass)
+    _set_energy_meter(hass, "sensor.grid_import_total", 100.0)
+    _set_energy_meter(hass, "sensor.grid_export_total", 10.0)
+    _set_energy_meter(hass, "sensor.usage_total", 200.0)
+    _set_energy_meter(hass, "sensor.pv_total", 50.0)
+
+    with patch(
+        "custom_components.wattplan.coordinator.optimize",
+        side_effect=_fake_optimize,
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        await entry.runtime_data.coordinator.async_plan(trigger=CycleTrigger.SERVICE)
+
+    tracker = entry.runtime_data.historical_tracker
+    assert tracker is not None
+    assert tracker.store.cached_price(start, "import") == pytest.approx(1.0)
+    assert tracker.store.cached_price(start, "export") == pytest.approx(0.1)
+
+    tracker.store.update_metadata(
+        last_processed_slot=start - timedelta(hours=1),
+        last_meter_values={
+            "grid_import": 100.0,
+            "grid_export": 10.0,
+            "usage": 200.0,
+            "pv": 50.0,
+        },
+        meter_config={
+            "grid_import": "sensor.grid_import_total",
+            "grid_export": "sensor.grid_export_total",
+            "usage": "sensor.usage_total",
+            "pv": "sensor.pv_total",
+        },
+    )
+    hass.states.async_set(
+        "sensor.import_price_forecast",
+        "ok",
+        {"prices": _points(start + timedelta(hours=1), [2.0, 2.1, 2.2, 2.3])},
+    )
+    hass.states.async_set(
+        "sensor.export_price_forecast",
+        "ok",
+        {"prices": _points(start + timedelta(hours=1), [0.2, 0.21, 0.22, 0.23])},
+    )
+    _set_energy_meter(hass, "sensor.grid_import_total", 101.0)
+    _set_energy_meter(hass, "sensor.grid_export_total", 10.2)
+    _set_energy_meter(hass, "sensor.usage_total", 201.5)
+    _set_energy_meter(hass, "sensor.pv_total", 51.0)
+
+    await tracker.async_process_completed_slot(start + timedelta(hours=1, seconds=1))
+    await hass.async_block_till_done()
+
+    day = tracker.store.data["days"]["2026-05-24"]
+    assert day["import_price"] == [1.0]
+    assert day["export_price"] == [0.1]
+    assert day["flags"] == [0]
     actual = hass.states.get("sensor.home_historical_actual_cost_today")
     assert actual is not None
     assert float(actual.state) == pytest.approx(0.98)
@@ -880,11 +1003,45 @@ async def test_historical_cost_store_prunes_old_days(hass: HomeAssistant) -> Non
         "2026-03-01": {"starts": []},
         "2026-05-01": {"starts": []},
     }
+    store.data["price_cache"] = {
+        "2026-03-01T12:00:00Z": {"import_price": 1.0, "export_price": 0.1},
+        "2026-05-01T12:00:00Z": {"import_price": 1.0, "export_price": 0.1},
+        "2026-05-25T12:00:00Z": {"import_price": 1.0, "export_price": 0.1},
+    }
 
     store.prune(datetime(2026, 5, 24, 12, 0, tzinfo=UTC))
 
     assert "2026-03-01" not in store.data["days"]
     assert "2026-05-01" in store.data["days"]
+    assert "2026-03-01T12:00:00Z" not in store.data["price_cache"]
+    assert "2026-05-01T12:00:00Z" in store.data["price_cache"]
+    assert "2026-05-25T12:00:00Z" in store.data["price_cache"]
+
+
+async def test_historical_cost_store_migrates_missing_price_cache(
+    hass: HomeAssistant,
+) -> None:
+    """Older historical stores should gain an empty retained price cache."""
+    store = HistoricalCostStore(
+        hass,
+        entry_id="history-entry",
+        slot_minutes=60,
+        currency="DKK",
+    )
+
+    migrated = store._migrate(
+        {
+            "version": 1,
+            "slot_minutes": 60,
+            "currency": "DKK",
+            "days": {},
+            "last_meter_values": {},
+            "meter_config": {},
+            "simulation_state": {},
+        }
+    )
+
+    assert migrated["price_cache"] == {}
 
 
 async def test_battery_action_sensor_uses_source_specific_charge_state(

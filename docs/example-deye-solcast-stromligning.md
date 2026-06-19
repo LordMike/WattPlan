@@ -197,19 +197,8 @@ What to do next:
 1. run the planner
 2. inspect the generated entities
 3. create automations that translate planned actions into real device commands
-4. enable historical cost tracking once those automations are actually applying WattPlan's plan
 
 WattPlan publishes the plan. It does not automatically operate your battery, washer, HVAC, or other devices unless you wire those actions into automations yourself.
-
-## Track Whether WattPlan Is Helping
-
-Historical cost tracking is disabled by default. Enable it from the WattPlan options flow after the main setup works and your automations are applying the WattPlan actions.
-
-For this example, historical tracking needs cumulative `kWh` meters for actual grid import and usage. Add grid export and PV meters too when those apply to your setup. Then enable the reference simulations you want to compare against:
-- `self_consumption` is usually the first comparison for a battery setup. It models PV serving usage first, PV surplus charging the battery, and the battery discharging before grid import.
-- `no_battery` is useful when you want to compare against the same usage and PV without battery behavior.
-
-After about 30 days, create a dashboard graph for a savings comparison sensor such as `sensor.<setup_slug>_historical_savings_vs_self_consumption_this_month`. Enable the monthly entity first if it is still disabled. Use the daily sensor when you want day-by-day checks. The savings sensors are reference cost minus actual cost. A value at or above `0` means the real setup was cheaper than the reference simulation. To show a consistent gain, the graph should stay non-negative over the period you care about. If you graph raw actual and reference cost sensors instead, actual cost should stay at or below the reference cost.
 
 ## Entities Used In This Example
 
