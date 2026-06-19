@@ -24,15 +24,11 @@ These exist once per WattPlan setup:
 | `sensor.<setup_slug>_last_run` | Timestamp of the last successful optimize (plan calculation) cycle. |
 | `sensor.<setup_slug>_next_run` | Disabled by default. Timestamp of the next scheduled planning cycle. |
 | `sensor.<setup_slug>_last_run_duration` | Disabled by default. Duration of the last optimize cycle in milliseconds. |
-| `sensor.<setup_slug>_projected_cost_savings` | Horizon-wide cost savings for the current plan. |
-| `sensor.<setup_slug>_projected_savings_percentage` | Horizon-wide savings percentage for the current plan. Uses `(1 - projected_cost / baseline_cost) * 100` and exposes the component costs as attributes. Returns `unknown` when the resulting percentage exceeds WattPlan's current sanity threshold. |
-| `sensor.<setup_slug>_projected_cost_savings_this_interval` | Disabled by default. Savings for the current planner interval only. |
-| `sensor.<setup_slug>_projected_savings_percentage_this_interval` | Disabled by default. Savings percentage for the current planner interval only, with the same formula, attributes, and sanity-threshold behavior as the horizon sensor. |
 | `sensor.<setup_slug>_plan_details` | Disabled by default. Raw planner-detail payload at WattPlan's configured slot size. |
 | `sensor.<setup_slug>_plan_details_hourly` | Disabled by default. The same planner details, aggregated to hourly buckets. |
 | `sensor.<setup_slug>_usage_forecast` | Present when the built-in usage source is configured. Exposes the generated usage forecast. |
 
-When `sensor.<setup_slug>_status` is `failed`, plan-dependent entities such as action sensors, plan details, projected savings, and usage forecast become unavailable rather than continuing to expose stale plan data.
+When `sensor.<setup_slug>_status` is `failed`, plan-dependent entities such as action sensors, plan details, and usage forecast become unavailable rather than continuing to expose stale plan data.
 
 The overall status sensor is the canonical view of whether the current plan is usable. Its `plan_created_at` attribute is the snapshot creation time, and its `expires_at` attribute is the end of the current usable plan coverage from the optimizer horizon. If planning fails but WattPlan retains a previous snapshot, `expires_at` continues to describe that retained plan. Once the retained or active plan no longer covers the current time, the overall status becomes `failed`, `is_stale` becomes `true`, and `has_usable_plan` becomes `false`.
 

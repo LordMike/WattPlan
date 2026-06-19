@@ -9,6 +9,7 @@ from datetime import datetime
 from homeassistant.config_entries import ConfigEntry
 
 from .coordinator import WattPlanCoordinator
+from .historical_cost.tracker import HistoricalCostTracker
 
 
 @dataclass
@@ -25,6 +26,7 @@ class WattPlanRuntimeData:
 
     coordinator: WattPlanCoordinator
     last_run_at: datetime
+    historical_tracker: HistoricalCostTracker | None = None
     optimizer_state: str | None = None
     runtime_update_listeners: set[Callable[[], None]] = field(default_factory=set)
     battery_targets: dict[str, BatteryTarget] = field(default_factory=dict)

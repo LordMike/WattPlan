@@ -7,11 +7,18 @@ from functools import partial
 import logging
 from typing import Any
 
-from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
+from homeassistant.core import Event, HomeAssistant, callback
 
-from .const import CONF_ACTION_EMISSION_ENABLED, CONF_PLANNING_ENABLED, CONF_SLOT_MINUTES, DOMAIN
+from .const import (
+    CONF_ACTION_EMISSION_ENABLED,
+    CONF_HISTORICAL_COST_TRACKING_ENABLED,
+    CONF_PLANNING_ENABLED,
+    CONF_SLOT_MINUTES,
+    DOMAIN,
+)
 from .coordinator import CycleTrigger, WattPlanCoordinator
+from .historical_cost.tracker import HistoricalCostTracker
 from .runtime import WattPlanConfigEntry, WattPlanRuntimeData, mark_runtime_updated
 from .services import SERVICE_SPECS
 
@@ -65,6 +72,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) -> 
         coordinator=coordinator,
         last_run_at=datetime.now(tz=UTC),
     )
+    if bool(entry.options.get(CONF_HISTORICAL_COST_TRACKING_ENABLED, False)):
+        tracker = HistoricalCostTracker(
+            hass,
+            entry,
+            slot_minutes=int(entry.data[CONF_SLOT_MINUTES]),
+        )
+        entry.runtime_data.historical_tracker = tracker
+        await tracker.async_start()
+
+        @callback
+        def _async_flush_history_on_stop(_event: Event) -> None:
+            hass.async_create_task(tracker.async_shutdown())
+
+        entry.async_on_unload(
+            hass.bus.async_listen_once(
+                EVENT_HOMEASSISTANT_STOP,
+                _async_flush_history_on_stop,
+            )
+        )
+
     had_snapshot = await coordinator.async_restore_snapshot()
     entry.async_on_unload(entry.add_update_listener(async_update_listener))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -75,6 +102,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) -> 
 
 async def async_unload_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) -> bool:
     """Unload a config entry."""
+    if entry.runtime_data.historical_tracker is not None:
+        await entry.runtime_data.historical_tracker.async_shutdown()
     await entry.runtime_data.coordinator.async_shutdown()
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if not unload_ok:

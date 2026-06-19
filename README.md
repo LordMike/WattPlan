@@ -27,6 +27,7 @@ This documentation is intended for Home Assistant users, energy enthusiasts, and
 9. Optionally configure an export price source if you have PV and want exported power to carry a value instead of defaulting to zero.
 10. Add [batteries, comfort loads, or optional loads](docs/extras.md) if you want WattPlan to control more than just forecasting.
 11. Make automations to apply the WattPlan actions to your devices, such as setting batteries to charge or starting your HVAC. See the [real-life examples](docs/extras.md#real-life-examples) for practical automation patterns.
+12. When the setup is operating, optionally enable [historical cost tracking](docs/historical-cost-tracking.md) if you want to measure whether it is actually improving cost over time.
 
 ## Configuration Steps
 After installing WattPlan via HACS, configure the following:
@@ -35,30 +36,34 @@ After installing WattPlan via HACS, configure the following:
 - **PV Source**: Optional. Set up your solar production data source if applicable.
 - **Export Price Source**: Optional. If PV is configured, you can provide a value for exported power. Otherwise WattPlan treats export value as zero.
 - **Optional Loads**: Optional. Configure any additional loads you wish to manage, such as batteries or comfort loads.
+- **Historical Cost Tracking**: Optional and disabled by default. See [Historical Cost Tracking](docs/historical-cost-tracking.md) for setup requirements and how to read the numbers.
+
+## Tracking Performance
+Use [Historical Cost Tracking](docs/historical-cost-tracking.md) to compare measured cost against reference scenarios and understand whether positive or negative savings values are good or bad.
 
 ## Features
 - Home Assistant custom integration with HACS-ready release artifacts
 - Config-flow driven source setup for import price, export price, usage, and PV inputs
 - Battery, comfort-load, and optional-load planning
 - Planned actions are exposed as entities, so you can easily use the results to do automations
+- Optional historical cost tracking for comparing actual cost against simple reference scenarios
 - Battery targets can be set and cleared through WattPlan services
 - GitHub Actions for CI, tagged releases, prereleases, and `main` branch dev artifacts
 
 ## Documentation
-- [docs/source-data.md](docs/source-data.md) - Source modes, data model, and how to feed WattPlan price, export price, usage, and PV data
-- [docs/example-deye-solcast-stromligning.md](docs/example-deye-solcast-stromligning.md) - Concrete end-to-end example using Strømligning, Deye, and Solcast
-- [docs/extras.md](docs/extras.md) - Batteries, comfort loads, optional loads, real-life examples, and how to wire WattPlan actions into your own automations
-- [docs/entities-and-services.md](docs/entities-and-services.md) - All exposed entities and services, including battery targets
-- [docs/optimizer-profiles.md](docs/optimizer-profiles.md) - What Aggressive, Balanced, and Conservative mean in practice
-- [docs/error-handling.md](docs/error-handling.md) - Health states, degraded operation, and what `ok`, `degraded`, and `failed` mean
-- [docs/development.md](docs/development.md) - Local setup with `uv`, local test env caveats, optional symlink workflow, packaging
-- [docs/architecture.md](docs/architecture.md) - Code layout, runtime boundaries, planning flow
-- [docs/release.md](docs/release.md) - Tags, prereleases, dev artifacts, GitHub release assets
-- [docs/optimizer-api.md](docs/optimizer-api.md) - Direct optimizer API notes
+- [Source Data](docs/source-data.md) - Source modes, data model, and how to feed WattPlan price, export price, usage, and PV data
+- [Historical Cost Tracking](docs/historical-cost-tracking.md) - Historical setup requirements, scenarios, entities, and how to read savings values
+- [Deye, Solcast, and Strømligning Example](docs/example-deye-solcast-stromligning.md) - Concrete end-to-end example using Strømligning, Deye, and Solcast
+- [Extras and Automations](docs/extras.md) - Batteries, comfort loads, optional loads, real-life examples, and how to wire WattPlan actions into your own automations
+- [Entities and Services](docs/entities-and-services.md) - Planner, battery, load entities, services, and battery targets
+- [Optimizer Profiles](docs/optimizer-profiles.md) - What Aggressive, Balanced, and Conservative mean in practice
+- [Error Handling](docs/error-handling.md) - Health states, degraded operation, and what `ok`, `degraded`, and `failed` mean
+- [Development](docs/development.md) - Local setup with `uv`, local test env caveats, optional symlink workflow, packaging
+- [Architecture](docs/architecture.md) - Code layout, runtime boundaries, planning flow
+- [Release Process](docs/release.md) - Tags, prereleases, dev artifacts, GitHub release assets
+- [Optimizer API](docs/optimizer-api.md) - Direct optimizer API notes
 
 ## Limitations
 While WattPlan is designed to optimize energy usage effectively, there are scenarios where it may not be the best fit:
 - Users with highly variable energy prices may find it challenging to predict optimal usage.
 - Integration with certain legacy systems may require additional configuration or may not be supported.
-
-## Status

@@ -31,42 +31,6 @@ ENTRY_SENSOR_SPECS: tuple[SensorSpec, ...] = (
     SensorSpec("last_run_duration", object),
     SensorSpec("plan_details", object, {"details_key": "plan_details"}),
     SensorSpec("plan_details_hourly", object, {"details_key": "plan_details_hourly"}),
-    SensorSpec(
-        "projected_cost_savings",
-        object,
-        {
-            "projection_key": "projected_savings_cost",
-            "aggregate_mode": "horizon",
-            "use_home_currency": True,
-        },
-    ),
-    SensorSpec(
-        "projected_savings_percentage",
-        object,
-        {
-            "projection_key": "projected_savings_pct",
-            "aggregate_mode": "horizon",
-            "native_unit_of_measurement": "%",
-        },
-    ),
-    SensorSpec(
-        "projected_cost_savings_this_interval",
-        object,
-        {
-            "projection_key": "projected_savings_cost",
-            "aggregate_mode": "next_interval",
-            "use_home_currency": True,
-        },
-    ),
-    SensorSpec(
-        "projected_savings_percentage_this_interval",
-        object,
-        {
-            "projection_key": "projected_savings_pct",
-            "aggregate_mode": "next_interval",
-            "native_unit_of_measurement": "%",
-        },
-    ),
 )
 
 OPTIONAL_SOURCE_STATUS_SPECS: tuple[tuple[str, str], ...] = (

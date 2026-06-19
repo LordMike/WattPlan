@@ -276,11 +276,15 @@ async def async_handle_run_optimize_now_service(
 ) -> None:
     for entry in resolve_run_entries(hass, call):
         await entry.runtime_data.coordinator.async_plan(trigger=CycleTrigger.SERVICE)
+        if entry.runtime_data.historical_tracker is not None:
+            await entry.runtime_data.historical_tracker.async_refresh()
         mark_runtime_updated(entry.runtime_data, when=datetime.now(tz=UTC))
 
 
 async def async_handle_refresh_sensors_service(hass: HomeAssistant, call: ServiceCall) -> None:
     for entry in resolve_run_entries(hass, call):
+        if entry.runtime_data.historical_tracker is not None:
+            await entry.runtime_data.historical_tracker.async_refresh()
         await entry.runtime_data.coordinator.async_emit(trigger=CycleTrigger.SERVICE)
 
 
