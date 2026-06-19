@@ -27,7 +27,7 @@ HISTORICAL_SENSOR_DESCRIPTIONS: tuple[HistoricalSensorDescription, ...] = (
         metric=HistoricalMetric.COST,
         period=PERIOD_TODAY,
         scenario=SCENARIO_ACTUAL,
-        name="Historical Actual Cost Today",
+        name="Actual Cost Today",
         enabled_default=True,
     ),
     HistoricalSensorDescription(
@@ -35,7 +35,7 @@ HISTORICAL_SENSOR_DESCRIPTIONS: tuple[HistoricalSensorDescription, ...] = (
         metric=HistoricalMetric.COST,
         period=PERIOD_TODAY,
         scenario=SCENARIO_NO_BATTERY,
-        name="Historical No Battery Cost Today",
+        name="No Battery Cost Today",
         enabled_default=True,
     ),
     HistoricalSensorDescription(
@@ -43,7 +43,7 @@ HISTORICAL_SENSOR_DESCRIPTIONS: tuple[HistoricalSensorDescription, ...] = (
         metric=HistoricalMetric.COST,
         period=PERIOD_TODAY,
         scenario=SCENARIO_SELF_CONSUMPTION,
-        name="Historical Self Consumption Cost Today",
+        name="Self Consumption Cost Today",
         enabled_default=True,
     ),
     HistoricalSensorDescription(
@@ -51,7 +51,7 @@ HISTORICAL_SENSOR_DESCRIPTIONS: tuple[HistoricalSensorDescription, ...] = (
         metric=HistoricalMetric.SAVINGS_VS_NO_BATTERY,
         period=PERIOD_TODAY,
         scenario=None,
-        name="Historical Savings vs No Battery Today",
+        name="Savings Today vs No Battery",
         enabled_default=True,
     ),
     HistoricalSensorDescription(
@@ -59,7 +59,7 @@ HISTORICAL_SENSOR_DESCRIPTIONS: tuple[HistoricalSensorDescription, ...] = (
         metric=HistoricalMetric.SAVINGS_VS_SELF_CONSUMPTION,
         period=PERIOD_TODAY,
         scenario=None,
-        name="Historical Savings vs Self Consumption Today",
+        name="Savings Today vs Self Consumption",
         enabled_default=True,
     ),
     HistoricalSensorDescription(
@@ -67,7 +67,7 @@ HISTORICAL_SENSOR_DESCRIPTIONS: tuple[HistoricalSensorDescription, ...] = (
         metric=HistoricalMetric.COST,
         period=PERIOD_THIS_MONTH,
         scenario=SCENARIO_ACTUAL,
-        name="Historical Actual Cost This Month",
+        name="Actual Cost This Month",
         enabled_default=False,
     ),
     HistoricalSensorDescription(
@@ -75,7 +75,7 @@ HISTORICAL_SENSOR_DESCRIPTIONS: tuple[HistoricalSensorDescription, ...] = (
         metric=HistoricalMetric.COST,
         period=PERIOD_THIS_MONTH,
         scenario=SCENARIO_NO_BATTERY,
-        name="Historical No Battery Cost This Month",
+        name="No Battery Cost This Month",
         enabled_default=False,
     ),
     HistoricalSensorDescription(
@@ -83,7 +83,7 @@ HISTORICAL_SENSOR_DESCRIPTIONS: tuple[HistoricalSensorDescription, ...] = (
         metric=HistoricalMetric.COST,
         period=PERIOD_THIS_MONTH,
         scenario=SCENARIO_SELF_CONSUMPTION,
-        name="Historical Self Consumption Cost This Month",
+        name="Self Consumption Cost This Month",
         enabled_default=False,
     ),
     HistoricalSensorDescription(
@@ -91,7 +91,7 @@ HISTORICAL_SENSOR_DESCRIPTIONS: tuple[HistoricalSensorDescription, ...] = (
         metric=HistoricalMetric.SAVINGS_VS_NO_BATTERY,
         period=PERIOD_THIS_MONTH,
         scenario=None,
-        name="Historical Savings vs No Battery This Month",
+        name="Savings This Month vs No Battery",
         enabled_default=False,
     ),
     HistoricalSensorDescription(
@@ -99,7 +99,7 @@ HISTORICAL_SENSOR_DESCRIPTIONS: tuple[HistoricalSensorDescription, ...] = (
         metric=HistoricalMetric.SAVINGS_VS_SELF_CONSUMPTION,
         period=PERIOD_THIS_MONTH,
         scenario=None,
-        name="Historical Savings vs Self Consumption This Month",
+        name="Savings This Month vs Self Consumption",
         enabled_default=False,
     ),
 )
