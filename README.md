@@ -51,17 +51,17 @@ Use [Historical Cost Tracking](docs/historical-cost-tracking.md) to compare meas
 - GitHub Actions for CI, tagged releases, prereleases, and `main` branch dev artifacts
 
 ## Documentation
-- [docs/source-data.md](docs/source-data.md) - Source modes, data model, and how to feed WattPlan price, export price, usage, and PV data
-- [docs/historical-cost-tracking.md](docs/historical-cost-tracking.md) - Historical setup requirements, scenarios, entities, and how to read savings values
-- [docs/example-deye-solcast-stromligning.md](docs/example-deye-solcast-stromligning.md) - Concrete end-to-end example using Strømligning, Deye, and Solcast
-- [docs/extras.md](docs/extras.md) - Batteries, comfort loads, optional loads, real-life examples, and how to wire WattPlan actions into your own automations
-- [docs/entities-and-services.md](docs/entities-and-services.md) - Planner, battery, load entities, services, and battery targets
-- [docs/optimizer-profiles.md](docs/optimizer-profiles.md) - What Aggressive, Balanced, and Conservative mean in practice
-- [docs/error-handling.md](docs/error-handling.md) - Health states, degraded operation, and what `ok`, `degraded`, and `failed` mean
-- [docs/development.md](docs/development.md) - Local setup with `uv`, local test env caveats, optional symlink workflow, packaging
-- [docs/architecture.md](docs/architecture.md) - Code layout, runtime boundaries, planning flow
-- [docs/release.md](docs/release.md) - Tags, prereleases, dev artifacts, GitHub release assets
-- [docs/optimizer-api.md](docs/optimizer-api.md) - Direct optimizer API notes
+- [Source Data](docs/source-data.md) - Source modes, data model, and how to feed WattPlan price, export price, usage, and PV data
+- [Historical Cost Tracking](docs/historical-cost-tracking.md) - Historical setup requirements, scenarios, entities, and how to read savings values
+- [Deye, Solcast, and Strømligning Example](docs/example-deye-solcast-stromligning.md) - Concrete end-to-end example using Strømligning, Deye, and Solcast
+- [Extras and Automations](docs/extras.md) - Batteries, comfort loads, optional loads, real-life examples, and how to wire WattPlan actions into your own automations
+- [Entities and Services](docs/entities-and-services.md) - Planner, battery, load entities, services, and battery targets
+- [Optimizer Profiles](docs/optimizer-profiles.md) - What Aggressive, Balanced, and Conservative mean in practice
+- [Error Handling](docs/error-handling.md) - Health states, degraded operation, and what `ok`, `degraded`, and `failed` mean
+- [Development](docs/development.md) - Local setup with `uv`, local test env caveats, optional symlink workflow, packaging
+- [Architecture](docs/architecture.md) - Code layout, runtime boundaries, planning flow
+- [Release Process](docs/release.md) - Tags, prereleases, dev artifacts, GitHub release assets
+- [Optimizer API](docs/optimizer-api.md) - Direct optimizer API notes
 
 ## Limitations
 While WattPlan is designed to optimize energy usage effectively, there are scenarios where it may not be the best fit:
