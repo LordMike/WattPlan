@@ -100,24 +100,25 @@ def _historical_costs_schema(defaults: dict[str, Any]) -> vol.Schema:
 
 def _historical_costs_settings_schema(defaults: dict[str, Any]) -> vol.Schema:
     """Build the historical cost settings schema."""
+
+    def optional_entity(field: str) -> vol.Optional:
+        default = defaults.get(field)
+        if default:
+            return vol.Optional(field, default=default)
+        return vol.Optional(field)
+
     return vol.Schema(
         {
-            vol.Optional(
-                CONF_HISTORICAL_GRID_IMPORT_SENSOR,
-                default=defaults.get(CONF_HISTORICAL_GRID_IMPORT_SENSOR),
+            optional_entity(
+                CONF_HISTORICAL_GRID_IMPORT_SENSOR
             ): _historical_energy_selector(),
-            vol.Optional(
-                CONF_HISTORICAL_GRID_EXPORT_SENSOR,
-                default=defaults.get(CONF_HISTORICAL_GRID_EXPORT_SENSOR),
+            optional_entity(
+                CONF_HISTORICAL_GRID_EXPORT_SENSOR
             ): _historical_energy_selector(),
-            vol.Optional(
-                CONF_HISTORICAL_USAGE_SENSOR,
-                default=defaults.get(CONF_HISTORICAL_USAGE_SENSOR),
+            optional_entity(
+                CONF_HISTORICAL_USAGE_SENSOR
             ): _historical_energy_selector(),
-            vol.Optional(
-                CONF_HISTORICAL_PV_SENSOR,
-                default=defaults.get(CONF_HISTORICAL_PV_SENSOR),
-            ): _historical_energy_selector(),
+            optional_entity(CONF_HISTORICAL_PV_SENSOR): _historical_energy_selector(),
             vol.Required(
                 CONF_HISTORICAL_SIMULATE_NO_BATTERY,
                 default=bool(defaults.get(CONF_HISTORICAL_SIMULATE_NO_BATTERY, True)),

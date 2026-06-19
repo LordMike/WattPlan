@@ -4,6 +4,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock
 
+import voluptuous_serialize
+
 from custom_components.wattplan.const import (
     CONF_CONFIG_ENTRY_ID,
     CONF_ACTION_EMISSION_ENABLED,
@@ -61,6 +63,7 @@ from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from tests.common import MockConfigEntry
 
@@ -92,7 +95,20 @@ def _schema_default(result: dict[str, Any], field: str) -> Any:
     """Extract a default value from a flow form schema."""
     schema = result["data_schema"].schema
     marker = next(key for key in schema if getattr(key, "schema", None) == field)
+    if not callable(marker.default):
+        return None
     return marker.default()
+
+
+def _serialized_schema_field(result: dict[str, Any], field: str) -> dict[str, Any]:
+    """Return a serialized schema field from a flow form."""
+    return next(
+        item
+        for item in voluptuous_serialize.convert(
+            result["data_schema"], custom_serializer=cv.custom_serializer
+        )
+        if item.get("name") == field
+    )
 
 
 def _set_energy_sensor(hass: HomeAssistant, entity_id: str, value: str = "1.0") -> None:
@@ -728,6 +744,12 @@ async def test_historical_costs_prefills_discovered_source_meters(
     assert _schema_default(result, CONF_HISTORICAL_PV_SENSOR) == "sensor.pv_energy_total"
     assert _schema_default(result, CONF_HISTORICAL_GRID_IMPORT_SENSOR) is None
     assert _schema_default(result, CONF_HISTORICAL_GRID_EXPORT_SENSOR) is None
+    assert "default" not in _serialized_schema_field(
+        result, CONF_HISTORICAL_GRID_IMPORT_SENSOR
+    )
+    assert "default" not in _serialized_schema_field(
+        result, CONF_HISTORICAL_GRID_EXPORT_SENSOR
+    )
 
 
 async def test_historical_costs_prefills_energy_provider_owned_meter(
