@@ -50,6 +50,8 @@ class RunOptimizeNowButton(WattPlanButton):
     async def async_press(self) -> None:
         """Run the planning stage immediately."""
         await self.coordinator.async_plan(trigger=CycleTrigger.SERVICE)
+        if self._config_entry.runtime_data.historical_tracker is not None:
+            await self._config_entry.runtime_data.historical_tracker.async_refresh()
         mark_runtime_updated(self._config_entry.runtime_data, when=datetime.now(tz=UTC))
 
 
@@ -60,6 +62,8 @@ class RefreshSensorsButton(WattPlanButton):
 
     async def async_press(self) -> None:
         """Run the emission stage immediately."""
+        if self._config_entry.runtime_data.historical_tracker is not None:
+            await self._config_entry.runtime_data.historical_tracker.async_refresh()
         await self.coordinator.async_emit(trigger=CycleTrigger.SERVICE)
 
 

@@ -148,15 +148,6 @@ class HistoricalCostTracker:
             await self._async_seed(now)
             return
         if completed_slot <= last_processed:
-            if (
-                completed_slot == last_processed
-                and self.store.data.pop("meter_cursor_seeded", False)
-            ):
-                current_meters, _flags = self._read_meter_values()
-                self.store.update_metadata(
-                    last_meter_values=current_meters,
-                    meter_config=self._meter_config(),
-                )
             return
         if completed_slot != last_processed + self._interval:
             missing_slot = last_processed + self._interval
@@ -208,10 +199,15 @@ class HistoricalCostTracker:
         self.store.data.pop("meter_cursor_seeded", None)
         self._notify()
 
+    async def async_refresh(self, now: datetime | None = None) -> None:
+        """Process due historical data and publish current aggregate state."""
+        await self.async_process_completed_slot(now)
+        self._notify()
+
     async def _async_timer(self, now: datetime) -> None:
         """Handle one scheduled tracker tick."""
         try:
-            await self.async_process_completed_slot(now)
+            await self.async_refresh(now)
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning(
                 "Historical cost tracking failed (entry_id=%s): %s",

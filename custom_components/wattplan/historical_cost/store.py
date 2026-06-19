@@ -242,6 +242,10 @@ class HistoricalCostStore:
             if value is not None:
                 values.append(value)
         total = round(sum(values), 4) if values else None
+        if total is None and not records and self._tracking_intersects_period(
+            period_start, period_end
+        ):
+            total = 0.0
         return HistoricalPeriodSummary(
             value=total,
             tracking_started_at=self._tracking_started_at(),
@@ -397,6 +401,22 @@ class HistoricalCostStore:
     def _tracking_started_at(self) -> str | None:
         value = self.data.get("tracking_started_at")
         return str(value) if value else None
+
+    def _tracking_intersects_period(self, period_start: datetime, period_end: datetime) -> bool:
+        """Return whether the store has started tracking within this aggregate period."""
+        for raw in (
+            self.data.get("tracking_started_at"),
+            self.data.get("last_processed_slot"),
+        ):
+            if not isinstance(raw, str) or not raw:
+                continue
+            parsed = dt_util.parse_datetime(raw)
+            if parsed is None:
+                continue
+            tracked_at = parsed.astimezone(UTC)
+            if period_start <= tracked_at < period_end:
+                return True
+        return False
 
     def _migrate(self, payload: dict[str, Any]) -> dict[str, Any]:
         migrated = default_store_payload(

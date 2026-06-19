@@ -546,10 +546,14 @@ async def test_historical_cost_tracking_seeds_without_fake_first_slot(
     tracker = entry.runtime_data.historical_tracker
     assert tracker is not None
     assert tracker.store.data["days"] == {}
-    assert hass.states.get("sensor.home_historical_actual_cost_today").state in {
-        STATE_UNAVAILABLE,
-        STATE_UNKNOWN,
-    }
+    actual = hass.states.get("sensor.home_historical_actual_cost_today")
+    assert actual is not None
+    assert float(actual.state) == pytest.approx(0.0)
+
+    seeded_meters = dict(tracker.store.last_meter_values())
+    await tracker.async_refresh(datetime.now(tz=UTC))
+    assert tracker.store.data["days"] == {}
+    assert tracker.store.last_meter_values() == seeded_meters
 
 
 async def test_historical_cost_tracking_processes_scenarios_and_entities(
@@ -664,6 +668,141 @@ async def test_historical_cost_tracking_processes_scenarios_and_entities(
     )
     assert monthly is not None
     assert monthly.disabled
+
+
+async def test_refresh_sensors_service_processes_historical_costs(
+    hass: HomeAssistant,
+    freezer,
+) -> None:
+    """Manual sensor refresh should process due historical cost slots."""
+    start = datetime(2026, 5, 24, 12, 0, tzinfo=UTC)
+    freezer.move_to(start + timedelta(hours=1, seconds=2))
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: 60,
+            CONF_HOURS_TO_PLAN: 4,
+            CONF_SOURCES: {
+                CONF_SOURCE_IMPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [1.0, 1.0, 1.0, 1.0] }}",
+                },
+                CONF_SOURCE_EXPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [0.1, 0.1, 0.1, 0.1] }}",
+                },
+            },
+        },
+        options=_historical_options(),
+    )
+    entry.add_to_hass(hass)
+    _set_energy_meter(hass, "sensor.grid_import_total", 100.0)
+    _set_energy_meter(hass, "sensor.grid_export_total", 10.0)
+    _set_energy_meter(hass, "sensor.usage_total", 200.0)
+    _set_energy_meter(hass, "sensor.pv_total", 50.0)
+
+    with patch("custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        await entry.runtime_data.coordinator.async_plan(trigger=CycleTrigger.SERVICE)
+
+    tracker = entry.runtime_data.historical_tracker
+    assert tracker is not None
+    tracker.store.update_metadata(
+        last_processed_slot=start - timedelta(hours=1),
+        last_meter_values={
+            "grid_import": 100.0,
+            "grid_export": 10.0,
+            "usage": 200.0,
+            "pv": 50.0,
+        },
+        meter_config={
+            "grid_import": "sensor.grid_import_total",
+            "grid_export": "sensor.grid_export_total",
+            "usage": "sensor.usage_total",
+            "pv": "sensor.pv_total",
+        },
+    )
+
+    _set_energy_meter(hass, "sensor.grid_import_total", 101.0)
+    _set_energy_meter(hass, "sensor.grid_export_total", 10.2)
+    _set_energy_meter(hass, "sensor.usage_total", 201.5)
+    _set_energy_meter(hass, "sensor.pv_total", 51.0)
+
+    await hass.services.async_call(DOMAIN, SERVICE_REFRESH_SENSORS, {}, blocking=True)
+    await hass.async_block_till_done()
+
+    actual = hass.states.get("sensor.home_historical_actual_cost_today")
+    assert actual is not None
+    assert float(actual.state) == pytest.approx(0.98)
+
+
+async def test_scheduled_tick_processes_historical_costs(
+    hass: HomeAssistant,
+    freezer,
+) -> None:
+    """Scheduled coordinator ticks should process due historical cost slots."""
+    start = datetime(2026, 5, 24, 12, 0, tzinfo=UTC)
+    freezer.move_to(start + timedelta(hours=1, seconds=2))
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: 60,
+            CONF_HOURS_TO_PLAN: 4,
+            CONF_SOURCES: {
+                CONF_SOURCE_IMPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [1.0, 1.0, 1.0, 1.0] }}",
+                },
+                CONF_SOURCE_EXPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [0.1, 0.1, 0.1, 0.1] }}",
+                },
+            },
+        },
+        options=_historical_options(),
+    )
+    entry.add_to_hass(hass)
+    _set_energy_meter(hass, "sensor.grid_import_total", 100.0)
+    _set_energy_meter(hass, "sensor.grid_export_total", 10.0)
+    _set_energy_meter(hass, "sensor.usage_total", 200.0)
+    _set_energy_meter(hass, "sensor.pv_total", 50.0)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    tracker = entry.runtime_data.historical_tracker
+    assert tracker is not None
+    tracker.store.update_metadata(
+        last_processed_slot=start - timedelta(hours=1),
+        last_meter_values={
+            "grid_import": 100.0,
+            "grid_export": 10.0,
+            "usage": 200.0,
+            "pv": 50.0,
+        },
+        meter_config={
+            "grid_import": "sensor.grid_import_total",
+            "grid_export": "sensor.grid_export_total",
+            "usage": "sensor.usage_total",
+            "pv": "sensor.pv_total",
+        },
+    )
+
+    _set_energy_meter(hass, "sensor.grid_import_total", 101.0)
+    _set_energy_meter(hass, "sensor.grid_export_total", 10.2)
+    _set_energy_meter(hass, "sensor.usage_total", 201.5)
+    _set_energy_meter(hass, "sensor.pv_total", 51.0)
+
+    await entry.runtime_data.coordinator.async_tick(trigger=CycleTrigger.SCHEDULE)
+    await hass.async_block_till_done()
+
+    actual = hass.states.get("sensor.home_historical_actual_cost_today")
+    assert actual is not None
+    assert float(actual.state) == pytest.approx(0.98)
 
 
 async def test_historical_cost_tracking_flags_meter_reset_and_missing_price(

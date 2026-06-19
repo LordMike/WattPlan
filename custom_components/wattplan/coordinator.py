@@ -284,6 +284,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
     async def async_tick(self, *, trigger: CycleTrigger) -> None:
         """Run one fixed-interval tick with conditional stage execution."""
         if not self.scheduler_enabled and trigger is CycleTrigger.SCHEDULE:
+            await self._async_refresh_historical(trigger=trigger)
             return
 
         self._last_attempt_at = datetime.now(tz=UTC)
@@ -304,6 +305,27 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning(
                     "Emit stage failed (entry_id=%s, trigger=%s): %s",
+                    self._entry_id,
+                    trigger,
+                    err,
+                )
+
+        await self._async_refresh_historical(trigger=trigger)
+
+    async def _async_refresh_historical(self, *, trigger: CycleTrigger) -> None:
+        """Refresh historical cost state when the entry has a tracker."""
+        entry = self.hass.config_entries.async_get_entry(self._entry_id)
+        historical_tracker = (
+            getattr(entry.runtime_data, "historical_tracker", None)
+            if entry is not None and hasattr(entry, "runtime_data")
+            else None
+        )
+        if historical_tracker is not None:
+            try:
+                await historical_tracker.async_refresh()
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Historical refresh failed (entry_id=%s, trigger=%s): %s",
                     self._entry_id,
                     trigger,
                     err,
