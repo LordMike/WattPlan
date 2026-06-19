@@ -42,7 +42,7 @@ WattPlan only processes completed slots. If the setup uses 15-minute slots, the 
 | Scenario | What it means | How to read it |
 | --- | --- | --- |
 | Actual | What really happened after all planning, automation, manual control, or lack of control. | Grid import cost minus grid export value. Lower is better when comparing raw cost sensors. |
-| No battery | A reference where usage is served by PV first, remaining usage comes from the grid, PV surplus is exported, and batteries are ignored. | Useful for seeing whether the real setup is cheaper than having no battery behavior. |
+| No battery | A reference where the home has no usable battery storage. It uses the same measured usage and PV, but treats battery capacity as zero: PV serves usage first, remaining usage comes from the grid, and PV surplus is exported. | Useful for seeing whether the real setup is cheaper than the same home with no batteries installed or available. |
 | Self-consumption | A reference where PV serves usage first, PV surplus charges configured batteries, and batteries discharge before grid import. It has no grid charging, no price awareness, and no preserve behavior. | Usually the first comparison for battery setups because it represents a simple PV-first battery strategy. |
 
 The reference scenarios are not predictions. They are recalculated from the same measured usage and PV facts that occurred in the completed slots.
