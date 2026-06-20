@@ -15,7 +15,7 @@ from ..historical_cost.models import (
     PERIOD_THIS_MONTH,
     PERIOD_TODAY,
     SCENARIO_ACTUAL,
-    SCENARIO_NO_BATTERY,
+    SCENARIO_GRID_ONLY,
     SCENARIO_SELF_CONSUMPTION,
 )
 from ..historical_cost.tracker import HistoricalCostTracker
@@ -31,11 +31,11 @@ HISTORICAL_SENSOR_DESCRIPTIONS: tuple[HistoricalSensorDescription, ...] = (
         enabled_default=True,
     ),
     HistoricalSensorDescription(
-        key="historical_no_battery_cost_today",
+        key="historical_grid_only_cost_today",
         metric=HistoricalMetric.COST,
         period=PERIOD_TODAY,
-        scenario=SCENARIO_NO_BATTERY,
-        name="No Battery Cost Today",
+        scenario=SCENARIO_GRID_ONLY,
+        name="Grid Only Cost Today",
         enabled_default=True,
     ),
     HistoricalSensorDescription(
@@ -43,15 +43,15 @@ HISTORICAL_SENSOR_DESCRIPTIONS: tuple[HistoricalSensorDescription, ...] = (
         metric=HistoricalMetric.COST,
         period=PERIOD_TODAY,
         scenario=SCENARIO_SELF_CONSUMPTION,
-        name="Self Consumption Cost Today",
+        name="Simple Self Consumption Cost Today",
         enabled_default=True,
     ),
     HistoricalSensorDescription(
-        key="historical_savings_vs_no_battery_today",
-        metric=HistoricalMetric.SAVINGS_VS_NO_BATTERY,
+        key="historical_savings_vs_grid_only_today",
+        metric=HistoricalMetric.SAVINGS_VS_GRID_ONLY,
         period=PERIOD_TODAY,
         scenario=None,
-        name="Savings Today vs No Battery",
+        name="Savings Today vs Grid Only",
         enabled_default=True,
     ),
     HistoricalSensorDescription(
@@ -59,7 +59,7 @@ HISTORICAL_SENSOR_DESCRIPTIONS: tuple[HistoricalSensorDescription, ...] = (
         metric=HistoricalMetric.SAVINGS_VS_SELF_CONSUMPTION,
         period=PERIOD_TODAY,
         scenario=None,
-        name="Savings Today vs Self Consumption",
+        name="Savings Today vs Simple Self Consumption",
         enabled_default=True,
     ),
     HistoricalSensorDescription(
@@ -71,11 +71,11 @@ HISTORICAL_SENSOR_DESCRIPTIONS: tuple[HistoricalSensorDescription, ...] = (
         enabled_default=False,
     ),
     HistoricalSensorDescription(
-        key="historical_no_battery_cost_this_month",
+        key="historical_grid_only_cost_this_month",
         metric=HistoricalMetric.COST,
         period=PERIOD_THIS_MONTH,
-        scenario=SCENARIO_NO_BATTERY,
-        name="No Battery Cost This Month",
+        scenario=SCENARIO_GRID_ONLY,
+        name="Grid Only Cost This Month",
         enabled_default=False,
     ),
     HistoricalSensorDescription(
@@ -83,15 +83,15 @@ HISTORICAL_SENSOR_DESCRIPTIONS: tuple[HistoricalSensorDescription, ...] = (
         metric=HistoricalMetric.COST,
         period=PERIOD_THIS_MONTH,
         scenario=SCENARIO_SELF_CONSUMPTION,
-        name="Self Consumption Cost This Month",
+        name="Simple Self Consumption Cost This Month",
         enabled_default=False,
     ),
     HistoricalSensorDescription(
-        key="historical_savings_vs_no_battery_this_month",
-        metric=HistoricalMetric.SAVINGS_VS_NO_BATTERY,
+        key="historical_savings_vs_grid_only_this_month",
+        metric=HistoricalMetric.SAVINGS_VS_GRID_ONLY,
         period=PERIOD_THIS_MONTH,
         scenario=None,
-        name="Savings This Month vs No Battery",
+        name="Savings This Month vs Grid Only",
         enabled_default=False,
     ),
     HistoricalSensorDescription(
@@ -99,7 +99,7 @@ HISTORICAL_SENSOR_DESCRIPTIONS: tuple[HistoricalSensorDescription, ...] = (
         metric=HistoricalMetric.SAVINGS_VS_SELF_CONSUMPTION,
         period=PERIOD_THIS_MONTH,
         scenario=None,
-        name="Savings This Month vs Self Consumption",
+        name="Savings This Month vs Simple Self Consumption",
         enabled_default=False,
     ),
 )
@@ -162,7 +162,7 @@ class HistoricalCostSensor(SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return period and retention metadata."""
         summary = self._summary()
-        return {
+        attributes = {
             "tracking_started_at": summary.tracking_started_at,
             "last_complete_slot": summary.last_complete_slot,
             "slots": summary.slots,
@@ -171,6 +171,9 @@ class HistoricalCostSensor(SensorEntity):
             "period_end": summary.period_end,
             "scenario": summary.scenario,
         }
+        if self._is_self_consumption_sensor():
+            attributes.update(self._tracker.self_consumption_simulation_attributes())
+        return attributes
 
     def _summary(self):
         return self._tracker.summary(
@@ -181,11 +184,18 @@ class HistoricalCostSensor(SensorEntity):
 
     def _scenario_enabled(self) -> bool:
         description = self._description
-        if description.metric is HistoricalMetric.SAVINGS_VS_NO_BATTERY:
-            return self._tracker.scenario_enabled(SCENARIO_NO_BATTERY)
+        if description.metric is HistoricalMetric.SAVINGS_VS_GRID_ONLY:
+            return self._tracker.scenario_enabled(SCENARIO_GRID_ONLY)
         if description.metric is HistoricalMetric.SAVINGS_VS_SELF_CONSUMPTION:
             return self._tracker.scenario_enabled(SCENARIO_SELF_CONSUMPTION)
         return self._tracker.scenario_enabled(description.scenario)
+
+    def _is_self_consumption_sensor(self) -> bool:
+        description = self._description
+        return (
+            description.scenario == SCENARIO_SELF_CONSUMPTION
+            or description.metric is HistoricalMetric.SAVINGS_VS_SELF_CONSUMPTION
+        )
 
 
 def build_historical_sensors(

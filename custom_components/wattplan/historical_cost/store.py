@@ -26,22 +26,22 @@ from .models import (
     RETENTION_DAYS,
     SAVE_DELAY_SECONDS,
     SCENARIO_ACTUAL,
-    SCENARIO_NO_BATTERY,
+    SCENARIO_GRID_ONLY,
     SCENARIO_SELF_CONSUMPTION,
     STORE_VERSION,
     SlotRecord,
     default_store_payload,
     empty_day_payload,
 )
-from .simulations import actual_cost, no_battery_cost
+from .simulations import actual_cost, grid_only_cost
 
 BAD_SLOT_FLAGS = (
     FLAG_GAP
     | FLAG_MISSING_IMPORT_PRICE
-    | FLAG_MISSING_EXPORT_PRICE
     | FLAG_MISSING_METER
     | FLAG_METER_RESET
 )
+EXPORT_DEPENDENT_BAD_SLOT_FLAGS = BAD_SLOT_FLAGS | FLAG_MISSING_EXPORT_PRICE
 
 
 @dataclass(frozen=True, slots=True)
@@ -330,8 +330,8 @@ class HistoricalCostStore:
         actual = self._scenario_cost(record, SCENARIO_ACTUAL)
         if actual is None:
             return None
-        if metric is HistoricalMetric.SAVINGS_VS_NO_BATTERY:
-            baseline = self._scenario_cost(record, SCENARIO_NO_BATTERY)
+        if metric is HistoricalMetric.SAVINGS_VS_GRID_ONLY:
+            baseline = self._scenario_cost(record, SCENARIO_GRID_ONLY)
         else:
             baseline = self._scenario_cost(record, SCENARIO_SELF_CONSUMPTION)
         if baseline is None:
@@ -339,11 +339,13 @@ class HistoricalCostStore:
         return baseline - actual
 
     def _scenario_cost(self, record: SlotRecord, scenario: str) -> float | None:
-        if record.flags & BAD_SLOT_FLAGS:
-            return None
-        if record.import_price is None or record.export_price is None:
+        if record.flags & BAD_SLOT_FLAGS or record.import_price is None:
             return None
         if scenario == SCENARIO_ACTUAL:
+            if record.flags & EXPORT_DEPENDENT_BAD_SLOT_FLAGS:
+                return None
+            if record.export_price is None:
+                return None
             if record.grid_import is None or record.grid_export is None:
                 return None
             return actual_cost(
@@ -352,17 +354,19 @@ class HistoricalCostStore:
                 import_price=record.import_price,
                 export_price=record.export_price,
             )
-        if scenario == SCENARIO_NO_BATTERY:
-            if record.usage is None or record.pv is None:
+        if scenario == SCENARIO_GRID_ONLY:
+            if record.usage is None:
                 return None
-            return no_battery_cost(
+            return grid_only_cost(
                 usage=record.usage,
-                pv=record.pv,
                 import_price=record.import_price,
-                export_price=record.export_price,
             )
         if scenario == SCENARIO_SELF_CONSUMPTION:
-            if record.flags & FLAG_SELF_CONSUMPTION_UNAVAILABLE:
+            if record.flags & (
+                EXPORT_DEPENDENT_BAD_SLOT_FLAGS | FLAG_SELF_CONSUMPTION_UNAVAILABLE
+            ):
+                return None
+            if record.export_price is None:
                 return None
             if (
                 record.self_consumption_grid_import is None

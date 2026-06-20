@@ -12,7 +12,7 @@ STORE_VERSION = 1
 SAVE_DELAY_SECONDS = 10
 
 SCENARIO_ACTUAL = "actual"
-SCENARIO_NO_BATTERY = "no_battery"
+SCENARIO_GRID_ONLY = "grid_only"
 SCENARIO_SELF_CONSUMPTION = "self_consumption"
 
 PERIOD_TODAY = "today"
@@ -43,7 +43,7 @@ class HistoricalMetric(StrEnum):
     """Supported historical entity metric kinds."""
 
     COST = "cost"
-    SAVINGS_VS_NO_BATTERY = "savings_vs_no_battery"
+    SAVINGS_VS_GRID_ONLY = "savings_vs_grid_only"
     SAVINGS_VS_SELF_CONSUMPTION = "savings_vs_self_consumption"
 
 

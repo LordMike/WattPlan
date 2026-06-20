@@ -2,26 +2,22 @@
 
 from custom_components.wattplan.historical_cost.simulations import (
     BatterySimulationConfig,
-    no_battery_cost,
+    grid_only_cost,
     simulate_self_consumption_slot,
 )
 import pytest
 
 
-def test_no_battery_cost_uses_usage_pv_and_prices() -> None:
-    """No-battery scenario should recompute flows from usage and PV facts."""
-    assert no_battery_cost(
+def test_grid_only_cost_uses_usage_and_import_price() -> None:
+    """Grid-only scenario should price all usage as grid import."""
+    assert grid_only_cost(
         usage=1.5,
-        pv=1.0,
         import_price=2.0,
-        export_price=0.5,
-    ) == pytest.approx(1.0)
-    assert no_battery_cost(
+    ) == pytest.approx(3.0)
+    assert grid_only_cost(
         usage=0.5,
-        pv=1.0,
         import_price=2.0,
-        export_price=0.5,
-    ) == pytest.approx(-0.25)
+    ) == pytest.approx(1.0)
 
 
 def test_self_consumption_uses_batteries_in_configured_order() -> None:

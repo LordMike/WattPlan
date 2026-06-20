@@ -22,7 +22,6 @@ from custom_components.wattplan.const import (
     CONF_HISTORICAL_GRID_EXPORT_SENSOR,
     CONF_HISTORICAL_GRID_IMPORT_SENSOR,
     CONF_HISTORICAL_PV_SENSOR,
-    CONF_HISTORICAL_SIMULATE_NO_BATTERY,
     CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION,
     CONF_HISTORICAL_USAGE_SENSOR,
     CONF_HOURS_TO_PLAN,
@@ -557,6 +556,14 @@ async def test_options_flow_add_core_and_one_of_each_asset(
     )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "historical_costs_settings"
+    serialized_fields = {
+        item.get("name")
+        for item in voluptuous_serialize.convert(
+            result["data_schema"], custom_serializer=cv.custom_serializer
+        )
+    }
+    assert "historical_simulate_no_battery" not in serialized_fields
+    assert CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION in serialized_fields
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         {
@@ -564,7 +571,6 @@ async def test_options_flow_add_core_and_one_of_each_asset(
             CONF_HISTORICAL_GRID_EXPORT_SENSOR: "sensor.grid_export_total",
             CONF_HISTORICAL_USAGE_SENSOR: "sensor.usage_total",
             CONF_HISTORICAL_PV_SENSOR: "sensor.pv_total",
-            CONF_HISTORICAL_SIMULATE_NO_BATTERY: True,
             CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION: False,
         },
     )
@@ -579,6 +585,7 @@ async def test_options_flow_add_core_and_one_of_each_asset(
         updated.options[CONF_HISTORICAL_GRID_IMPORT_SENSOR]
         == "sensor.grid_import_total"
     )
+    assert "historical_simulate_no_battery" not in updated.options
     assert updated.options[CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION] is False
     assert CONF_SOURCES in updated.data
 
