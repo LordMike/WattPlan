@@ -21,6 +21,7 @@ Prefer updating the integration, tests, and docs together when behavior changes.
 - Build: `python scripts/build_hacs_zip.py`
 - Test: `pytest`
 - Run: `PYTHONPATH=. pytest tests` or `PYTHONPATH=. ../hass-core/.venv/bin/pytest tests`
+- Release: use `docs/release.md` as the authoritative runbook for all release questions, preparation, tag handling, release text, and artifact publication.
 
 ## Testing in Codex
 - When running pytest from Codex, request elevated execution for each test run instead of using the default sandbox.
