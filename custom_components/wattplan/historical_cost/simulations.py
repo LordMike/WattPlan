@@ -39,26 +39,13 @@ def actual_cost(
     return (grid_import * import_price) - (grid_export * export_price)
 
 
-def no_battery_flows(*, usage: float, pv: float) -> tuple[float, float]:
-    """Return grid import/export if no battery existed."""
-    return max(usage - pv, 0.0), max(pv - usage, 0.0)
-
-
-def no_battery_cost(
+def grid_only_cost(
     *,
     usage: float,
-    pv: float,
     import_price: float,
-    export_price: float,
 ) -> float:
-    """Return no-battery scenario cost for one slot."""
-    grid_import, grid_export = no_battery_flows(usage=usage, pv=pv)
-    return actual_cost(
-        grid_import=grid_import,
-        grid_export=grid_export,
-        import_price=import_price,
-        export_price=export_price,
-    )
+    """Return grid-only scenario cost for one slot."""
+    return usage * import_price
 
 
 def simulate_self_consumption_slot(

@@ -20,7 +20,6 @@ from ..const import (
     CONF_HISTORICAL_GRID_EXPORT_SENSOR,
     CONF_HISTORICAL_GRID_IMPORT_SENSOR,
     CONF_HISTORICAL_PV_SENSOR,
-    CONF_HISTORICAL_SIMULATE_NO_BATTERY,
     CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION,
     CONF_HISTORICAL_USAGE_SENSOR,
     CONF_MAX_CHARGE_KW,
@@ -44,6 +43,9 @@ from .models import (
     FLAG_MISSING_METER,
     FLAG_SELF_CONSUMPTION_UNAVAILABLE,
     HistoricalMetric,
+    SCENARIO_ACTUAL,
+    SCENARIO_GRID_ONLY,
+    SCENARIO_SELF_CONSUMPTION,
     SlotRecord,
 )
 from .simulations import (
@@ -123,11 +125,11 @@ class HistoricalCostTracker:
 
     def scenario_enabled(self, scenario: str | None) -> bool:
         """Return whether a historical scenario is currently enabled."""
-        if scenario is None or scenario == "actual":
+        if scenario is None or scenario == SCENARIO_ACTUAL:
             return True
-        if scenario == "no_battery":
-            return bool(self.entry.options.get(CONF_HISTORICAL_SIMULATE_NO_BATTERY, True))
-        if scenario == "self_consumption":
+        if scenario == SCENARIO_GRID_ONLY:
+            return True
+        if scenario == SCENARIO_SELF_CONSUMPTION:
             return bool(
                 self.entry.options.get(
                     CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION,
@@ -152,6 +154,25 @@ class HistoricalCostTracker:
             export_prices=export_prices,
         )
         self._notify()
+
+    def self_consumption_simulation_attributes(self) -> dict[str, Any]:
+        """Return current self-consumption simulation state attributes."""
+        soc_kwh = self.store.simulation_soc()
+        battery_configs = {
+            battery.subentry_id: battery for battery in self._battery_configs()
+        }
+        soc_percent: dict[str, float] = {}
+        for subentry_id, soc in soc_kwh.items():
+            battery = battery_configs.get(subentry_id)
+            if battery is None or battery.capacity_kwh <= 0.0:
+                continue
+            soc_percent[subentry_id] = round((soc / battery.capacity_kwh) * 100.0, 4)
+        return {
+            "simulated_soc_kwh_by_battery": soc_kwh,
+            "simulated_soc_percent_by_battery": soc_percent,
+            "simulation_soc_seeded_from_real_soc": True,
+            "simulation_soc_resyncs_each_slot": False,
+        }
 
     async def async_process_completed_slot(
         self,

@@ -23,7 +23,6 @@ from custom_components.wattplan.const import (
     CONF_HISTORICAL_GRID_EXPORT_SENSOR,
     CONF_HISTORICAL_GRID_IMPORT_SENSOR,
     CONF_HISTORICAL_PV_SENSOR,
-    CONF_HISTORICAL_SIMULATE_NO_BATTERY,
     CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION,
     CONF_HISTORICAL_USAGE_SENSOR,
     CONF_MAX_CHARGE_KW,
@@ -296,7 +295,6 @@ def _historical_options() -> dict[str, object]:
         CONF_HISTORICAL_GRID_EXPORT_SENSOR: "sensor.grid_export_total",
         CONF_HISTORICAL_USAGE_SENSOR: "sensor.usage_total",
         CONF_HISTORICAL_PV_SENSOR: "sensor.pv_total",
-        CONF_HISTORICAL_SIMULATE_NO_BATTERY: True,
         CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION: True,
     }
 
@@ -562,7 +560,7 @@ async def test_historical_cost_tracking_processes_scenarios_and_entities(
     hass: HomeAssistant,
     freezer,
 ) -> None:
-    """Historical tracker should aggregate actual, no-battery, and self-consumption costs."""
+    """Historical tracker should aggregate actual, grid-only, and self-consumption costs."""
     start = datetime(2026, 5, 24, 12, 0, tzinfo=UTC)
     freezer.move_to(start + timedelta(hours=1, seconds=2))
     entry = MockConfigEntry(
@@ -646,23 +644,42 @@ async def test_historical_cost_tracking_processes_scenarios_and_entities(
     await hass.async_block_till_done()
 
     actual = hass.states.get("sensor.home_historical_actual_cost_today")
-    no_battery = hass.states.get("sensor.home_historical_no_battery_cost_today")
+    grid_only = hass.states.get("sensor.home_historical_grid_only_cost_today")
     self_consumption = hass.states.get(
         "sensor.home_historical_self_consumption_cost_today"
     )
-    savings = hass.states.get("sensor.home_historical_savings_vs_no_battery_today")
+    savings = hass.states.get("sensor.home_historical_savings_vs_grid_only_today")
+    self_savings = hass.states.get(
+        "sensor.home_historical_savings_vs_self_consumption_today"
+    )
 
     assert actual is not None
     assert float(actual.state) == pytest.approx(0.98)
     assert actual.attributes["slots"] == 1
     assert actual.attributes["missing_slots"] == 0
     assert actual.attributes["scenario"] == "actual"
-    assert no_battery is not None
-    assert float(no_battery.state) == pytest.approx(0.5)
+    assert grid_only is not None
+    assert float(grid_only.state) == pytest.approx(1.5)
     assert self_consumption is not None
     assert float(self_consumption.state) == pytest.approx(0.0)
+    assert self_consumption.attributes["simulated_soc_kwh_by_battery"] == {
+        "battery_sub": pytest.approx(0.5)
+    }
+    assert self_consumption.attributes["simulated_soc_percent_by_battery"] == {
+        "battery_sub": pytest.approx(5.0)
+    }
+    assert self_consumption.attributes["simulation_soc_seeded_from_real_soc"] is True
+    assert self_consumption.attributes["simulation_soc_resyncs_each_slot"] is False
     assert savings is not None
-    assert float(savings.state) == pytest.approx(-0.48)
+    assert float(savings.state) == pytest.approx(0.52)
+    assert self_savings is not None
+    assert self_savings.attributes["simulated_soc_kwh_by_battery"] == {
+        "battery_sub": pytest.approx(0.5)
+    }
+    assert hass.states.get("sensor.home_historical_no_battery_cost_today") is None
+    assert (
+        hass.states.get("sensor.home_historical_savings_vs_no_battery_today") is None
+    )
 
     entity_registry = er.async_get(hass)
     monthly = entity_registry.async_get(
@@ -670,6 +687,11 @@ async def test_historical_cost_tracking_processes_scenarios_and_entities(
     )
     assert monthly is not None
     assert monthly.disabled
+    monthly_grid_only = entity_registry.async_get(
+        "sensor.home_historical_grid_only_cost_this_month"
+    )
+    assert monthly_grid_only is not None
+    assert monthly_grid_only.disabled
 
 
 async def test_refresh_sensors_service_processes_historical_costs(

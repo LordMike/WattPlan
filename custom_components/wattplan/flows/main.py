@@ -26,7 +26,6 @@ from .source_shared import (
     CONF_HISTORICAL_GRID_EXPORT_SENSOR,
     CONF_HISTORICAL_GRID_IMPORT_SENSOR,
     CONF_HISTORICAL_PV_SENSOR,
-    CONF_HISTORICAL_SIMULATE_NO_BATTERY,
     CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION,
     CONF_HISTORICAL_USAGE_SENSOR,
     CONF_HOURS_TO_PLAN,
@@ -119,10 +118,6 @@ def _historical_costs_settings_schema(defaults: dict[str, Any]) -> vol.Schema:
                 CONF_HISTORICAL_USAGE_SENSOR
             ): _historical_energy_selector(),
             optional_entity(CONF_HISTORICAL_PV_SENSOR): _historical_energy_selector(),
-            vol.Required(
-                CONF_HISTORICAL_SIMULATE_NO_BATTERY,
-                default=bool(defaults.get(CONF_HISTORICAL_SIMULATE_NO_BATTERY, True)),
-            ): selector.BooleanSelector(),
             vol.Required(
                 CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION,
                 default=bool(
