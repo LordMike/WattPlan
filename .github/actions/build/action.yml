@@ -1,0 +1,40 @@
+name: Validate and package WattPlan
+description: Run the Python test suite and prepare the HACS release artifact
+
+# Contract:
+# - The managed CI workflow calls this action exactly once.
+# - Validation runs for every active CI ref.
+# - SemVer tags additionally produce the fixed HACS attachment consumed by CI.
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      with:
+        python-version: '3.14.3'
+
+    - name: Set up uv
+      uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+      with:
+        version: '0.10.7'
+        enable-cache: true
+
+    - name: Install test dependencies
+      shell: bash
+      env:
+        UV_SYSTEM_PYTHON: '1'
+      run: uv pip install '.[test]'
+
+    - name: Run tests
+      shell: bash
+      run: pytest
+
+    - name: Build HACS release artifact
+      if: env.CI_PUBLISH_TARGET == 'release'
+      shell: bash
+      run: >-
+        python scripts/build_hacs_zip.py
+        --output-dir .artifacts/release
+        --output-name wattplan.zip
+        --validate-manifest-version "$CI_VERSION"

@@ -48,7 +48,7 @@ Use [Historical Cost Tracking](docs/historical-cost-tracking.md) to compare meas
 - Planned actions are exposed as entities, so you can easily use the results to do automations
 - Optional historical cost tracking for comparing actual cost against simple reference scenarios
 - Battery targets can be set and cleared through WattPlan services
-- GitHub Actions for CI, tagged releases, prereleases, and `main` branch dev artifacts
+- Managed CI for validation, tagged releases, and prereleases
 
 ## Documentation
 - [Source Data](docs/source-data.md) - Source modes, data model, and how to feed WattPlan price, export price, usage, and PV data
@@ -60,7 +60,7 @@ Use [Historical Cost Tracking](docs/historical-cost-tracking.md) to compare meas
 - [Error Handling](docs/error-handling.md) - Health states, degraded operation, and what `ok`, `degraded`, and `failed` mean
 - [Development](docs/development.md) - Local setup with `uv`, local test env caveats, optional symlink workflow, packaging
 - [Architecture](docs/architecture.md) - Code layout, runtime boundaries, planning flow
-- [Release Process](docs/release.md) - Tags, prereleases, dev artifacts, GitHub release assets
+- [Release Process](docs/release.md) - Versioned tags and managed GitHub releases
 - [Optimizer API](docs/optimizer-api.md) - Direct optimizer API notes
 
 ## Limitations
