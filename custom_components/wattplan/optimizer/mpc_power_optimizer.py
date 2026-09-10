@@ -282,14 +282,19 @@ def _build_reuse_plan(
         return None
 
     lock_offset = best_offset if best_offset is not None else best_forecast_offset
+    reusable_steps = int(best_overlap)
+    if best_offset is not None and best_overlap < total_steps:
+        # Appended forecast data can change decisions anywhere inside a later
+        # MPC window. Re-solve the request while carrying only runtime locks.
+        reusable_steps = 0
     reuse_plan = {
-        "overlap_steps": int(best_overlap),
+        "overlap_steps": reusable_steps,
         "initial_comfort_lock_mode": comfort_lock_mode[:, lock_offset].copy(),
         "initial_comfort_lock_remaining": comfort_lock_remaining[
             :, lock_offset
         ].copy(),
     }
-    if best_offset is None or best_overlap <= 0:
+    if best_offset is None or reusable_steps <= 0:
         return reuse_plan
 
     reuse_plan.update(

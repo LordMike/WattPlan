@@ -117,7 +117,7 @@ Optional entities provide advisory start-time suggestions and do not change the 
 `state` is an opaque base64 blob returned by one solve and accepted in the next.
 - You should store and pass it back as-is.
 - Do not parse or mutate it in client code.
-- The optimizer may reuse overlap from prior solve data when forecasts, configuration, observed battery SoC, and observed comfort runtime state match the prior plan at the detected overlap offset. Runtime state includes the comfort entity's current on/off state, remaining rolling-window requirement, and off streak. If reality differs from the expected prior trajectory, WattPlan re-solves the current request instead of replaying stale controls. Older opaque state blobs without runtime trajectories remain valid inputs but are not reused.
+- The optimizer may reuse overlap from prior solve data when the complete requested forecast is already covered and configuration, observed battery SoC, and observed comfort runtime state match the prior plan at the detected overlap offset. Runtime state includes the comfort entity's current on/off state, remaining rolling-window requirement, and off streak. If reality differs from the expected prior trajectory, or a rolling request appends newly visible forecast slots, WattPlan re-solves the request instead of replaying stale controls. Applicable comfort minimum-on/off locks are still carried into that fresh solve. This conservative invalidation increases solve work on normal sliding forecasts, but it does not extend the configured MPC lookahead or make distant tail data influence the current action. Older opaque state blobs without runtime trajectories remain valid inputs but are not reused.
 
 ## Full Request Example (Small)
 ```jsonc

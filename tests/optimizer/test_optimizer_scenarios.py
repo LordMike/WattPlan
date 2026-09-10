@@ -524,6 +524,60 @@ def test_replan_uses_observed_comfort_history_when_forecast_window_slides():
     )
 
 
+def test_replan_uses_new_tail_demand_before_cheap_window_closes():
+    """New expensive demand must influence still-achievable cheap charging."""
+    old_prices = [0.1] * 8
+    first_payload = {
+        "grid_import_price_per_kwh": old_prices,
+        "grid_export_price_per_kwh": [0.0] * 8,
+        "solar_input_kwh": [0.0] * 8,
+        "usage_kwh": [0.0] * 8,
+        "throughput_cost_per_kwh": 0.01,
+        "battery_entities": [
+            {
+                "name": "home_battery",
+                "initial_kwh": 0.0,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 1.0,
+                "charge_curve_kwh": [1.0],
+                "discharge_curve_kwh": [1.0],
+                "can_charge_from": 1,
+            }
+        ],
+        "comfort_entities": [],
+    }
+    first_result = _run_optimizer(first_payload)
+    first_schedule = _entity_schedule(first_result, "home_battery")
+    assert all(point["state"] == "self_consume" for point in first_schedule)
+    assert first_schedule[-1]["level"] == pytest.approx(0.0, abs=1e-6)
+
+    current_payload = {
+        **first_payload,
+        "grid_import_price_per_kwh": [*old_prices[1:], 1.0],
+        "usage_kwh": [0.0] * 7 + [1.0],
+    }
+    cold_result = _run_optimizer(current_payload)
+    warm_result = _run_optimizer({**current_payload, "state": first_result["state"]})
+
+    for result in (cold_result, warm_result):
+        _assert_common_result_shape(result, intervals=8, expected_entities=1)
+        schedule = _entity_schedule(result, "home_battery")
+        assert any(point["state"] == "grid_charge" for point in schedule[:7])
+        assert schedule[-1]["level"] == pytest.approx(0.0, abs=1e-6)
+        assert result["projections"]["projected_cost"] == pytest.approx(0.1, abs=1e-6)
+        assert result["projections"]["projected_cost"] == pytest.approx(
+            _independent_projected_cost_for_unit_efficiency(current_payload, result),
+            abs=1e-6,
+        )
+
+    assert warm_result["projections"]["projected_cost"] == pytest.approx(
+        cold_result["projections"]["projected_cost"], abs=1e-6
+    )
+    assert _entity_schedule(warm_result, "home_battery")[-1]["level"] == pytest.approx(
+        _entity_schedule(cold_result, "home_battery")[-1]["level"], abs=1e-6
+    )
+
+
 def test_soc_replan_preserves_active_comfort_minimum_on_commitment():
     """Rejecting stale battery controls must retain an active comfort lock."""
     old_prices = [1.0, 1.0, 1.0, 0.1, 0.1, 0.1]
