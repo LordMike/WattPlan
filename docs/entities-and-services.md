@@ -30,7 +30,7 @@ These exist once per WattPlan setup:
 
 When `sensor.<setup_slug>_status` is `failed`, plan-dependent entities such as action sensors, plan details, and usage forecast become unavailable rather than continuing to expose stale plan data.
 
-The overall status sensor is the canonical view of whether the current plan is usable. Its `plan_created_at` attribute is the snapshot creation time, and its `expires_at` attribute is the end of the current usable plan coverage from the optimizer horizon. If planning fails but WattPlan retains a previous snapshot, `expires_at` continues to describe that retained plan. Once the retained or active plan no longer covers the current time, the overall status becomes `failed`, `is_stale` becomes `true`, and `has_usable_plan` becomes `false`.
+The overall status sensor is the canonical view of whether the current plan is usable. Its `plan_created_at` attribute is the snapshot creation time, and its `expires_at` attribute is the end of the current usable plan coverage from the optimizer horizon. If planning fails but WattPlan retains a previous snapshot, WattPlan continues advancing through that snapshot's time-indexed battery and comfort actions, while `expires_at` continues to describe the retained plan. Once the retained or active plan no longer covers the current time, the overall status becomes `failed`, `is_stale` becomes `true`, and `has_usable_plan` becomes `false`.
 
 Per-source status sensors explain input health. Their `expires_at` attribute describes the source data or fallback coverage for that source, not the whole plan. Stale fallback data from a source can make the overall status `degraded` while the plan is still usable; an expired overall plan is `failed`.
 
@@ -71,7 +71,7 @@ Additional `option_N_start` entities appear when more options are configured.
 WattPlan operates in two distinct steps:
 
 1. **Optimize** (`run_optimize_now`) — runs the planner and calculates a new plan. This is the slow step that reads all energy sources and solves the optimization. Run it as often as you want fresh plans, but it can be infrequent if the optimizer is slow.
-2. **Refresh** (`refresh_sensors`) — reads the already-calculated plan and pushes the current slot's actions to HA sensor entities. This is fast and can be called frequently to keep action sensors up to date without re-running the optimizer.
+2. **Refresh** (`refresh_sensors`) — reads the retained time-indexed plan and pushes the current slot's battery and comfort actions to HA sensor entities. This is fast and can be called frequently to keep action sensors up to date without re-running the optimizer, including while new planning is temporarily failing.
 
 By default, WattPlan schedules both steps on the configured planner interval. If you disable scheduled planning in Scheduler settings, fresh plan generation becomes your responsibility and you should call `wattplan.run_optimize_now` from your own automation or schedule. If you disable scheduled action emission, current-slot action publishing becomes your responsibility and you should call `wattplan.refresh_sensors` from your own automation or schedule. If you disable both, WattPlan has no automatic cadence.
 

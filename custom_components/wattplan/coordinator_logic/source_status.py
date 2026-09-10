@@ -55,7 +55,7 @@ class SourceStatusManager:
         payload = dict(self._overall_status)
         now = datetime.now(tz=UTC)
         expires_at = parse_snapshot_datetime(payload.get("expires_at"))
-        if expires_at is not None and now > expires_at:
+        if expires_at is not None and now >= expires_at:
             payload.update(
                 {
                     "status": "failed",

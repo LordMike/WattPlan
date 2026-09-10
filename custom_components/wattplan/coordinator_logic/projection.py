@@ -50,6 +50,12 @@ class PlannerProjectionBuilder:
         batteries: dict[str, dict[str, Any]] = {}
         comforts: dict[str, dict[str, Any]] = {}
         optionals: dict[str, dict[str, Any]] = {}
+        action_schedules: dict[str, Any] = {
+            "start_at": start_at.isoformat(),
+            "slot_minutes": slot_minutes,
+            "batteries": {},
+            "comforts": {},
+        }
         name_maps = request["name_to_subentry"]
         skipped_batteries = request.get("skipped_batteries", {})
         if isinstance(skipped_batteries, dict):
@@ -71,58 +77,28 @@ class PlannerProjectionBuilder:
                 subentry_id = name_maps["batteries"].get(entity_name)
                 if subentry_id is None:
                     continue
-                current = schedule[0]
-                next_change = self._next_change_point(
-                    schedule,
-                    key="state",
-                    start_at=start_at,
-                    slot_minutes=slot_minutes,
-                )
-                next_action_timestamp = next_change[0] if next_change is not None else None
-                next_point = next_change[1] if next_change is not None else None
-                next_action = (
-                    str(next_point.get("state", "self_consume"))
-                    if isinstance(next_point, dict)
-                    else None
-                )
-                batteries[subentry_id] = {
-                    "action": str(current.get("state", "self_consume")),
-                    "next_action_timestamp": (
-                        next_action_timestamp.isoformat()
-                        if next_action_timestamp is not None
-                        else None
-                    ),
-                    "next_action": next_action,
-                }
+                actions = self._executable_actions(schedule, key="state")
+                if actions is not None and all(
+                    isinstance(action, str)
+                    and action in {"grid_charge", "preserve", "self_consume"}
+                    for action in actions
+                ):
+                    action_schedules["batteries"][subentry_id] = actions
+                    batteries[subentry_id] = {}
                 continue
 
             if entity_type == "comfort":
                 subentry_id = name_maps["comforts"].get(entity_name)
                 if subentry_id is None:
                     continue
-                current = schedule[0]
-                next_change = self._next_change_point(
-                    schedule,
-                    key="enabled",
-                    start_at=start_at,
-                    slot_minutes=slot_minutes,
-                )
-                next_action_timestamp = next_change[0] if next_change is not None else None
-                next_point = next_change[1] if next_change is not None else None
-                next_action = (
-                    ("on" if bool(next_point.get("enabled")) else "off")
-                    if isinstance(next_point, dict)
-                    else None
-                )
-                comforts[subentry_id] = {
-                    "action": "on" if bool(current.get("enabled")) else "off",
-                    "next_action_timestamp": (
-                        next_action_timestamp.isoformat()
-                        if next_action_timestamp is not None
-                        else None
-                    ),
-                    "next_action": next_action,
-                }
+                enabled_values = self._executable_actions(schedule, key="enabled")
+                if enabled_values is not None and all(
+                    isinstance(value, bool) for value in enabled_values
+                ):
+                    action_schedules["comforts"][subentry_id] = [
+                        "on" if value else "off" for value in enabled_values
+                    ]
+                    comforts[subentry_id] = {}
 
         for optional in result.get("optional_entity_options", []):
             entity_name = str(optional.get("name"))
@@ -168,6 +144,7 @@ class PlannerProjectionBuilder:
         return {
             "status": status,
             "message": message,
+            "action_schedules": action_schedules,
             "diagnostics": {
                 "batteries": batteries,
                 "skipped_batteries": skipped_batteries,
@@ -206,6 +183,7 @@ class PlannerProjectionBuilder:
                 else None
             ),
             diagnostics=planner_output.get("diagnostics"),
+            action_schedules=planner_output.get("action_schedules"),
         )
 
     def _build_enabled_plan_details(
@@ -466,24 +444,19 @@ class PlannerProjectionBuilder:
             values.append(str(value) if stringify else value)
         return values
 
-    def _next_change_point(
+    def _executable_actions(
         self,
         schedule: list[dict[str, Any]],
         *,
         key: str,
-        start_at: datetime,
-        slot_minutes: int,
-    ) -> tuple[datetime, dict[str, Any]] | None:
-        if not schedule:
-            return None
-        current = schedule[0].get(key)
-        for index, point in enumerate(schedule[1:], start=1):
-            if point.get(key) != current:
-                return (
-                    start_at + timedelta(minutes=index * slot_minutes),
-                    point,
-                )
-        return None
+    ) -> list[Any] | None:
+        """Return a complete schedule without filling malformed future slots."""
+        actions: list[Any] = []
+        for point in schedule:
+            if not isinstance(point, dict) or key not in point:
+                return None
+            actions.append(point[key])
+        return actions
 
     def _map_action_code(self, action: str) -> str:
         return {

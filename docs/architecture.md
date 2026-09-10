@@ -97,6 +97,8 @@ flowchart LR
   Plan --> A
 ```
 
+The coordinator snapshot retains complete time-indexed battery and comfort action schedules separately from the optional plan-detail diagnostic sensors. Action emission selects the slot covering the current time, so a retained plan continues to advance after a planning failure or restart. The plan becomes unusable at the end of its recorded coverage; WattPlan then publishes failed health and makes plan-dependent actions unavailable instead of inventing a fallback action.
+
 ## Optimizer Boundary
 The optimizer package is intentionally kept free of `homeassistant` imports. The integration translates Home Assistant state into optimizer inputs and translates optimizer results back into entities, services, and diagnostics.
 

@@ -43,22 +43,26 @@ class SubentryActionSensor(WattPlanCoordinatorSensor):
             self._attr_options = BATTERY_ACTION_STATES
 
     def _action_data(self) -> dict[str, Any]:
-        """Return action data for this subentry from snapshot diagnostics."""
+        """Return action data for this subentry at the current plan slot."""
         if not self.snapshot:
             return {}
         diagnostics = self.snapshot.diagnostics or {}
         group_data = diagnostics.get(self._group, {})
-        if not isinstance(group_data, dict):
-            return {}
-        subentry_data = group_data.get(self._subentry_id, {})
-        return subentry_data if isinstance(subentry_data, dict) else {}
+        if isinstance(group_data, dict):
+            subentry_data = group_data.get(self._subentry_id, {})
+            if isinstance(subentry_data, dict) and bool(subentry_data.get("skipped")):
+                return subentry_data
+        return self.snapshot.action_data(self._group, self._subentry_id)
 
     @property
     def available(self) -> bool:
         """Return whether this action sensor has current plan data."""
         if not super().available:
             return False
-        return not bool(self._action_data().get("skipped", False))
+        action_data = self._action_data()
+        return not bool(action_data.get("skipped", False)) and isinstance(
+            action_data.get("action"), str
+        )
 
 
 class ActionSensor(SubentryActionSensor):
