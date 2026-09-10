@@ -706,8 +706,23 @@ async def test_battery_availability_controls_planner_input_and_status(
     assert target.state != STATE_UNAVAILABLE
 
 
+@pytest.mark.parametrize(
+    ("invalid_soc", "unit", "recovered_soc"),
+    [
+        ("not-a-number", "kWh", "5"),
+        ("nan", "%", "50"),
+        ("inf", "%", "50"),
+        ("-inf", "%", "50"),
+        ("nan", "kWh", "5"),
+        ("inf", "kWh", "5"),
+        ("-inf", "kWh", "5"),
+    ],
+)
 async def test_invalid_soc_without_availability_skips_only_that_battery(
     hass: HomeAssistant,
+    invalid_soc: str,
+    unit: str,
+    recovered_soc: str,
 ) -> None:
     """A bad fixed-battery SoC degrades status but does not fail the whole plan."""
     entry = _entry(
@@ -718,29 +733,57 @@ async def test_invalid_soc_without_availability_skips_only_that_battery(
                 name="battery",
                 soc_source="sensor.invalid_battery_soc",
             ),
+            _battery_subentry(
+                subentry_id="available",
+                name="available",
+                soc_source="sensor.available_battery_soc",
+            ),
             _comfort_subentry(subentry_id="comfort", name="comfort"),
             _optional_subentry(subentry_id="optional", name="optional"),
         ],
     )
     await _setup_entry(hass, entry)
-    hass.states.async_set("sensor.invalid_battery_soc", "not-a-number")
+    hass.states.async_set(
+        "sensor.invalid_battery_soc",
+        invalid_soc,
+        {"unit_of_measurement": unit},
+    )
+    hass.states.async_set("sensor.available_battery_soc", "6.0")
     captured_params: list[Any] = []
 
     def capture(params: Any) -> dict[str, object]:
         captured_params.append(params)
-        return _fake_optimize_with_entities(params)
+        result = _fake_optimize_with_entities(params)
+        result["state"] = None
+        return result
 
     with patch("custom_components.wattplan.coordinator.optimize", side_effect=capture):
         await _run_optimize(hass)
 
     params = captured_params[-1]
-    assert params.battery_entities == []
+    assert [_name_of(battery) for battery in params.battery_entities] == ["available"]
     assert [_name_of(comfort) for comfort in params.comfort_entities] == ["comfort"]
     assert [_name_of(optional) for optional in params.optional_entities] == ["optional"]
     status = hass.states.get("sensor.home_status")
     assert status is not None
     assert status.state == "degraded"
     assert "battery_soc_unavailable" in status.attributes["reason_codes"]
+    assert hass.states.get("sensor.home_battery_action").state == STATE_UNAVAILABLE
+    assert hass.states.get("sensor.home_available_action").state == "grid_charge"
+
+    hass.states.async_set(
+        "sensor.invalid_battery_soc",
+        recovered_soc,
+        {"unit_of_measurement": unit},
+    )
+    with patch("custom_components.wattplan.coordinator.optimize", side_effect=capture):
+        await _run_optimize(hass)
+
+    assert [
+        _name_of(battery) for battery in captured_params[-1].battery_entities
+    ] == ["battery", "available"]
+    assert hass.states.get("sensor.home_status").state == "ok"
+    assert hass.states.get("sensor.home_battery_action").state == "grid_charge"
 
 
 async def test_mixed_batteries_send_only_available_batteries_to_optimizer(

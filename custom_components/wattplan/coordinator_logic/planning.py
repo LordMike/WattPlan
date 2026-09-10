@@ -635,6 +635,8 @@ class PlanningRequestBuilder:
             numeric_value = float(state.state)
         except (TypeError, ValueError):
             return None
+        if not math.isfinite(numeric_value):
+            return None
         if state.attributes.get("unit_of_measurement") == "%":
             return max(0.0, min(capacity_kwh, (numeric_value / 100.0) * capacity_kwh))
         return numeric_value
