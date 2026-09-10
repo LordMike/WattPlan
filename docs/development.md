@@ -60,20 +60,6 @@ Run only integration tests:
 ./scripts/run_tests.sh tests/integration
 ```
 
-Run the isolated hello-world Home Assistant smoke test:
-
-```bash
-./sandbox/ha_hello_world/run.sh
-```
-
-This smoke test is separate from the main `tests/` suite. It disables pytest
-plugin autoload, blocks `pycares`/`aiodns` imports inside the smoke test, and
-runs from `/tmp` so it is less sensitive to filesystem-specific path issues.
-
-If you want a dedicated local venv for just that smoke test, create
-`sandbox/ha_hello_world/.venv` and point the runner at it with
-`WATTPLAN_HA_VENV`.
-
 ## Packaging
 
 Build a local HACS artifact:
