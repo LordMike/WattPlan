@@ -542,12 +542,16 @@ class NormalizedState:
     grid_export_prices: np.ndarray
     solar_input: np.ndarray
     usage: np.ndarray
+    battery_levels: np.ndarray | None
     battery_charge: np.ndarray
     battery_charge_grid: np.ndarray
     battery_charge_pv: np.ndarray
     battery_discharge: np.ndarray
     battery_preserve: np.ndarray
     comfort_on: np.ndarray
+    comfort_levels: np.ndarray | None
+    comfort_off_streaks: np.ndarray | None
+    comfort_is_on: np.ndarray | None
     comfort_lock_mode: np.ndarray
     comfort_lock_remaining: np.ndarray
 
@@ -650,6 +654,11 @@ def _parse_state_blob(state_blob):
         )
         solar_input = np.asarray(obj["solar_input_kwh"], dtype=np.float64)
         usage = np.asarray(obj["usage_kwh"], dtype=np.float64)
+        battery_levels = (
+            np.asarray(obj["battery_levels"], dtype=np.float64)
+            if "battery_levels" in obj
+            else None
+        )
         battery_charge = np.asarray(obj["battery_charge"], dtype=np.float64)
         battery_charge_grid = np.asarray(obj["battery_charge_grid"], dtype=np.float64)
         battery_charge_pv = np.asarray(obj["battery_charge_pv"], dtype=np.float64)
@@ -659,6 +668,21 @@ def _parse_state_blob(state_blob):
             dtype=np.bool_,
         )
         comfort_on = np.asarray(obj["comfort_on"], dtype=np.float64)
+        comfort_levels = (
+            np.asarray(obj["comfort_levels"], dtype=np.float64)
+            if "comfort_levels" in obj
+            else None
+        )
+        comfort_off_streaks = (
+            np.asarray(obj["comfort_off_streaks"], dtype=np.float64)
+            if "comfort_off_streaks" in obj
+            else None
+        )
+        comfort_is_on = (
+            np.asarray(obj["comfort_is_on"], dtype=np.bool_)
+            if "comfort_is_on" in obj
+            else None
+        )
         comfort_lock_mode = np.asarray(obj["comfort_lock_mode"], dtype=np.float64)
         comfort_lock_remaining = np.asarray(
             obj["comfort_lock_remaining"], dtype=np.float64
@@ -679,8 +703,32 @@ def _parse_state_blob(state_blob):
         battery_charge_pv = battery_charge_pv.reshape(0, num_steps)
     if battery_preserve.ndim == 1 and battery_preserve.size == 0:
         battery_preserve = battery_preserve.reshape(0, num_steps)
+    if (
+        battery_levels is not None
+        and battery_levels.ndim == 1
+        and battery_levels.size == 0
+    ):
+        battery_levels = battery_levels.reshape(0, num_steps + 1)
     if comfort_on.ndim == 1 and comfort_on.size == 0:
         comfort_on = comfort_on.reshape(0, num_steps)
+    if (
+        comfort_levels is not None
+        and comfort_levels.ndim == 1
+        and comfort_levels.size == 0
+    ):
+        comfort_levels = comfort_levels.reshape(0, num_steps + 1)
+    if (
+        comfort_off_streaks is not None
+        and comfort_off_streaks.ndim == 1
+        and comfort_off_streaks.size == 0
+    ):
+        comfort_off_streaks = comfort_off_streaks.reshape(0, num_steps + 1)
+    if (
+        comfort_is_on is not None
+        and comfort_is_on.ndim == 1
+        and comfort_is_on.size == 0
+    ):
+        comfort_is_on = comfort_is_on.reshape(0, num_steps + 1)
     if comfort_lock_mode.ndim == 1 and comfort_lock_mode.size == 0:
         comfort_lock_mode = comfort_lock_mode.reshape(0, num_steps)
     if comfort_lock_remaining.ndim == 1 and comfort_lock_remaining.size == 0:
@@ -696,6 +744,11 @@ def _parse_state_blob(state_blob):
         raise ValueError("state.usage_kwh shape mismatch")
     if battery_charge.ndim != 2 or battery_charge.shape[1] != num_steps:
         raise ValueError("state.battery_charge shape mismatch")
+    if battery_levels is not None and (
+        battery_levels.ndim != 2
+        or battery_levels.shape != (battery_charge.shape[0], num_steps + 1)
+    ):
+        raise ValueError("state.battery_levels shape mismatch")
     if battery_discharge.ndim != 2 or battery_discharge.shape[1] != num_steps:
         raise ValueError("state.battery_discharge shape mismatch")
     if battery_charge_grid.ndim != 2 or battery_charge_grid.shape[1] != num_steps:
@@ -706,12 +759,28 @@ def _parse_state_blob(state_blob):
         raise ValueError("state.battery_preserve shape mismatch")
     if comfort_on.ndim != 2 or comfort_on.shape[1] != num_steps:
         raise ValueError("state.comfort_on shape mismatch")
+    expected_comfort_trajectory_shape = (comfort_on.shape[0], num_steps + 1)
+    if (
+        comfort_levels is not None
+        and comfort_levels.shape != expected_comfort_trajectory_shape
+    ):
+        raise ValueError("state.comfort_levels shape mismatch")
+    if (
+        comfort_off_streaks is not None
+        and comfort_off_streaks.shape != expected_comfort_trajectory_shape
+    ):
+        raise ValueError("state.comfort_off_streaks shape mismatch")
+    if (
+        comfort_is_on is not None
+        and comfort_is_on.shape != expected_comfort_trajectory_shape
+    ):
+        raise ValueError("state.comfort_is_on shape mismatch")
     if comfort_lock_mode.ndim != 2 or comfort_lock_mode.shape[1] != num_steps:
         raise ValueError("state.comfort_lock_mode shape mismatch")
     if comfort_lock_remaining.ndim != 2 or comfort_lock_remaining.shape[1] != num_steps:
         raise ValueError("state.comfort_lock_remaining shape mismatch")
 
-    for series_name, series in (
+    state_series = [
         ("grid_import_price_per_kwh", grid_import_prices),
         ("grid_export_price_per_kwh", grid_export_prices),
         ("solar_input_kwh", solar_input),
@@ -723,7 +792,14 @@ def _parse_state_blob(state_blob):
         ("comfort_on", comfort_on),
         ("comfort_lock_mode", comfort_lock_mode),
         ("comfort_lock_remaining", comfort_lock_remaining),
-    ):
+    ]
+    if battery_levels is not None:
+        state_series.append(("battery_levels", battery_levels))
+    if comfort_levels is not None:
+        state_series.append(("comfort_levels", comfort_levels))
+    if comfort_off_streaks is not None:
+        state_series.append(("comfort_off_streaks", comfort_off_streaks))
+    for series_name, series in state_series:
         if not np.all(np.isfinite(series)):
             raise ValueError(f"state.{series_name} must contain finite values")
 
@@ -734,12 +810,16 @@ def _parse_state_blob(state_blob):
         grid_export_prices=grid_export_prices,
         solar_input=solar_input,
         usage=usage,
+        battery_levels=battery_levels,
         battery_charge=battery_charge,
         battery_charge_grid=battery_charge_grid,
         battery_charge_pv=battery_charge_pv,
         battery_discharge=battery_discharge,
         battery_preserve=battery_preserve,
         comfort_on=comfort_on,
+        comfort_levels=comfort_levels,
+        comfort_off_streaks=comfort_off_streaks,
+        comfort_is_on=comfort_is_on,
         comfort_lock_mode=comfort_lock_mode,
         comfort_lock_remaining=comfort_lock_remaining,
     )

@@ -1,6 +1,5 @@
-import base64
-import math
 import json
+import math
 
 import pytest
 from pydantic import ValidationError
@@ -415,60 +414,247 @@ def test_pv_serves_comfort_before_charging_battery_from_surplus():
     )
 
 
-def test_state_roundtrip_with_sliding_window_inputs():
-    full_prices = [0.40, 0.22, 0.27, 0.33, 0.19, 0.41, 0.36, 0.24]
-    full_export_prices = [0.05, 0.01, 0.02, 0.08, 0.10, 0.06, 0.03, 0.02]
-    full_solar = [0.0, 0.1, 0.5, 1.2, 0.8, 0.2, 0.0, 0.0]
-    full_usage = [1.1, 1.0, 0.9, 1.2, 1.0, 1.4, 1.3, 1.1]
-
-    base_payload = {
+def test_replan_uses_observed_soc_when_forecast_window_slides():
+    """An empty observed battery must use the current cheap charge window."""
+    old_prices = [0.8, 0.1, 1.0, 1.0, 1.0, 1.0]
+    old_usage = [0.0, 0.0, 1.0, 1.0, 1.0, 1.0]
+    first_payload = {
+        "grid_import_price_per_kwh": old_prices,
+        "grid_export_price_per_kwh": [0.0] * 6,
+        "solar_input_kwh": [0.0] * 6,
+        "usage_kwh": old_usage,
         "battery_entities": [
             {
                 "name": "home_battery",
-                "initial_kwh": 5.0,
+                "initial_kwh": 4.0,
                 "minimum_kwh": 0.0,
-                "capacity_kwh": 10.0,
-                "charge_curve_kwh": [2.0],
-                "discharge_curve_kwh": [2.0],
+                "capacity_kwh": 4.0,
+                "charge_curve_kwh": [4.0],
+                "discharge_curve_kwh": [1.0],
                 "can_charge_from": 1,
             }
         ],
         "comfort_entities": [],
     }
-
-    first_payload = {
-        **base_payload,
-        "grid_import_price_per_kwh": full_prices[:6],
-        "grid_export_price_per_kwh": full_export_prices[:6],
-        "solar_input_kwh": full_solar[:6],
-        "usage_kwh": full_usage[:6],
-    }
     first_result = _run_optimizer(first_payload)
     _assert_common_result_shape(first_result, intervals=6, expected_entities=1)
-    assert isinstance(first_result.get("state"), str)
-    assert first_result["state"]
-    assert not first_result["state"].startswith("{")
 
-    decoded = json.loads(
-        base64.urlsafe_b64decode(first_result["state"].encode("ascii")).decode("utf-8")
+    current_payload = {
+        **first_payload,
+        "grid_import_price_per_kwh": [*old_prices[1:], 1.0],
+        "usage_kwh": [*old_usage[1:], 0.0],
+        "battery_entities": [
+            {
+                **first_payload["battery_entities"][0],
+                "initial_kwh": 0.0,
+            }
+        ],
+    }
+    cold_result = _run_optimizer(current_payload)
+    warm_result = _run_optimizer({**current_payload, "state": first_result["state"]})
+
+    for result in (cold_result, warm_result):
+        _assert_common_result_shape(result, intervals=6, expected_entities=1)
+        schedule = _entity_schedule(result, "home_battery")
+        assert schedule[0]["state"] == "grid_charge"
+        assert schedule[0]["level"] == pytest.approx(4.0, abs=1e-6)
+        assert schedule[4]["level"] == pytest.approx(0.0, abs=1e-6)
+        assert result["projections"]["projected_cost"] == pytest.approx(0.4, abs=1e-6)
+        assert result["projections"]["projected_cost"] == pytest.approx(
+            _independent_projected_cost_for_unit_efficiency(current_payload, result),
+            abs=1e-6,
+        )
+
+    assert warm_result["projections"]["projected_cost"] == pytest.approx(
+        cold_result["projections"]["projected_cost"], abs=1e-6
     )
-    assert decoded["v"] == 1
-    assert "grid_import_price_per_kwh" in decoded
-    assert "grid_export_price_per_kwh" in decoded
-    assert decoded["grid_export_price_per_kwh"] == pytest.approx(full_export_prices[:6])
 
-    second_payload = {
-        **base_payload,
-        "grid_import_price_per_kwh": full_prices[2:],
-        "grid_export_price_per_kwh": full_export_prices[2:],
-        "solar_input_kwh": full_solar[2:],
-        "usage_kwh": full_usage[2:],
+
+def test_replan_uses_observed_comfort_history_when_forecast_window_slides():
+    """New comfort demand must be scheduled instead of replaying stale controls."""
+    old_prices = [6.0, 5.0, 4.0, 3.0, 2.0, 1.0]
+    first_payload = {
+        "grid_import_price_per_kwh": old_prices,
+        "grid_export_price_per_kwh": [0.0] * 6,
+        "solar_input_kwh": [0.0] * 6,
+        "usage_kwh": [0.0] * 6,
+        "battery_entities": [],
+        "comfort_entities": [
+            {
+                "name": "water_heater",
+                "target_on_slots_per_rolling_window": 3,
+                "min_consecutive_on_slots": 1,
+                "min_consecutive_off_slots": 1,
+                "max_consecutive_off_slots": 100,
+                "power_usage_kwh": 1.0,
+                "is_on_now": False,
+                "on_slots_last_rolling_window": 3,
+                "off_streak_slots_now": 0,
+            }
+        ],
+    }
+    first_result = _run_optimizer(first_payload)
+
+    current_payload = {
+        **first_payload,
+        "grid_import_price_per_kwh": [*old_prices[1:], 0.5],
+        "comfort_entities": [
+            {
+                **first_payload["comfort_entities"][0],
+                "on_slots_last_rolling_window": 0,
+                "off_streak_slots_now": 1,
+            }
+        ],
+    }
+    cold_result = _run_optimizer(current_payload)
+    warm_result = _run_optimizer({**current_payload, "state": first_result["state"]})
+
+    for result in (cold_result, warm_result):
+        _assert_common_result_shape(result, intervals=6, expected_entities=1)
+        schedule = _entity_schedule(result, "water_heater")
+        assert sum(bool(point["enabled"]) for point in schedule) >= 3
+        assert result["projections"]["projected_cost"] == pytest.approx(3.5, abs=1e-6)
+        assert result["projections"]["projected_cost"] == pytest.approx(
+            _independent_projected_cost_for_unit_efficiency(current_payload, result),
+            abs=1e-6,
+        )
+
+    assert warm_result["projections"]["projected_cost"] == pytest.approx(
+        cold_result["projections"]["projected_cost"], abs=1e-6
+    )
+
+
+def test_soc_replan_preserves_active_comfort_minimum_on_commitment():
+    """Rejecting stale battery controls must retain an active comfort lock."""
+    old_prices = [1.0, 1.0, 1.0, 0.1, 0.1, 0.1]
+    first_payload = {
+        "grid_import_price_per_kwh": old_prices,
+        "grid_export_price_per_kwh": [0.0] * 6,
+        "solar_input_kwh": [0.0] * 6,
+        "usage_kwh": [0.0] * 6,
+        "battery_entities": [
+            {
+                "name": "home_battery",
+                "initial_kwh": 1.0,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 1.0,
+                "charge_curve_kwh": [0.0],
+                "discharge_curve_kwh": [0.0],
+                "can_charge_from": 0,
+            }
+        ],
+        "comfort_entities": [
+            {
+                "name": "heatpump",
+                "target_on_slots_per_rolling_window": 3,
+                "min_consecutive_on_slots": 3,
+                "min_consecutive_off_slots": 1,
+                "max_consecutive_off_slots": 4,
+                "power_usage_kwh": 1.0,
+                "is_on_now": False,
+                "on_slots_last_rolling_window": 0,
+                "off_streak_slots_now": 4,
+            }
+        ],
+    }
+    first_result = _run_optimizer(first_payload)
+    assert _entity_schedule(first_result, "heatpump")[0]["enabled"] is True
+
+    current_payload = {
+        **first_payload,
+        "grid_import_price_per_kwh": [*old_prices[1:], 0.1],
+        "battery_entities": [
+            {
+                **first_payload["battery_entities"][0],
+                "initial_kwh": 0.0,
+            }
+        ],
+        "comfort_entities": [
+            {
+                **first_payload["comfort_entities"][0],
+                "is_on_now": True,
+                "on_slots_last_rolling_window": 1,
+                "off_streak_slots_now": 0,
+            }
+        ],
         "state": first_result["state"],
     }
-    second_result = _run_optimizer(second_payload)
-    _assert_common_result_shape(second_result, intervals=6, expected_entities=1)
-    assert isinstance(second_result.get("state"), str)
-    assert second_result["state"]
+    result = _run_optimizer(current_payload)
+    _assert_common_result_shape(result, intervals=6, expected_entities=2)
+
+    comfort_schedule = _entity_schedule(result, "heatpump")
+    assert [point["enabled"] for point in comfort_schedule[:2]] == [True, True]
+    assert sum(bool(point["enabled"]) for point in comfort_schedule) >= 2
+
+
+def test_soc_replan_preserves_observed_comfort_minimum_off_commitment():
+    """Cached lock state must not shorten an OFF lock observed at replan time."""
+    old_prices = [10.0, 0.1, 0.2, 1.0, 1.0, 1.0]
+    first_payload = {
+        "grid_import_price_per_kwh": old_prices,
+        "grid_export_price_per_kwh": [0.0] * 6,
+        "solar_input_kwh": [0.0] * 6,
+        "usage_kwh": [0.0] * 6,
+        "battery_entities": [
+            {
+                "name": "home_battery",
+                "initial_kwh": 1.0,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 1.0,
+                "charge_curve_kwh": [0.0],
+                "discharge_curve_kwh": [0.0],
+                "can_charge_from": 0,
+            }
+        ],
+        "comfort_entities": [
+            {
+                "name": "heatpump",
+                "target_on_slots_per_rolling_window": 1,
+                "min_consecutive_on_slots": 1,
+                "min_consecutive_off_slots": 3,
+                "max_consecutive_off_slots": 5,
+                "power_usage_kwh": 1.0,
+                "is_on_now": False,
+                "on_slots_last_rolling_window": 0,
+                "off_streak_slots_now": 3,
+            }
+        ],
+    }
+    first_result = _run_optimizer(first_payload)
+    assert _entity_schedule(first_result, "heatpump")[0]["enabled"] is False
+
+    current_payload = {
+        **first_payload,
+        "grid_import_price_per_kwh": [*old_prices[1:], 0.1],
+        "battery_entities": [
+            {
+                **first_payload["battery_entities"][0],
+                "initial_kwh": 0.0,
+            }
+        ],
+        "comfort_entities": [
+            {
+                **first_payload["comfort_entities"][0],
+                "off_streak_slots_now": 0,
+            }
+        ],
+    }
+    cold_result = _run_optimizer(current_payload)
+    warm_result = _run_optimizer({**current_payload, "state": first_result["state"]})
+
+    for result in (cold_result, warm_result):
+        _assert_common_result_shape(result, intervals=6, expected_entities=2)
+        comfort_schedule = _entity_schedule(result, "heatpump")
+        assert [point["enabled"] for point in comfort_schedule[:3]] == [
+            False,
+            False,
+            False,
+        ]
+        assert sum(bool(point["enabled"]) for point in comfort_schedule) >= 1
+
+    assert _entity_schedule(warm_result, "heatpump") == _entity_schedule(
+        cold_result, "heatpump"
+    )
 
 
 def test_optional_entities_return_independent_start_options_without_affecting_schedule():

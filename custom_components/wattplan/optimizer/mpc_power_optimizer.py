@@ -109,8 +109,8 @@ def _build_reuse_plan(
     solar_input,
     usage,
     total_steps,
-    num_battery,
-    num_comfort,
+    battery_entities,
+    comfort_entities,
     expected_fingerprint,
 ):
     if previous_state is None:
@@ -124,14 +124,25 @@ def _build_reuse_plan(
     old_solar = previous_state.solar_input
     old_usage = previous_state.usage
     battery_charge = previous_state.battery_charge
+    battery_levels = previous_state.battery_levels
     battery_charge_grid = previous_state.battery_charge_grid
     battery_charge_pv = previous_state.battery_charge_pv
     battery_discharge = previous_state.battery_discharge
     battery_preserve = previous_state.battery_preserve
     comfort_on = previous_state.comfort_on
+    comfort_levels = previous_state.comfort_levels
+    comfort_off_streaks = previous_state.comfort_off_streaks
+    comfort_is_on = previous_state.comfort_is_on
     comfort_lock_mode = previous_state.comfort_lock_mode
     comfort_lock_remaining = previous_state.comfort_lock_remaining
 
+    num_battery = len(battery_entities)
+    num_comfort = len(comfort_entities)
+    if battery_levels is not None and battery_levels.shape != (
+        num_battery,
+        old_steps + 1,
+    ):
+        return None
     if battery_charge.shape[0] != num_battery:
         return None
     if battery_discharge.shape[0] != num_battery:
@@ -144,16 +155,59 @@ def _build_reuse_plan(
         return None
     if comfort_on.shape[0] != num_comfort:
         return None
+    if comfort_levels is None or comfort_levels.shape != (
+        num_comfort,
+        old_steps + 1,
+    ):
+        return None
+    if comfort_off_streaks is None or comfort_off_streaks.shape != (
+        num_comfort,
+        old_steps + 1,
+    ):
+        return None
+    if comfort_is_on is None or comfort_is_on.shape != (
+        num_comfort,
+        old_steps + 1,
+    ):
+        return None
     if comfort_lock_mode.shape[0] != num_comfort:
         return None
     if comfort_lock_remaining.shape[0] != num_comfort:
         return None
 
+    actual_battery_levels = np.asarray(
+        [float(entity.initial_kwh) for entity in battery_entities],
+        dtype=np.float64,
+    )
+    actual_comfort_modes = np.asarray(
+        [1 if entity.is_on_now else 0 for entity in comfort_entities],
+        dtype=np.int32,
+    )
+    actual_comfort_levels = np.asarray(
+        [
+            max(
+                float(entity.target_on_slots_per_rolling_window)
+                - float(entity.on_slots_last_rolling_window),
+                0.0,
+            )
+            for entity in comfort_entities
+        ],
+        dtype=np.float64,
+    )
+    actual_comfort_off_streaks = np.asarray(
+        [
+            0.0 if entity.is_on_now else float(entity.off_streak_slots_now)
+            for entity in comfort_entities
+        ],
+        dtype=np.float64,
+    )
+    best_forecast_offset = None
+    best_forecast_overlap = 0
     best_offset = None
     best_overlap = 0
     for offset_steps in range(old_steps):
         overlap_steps = min(total_steps, old_steps - offset_steps)
-        if overlap_steps <= best_overlap:
+        if overlap_steps <= 0:
             continue
 
         if not np.allclose(
@@ -186,36 +240,85 @@ def _build_reuse_plan(
             rtol=0.0,
         ):
             continue
+        if overlap_steps > best_forecast_overlap:
+            best_forecast_offset = offset_steps
+            best_forecast_overlap = overlap_steps
 
-        best_offset = offset_steps
-        best_overlap = overlap_steps
+        battery_state_matches = battery_levels is not None and np.allclose(
+            battery_levels[:, offset_steps],
+            actual_battery_levels,
+            atol=1e-6,
+            rtol=0.0,
+        )
+        comfort_state_matches = (
+            np.array_equal(
+                comfort_is_on[:, offset_steps].astype(np.int32),
+                actual_comfort_modes,
+            )
+            and np.allclose(
+                comfort_levels[:, offset_steps],
+                actual_comfort_levels,
+                atol=1e-6,
+                rtol=0.0,
+            )
+            and np.allclose(
+                comfort_off_streaks[:, offset_steps],
+                actual_comfort_off_streaks,
+                atol=1e-6,
+                rtol=0.0,
+            )
+        )
+        if not battery_state_matches or not comfort_state_matches:
+            # The longest matching forecast overlap defines elapsed time. A
+            # later coincidental state match must not invent a shorter window.
+            break
 
-    if best_offset is None or best_overlap <= 0:
+        if overlap_steps > best_overlap:
+            best_offset = offset_steps
+            best_overlap = overlap_steps
+        break
+
+    if best_forecast_offset is None or best_forecast_overlap <= 0:
         return None
 
-    return {
+    lock_offset = best_offset if best_offset is not None else best_forecast_offset
+    reuse_plan = {
         "overlap_steps": int(best_overlap),
-        "battery_charge": battery_charge[:, best_offset : best_offset + best_overlap],
-        "battery_charge_grid": battery_charge_grid[
-            :, best_offset : best_offset + best_overlap
-        ],
-        "battery_charge_pv": battery_charge_pv[
-            :, best_offset : best_offset + best_overlap
-        ],
-        "battery_discharge": battery_discharge[
-            :, best_offset : best_offset + best_overlap
-        ],
-        "battery_preserve": battery_preserve[
-            :, best_offset : best_offset + best_overlap
-        ],
-        "comfort_on": comfort_on[:, best_offset : best_offset + best_overlap],
-        "comfort_lock_mode": comfort_lock_mode[
-            :, best_offset : best_offset + best_overlap
-        ],
-        "comfort_lock_remaining": comfort_lock_remaining[
-            :, best_offset : best_offset + best_overlap
-        ],
+        "initial_comfort_lock_mode": comfort_lock_mode[:, lock_offset].copy(),
+        "initial_comfort_lock_remaining": comfort_lock_remaining[
+            :, lock_offset
+        ].copy(),
     }
+    if best_offset is None or best_overlap <= 0:
+        return reuse_plan
+
+    reuse_plan.update(
+        {
+            "battery_charge": battery_charge[
+                :, best_offset : best_offset + best_overlap
+            ],
+            "battery_charge_grid": battery_charge_grid[
+                :, best_offset : best_offset + best_overlap
+            ],
+            "battery_charge_pv": battery_charge_pv[
+                :, best_offset : best_offset + best_overlap
+            ],
+            "battery_discharge": battery_discharge[
+                :, best_offset : best_offset + best_overlap
+            ],
+            "battery_preserve": battery_preserve[
+                :, best_offset : best_offset + best_overlap
+            ],
+            "comfort_on": comfort_on[:, best_offset : best_offset + best_overlap],
+            "comfort_lock_mode": comfort_lock_mode[
+                :, best_offset : best_offset + best_overlap
+            ],
+            "comfort_lock_remaining": comfort_lock_remaining[
+                :, best_offset : best_offset + best_overlap
+            ],
+        }
+    )
+    return reuse_plan
 
 
 def _solve_lp(objective, A_ub, b_ub, A_eq, b_eq, bounds, integrality=None):
@@ -918,6 +1021,20 @@ def _run_mpc(
                 - int(entity.off_streak_slots_now),
                 0,
             )
+    if reuse_plan is not None:
+        prior_modes = reuse_plan.get("initial_comfort_lock_mode")
+        prior_remaining = reuse_plan.get("initial_comfort_lock_remaining")
+        if prior_modes is not None and prior_remaining is not None:
+            for i, entity in enumerate(comfort_entities):
+                actual_mode = 1 if entity.is_on_now else 0
+                if int(prior_modes[i]) != actual_mode:
+                    continue
+                comfort_lock_mode[i] = actual_mode
+                comfort_lock_remaining[i] = max(
+                    int(comfort_lock_remaining[i]),
+                    int(prior_remaining[i]),
+                    0,
+                )
 
     for t in range(total_steps):
         horizon = min(MPC_HORIZON, total_steps - t)
@@ -1151,6 +1268,7 @@ def _run_mpc(
     return {
         "battery_levels": battery_levels,
         "comfort_levels": comfort_levels,
+        "comfort_off_streaks": comfort_off_streaks,
         "battery_states": battery_states,
         "comfort_enabled": comfort_enabled,
         "battery_charge": battery_charge,
@@ -1393,8 +1511,8 @@ def optimize_internal(normalized: CalculationInput):
         solar_input=solar_input,
         usage=usage,
         total_steps=total_steps,
-        num_battery=len(battery_entities),
-        num_comfort=len(comfort_entities),
+        battery_entities=battery_entities,
+        comfort_entities=comfort_entities,
         expected_fingerprint=fingerprint,
     )
 
@@ -1525,12 +1643,25 @@ def optimize_internal(normalized: CalculationInput):
         "grid_export_price_per_kwh": grid_export_prices.tolist(),
         "solar_input_kwh": solar_input.tolist(),
         "usage_kwh": usage.tolist(),
+        "battery_levels": result["battery_levels"].tolist(),
         "battery_charge": result["battery_charge"].tolist(),
         "battery_charge_grid": result["battery_charge_grid"].tolist(),
         "battery_charge_pv": result["battery_charge_pv"].tolist(),
         "battery_discharge": result["battery_discharge"].tolist(),
         "battery_preserve": result["battery_preserve"].astype(bool).tolist(),
         "comfort_on": result["comfort_on"].tolist(),
+        "comfort_levels": result["comfort_levels"].tolist(),
+        "comfort_off_streaks": result["comfort_off_streaks"].tolist(),
+        "comfort_is_on": np.concatenate(
+            (
+                np.asarray(
+                    [bool(entity.is_on_now) for entity in comfort_entities],
+                    dtype=np.bool_,
+                ).reshape(len(comfort_entities), 1),
+                result["comfort_enabled"].astype(np.bool_),
+            ),
+            axis=1,
+        ).tolist(),
         "comfort_lock_mode": result["comfort_lock_mode"].tolist(),
         "comfort_lock_remaining": result["comfort_lock_remaining"].tolist(),
     }
