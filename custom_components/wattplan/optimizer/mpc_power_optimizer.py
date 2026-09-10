@@ -727,7 +727,8 @@ def _apply_controls_step(
     charge_pv_amounts = np.zeros(num_battery, dtype=np.float64)
     discharge_requests = np.zeros(num_battery, dtype=np.float64)
     next_battery_levels = battery_levels.copy()
-    pv_surplus_remaining = max(float(solar_input[t]) - float(usage[t]), 0.0)
+    modeled_demand = float(usage[t]) + comfort_energy
+    pv_surplus_remaining = max(float(solar_input[t]) - modeled_demand, 0.0)
 
     for i, entity in enumerate(battery_entities):
         level = float(battery_levels[i])
@@ -806,7 +807,7 @@ def _apply_controls_step(
             discharge_requests[i] = discharge_request
 
     demand_before_discharge = (
-        float(usage[t]) + float(np.sum(charge_amounts)) - float(solar_input[t])
+        modeled_demand + float(np.sum(charge_amounts)) - float(solar_input[t])
     )
 
     total_discharge_request = float(np.sum(discharge_requests))
@@ -851,11 +852,7 @@ def _apply_controls_step(
         discharge_amounts,
         max(
             float(solar_input[t])
-            - (
-                float(usage[t])
-                + comfort_energy
-                + float(np.sum(charge_pv_amounts))
-            ),
+            - (modeled_demand + float(np.sum(charge_pv_amounts))),
             0.0,
         ),
     )

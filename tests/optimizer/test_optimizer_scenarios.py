@@ -30,6 +30,55 @@ def _level_increase_count(schedule, *, initial_level):
     return increases
 
 
+def _entity_schedule(result, name):
+    """Return one public entity schedule by name."""
+    return next(
+        entity["schedule"]
+        for entity in result["entities"]
+        if entity["name"] == name
+    )
+
+
+def _independent_projected_cost_for_unit_efficiency(payload, result):
+    """Evaluate public schedules whose batteries have unit efficiency."""
+    for battery in payload["battery_entities"]:
+        assert float(battery.get("charge_efficiency", 1.0)) == pytest.approx(1.0)
+        assert float(battery.get("discharge_efficiency", 1.0)) == pytest.approx(1.0)
+    battery_schedules = {
+        entity["name"]: entity["schedule"]
+        for entity in result["entities"]
+        if entity["type"] == "battery"
+    }
+    comfort_schedules = {
+        entity["name"]: entity["schedule"]
+        for entity in result["entities"]
+        if entity["type"] == "comfort"
+    }
+    previous_levels = {
+        battery["name"]: float(battery["initial_kwh"])
+        for battery in payload["battery_entities"]
+    }
+    total_cost = 0.0
+    export_prices = payload.get(
+        "grid_export_price_per_kwh",
+        [0.0] * len(payload["grid_import_price_per_kwh"]),
+    )
+    for slot, import_price in enumerate(payload["grid_import_price_per_kwh"]):
+        demand = float(payload["usage_kwh"][slot])
+        for comfort in payload["comfort_entities"]:
+            if comfort_schedules[comfort["name"]][slot]["enabled"]:
+                demand += float(comfort["power_usage_kwh"])
+        for battery in payload["battery_entities"]:
+            name = battery["name"]
+            level = float(battery_schedules[name][slot]["level"])
+            demand += level - previous_levels[name]
+            previous_levels[name] = level
+        net_grid = demand - float(payload["solar_input_kwh"][slot])
+        total_cost += float(import_price) * max(net_grid, 0.0)
+        total_cost -= float(export_prices[slot]) * max(-net_grid, 0.0)
+    return total_cost
+
+
 def _assert_common_result_shape(
     result, intervals, expected_entities, expect_suboptimal=False
 ):
@@ -209,7 +258,7 @@ def test_complex_48h_input_returns_valid_result():
                 "minimum_kwh": 0.0,
                 "capacity_kwh": 13.0,
                 "charge_curve_kwh": [4.0, 4.0, 3.0, 1.0],
-                "discharge_curve_kwh": [0.0],
+                "discharge_curve_kwh": [4.0, 4.0, 3.0, 1.0],
                 "can_charge_from": 3,
             },
         ],
@@ -241,6 +290,129 @@ def test_complex_48h_input_returns_valid_result():
 
     result = _run_optimizer(payload)
     _assert_common_result_shape(result, intervals=intervals, expected_entities=4)
+
+    house_schedule = _entity_schedule(result, "house_battery")
+    assert any(
+        float(point["level"])
+        < (6.0 if index == 0 else float(house_schedule[index - 1]["level"])) - 1e-6
+        for index, point in enumerate(house_schedule)
+    )
+    for battery in payload["battery_entities"]:
+        for point in _entity_schedule(result, battery["name"]):
+            assert float(battery["minimum_kwh"]) - 1e-6 <= float(point["level"])
+            assert float(point["level"]) <= float(battery["capacity_kwh"]) + 1e-6
+    for comfort in payload["comfort_entities"]:
+        enabled_slots = sum(
+            bool(point["enabled"])
+            for point in _entity_schedule(result, comfort["name"])
+        )
+        required_slots = max(
+            int(comfort["target_on_slots_per_rolling_window"])
+            - int(comfort["on_slots_last_rolling_window"]),
+            0,
+        )
+        assert enabled_slots >= required_slots
+    assert result["projections"]["projected_cost"] == pytest.approx(
+        _independent_projected_cost_for_unit_efficiency(payload, result), abs=1e-6
+    )
+
+
+def test_full_battery_serves_mandatory_comfort_only_demand():
+    """Self-consume should use available battery energy for comfort demand."""
+    payload = {
+        "grid_import_price_per_kwh": [1.0, 1.0, 1.0, 1.0],
+        "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
+        "usage_kwh": [0.0, 0.0, 0.0, 0.0],
+        "battery_entities": [
+            {
+                "name": "house_battery",
+                "initial_kwh": 4.0,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 4.0,
+                "charge_curve_kwh": [0.0],
+                "discharge_curve_kwh": [1.0],
+                "can_charge_from": 0,
+            }
+        ],
+        "comfort_entities": [
+            {
+                "name": "heatpump",
+                "target_on_slots_per_rolling_window": 4,
+                "max_consecutive_off_slots": 1,
+                "power_usage_kwh": 1.0,
+                "is_on_now": True,
+                "on_slots_last_rolling_window": 0,
+                "off_streak_slots_now": 0,
+            }
+        ],
+    }
+
+    result = _run_optimizer(payload)
+    _assert_common_result_shape(result, intervals=4, expected_entities=2)
+
+    assert [point["enabled"] for point in _entity_schedule(result, "heatpump")] == [
+        True,
+        True,
+        True,
+        True,
+    ]
+    battery_schedule = _entity_schedule(result, "house_battery")
+    assert [point["state"] for point in battery_schedule] == ["self_consume"] * 4
+    assert [point["level"] for point in battery_schedule] == pytest.approx(
+        [3.0, 2.0, 1.0, 0.0], abs=1e-6
+    )
+    assert result["projections"]["projected_cost"] == pytest.approx(0.0, abs=1e-9)
+    assert result["projections"]["projected_cost"] == pytest.approx(
+        _independent_projected_cost_for_unit_efficiency(payload, result), abs=1e-9
+    )
+
+
+def test_pv_serves_comfort_before_charging_battery_from_surplus():
+    """PV allocated to comfort demand must not also be stored in the battery."""
+    payload = {
+        "grid_import_price_per_kwh": [1.0, 1.0, 1.0, 1.0],
+        "solar_input_kwh": [2.0, 0.0, 0.0, 0.0],
+        "usage_kwh": [0.0, 0.0, 0.0, 0.0],
+        "battery_entities": [
+            {
+                "name": "house_battery",
+                "initial_kwh": 0.0,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 2.0,
+                "charge_curve_kwh": [2.0],
+                "discharge_curve_kwh": [2.0],
+                "can_charge_from": 2,
+            }
+        ],
+        "comfort_entities": [
+            {
+                "name": "heatpump",
+                "target_on_slots_per_rolling_window": 4,
+                "max_consecutive_off_slots": 1,
+                "power_usage_kwh": 1.0,
+                "is_on_now": True,
+                "on_slots_last_rolling_window": 0,
+                "off_streak_slots_now": 0,
+            }
+        ],
+    }
+
+    result = _run_optimizer(payload)
+    _assert_common_result_shape(result, intervals=4, expected_entities=2)
+
+    battery_schedule = _entity_schedule(result, "house_battery")
+    assert battery_schedule[0]["level"] == pytest.approx(1.0, abs=1e-6)
+    assert all(0.0 <= float(point["level"]) <= 2.0 for point in battery_schedule)
+    assert [point["enabled"] for point in _entity_schedule(result, "heatpump")] == [
+        True,
+        True,
+        True,
+        True,
+    ]
+    assert result["projections"]["projected_cost"] == pytest.approx(2.0, abs=1e-6)
+    assert result["projections"]["projected_cost"] == pytest.approx(
+        _independent_projected_cost_for_unit_efficiency(payload, result), abs=1e-6
+    )
 
 
 def test_state_roundtrip_with_sliding_window_inputs():
