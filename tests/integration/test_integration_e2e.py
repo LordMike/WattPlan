@@ -562,6 +562,51 @@ async def test_fixed_battery_with_numeric_soc_is_planned(
 
 
 @pytest.mark.parametrize(
+    ("enabled", "expected_action"),
+    [(True, "on"), (False, "off")],
+)
+async def test_constant_comfort_schedule_publishes_current_actions(
+    hass: HomeAssistant,
+    entity_registry_enabled_by_default: None,
+    enabled: bool,
+    expected_action: str,
+) -> None:
+    """A comfort schedule without changes should not block plan publication."""
+    entry = _entry(
+        title="Home",
+        subentries_data=[
+            _battery_subentry(subentry_id="battery", name="battery"),
+            _comfort_subentry(subentry_id="comfort", name="comfort"),
+        ],
+    )
+    await _setup_entry(hass, entry)
+
+    def constant_comfort(params: Any) -> dict[str, object]:
+        result = _fake_optimize_with_entities(params)
+        for entity in result["entities"]:
+            if entity["type"] == "comfort":
+                entity["schedule"] = [
+                    {"enabled": enabled, "level": 1.0 if enabled else 0.0}
+                ] * 4
+        return assert_plan_invariants(result)
+
+    with patch(
+        "custom_components.wattplan.coordinator.optimize",
+        side_effect=constant_comfort,
+    ):
+        await _run_optimize(hass)
+
+    assert hass.states.get("sensor.home_status").state == "ok"
+    assert hass.states.get("sensor.home_comfort_action").state == expected_action
+    comfort_next = hass.states.get("sensor.home_comfort_next_action")
+    assert comfort_next is not None
+    assert comfort_next.state == STATE_UNKNOWN
+    assert "timestamp" not in comfort_next.attributes
+    assert hass.states.get("sensor.home_battery_action").state == "grid_charge"
+    assert hass.states.get("sensor.home_battery_next_action").state == "self_consume"
+
+
+@pytest.mark.parametrize(
     (
         "availability_state",
         "soc_state",

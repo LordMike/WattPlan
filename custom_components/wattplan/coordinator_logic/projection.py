@@ -109,6 +109,11 @@ class PlannerProjectionBuilder:
                 )
                 next_action_timestamp = next_change[0] if next_change is not None else None
                 next_point = next_change[1] if next_change is not None else None
+                next_action = (
+                    ("on" if bool(next_point.get("enabled")) else "off")
+                    if isinstance(next_point, dict)
+                    else None
+                )
                 comforts[subentry_id] = {
                     "action": "on" if bool(current.get("enabled")) else "off",
                     "next_action_timestamp": (
@@ -116,11 +121,7 @@ class PlannerProjectionBuilder:
                         if next_action_timestamp is not None
                         else None
                     ),
-                    "next_action": (
-                        "on" if bool(next_point.get("enabled")) else "off"
-                        if isinstance(next_point, dict)
-                        else None
-                    ),
+                    "next_action": next_action,
                 }
 
         for optional in result.get("optional_entity_options", []):
