@@ -27,8 +27,11 @@ your preferred local location and point the test wrapper at it.
 Run tests directly from this repo:
 
 ```bash
-python -m pytest tests
+python -m pytest
 ```
+
+The default collection covers the full `tests/` tree, including packaging,
+integration, and optimizer tests.
 
 ## Testing
 

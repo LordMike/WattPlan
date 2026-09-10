@@ -21,8 +21,7 @@ test = [
 addopts = "-ra"
 pythonpath = ["."]
 testpaths = [
-  "tests/integration",
-  "tests/optimizer",
+  "tests",
 ]
 asyncio_mode = "auto"
 
