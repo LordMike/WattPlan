@@ -37,6 +37,8 @@ Historical cost sensors are period-to-date totals, not last-slot snapshots.
 
 WattPlan only processes completed slots. If the setup uses 15-minute slots, the values update after a full 15-minute interval has finished. Missing meters, meter resets, missing prices, and skipped slots are counted as missing slots instead of being spread across multiple prices.
 
+When historical tracking first reads the cumulative meters partway through a slot, that reading becomes the baseline for the current slot. At the next boundary, WattPlan records only the increase observed since that baseline in the current slot; it does not extrapolate energy for the unobserved beginning of the slot. Later slots use the preceding boundary reading normally. If one or more boundaries are missed instead, WattPlan keeps the existing gap behavior: it marks the affected slots as missing and reseeds the meter baseline without distributing accumulated energy across them.
+
 ## Scenarios
 
 | Scenario | What it means | How to read it |

@@ -195,10 +195,18 @@ class HistoricalCostTracker:
         if last_processed is None or not self.store.last_meter_values():
             await self._async_seed(now)
             return
-        if completed_slot <= last_processed:
+        seeded_cursor = self.store.data.get("meter_cursor_seeded") is True
+        if seeded_cursor and self.store.has_slot(last_processed):
+            self.store.data.pop("meter_cursor_seeded", None)
+            self.store.mark_dirty()
+            seeded_cursor = False
+        next_slot = (
+            last_processed if seeded_cursor else last_processed + self._interval
+        )
+        if completed_slot < next_slot:
             return
-        if completed_slot != last_processed + self._interval:
-            missing_slot = last_processed + self._interval
+        if completed_slot != next_slot:
+            missing_slot = next_slot
             while missing_slot <= completed_slot:
                 await self._async_append_gap(missing_slot, FLAG_GAP)
                 missing_slot += self._interval
@@ -294,6 +302,8 @@ class HistoricalCostTracker:
         )
         if processed_slot is None:
             self.store.data["meter_cursor_seeded"] = True
+        else:
+            self.store.data.pop("meter_cursor_seeded", None)
         self._schedule_next(now)
 
     async def _async_append_gap(self, slot_start: datetime, flags: int) -> None:

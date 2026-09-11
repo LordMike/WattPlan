@@ -515,31 +515,39 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
     assert option_1.attributes["friendly_name"] == "(optional) Option 1 Start"
 
 
-async def test_historical_cost_tracking_seeds_without_fake_first_slot(
+@pytest.mark.parametrize("startup_minute", [0, 7])
+async def test_historical_cost_tracking_processes_first_observed_partial_slot(
     hass: HomeAssistant,
+    freezer,
+    startup_minute: int,
 ) -> None:
-    """First historical run should seed cursors without creating cost history."""
+    """The startup reading should be the current bucket's measured baseline."""
+    start = datetime(2026, 5, 24, 10, 0, tzinfo=UTC)
+    freezer.move_to(start + timedelta(minutes=startup_minute))
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Home",
         data={
             CONF_NAME: "Home",
-            CONF_SLOT_MINUTES: 60,
-            CONF_HOURS_TO_PLAN: 4,
+            CONF_SLOT_MINUTES: 15,
+            CONF_HOURS_TO_PLAN: 1,
             CONF_SOURCES: {
                 CONF_SOURCE_IMPORT_PRICE: {
                     CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [1.0, 1.0, 1.0, 1.0] }}",
+                    CONF_TEMPLATE: "{{ [1.0, 3.0, 1.0, 1.0] }}",
                 },
             },
         },
-        options=_historical_options(),
+        options={
+            **_historical_options(),
+            CONF_HISTORICAL_GRID_EXPORT_SENSOR: None,
+            CONF_HISTORICAL_PV_SENSOR: None,
+            CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION: False,
+        },
     )
     entry.add_to_hass(hass)
     _set_energy_meter(hass, "sensor.grid_import_total", 100.0)
-    _set_energy_meter(hass, "sensor.grid_export_total", 10.0)
     _set_energy_meter(hass, "sensor.usage_total", 200.0)
-    _set_energy_meter(hass, "sensor.pv_total", 50.0)
 
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
@@ -550,11 +558,147 @@ async def test_historical_cost_tracking_seeds_without_fake_first_slot(
     actual = hass.states.get("sensor.home_historical_actual_cost_today")
     assert actual is not None
     assert float(actual.state) == pytest.approx(0.0)
+    assert tracker.store.last_processed_slot() == start
+    assert tracker.store.data["meter_cursor_seeded"] is True
 
-    seeded_meters = dict(tracker.store.last_meter_values())
-    await tracker.async_refresh(datetime.now(tz=UTC))
-    assert tracker.store.data["days"] == {}
-    assert tracker.store.last_meter_values() == seeded_meters
+    tracker.remember_price_series(
+        start_at=start,
+        slot_minutes=15,
+        import_prices=[1.0, 3.0],
+        export_prices=[0.0, 0.0],
+    )
+
+    freezer.move_to(start + timedelta(minutes=15, seconds=2))
+    _set_energy_meter(hass, "sensor.grid_import_total", 101.0)
+    _set_energy_meter(hass, "sensor.usage_total", 201.5)
+    await hass.services.async_call(DOMAIN, SERVICE_REFRESH_SENSORS, {}, blocking=True)
+    await hass.async_block_till_done()
+
+    day = tracker.store.data["days"]["2026-05-24"]
+    assert day["starts"] == ["2026-05-24T10:00:00Z"]
+    assert day["import_price"] == pytest.approx([1.0])
+    assert day["grid_import"] == pytest.approx([1.0])
+    assert day["usage"] == pytest.approx([1.5])
+    assert tracker.store.last_processed_slot() == start
+    assert "meter_cursor_seeded" not in tracker.store.data
+    actual = hass.states.get("sensor.home_historical_actual_cost_today")
+    assert actual is not None
+    assert float(actual.state) == pytest.approx(1.0)
+
+    freezer.move_to(start + timedelta(minutes=30, seconds=2))
+    _set_energy_meter(hass, "sensor.grid_import_total", 103.0)
+    _set_energy_meter(hass, "sensor.usage_total", 202.0)
+    await hass.services.async_call(DOMAIN, SERVICE_REFRESH_SENSORS, {}, blocking=True)
+    await hass.async_block_till_done()
+
+    assert day["starts"] == [
+        "2026-05-24T10:00:00Z",
+        "2026-05-24T10:15:00Z",
+    ]
+    assert day["import_price"] == pytest.approx([1.0, 3.0])
+    assert day["grid_import"] == pytest.approx([1.0, 2.0])
+    assert day["usage"] == pytest.approx([1.5, 0.5])
+    assert tracker.store.last_processed_slot() == start + timedelta(minutes=15)
+    assert tracker.store.last_meter_values() == {
+        "grid_import": pytest.approx(103.0),
+        "grid_export": pytest.approx(0.0),
+        "usage": pytest.approx(202.0),
+        "pv": pytest.approx(0.0),
+    }
+    actual = hass.states.get("sensor.home_historical_actual_cost_today")
+    grid_only = hass.states.get("sensor.home_historical_grid_only_cost_today")
+    assert actual is not None
+    assert grid_only is not None
+    assert float(actual.state) == pytest.approx(7.0)
+    assert float(grid_only.state) == pytest.approx(3.0)
+
+    await hass.services.async_call(DOMAIN, SERVICE_REFRESH_SENSORS, {}, blocking=True)
+    assert day["starts"] == [
+        "2026-05-24T10:00:00Z",
+        "2026-05-24T10:15:00Z",
+    ]
+    assert tracker.store.last_meter_values()["grid_import"] == pytest.approx(103.0)
+
+
+async def test_historical_cost_startup_missed_boundary_keeps_gap_policy(
+    hass: HomeAssistant,
+    freezer,
+) -> None:
+    """Missing the first boundary should mark gaps, reseed, and resume normally."""
+    start = datetime(2026, 5, 24, 10, 0, tzinfo=UTC)
+    freezer.move_to(start + timedelta(minutes=7))
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: 15,
+            CONF_HOURS_TO_PLAN: 1,
+            CONF_SOURCES: {
+                CONF_SOURCE_IMPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [2.0, 2.0, 2.0, 2.0] }}",
+                },
+            },
+        },
+        options={
+            **_historical_options(),
+            CONF_HISTORICAL_GRID_EXPORT_SENSOR: None,
+            CONF_HISTORICAL_PV_SENSOR: None,
+            CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION: False,
+        },
+    )
+    entry.add_to_hass(hass)
+    _set_energy_meter(hass, "sensor.grid_import_total", 100.0)
+    _set_energy_meter(hass, "sensor.usage_total", 200.0)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    tracker = entry.runtime_data.historical_tracker
+    assert tracker is not None
+
+    freezer.move_to(start + timedelta(minutes=31))
+    _set_energy_meter(hass, "sensor.grid_import_total", 105.0)
+    _set_energy_meter(hass, "sensor.usage_total", 205.0)
+    await hass.services.async_call(DOMAIN, SERVICE_REFRESH_SENSORS, {}, blocking=True)
+
+    day = tracker.store.data["days"]["2026-05-24"]
+    assert day["starts"] == [
+        "2026-05-24T10:00:00Z",
+        "2026-05-24T10:15:00Z",
+    ]
+    assert day["flags"] == [FLAG_GAP, FLAG_GAP]
+    assert day["grid_import"] == [None, None]
+    assert day["usage"] == [None, None]
+    assert tracker.store.last_processed_slot() == start + timedelta(minutes=15)
+    assert tracker.store.last_meter_values()["grid_import"] == pytest.approx(105.0)
+    assert "meter_cursor_seeded" not in tracker.store.data
+
+    tracker.remember_price_series(
+        start_at=start + timedelta(minutes=30),
+        slot_minutes=15,
+        import_prices=[2.0],
+        export_prices=[0.0],
+    )
+    freezer.move_to(start + timedelta(minutes=45, seconds=2))
+    _set_energy_meter(hass, "sensor.grid_import_total", 105.5)
+    _set_energy_meter(hass, "sensor.usage_total", 205.25)
+    await hass.services.async_call(DOMAIN, SERVICE_REFRESH_SENSORS, {}, blocking=True)
+    await hass.async_block_till_done()
+
+    assert day["starts"] == [
+        "2026-05-24T10:00:00Z",
+        "2026-05-24T10:15:00Z",
+        "2026-05-24T10:30:00Z",
+    ]
+    assert day["flags"] == [FLAG_GAP, FLAG_GAP, 0]
+    assert day["grid_import"] == [None, None, pytest.approx(0.5)]
+    assert day["usage"] == [None, None, pytest.approx(0.25)]
+    actual = hass.states.get("sensor.home_historical_actual_cost_today")
+    assert actual is not None
+    assert float(actual.state) == pytest.approx(1.0)
+    assert actual.attributes["slots"] == 3
+    assert actual.attributes["missing_slots"] == 2
 
 
 async def test_historical_cost_tracking_processes_scenarios_and_entities(

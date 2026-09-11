@@ -121,6 +121,7 @@ class HistoricalCostStore:
         """Update persisted cursors and configuration metadata."""
         if last_processed_slot is not None:
             self.data["last_processed_slot"] = _utc_iso(last_processed_slot)
+            self.data.pop("meter_cursor_seeded", None)
         if last_meter_values is not None:
             self.data["last_meter_values"] = dict(last_meter_values)
         if meter_config is not None:
@@ -152,6 +153,17 @@ class HistoricalCostStore:
             except (TypeError, ValueError):
                 values[str(key)] = None
         return values
+
+    def has_slot(self, slot_start: datetime) -> bool:
+        """Return whether the local day already contains the slot."""
+        days = self.data.get("days", {})
+        if not isinstance(days, dict):
+            return False
+        day_payload = days.get(self._local_date(slot_start).isoformat(), {})
+        if not isinstance(day_payload, dict):
+            return False
+        starts = day_payload.get("starts", [])
+        return isinstance(starts, list) and _utc_iso(slot_start) in starts
 
     def simulation_soc(self) -> dict[str, float]:
         """Return persisted self-consumption battery SoC values."""
