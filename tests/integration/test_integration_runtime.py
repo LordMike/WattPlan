@@ -845,6 +845,91 @@ async def test_historical_cost_tracking_processes_scenarios_and_entities(
     assert monthly_grid_only.disabled
 
 
+@pytest.mark.parametrize(
+    "missing_pv",
+    [
+        False,
+        pytest.param(True, marks=pytest.mark.xfail(
+            strict=True,
+            reason="G1: missing PV freezes reference SoC and creates false negative savings",
+        )),
+    ],
+)
+async def test_identical_self_consumption_execution_has_zero_reported_savings(
+    hass: HomeAssistant, freezer, missing_pv: bool,
+) -> None:
+    """A fixed self-consumption policy must not lose to itself after a meter gap.
+
+    Physical trace: initial battery 1 kWh; no PV; load 1 kWh in each
+    of three hours. Both actual and reference discharge in hour 1, then
+    import 1 kWh in hours 2 and 3. At unit tariff every slot's savings
+    must be zero, including any subset retained after missing readings.
+    No optimizer choices participate in this reference calculation.
+    """
+    start = datetime(2026, 9, 1, 12, tzinfo=UTC)
+    freezer.move_to(start)
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="Home",
+        data={
+            CONF_NAME: "Home", CONF_SLOT_MINUTES: 60, CONF_HOURS_TO_PLAN: 4,
+            CONF_SOURCES: {
+                CONF_SOURCE_IMPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [1.0, 1.0, 1.0, 1.0] }}",
+                },
+                CONF_SOURCE_EXPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [0.0, 0.0, 0.0, 0.0] }}",
+                },
+            },
+        },
+        options=_historical_options(),
+        subentries_data=[config_entries.ConfigSubentryData(
+            subentry_id="battery_sub", subentry_type=SUBENTRY_TYPE_BATTERY,
+            title="battery", unique_id="battery:battery",
+            data={
+                CONF_NAME: "battery", CONF_SOC_SOURCE: "sensor.battery_soc",
+                CONF_CAPACITY_KWH: 1.0, CONF_MINIMUM_KWH: 0.0,
+                CONF_MAX_CHARGE_KW: 1.0, CONF_MAX_DISCHARGE_KW: 1.0,
+                CONF_CHARGE_EFFICIENCY: 1.0, CONF_DISCHARGE_EFFICIENCY: 1.0,
+                CONF_CAN_CHARGE_FROM_GRID: False, CONF_CAN_CHARGE_FROM_PV: True,
+            },
+        )],
+    )
+    entry.add_to_hass(hass)
+    for entity_id in ("sensor.grid_import_total", "sensor.grid_export_total",
+                      "sensor.usage_total", "sensor.pv_total"):
+        _set_energy_meter(hass, entity_id, 0.0)
+    hass.states.async_set("sensor.battery_soc", "1.0",
+                         {"unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR})
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    tracker = entry.runtime_data.historical_tracker
+    assert tracker is not None
+    tracker.store.update_metadata(
+        last_processed_slot=start - timedelta(hours=1),
+        last_meter_values=dict(grid_import=0., grid_export=0., usage=0., pv=0.),
+    )
+    tracker.store.data.pop("meter_cursor_seeded", None)
+    tracker.store.update_simulation_soc({"battery_sub": 1.0})
+    for hour in (1, 2, 3):
+        now = start + timedelta(hours=hour, seconds=1)
+        freezer.move_to(now)
+        _set_energy_meter(hass, "sensor.grid_import_total", float(hour - 1))
+        _set_energy_meter(hass, "sensor.usage_total", float(hour))
+        _set_energy_meter(hass, "sensor.pv_total",
+                          float("nan") if missing_pv and hour == 1 else 0.0)
+        hass.states.async_set("sensor.battery_soc", "0.0",
+                             {"unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR})
+        await tracker.async_process_completed_slot(now)
+        await hass.async_block_till_done()
+    sensor = hass.states.get("sensor.home_historical_savings_vs_self_consumption_today")
+    assert sensor is not None
+    assert sensor.attributes["slots"] == 3
+    assert sensor.attributes["missing_slots"] == (2 if missing_pv else 0)
+    assert float(sensor.state) == pytest.approx(0.0)
+
+
 async def test_refresh_sensors_service_processes_historical_costs(
     hass: HomeAssistant,
     freezer,
