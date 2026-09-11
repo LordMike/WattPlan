@@ -204,6 +204,14 @@ class TemplateAdapterSourceProvider(SourceProvider):
                     ) from err
                 continue
 
+            if not math.isfinite(value):
+                if strict:
+                    raise self._nonfinite_value_error(
+                        index=index,
+                        value=numeric_value,
+                    )
+                continue
+
             points.append(
                 {
                     "start": self._as_utc(start_dt).isoformat(),
@@ -248,6 +256,8 @@ class TemplateAdapterSourceProvider(SourceProvider):
                     ),
                     details={"source": self._source_name, "index": index, "value": value},
                 ) from err
+            if not math.isfinite(numeric):
+                raise self._nonfinite_value_error(index=index, value=value)
             points.append(
                 {
                     "start": (
@@ -328,6 +338,8 @@ class TemplateAdapterSourceProvider(SourceProvider):
                         "value": numeric_value,
                     },
                 ) from err
+            if not math.isfinite(value):
+                raise self._nonfinite_value_error(index=index, value=numeric_value)
 
             points.append((self._as_utc(start_dt), value))
 
@@ -513,14 +525,18 @@ class TemplateAdapterSourceProvider(SourceProvider):
     def _aggregate_values(self, values: list[float]) -> float:
         """Aggregate values with configured mode."""
         if self._aggregation_mode == AGGREGATION_MODE_FIRST:
-            return values[0]
-        if self._aggregation_mode == AGGREGATION_MODE_LAST:
-            return values[-1]
-        if self._aggregation_mode == AGGREGATION_MODE_MIN:
-            return min(values)
-        if self._aggregation_mode == AGGREGATION_MODE_MAX:
-            return max(values)
-        return float(sum(values) / len(values))
+            result = values[0]
+        elif self._aggregation_mode == AGGREGATION_MODE_LAST:
+            result = values[-1]
+        elif self._aggregation_mode == AGGREGATION_MODE_MIN:
+            result = min(values)
+        elif self._aggregation_mode == AGGREGATION_MODE_MAX:
+            result = max(values)
+        else:
+            result = float(sum(values) / len(values))
+        if not math.isfinite(result):
+            raise self._nonfinite_value_error(stage="aggregation")
+        return result
 
     def _complete_slots(self, known: list[float | None]) -> list[float]:
         """Complete missing slots using configured resample and edge modes."""
@@ -582,7 +598,41 @@ class TemplateAdapterSourceProvider(SourceProvider):
                 },
             )
 
-        return [float(value) for value in completed if value is not None]
+        values = [float(value) for value in completed if value is not None]
+        for index, value in enumerate(values):
+            if not math.isfinite(value):
+                raise self._nonfinite_value_error(
+                    index=index,
+                    value=value,
+                    stage="normalization",
+                )
+        return values
+
+    def _nonfinite_value_error(
+        self,
+        *,
+        index: int | None = None,
+        value: Any = None,
+        stage: str | None = None,
+    ) -> SourceProviderError:
+        """Return a source error for a nonfinite raw or derived value."""
+        if index is None:
+            location = f" during {stage}" if stage else ""
+        else:
+            location = f" at point {index + 1}"
+        details: dict[str, Any] = {
+            "source": self._source_name,
+            "provider_reason": "nonfinite_value",
+        }
+        if index is not None:
+            details["index"] = index
+        if value is not None:
+            details["value"] = value
+        return SourceProviderError(
+            "source_parse",
+            f"{self._source_name} source produced a non-finite numeric value{location}",
+            details=details,
+        )
 
     def _as_utc(self, value: datetime) -> datetime:
         """Normalize datetime to UTC, assuming UTC for naive values."""

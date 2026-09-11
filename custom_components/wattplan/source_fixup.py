@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from enum import StrEnum
+import math
 from typing import Any
 
 from .const import (
@@ -96,6 +97,7 @@ class SourceFixupProvider(SourceProvider):
         """Return exactly `window.slots` values after fixup."""
         try:
             values = await self._provider.async_values(window)
+            self._validate_finite_values(values, window)
         except SourceProviderError as err:
             repaired = await self._recover_values(window, err)
             if repaired is not None:
@@ -169,6 +171,7 @@ class SourceFixupProvider(SourceProvider):
         base_window = replace(window, slots=min(window.slots, known_slots))
         try:
             values = await self._provider.async_values(base_window)
+            self._validate_finite_values(values, base_window)
         except SourceProviderError:
             return None
 
@@ -182,6 +185,27 @@ class SourceFixupProvider(SourceProvider):
                 return None
             completed.append(completed[repeat_index])
         return completed[: window.slots]
+
+    def _validate_finite_values(
+        self,
+        values: list[float],
+        window: SourceWindow,
+    ) -> None:
+        """Reject invalid provider output before health or cache success."""
+        for index, value in enumerate(values):
+            if math.isfinite(value):
+                continue
+            raise SourceProviderError(
+                "source_parse",
+                f"Source produced a non-finite numeric value at slot {index + 1}",
+                details={
+                    "index": index,
+                    "value": value,
+                    "available_count": index,
+                    "required_count": window.slots,
+                    "provider_reason": "nonfinite_value",
+                },
+            )
 
     def _reuse_last_success(self, window: SourceWindow) -> list[float] | None:
         """Shift the last good window forward and extend from the full cache.

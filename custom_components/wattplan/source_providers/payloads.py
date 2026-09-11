@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime
+import math
 from typing import Any
 
 from homeassistant.const import CONF_NAME
@@ -283,6 +284,19 @@ class EnergySolarForecastPayloadProvider(BasePayloadProvider):
                         "provider_reason": "invalid_forecast",
                     },
                 ) from err
+            if not math.isfinite(numeric_value):
+                raise SourceProviderError(
+                    "source_parse",
+                    (
+                        f"{self._source_name} Energy provider returned non-finite "
+                        f"numeric value `{value}`"
+                    ),
+                    details={
+                        "source": self._source_name,
+                        "config_entry_id": entry.entry_id,
+                        "provider_reason": "nonfinite_value",
+                    },
+                )
             rows.append((start_dt, numeric_value))
 
         return [

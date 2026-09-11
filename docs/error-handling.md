@@ -48,6 +48,7 @@ Typical examples:
 
 - a non-critical source such as PV or export price is unavailable
 - a critical source is temporarily backed by stale cached data
+- a provider returned NaN or an infinite value, so WattPlan rejected that refresh and retained a finite cached window
 - the optimizer solved the plan with reduced confidence
 - planning failed, but a previous plan is retained and still covers the current time
 
@@ -67,6 +68,7 @@ Typical examples:
 
 - import price failed and no usable fallback remains
 - configured usage forecast failed and no usable fallback remains
+- a source returned NaN or an infinite value and no finite cached fallback remains
 - planning failed entirely
 - the active or retained plan no longer covers the current time
 - coordinator state has gone stale and the plan can no longer be trusted

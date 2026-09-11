@@ -22,6 +22,7 @@ from custom_components.wattplan.const import (
     SOURCE_MODE_ENTITY_ADAPTER,
     SOURCE_MODE_TEMPLATE,
 )
+from custom_components.wattplan.source_config.provider import build_source_value_provider
 from custom_components.wattplan.source_fixup import (
     SourceFixupProvider,
     SourceHealthKind,
@@ -155,6 +156,78 @@ async def test_fixup_marks_unavailable_when_stale_cache_covers_failure() -> None
     assert provider.last_health.kind is SourceHealthKind.UNAVAILABLE
     assert provider.last_health.using_stale is True
     assert provider.last_health.expires_at == datetime(2026, 1, 2, 0, 0, tzinfo=UTC)
+
+
+async def test_real_provider_nonfinite_refresh_uses_clean_cache_and_recovers(
+    hass: HomeAssistant,
+) -> None:
+    """Invalid refreshes must use, but never replace, the last finite cache."""
+    hass.states.async_set(
+        "sensor.forecast",
+        "ok",
+        {"prices": [1.0, 2.0, 3.0, 4.0]},
+    )
+    provider = build_source_value_provider(
+        hass,
+        source_key="price",
+        source_config={
+            CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+            "entity_id": "sensor.forecast",
+            CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_VALUES,
+            CONF_NAME: "prices",
+            "fixup_profile": FIXUP_PROFILE_EXTEND,
+        },
+    )
+    window = _window(slots=4)
+
+    assert await provider.async_values(window) == [1.0, 2.0, 3.0, 4.0]
+
+    hass.states.async_set(
+        "sensor.forecast",
+        "ok",
+        {"prices": [float("nan"), 20.0, 30.0, 40.0]},
+    )
+    assert await provider.async_values(window) == [1.0, 2.0, 3.0, 4.0]
+    assert isinstance(provider, SourceFixupProvider)
+    assert provider.last_health.kind is SourceHealthKind.UNAVAILABLE
+    assert provider.last_health.using_stale is True
+    assert provider.last_health.error_code == "source_parse"
+    assert provider.last_health.reason == "nonfinite_value"
+
+    hass.states.async_set(
+        "sensor.forecast",
+        "ok",
+        {"prices": [5.0, 6.0, 7.0, 8.0]},
+    )
+    assert await provider.async_values(window) == [5.0, 6.0, 7.0, 8.0]
+    assert provider.last_health.kind is SourceHealthKind.OK
+    assert provider.last_health.using_stale is False
+
+    hass.states.async_set(
+        "sensor.forecast",
+        "ok",
+        {"prices": [float("inf"), 60.0, 70.0, 80.0]},
+    )
+    assert await provider.async_values(window) == [5.0, 6.0, 7.0, 8.0]
+
+
+@pytest.mark.parametrize("invalid_value", [float("nan"), float("inf"), float("-inf")])
+async def test_fixup_rejects_nonfinite_direct_provider_values(
+    invalid_value: float,
+) -> None:
+    """The shared fixup boundary must protect direct providers and the cache."""
+    provider = SourceFixupProvider(
+        _StaticProvider(values=[invalid_value] * 4),
+        profile=FIXUP_PROFILE_STRICT,
+    )
+
+    with pytest.raises(SourceProviderError, match="non-finite") as err:
+        await provider.async_values(_window(slots=4))
+
+    assert err.value.code == "source_parse"
+    assert err.value.details["provider_reason"] == "nonfinite_value"
+    assert provider.last_health.kind is SourceHealthKind.UNAVAILABLE
+    assert provider.last_health.using_stale is False
 
 
 async def test_fixup_marks_incomplete_when_some_intervals_are_missing() -> None:

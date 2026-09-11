@@ -39,11 +39,11 @@ Every provider first resolves into timestamp/value points. The source pipeline t
 
 The acquisition pipeline for each source is:
 1. Select the configured provider mode and fetch raw payload or direct slot values.
-2. Normalize the provider output into one numeric value per planner slot.
+2. Normalize the provider output into one finite numeric value per planner slot. NaN and infinities are rejected as source parse failures; signed finite tariffs remain valid.
 3. Apply slot-level aggregation when multiple values land in the same slot.
 4. Optionally align timestamps to the nearest slot, repair gaps by resampling, and fill edges.
 5. Optionally extend the tail with the value from 24 hours earlier when the source uses an extend-style fixup path.
-6. Optionally reuse the last successful normalized window for a limited time when a refresh fails.
+6. Optionally reuse the last successful normalized window for a limited time when a refresh fails. Only fully finite windows can update this cache.
 
 After this, the coordinator holds four slot-aligned numeric arrays that are passed to the optimizer:
 - `grid_import_price_per_kwh`

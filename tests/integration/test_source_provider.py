@@ -214,6 +214,96 @@ async def test_entity_adapter_provider_returns_values(hass: HomeAssistant) -> No
     assert values == [1.0, 2.0, 3.0, 4.0]
 
 
+async def test_numeric_payload_preserves_signed_finite_tariffs(
+    hass: HomeAssistant,
+) -> None:
+    """Numeric normalization should allow negative and positive finite tariffs."""
+    hass.states.async_set(
+        "sensor.forecast",
+        "ok",
+        {"prices": [-0.25, 0.0, 0.5, 1.0]},
+    )
+    provider = TemplateAdapterSourceProvider(
+        hass,
+        source_name="price",
+        source_config={
+            CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+            "entity_id": "sensor.forecast",
+            CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_VALUES,
+            CONF_NAME: "prices",
+        },
+    )
+
+    assert await provider.async_values(_window()) == [-0.25, 0.0, 0.5, 1.0]
+
+
+@pytest.mark.parametrize("invalid_value", [float("nan"), float("inf"), float("-inf")])
+async def test_numeric_payload_rejects_nonfinite_values(
+    hass: HomeAssistant,
+    invalid_value: float,
+) -> None:
+    """Numeric payloads must reject NaN and infinities at source parsing."""
+    hass.states.async_set(
+        "sensor.forecast",
+        "ok",
+        {"prices": [1.0, invalid_value, 3.0, 4.0]},
+    )
+    provider = TemplateAdapterSourceProvider(
+        hass,
+        source_name="price",
+        source_config={
+            CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+            "entity_id": "sensor.forecast",
+            CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_VALUES,
+            CONF_NAME: "prices",
+        },
+    )
+
+    with pytest.raises(SourceProviderError, match="non-finite") as err:
+        await provider.async_values(_window())
+
+    assert err.value.code == "source_parse"
+    assert err.value.details["provider_reason"] == "nonfinite_value"
+
+
+@pytest.mark.parametrize("invalid_value", [float("nan"), float("inf"), float("-inf")])
+async def test_object_payload_rejects_nonfinite_values(
+    hass: HomeAssistant,
+    invalid_value: float,
+) -> None:
+    """Timestamped point payloads must reject NaN and infinities."""
+    hass.states.async_set(
+        "sensor.forecast",
+        "ok",
+        {
+            "prices": [
+                {"start": "2026-01-01T00:00:00+00:00", "price": 1.0},
+                {"start": "2026-01-01T00:15:00+00:00", "price": invalid_value},
+                {"start": "2026-01-01T00:30:00+00:00", "price": 3.0},
+                {"start": "2026-01-01T00:45:00+00:00", "price": 4.0},
+            ]
+        },
+    )
+    provider = TemplateAdapterSourceProvider(
+        hass,
+        source_name="price",
+        source_config={
+            CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+            "entity_id": "sensor.forecast",
+            CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
+            CONF_NAME: "prices",
+            "time_key": "start",
+            "value_key": "price",
+        },
+    )
+
+    with pytest.raises(SourceProviderError, match="non-finite") as err:
+        await provider.async_values(_window())
+
+    assert err.value.code == "source_parse"
+    assert err.value.details["provider_reason"] == "nonfinite_value"
+
+
 async def test_entity_adapter_auto_detects_nested_attribute(
     hass: HomeAssistant,
 ) -> None:
@@ -751,6 +841,31 @@ async def test_aggregation_mode_groups_values(hass: HomeAssistant) -> None:
     assert values == [2.0, 4.0, 6.0, 8.0]
 
 
+async def test_aggregation_rejects_nonfinite_overflow(hass: HomeAssistant) -> None:
+    """Finite samples must not overflow into a successful infinite slot value."""
+    payload = [
+        {"start": "2026-01-01T00:00:00+00:00", "value": 1e308},
+        {"start": "2026-01-01T00:00:00+00:00", "value": 1e308},
+        {"start": "2026-01-01T00:15:00+00:00", "value": 1.0},
+        {"start": "2026-01-01T00:30:00+00:00", "value": 1.0},
+        {"start": "2026-01-01T00:45:00+00:00", "value": 1.0},
+    ]
+    provider = TemplateAdapterSourceProvider(
+        hass,
+        source_name="price",
+        source_config=_template_config(
+            payload,
+            **{CONF_AGGREGATION_MODE: AGGREGATION_MODE_MEAN},
+        ),
+    )
+
+    with pytest.raises(SourceProviderError, match="during aggregation") as err:
+        await provider.async_values(_window())
+
+    assert err.value.code == "source_parse"
+    assert err.value.details["provider_reason"] == "nonfinite_value"
+
+
 async def test_clamp_mode_nearest_aligns_timestamps(hass: HomeAssistant) -> None:
     """Clamp nearest should map off-grid timestamps to nearest slot."""
     payload = [
@@ -959,3 +1074,55 @@ async def test_energy_provider_splits_solcast_half_hour_energy_into_15_min_slots
     )
 
     assert values == [0.723, 0.723, 1.001, 1.001, 1.24, 1.24]
+
+
+@pytest.mark.parametrize(
+    "invalid_wh",
+    [float("nan"), float("inf"), float("-inf"), "1e400"],
+)
+async def test_energy_provider_rejects_nonfinite_wh_conversion(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_wh: float | str,
+) -> None:
+    """Energy provider Wh values must remain finite after conversion to kWh."""
+    entry = MockConfigEntry(
+        domain="forecast_solar",
+        entry_id="solar-entry",
+        title="Solcast",
+        state=ConfigEntryState.LOADED,
+    )
+    entry.async_unload = AsyncMock(return_value=True)
+    entry.add_to_hass(hass)
+    monkeypatch.setattr(
+        "custom_components.wattplan.source_providers.payloads.async_get_energy_solar_forecast_platforms",
+        AsyncMock(
+            return_value={
+                "forecast_solar": AsyncMock(
+                    return_value={
+                        "wh_hours": {"2026-01-01T00:00:00+00:00": invalid_wh}
+                    }
+                )
+            }
+        ),
+    )
+    provider = build_source_value_provider(
+        hass,
+        source_key="pv",
+        source_config={
+            CONF_SOURCE_MODE: SOURCE_MODE_ENERGY_PROVIDER,
+            CONF_CONFIG_ENTRY_ID: entry.entry_id,
+            CONF_PROVIDERS: [
+                {
+                    CONF_SOURCE_MODE: SOURCE_MODE_ENERGY_PROVIDER,
+                    CONF_CONFIG_ENTRY_ID: entry.entry_id,
+                }
+            ],
+        },
+    )
+
+    with pytest.raises(SourceProviderError, match="non-finite") as err:
+        await provider.async_values(_window())
+
+    assert err.value.code == "source_parse"
+    assert err.value.details["provider_reason"] == "nonfinite_value"
