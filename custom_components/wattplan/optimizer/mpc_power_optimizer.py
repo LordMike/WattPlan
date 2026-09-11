@@ -471,6 +471,7 @@ def _solve_mpc_step(
                 "charge_grid": idx.add(horizon),
                 "charge_pv": idx.add(horizon),
                 "discharge": idx.add(horizon),
+                "charge_mode": idx.add(horizon),
                 "level": idx.add(horizon + 1),
                 "min_slack": idx.add(horizon),
                 "target_under": idx.add(1),
@@ -491,19 +492,37 @@ def _solve_mpc_step(
 
     grid_import = idx.add(horizon)
     grid_export = idx.add(horizon)
+    grid_import_mode = idx.add(horizon)
+    pv_surplus_mode = idx.add(horizon)
     n_vars = idx.offset
 
     bounds = [(0.0, None) for _ in range(n_vars)]
     integrality = [highspy.HighsVarType.kContinuous for _ in range(n_vars)]
     objective = np.zeros(n_vars, dtype=np.float64)
+    max_comfort_load = sum(
+        float(entity.power_usage_kwh) for entity in comfort_entities
+    )
+    max_grid_charge = sum(
+        max(float(value) for value in entity.charge_curve_kwh)
+        for entity in battery_entities
+        if _charge_ingress_permissions(entity)[0]
+    )
 
     for t in range(horizon):
-        objective[grid_import.start + t] = max(float(prices_h[t]), 0.0)
-        objective[grid_export.start + t] = -max(float(grid_export_prices_h[t]), 0.0)
+        objective[grid_import.start + t] = float(prices_h[t])
+        objective[grid_export.start + t] = -float(grid_export_prices_h[t])
+        bounds[grid_import.start + t] = (
+            0.0,
+            float(usage_h[t]) + max_comfort_load + max_grid_charge,
+        )
         bounds[grid_export.start + t] = (
             0.0,
-            max(float(solar_h[t]) - float(usage_h[t]), 0.0),
+            max(float(solar_h[t]), 0.0),
         )
+        bounds[grid_import_mode.start + t] = (0.0, 1.0)
+        bounds[pv_surplus_mode.start + t] = (0.0, 1.0)
+        integrality[grid_import_mode.start + t] = highspy.HighsVarType.kInteger
+        integrality[pv_surplus_mode.start + t] = highspy.HighsVarType.kInteger
 
     penalty_battery_min = 0.0
     penalty_battery_target = 5000.0
@@ -534,6 +553,10 @@ def _solve_mpc_step(
             bounds[var["charge_grid"].start + t] = (0.0, grid_upper)
             bounds[var["charge_pv"].start + t] = (0.0, pv_upper)
             bounds[var["discharge"].start + t] = (0.0, discharge_limit)
+            bounds[var["charge_mode"].start + t] = (0.0, 1.0)
+            integrality[var["charge_mode"].start + t] = (
+                highspy.HighsVarType.kInteger
+            )
             # Keep minimum state-of-charge as a hard floor.
             bounds[var["min_slack"].start + t] = (0.0, 0.0)
             bounds[var["target_under"].start] = (0.0, None)
@@ -554,8 +577,15 @@ def _solve_mpc_step(
             row = np.zeros(n_vars, dtype=np.float64)
             row[var["charge_grid"].start + t] = 1.0
             row[var["charge_pv"].start + t] = 1.0
+            row[var["charge_mode"].start + t] = -charge_limit
             A_ub.append(row)
-            b_ub.append(charge_limit)
+            b_ub.append(0.0)
+
+            row = np.zeros(n_vars, dtype=np.float64)
+            row[var["discharge"].start + t] = 1.0
+            row[var["charge_mode"].start + t] = discharge_limit
+            A_ub.append(row)
+            b_ub.append(discharge_limit)
 
         for t in range(horizon + 1):
             bounds[var["level"].start + t] = (0.0, capacity)
@@ -690,6 +720,22 @@ def _solve_mpc_step(
                 b_ub.append(-1.0)
 
     for t in range(horizon):
+        import_upper = float(usage_h[t]) + max_comfort_load + max_grid_charge
+        export_upper = max(float(solar_h[t]), 0.0)
+
+        # Signed tariffs need explicit site direction rather than objective clamps.
+        row = np.zeros(n_vars, dtype=np.float64)
+        row[grid_import.start + t] = 1.0
+        row[grid_import_mode.start + t] = -import_upper
+        A_ub.append(row)
+        b_ub.append(0.0)
+
+        row = np.zeros(n_vars, dtype=np.float64)
+        row[grid_export.start + t] = 1.0
+        row[grid_import_mode.start + t] = export_upper
+        A_ub.append(row)
+        b_ub.append(export_upper)
+
         row = np.zeros(n_vars, dtype=np.float64)
         row[grid_import.start + t] = -1.0
         row[grid_export.start + t] = 1.0
@@ -705,12 +751,49 @@ def _solve_mpc_step(
         A_eq.append(row)
         b_eq.append(float(solar_h[t]) - float(usage_h[t]))
 
-    for t in range(horizon):
+        # Grid-labeled battery energy must be backed by actual grid import.
+        row = np.zeros(n_vars, dtype=np.float64)
+        row[grid_import.start + t] = -1.0
+        for b in range(num_battery):
+            row[battery_vars[b]["charge_grid"].start + t] = 1.0
+        A_ub.append(row)
+        b_ub.append(0.0)
+
+        # Battery discharge may serve modeled load, not charging or export loops.
         row = np.zeros(n_vars, dtype=np.float64)
         for b in range(num_battery):
-            row[battery_vars[b]["charge_pv"].start + t] = 1.0
+            row[battery_vars[b]["discharge"].start + t] = 1.0
+        for c, entity in enumerate(comfort_entities):
+            row[comfort_vars[c]["on"].start + t] -= float(
+                entity.power_usage_kwh
+            )
         A_ub.append(row)
-        b_ub.append(max(float(solar_h[t]) - float(usage_h[t]), 0.0))
+        b_ub.append(float(usage_h[t]))
+
+        # PV charging and export share only surplus after household/comfort load.
+        surplus_upper = max(float(solar_h[t]), 0.0)
+        row = np.zeros(n_vars, dtype=np.float64)
+        row[grid_export.start + t] = 1.0
+        for b in range(num_battery):
+            row[battery_vars[b]["charge_pv"].start + t] = 1.0
+        row[pv_surplus_mode.start + t] = -surplus_upper
+        A_ub.append(row)
+        b_ub.append(0.0)
+
+        row = np.zeros(n_vars, dtype=np.float64)
+        row[grid_export.start + t] = 1.0
+        for b in range(num_battery):
+            row[battery_vars[b]["charge_pv"].start + t] = 1.0
+        for c, entity in enumerate(comfort_entities):
+            row[comfort_vars[c]["on"].start + t] += float(
+                entity.power_usage_kwh
+            )
+        surplus_relaxation = float(usage_h[t]) + max_comfort_load
+        row[pv_surplus_mode.start + t] = surplus_relaxation
+        A_ub.append(row)
+        b_ub.append(
+            float(solar_h[t]) - float(usage_h[t]) + surplus_relaxation
+        )
 
     result = _solve_lp(
         objective=objective,

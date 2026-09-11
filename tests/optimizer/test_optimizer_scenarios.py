@@ -1017,6 +1017,156 @@ def test_optional_load_can_avoid_a_negative_export_tariff():
     assert options[1]["incremental_cost"] == pytest.approx(0.1)
 
 
+@pytest.mark.parametrize(
+    ("prices", "charge_slot"),
+    [
+        ([-1.0, -0.2, 0.4, 0.4], 0),
+        ([-0.2, -1.0, 0.4, 0.4], 1),
+    ],
+)
+def test_signed_negative_import_charges_at_the_more_negative_slot(
+    prices, charge_slot
+):
+    payload = {
+        "grid_import_price_per_kwh": prices,
+        "grid_export_price_per_kwh": [0.0, 0.0, 0.0, 0.0],
+        "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
+        "usage_kwh": [0.0, 0.0, 0.0, 0.0],
+        "battery_entities": [
+            {
+                "name": "battery",
+                "initial_kwh": 0.0,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 0.25,
+                "charge_curve_kwh": [1.0],
+                "discharge_curve_kwh": [1.0],
+                "charge_efficiency": 0.5,
+                "discharge_efficiency": 0.5,
+                "can_charge_from": 1,
+            }
+        ],
+        "comfort_entities": [],
+    }
+
+    result = _run_optimizer(payload)
+    schedule = _entity_schedule(result, "battery")
+
+    assert schedule[charge_slot]["state"] == "grid_charge"
+    assert schedule[charge_slot]["level"] == pytest.approx(0.25)
+    assert all(
+        point["state"] != "grid_charge"
+        for slot, point in enumerate(schedule)
+        if slot != charge_slot
+    )
+    # Capacity and 50% efficiency permit exactly 0.5 kWh of grid input.
+    assert result["projections"]["projected_cost"] == pytest.approx(-0.5)
+
+
+@pytest.mark.parametrize(
+    ("prices", "enabled_slot"),
+    [
+        ([-1.0, 0.2, 0.3, 0.4], 0),
+        ([0.2, -1.0, 0.3, 0.4], 1),
+    ],
+)
+def test_signed_negative_import_schedules_comfort_at_the_paid_slot(
+    prices, enabled_slot
+):
+    payload = {
+        "grid_import_price_per_kwh": prices,
+        "grid_export_price_per_kwh": [0.0, 0.0, 0.0, 0.0],
+        "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
+        "usage_kwh": [0.0, 0.0, 0.0, 0.0],
+        "battery_entities": [],
+        "comfort_entities": [
+            {
+                "name": "heatpump",
+                "target_on_slots_per_rolling_window": 1,
+                "min_consecutive_on_slots": 1,
+                "min_consecutive_off_slots": 1,
+                "max_consecutive_off_slots": 4,
+                "power_usage_kwh": 1.0,
+                "is_on_now": True,
+                "on_slots_last_rolling_window": 0,
+                "off_streak_slots_now": 0,
+            }
+        ],
+    }
+
+    result = _run_optimizer(payload)
+    schedule = _entity_schedule(result, "heatpump")
+
+    assert schedule[enabled_slot]["enabled"] is True
+    if enabled_slot == 1:
+        assert schedule[0]["enabled"] is False
+    expected_cost = sum(
+        prices[slot] for slot, point in enumerate(schedule) if point["enabled"]
+    )
+    assert result["projections"]["projected_cost"] == pytest.approx(expected_cost)
+
+
+def test_full_pv_battery_exports_surplus_without_paid_import_loop():
+    payload = {
+        "grid_import_price_per_kwh": [-2.0, 0.2, 0.2, 0.2],
+        "grid_export_price_per_kwh": [1.0, 0.0, 0.0, 0.0],
+        "solar_input_kwh": [1.0, 0.0, 0.0, 0.0],
+        "usage_kwh": [0.0, 0.0, 0.0, 0.0],
+        "infer_battery_preserve_policy": False,
+        "battery_entities": [
+            {
+                "name": "battery",
+                "initial_kwh": 1.0,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 1.0,
+                "charge_curve_kwh": [1.0],
+                "discharge_curve_kwh": [1.0],
+                "can_charge_from": 3,
+            }
+        ],
+        "comfort_entities": [],
+    }
+
+    result = _run_optimizer(payload)
+    first = _entity_schedule(result, "battery")[0]
+
+    # The full PV-capable battery cannot absorb more energy, so self-consume
+    # exports 1 kWh and earns 1.0. A paid import/export loop would report a
+    # larger artificial gain but is neither feasible nor an available mode.
+    assert first["state"] == "self_consume"
+    assert first["level"] == pytest.approx(1.0)
+    assert result["projections"]["projected_cost"] == pytest.approx(-1.0)
+
+
+def test_negative_export_tariff_uses_pv_to_charge_without_paid_import_loop():
+    payload = {
+        "grid_import_price_per_kwh": [-1.0, 0.2, 0.2, 0.2],
+        "grid_export_price_per_kwh": [-0.2, 0.0, 0.0, 0.0],
+        "solar_input_kwh": [1.0, 0.0, 0.0, 0.0],
+        "usage_kwh": [0.0, 0.0, 0.0, 0.0],
+        "battery_entities": [
+            {
+                "name": "battery",
+                "initial_kwh": 0.0,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 1.0,
+                "charge_curve_kwh": [1.0],
+                "discharge_curve_kwh": [1.0],
+                "can_charge_from": 3,
+            }
+        ],
+        "comfort_entities": [],
+    }
+
+    result = _run_optimizer(payload)
+    first = _entity_schedule(result, "battery")[0]
+
+    # PV charging avoids the 0.2 export fee. The battery cannot also import
+    # for payment while sending the same PV to the grid.
+    assert first["state"] == "self_consume"
+    assert first["level"] == pytest.approx(1.0)
+    assert result["projections"]["projected_cost"] == pytest.approx(0.0)
+
+
 def test_optional_policy_replay_reduces_pv_charging_before_importing():
     payload = {
         "grid_import_price_per_kwh": [0.5, 0.2, 0.3, 0.3],
@@ -2714,7 +2864,7 @@ def test_charge_efficiency_increases_required_input_cost():
 
 def test_discharge_efficiency_reduces_deliverable_energy():
     base_payload = {
-        "grid_import_price_per_kwh": [1.0, 1.0, 0.1, 0.1],
+        "grid_import_price_per_kwh": [1.1, 1.0, 0.1, 0.1],
         "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
         "usage_kwh": [1.0, 1.0, 1.0, 1.0],
         "battery_entities": [
@@ -2744,8 +2894,8 @@ def test_discharge_efficiency_reduces_deliverable_energy():
         > efficient["projections"]["projected_cost"]
     )
     assert (
-        lossy["projections"]["per_slot"][0]["projected_cost"]
-        > efficient["projections"]["per_slot"][0]["projected_cost"]
+        lossy["projections"]["per_slot"][1]["projected_cost"]
+        > efficient["projections"]["per_slot"][1]["projected_cost"]
     )
 
 

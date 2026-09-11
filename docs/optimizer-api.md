@@ -8,6 +8,12 @@ This document describes the direct Python API for the optimizer packaged inside 
 
 The optimizer is model-predictive-control (MPC) based.
 
+Import and export tariffs retain their supplied signed values in the solve. Negative import prices can therefore make feasible grid charging or comfort consumption economically beneficial. Direction constraints prevent a slot from importing and exporting simultaneously, prevent a battery from charging and discharging simultaneously, limit grid-sourced charging to actual grid import, and reserve PV charging/export for physical PV surplus after household and scheduled comfort demand.
+
+The model does not export battery energy, add an export-first battery mode, curtail forecast PV, or assign a terminal value to energy remaining beyond the supplied horizon. A `grid_charge` schedule state is a policy instruction to charge as much as the configured rate, capacity, efficiency, and ingress permissions allow; WattPlan does not publish a precise throttled power setpoint.
+
+The optimizer still models battery energy as continuous quantities before mapping results to the three policy states. In some pre-existing target or ordinary arbitrage cases, that internal solution can contain a partial grid-charge amount even though the published `grid_charge` policy asks the inverter to charge at its maximum feasible rate. The continuous model can also prefer exporting PV over storing it when stored energy has no modeled future value, even though an empty PV-capable battery receiving the coarse `self_consume` policy would normally charge from surplus first. Signed-tariff validation does not rely on either mismatch: its paid-to-charge cases are capacity-limited at the selected slot, and its export case uses a full battery. Making every modeled transition exactly match the coarse policy would require a separate mode-selection redesign.
+
 If you are using WattPlan through the Home Assistant integration, see [optimizer-profiles.md](optimizer-profiles.md) for the user-facing `Aggressive`, `Balanced`, and `Conservative` presets. Those profiles are integration-level presets that map onto the numeric optimizer fields documented here. New Home Assistant setups use a 12-hour economic lookahead. Existing setups are migrated to the historical 22-slot lookahead and may edit the displayed duration in General settings.
 
 ## Time Resolution (Timeslots)
