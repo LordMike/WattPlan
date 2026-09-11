@@ -15,7 +15,7 @@ These exist once per WattPlan setup:
 
 | Entity | Purpose |
 | --- | --- |
-| `sensor.<setup_slug>_status` | Current integration health: `ok`, `degraded`, or `failed`. Includes attributes such as `reason_codes`, `affected_sources`, `is_stale`, and `has_usable_plan`. |
+| `sensor.<setup_slug>_status` | Current integration health: `ok`, `degraded`, or `failed`. Includes attributes such as `reason_codes`, `affected_sources`, `is_stale`, `scheduler_stale`, `has_usable_plan`, and `action_recommendations_validated`. |
 | `sensor.<setup_slug>_status_message` | Human-readable summary of the current integration health. |
 | `sensor.<setup_slug>_import_price_status` | Import price source health: `ok`, `degraded`, or `failed`. |
 | `sensor.<setup_slug>_usage_status` | Present when usage is configured. Usage source health: `ok`, `degraded`, or `failed`. |
@@ -30,7 +30,9 @@ These exist once per WattPlan setup:
 
 When `sensor.<setup_slug>_status` is `failed`, plan-dependent entities such as action sensors, plan details, and usage forecast become unavailable rather than continuing to expose stale plan data.
 
-The overall status sensor is the canonical view of whether the current plan is usable. Its `plan_created_at` attribute is the snapshot creation time, and its `expires_at` attribute is the end of the current usable plan coverage from the optimizer horizon. If planning fails but WattPlan retains a previous snapshot, WattPlan continues advancing through that snapshot's time-indexed battery and comfort actions, while `expires_at` continues to describe the retained plan. Once the retained or active plan no longer covers the current time, the overall status becomes `failed`, `is_stale` becomes `true`, and `has_usable_plan` becomes `false`.
+The overall status sensor is the canonical view of plan and scheduler health. Its `plan_created_at` attribute is the snapshot creation time, and its `expires_at` attribute is the end of the current plan coverage from the optimizer horizon. `scheduler_stale` reports only whether the fixed scheduler heartbeat is overdue; the compatibility attribute `is_stale` can also become true when plan coverage expires. `action_recommendations_validated` reports whether the current action recommendations came from a successful plan in this Home Assistant runtime session.
+
+After a restart, WattPlan restores the snapshot and diagnostics but keeps battery, comfort, next-action, and optional-start recommendation entities unavailable until a fresh planning run succeeds. A failed planning or emission attempt does not validate restored recommendations. Once a fresh plan succeeds, later planning failures may continue advancing through that already validated in-session plan until its `expires_at` time. This avoids publishing recommendations that were calculated before runtime inputs and device state were revalidated.
 
 Per-source status sensors explain input health. Their `expires_at` attribute describes the source data or fallback coverage for that source, not the whole plan. Stale fallback data from a source can make the overall status `degraded` while the plan is still usable; an expired overall plan is `failed`.
 

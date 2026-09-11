@@ -89,6 +89,7 @@ from homeassistant.const import (
     UnitOfEnergy,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
@@ -1579,7 +1580,7 @@ async def test_battery_next_action_sensor_exposes_timestamp_and_state(
 
 
 async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
-    """Restore a snapshot mid-plan at the actions for the current slot."""
+    """Keep restored diagnostics but suppress actions until a fresh plan succeeds."""
     now = datetime.now(tz=UTC)
     plan_start = now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
     plan_end = plan_start + timedelta(hours=4)
@@ -1721,23 +1722,29 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
         await hass.async_block_till_done()
 
     _assert_valid_state(hass, "sensor.home_status")
-    _assert_valid_state(hass, "sensor.home_optional_next_start_option")
     _assert_valid_state(hass, "sensor.home_last_run_duration")
-    assert hass.states.get("sensor.home_battery_action").state == "preserve"
-    assert hass.states.get("sensor.home_comfort_action").state == "off"
+    status = hass.states.get("sensor.home_status")
+    assert status is not None
+    assert status.state == "degraded"
+    assert status.attributes["reason_codes"] == [
+        "restored_plan_awaiting_validation"
+    ]
+    assert status.attributes["scheduler_stale"] is False
+    assert status.attributes["action_recommendations_validated"] is False
+    assert status.attributes["has_usable_plan"] is True
+    assert hass.states.get("sensor.home_battery_action").state == STATE_UNAVAILABLE
+    assert hass.states.get("sensor.home_comfort_action").state == STATE_UNAVAILABLE
+    assert (
+        hass.states.get("sensor.home_optional_next_start_option").state
+        == STATE_UNAVAILABLE
+    )
 
     battery_next = hass.states.get("sensor.home_battery_next_action")
     assert battery_next is not None
-    assert battery_next.state == "self_consume"
-    assert battery_next.attributes["timestamp"] == (
-        plan_start + timedelta(hours=2)
-    ).isoformat()
+    assert battery_next.state == STATE_UNAVAILABLE
     comfort_next = hass.states.get("sensor.home_comfort_next_action")
     assert comfort_next is not None
-    assert comfort_next.state == "on"
-    assert comfort_next.attributes["timestamp"] == (
-        plan_start + timedelta(hours=2)
-    ).isoformat()
+    assert comfort_next.state == STATE_UNAVAILABLE
 
     duration_state = hass.states.get("sensor.home_last_run_duration")
     assert duration_state is not None
@@ -1753,13 +1760,73 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
     )
     assert all(isinstance(entry[1], int) for entry in restored_timings)
 
-    next_option = hass.states.get("sensor.home_optional_next_start_option")
-    assert next_option is not None
-    next_option_start = dt_util.parse_datetime(next_option.state)
-    next_option_end = dt_util.parse_datetime(next_option.attributes["end_timestamp"])
-    assert next_option_start is not None
-    assert next_option_end is not None
-    assert next_option_end - next_option_start == timedelta(hours=1)
+    coordinator = entry.runtime_data.coordinator
+    expired_at = plan_end + timedelta(minutes=1)
+
+    class ExpiredPlanDateTime(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> datetime:
+            return expired_at if tz is not None else expired_at.replace(tzinfo=None)
+
+    with patch(
+        "custom_components.wattplan.coordinator_logic.source_status.datetime",
+        ExpiredPlanDateTime,
+    ):
+        coordinator.async_update_listeners()
+        await hass.async_block_till_done()
+        status = hass.states.get("sensor.home_status")
+        assert status is not None
+        assert status.attributes["reason_codes"] == ["plan_stale"]
+        assert status.attributes["scheduler_stale"] is False
+        assert status.attributes["has_usable_plan"] is False
+        _assert_valid_state(hass, "sensor.home_last_run_duration")
+
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    with pytest.raises(ServiceValidationError, match="fresh successful plan"):
+        await coordinator.async_emit(trigger=CycleTrigger.SERVICE)
+    assert coordinator.action_recommendations_validated is False
+
+    with patch.object(
+        coordinator,
+        "_async_build_planning_request",
+        side_effect=PlanningStageError(
+            StageErrorKind.PLANNER_INPUT,
+            "import_price source entity `sensor.missing` was not found",
+        ),
+    ):
+        with pytest.raises(PlanningStageError):
+            await coordinator.async_plan(trigger=CycleTrigger.SERVICE)
+        await hass.async_block_till_done()
+
+    assert coordinator.action_recommendations_validated is False
+    assert hass.states.get("sensor.home_battery_action").state == STATE_UNAVAILABLE
+    assert (
+        hass.states.get("sensor.home_optional_next_start_option").state
+        == STATE_UNAVAILABLE
+    )
+
+    with patch("custom_components.wattplan.coordinator.optimize", _fake_optimize):
+        await hass.services.async_call(
+            DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True
+        )
+        await hass.async_block_till_done()
+
+    assert coordinator.action_recommendations_validated is True
+    assert hass.states.get("sensor.home_battery_action").state == "grid_charge"
+    assert hass.states.get("sensor.home_comfort_action").state == "on"
+    _assert_valid_state(hass, "sensor.home_optional_next_start_option")
+
+    payload = coordinator.restore_payload()
+    assert payload is not None
+    assert coordinator.async_restore_payload(payload)
+    await hass.async_block_till_done()
+    assert coordinator.action_recommendations_validated is False
+    assert hass.states.get("sensor.home_battery_action").state == STATE_UNAVAILABLE
+    assert (
+        hass.states.get("sensor.home_optional_next_start_option").state
+        == STATE_UNAVAILABLE
+    )
 
 
 async def test_successful_plan_persists_completed_last_run(

@@ -41,7 +41,11 @@ class StatusSensor(WattPlanCoordinatorSensor):
             "critical_sources_failed": list(status.get("critical_sources_failed", [])),
             "skipped_batteries": skipped_batteries,
             "is_stale": bool(status.get("is_stale", False)),
+            "scheduler_stale": bool(status.get("scheduler_stale", False)),
             "has_usable_plan": bool(status.get("has_usable_plan", False)),
+            "action_recommendations_validated": bool(
+                status.get("action_recommendations_validated", False)
+            ),
             "plan_created_at": status.get("plan_created_at"),
             "expires_at": status.get("expires_at"),
         }

@@ -20,11 +20,15 @@ It also exposes attributes such as:
 - `reason_summary`
 - `affected_sources`
 - `is_stale`
+- `scheduler_stale`
 - `has_usable_plan`
+- `action_recommendations_validated`
 - `plan_created_at`
 - `expires_at`
 
-`plan_created_at` is when the active snapshot was created. On the overall status sensor, `expires_at` is the end of the current usable plan coverage from the optimizer horizon. If planning fails and WattPlan keeps using a previous snapshot, `expires_at` remains the retained plan's coverage end. When the active or retained plan passes that time, the overall status becomes `failed`, `is_stale` becomes `true`, and `has_usable_plan` becomes `false`.
+`plan_created_at` is when the active snapshot was created. On the overall status sensor, `expires_at` is the end of the current usable plan coverage from the optimizer horizon. `scheduler_stale` is specifically the scheduler-heartbeat check, while `is_stale` remains the aggregate compatibility signal and can also indicate expired plan coverage.
+
+Restored diagnostics remain visible after startup, but `action_recommendations_validated` remains false and recommendation entities remain unavailable until a new planning call succeeds. Planning or emission failures do not validate a restored plan. A previously successful plan from the same runtime session can still be retained across a later planning failure until its coverage expires.
 
 ### `ok`
 

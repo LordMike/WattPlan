@@ -24,6 +24,7 @@ class SubentryActionSensor(WattPlanCoordinatorSensor):
     """Base sensor for diagnostics keyed by subentry and action group."""
 
     _require_usable_plan = True
+    _require_validated_actions = True
 
     def __init__(
         self,

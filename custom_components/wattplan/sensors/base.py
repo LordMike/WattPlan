@@ -18,6 +18,7 @@ class WattPlanCoordinatorSensor(CoordinatorEntity[WattPlanCoordinator], SensorEn
     _attr_should_poll = False
     _require_snapshot = True
     _require_usable_plan = False
+    _require_validated_actions = False
 
     def __init__(
         self,
@@ -45,6 +46,11 @@ class WattPlanCoordinatorSensor(CoordinatorEntity[WattPlanCoordinator], SensorEn
         if not super().available:
             return False
         if self._require_usable_plan and not self.coordinator.has_usable_plan:
+            return False
+        if (
+            self._require_validated_actions
+            and not self.coordinator.action_recommendations_validated
+        ):
             return False
         if self._require_snapshot and self.coordinator.snapshot is None:
             return False

@@ -313,12 +313,11 @@ class SourceStatusManager:
         restored_status = planner_status if planner_status in {"ok", "degraded"} else "ok"
         plan_expires_at = self._snapshot_plan_expires_at(snapshot)
         self._overall_status = {
-            "status": restored_status,
-            "reason_codes": [],
+            "status": "degraded" if restored_status == "ok" else restored_status,
+            "reason_codes": ["restored_plan_awaiting_validation"],
             "reason_summary": (
-                snapshot.planner_message
-                if snapshot.planner_message is not None
-                else "Restored plan snapshot"
+                "Restored plan diagnostics are available; action recommendations "
+                "require a fresh successful plan"
             ),
             "affected_sources": [],
             "critical_sources_failed": [],

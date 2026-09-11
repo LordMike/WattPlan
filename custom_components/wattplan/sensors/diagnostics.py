@@ -18,6 +18,8 @@ ProjectionValueTransform = Callable[["ProjectionSensor", float], float | None]
 class OptionalTimestampSensor(WattPlanCoordinatorSensor):
     """Timestamp sensor for optional load options."""
 
+    _require_validated_actions = True
+
     def __init__(
         self,
         config_entry: ConfigEntry,

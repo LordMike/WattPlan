@@ -100,6 +100,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         self._last_duration_ms: int | None = None
         self._last_run_timings: list[TimingEntry] | None = None
         self._next_refresh_at: datetime | None = None
+        self._action_recommendations_validated = False
 
         self._plan_error = StageErrorState()
         self._emit_error = StageErrorState()
@@ -156,7 +157,21 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
     @property
     def overall_status(self) -> dict[str, Any]:
         """Return current top-level health payload."""
-        return self._source_status.overall_status(is_stale=self.is_stale)
+        status = self._source_status.overall_status(is_stale=self.is_stale)
+        status["scheduler_stale"] = self.is_stale
+        status["action_recommendations_validated"] = (
+            self.action_recommendations_validated
+        )
+        return status
+
+    @property
+    def action_recommendations_validated(self) -> bool:
+        """Return whether recommendations came from this runtime session."""
+        return self._action_recommendations_validated and bool(
+            self._source_status.overall_status(is_stale=self.is_stale).get(
+                "has_usable_plan", False
+            )
+        )
 
     def source_status(self, source_key: str) -> dict[str, Any] | None:
         """Return current source health payload for one source."""
@@ -364,6 +379,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 new_snapshot = self._project_snapshot(planner_output)
                 self._snapshot = new_snapshot
                 self.data = new_snapshot
+                self._action_recommendations_validated = True
                 self._last_success_at = datetime.now(tz=UTC)
                 self._set_last_plan_duration(started)
                 self._clear_stage_error(Stage.PLAN)
@@ -419,6 +435,11 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         async with self._emit_lock:
             try:
                 snapshot = self._require_snapshot()
+                if not self.action_recommendations_validated:
+                    raise EmitStageError(
+                        StageErrorKind.EMIT_NO_SNAPSHOT,
+                        "Restored action recommendations require a fresh successful plan",
+                    )
 
                 diagnostics = dict(snapshot.diagnostics or {})
                 diagnostics["emit"] = {
@@ -826,6 +847,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
 
         self._snapshot = restored.snapshot
         self.data = self._snapshot
+        self._action_recommendations_validated = False
         self._last_success_at = restored.last_success_at
         self._last_duration_ms = restored.last_duration_ms
         self._last_run_timings = restored.last_run_timings
@@ -842,6 +864,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             return False
         self._snapshot = restored.snapshot
         self.data = self._snapshot
+        self._action_recommendations_validated = False
         self._last_success_at = restored.last_success_at
         self._last_duration_ms = restored.last_duration_ms
         self._last_run_timings = restored.last_run_timings
