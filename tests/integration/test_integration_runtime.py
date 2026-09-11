@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta, tzinfo
 from unittest.mock import patch
 
@@ -764,6 +765,198 @@ async def test_refresh_sensors_service_processes_historical_costs(
     actual = hass.states.get("sensor.home_historical_actual_cost_today")
     assert actual is not None
     assert float(actual.state) == pytest.approx(0.98)
+
+
+async def test_overlapping_historical_refresh_paths_process_each_slot_once(
+    hass: HomeAssistant,
+    freezer,
+) -> None:
+    """Timer, coordinator, and service refreshes should share one slot transaction."""
+    start = datetime(2026, 5, 24, 12, 0, tzinfo=UTC)
+    first_refresh = start + timedelta(hours=1, seconds=2)
+    freezer.move_to(first_refresh)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: 60,
+            CONF_HOURS_TO_PLAN: 4,
+            CONF_SOURCES: {
+                CONF_SOURCE_IMPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [1.0, 1.0, 1.0, 1.0] }}",
+                },
+                CONF_SOURCE_EXPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [0.1, 0.1, 0.1, 0.1] }}",
+                },
+            },
+        },
+        options=_historical_options(),
+        subentries_data=[
+            config_entries.ConfigSubentryData(
+                subentry_id="battery_sub",
+                subentry_type=SUBENTRY_TYPE_BATTERY,
+                title="battery",
+                unique_id="battery:battery",
+                data={
+                    CONF_NAME: "battery",
+                    CONF_SOC_SOURCE: "sensor.battery_soc",
+                    CONF_CAPACITY_KWH: 10.0,
+                    CONF_MINIMUM_KWH: 0.0,
+                    CONF_MAX_CHARGE_KW: 3.0,
+                    CONF_MAX_DISCHARGE_KW: 3.0,
+                    CONF_CHARGE_EFFICIENCY: 1.0,
+                    CONF_DISCHARGE_EFFICIENCY: 1.0,
+                    CONF_CAN_CHARGE_FROM_GRID: False,
+                    CONF_CAN_CHARGE_FROM_PV: True,
+                },
+            )
+        ],
+    )
+    entry.add_to_hass(hass)
+    _set_energy_meter(hass, "sensor.grid_import_total", 100.0)
+    _set_energy_meter(hass, "sensor.grid_export_total", 10.0)
+    _set_energy_meter(hass, "sensor.usage_total", 200.0)
+    _set_energy_meter(hass, "sensor.pv_total", 50.0)
+    hass.states.async_set(
+        "sensor.battery_soc",
+        "1.0",
+        {"unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR},
+    )
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    tracker = entry.runtime_data.historical_tracker
+    assert tracker is not None
+    tracker.store.update_metadata(
+        last_processed_slot=start - timedelta(hours=1),
+        last_meter_values={
+            "grid_import": 100.0,
+            "grid_export": 10.0,
+            "usage": 200.0,
+            "pv": 50.0,
+        },
+        meter_config={
+            "grid_import": "sensor.grid_import_total",
+            "grid_export": "sensor.grid_export_total",
+            "usage": "sensor.usage_total",
+            "pv": "sensor.pv_total",
+        },
+    )
+    tracker.store.update_simulation_soc({"battery_sub": 1.0})
+    _set_energy_meter(hass, "sensor.grid_import_total", 101.0)
+    _set_energy_meter(hass, "sensor.grid_export_total", 10.2)
+    _set_energy_meter(hass, "sensor.usage_total", 201.5)
+    _set_energy_meter(hass, "sensor.pv_total", 51.0)
+
+    price_lookup_started = asyncio.Event()
+    release_price_lookup = asyncio.Event()
+    price_lookups: list[tuple[str, datetime]] = []
+
+    async def _delayed_price(source_key: str, slot_start: datetime) -> float:
+        price_lookups.append((source_key, slot_start))
+        if not price_lookup_started.is_set():
+            price_lookup_started.set()
+            await release_price_lookup.wait()
+        return 1.0 if source_key == CONF_SOURCE_IMPORT_PRICE else 0.1
+
+    with patch.object(tracker, "_async_price", side_effect=_delayed_price):
+        timer_refresh = asyncio.create_task(tracker._async_timer(first_refresh))
+        await price_lookup_started.wait()
+        coordinator_refresh = asyncio.create_task(
+            entry.runtime_data.coordinator.async_tick(trigger=CycleTrigger.SCHEDULE)
+        )
+        service_refresh = asyncio.create_task(
+            hass.services.async_call(
+                DOMAIN,
+                SERVICE_REFRESH_SENSORS,
+                {},
+                blocking=True,
+            )
+        )
+        await asyncio.sleep(0)
+        release_price_lookup.set()
+        await asyncio.gather(timer_refresh, coordinator_refresh, service_refresh)
+        await hass.async_block_till_done()
+
+        day = tracker.store.data["days"]["2026-05-24"]
+        assert day["starts"] == ["2026-05-24T12:00:00Z"]
+        assert day["grid_import"] == pytest.approx([1.0])
+        assert day["grid_export"] == pytest.approx([0.2])
+        assert day["usage"] == pytest.approx([1.5])
+        assert day["pv"] == pytest.approx([1.0])
+        assert tracker.store.simulation_soc() == {"battery_sub": pytest.approx(0.5)}
+        assert tracker.store.last_processed_slot() == start
+        assert tracker.store.last_meter_values() == {
+            "grid_import": pytest.approx(101.0),
+            "grid_export": pytest.approx(10.2),
+            "usage": pytest.approx(201.5),
+            "pv": pytest.approx(51.0),
+        }
+        assert len(price_lookups) == 2
+        actual = hass.states.get("sensor.home_historical_actual_cost_today")
+        grid_only = hass.states.get("sensor.home_historical_grid_only_cost_today")
+        self_consumption = hass.states.get(
+            "sensor.home_historical_self_consumption_cost_today"
+        )
+        assert actual is not None
+        assert grid_only is not None
+        assert self_consumption is not None
+        assert float(actual.state) == pytest.approx(0.98)
+        assert float(grid_only.state) == pytest.approx(1.5)
+        assert float(self_consumption.state) == pytest.approx(0.0)
+        assert actual.attributes["slots"] == 1
+
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_REFRESH_SENSORS,
+            {},
+            blocking=True,
+        )
+        assert day["starts"] == ["2026-05-24T12:00:00Z"]
+        assert tracker.store.simulation_soc() == {"battery_sub": pytest.approx(0.5)}
+        assert len(price_lookups) == 2
+
+        second_refresh = start + timedelta(hours=2, seconds=2)
+        freezer.move_to(second_refresh)
+        _set_energy_meter(hass, "sensor.grid_import_total", 101.4)
+        _set_energy_meter(hass, "sensor.grid_export_total", 10.2)
+        _set_energy_meter(hass, "sensor.usage_total", 202.0)
+        _set_energy_meter(hass, "sensor.pv_total", 51.2)
+        await entry.runtime_data.coordinator.async_tick(trigger=CycleTrigger.SCHEDULE)
+        await hass.async_block_till_done()
+
+    assert day["starts"] == [
+        "2026-05-24T12:00:00Z",
+        "2026-05-24T13:00:00Z",
+    ]
+    assert day["grid_import"] == pytest.approx([1.0, 0.4])
+    assert day["grid_export"] == pytest.approx([0.2, 0.0])
+    assert day["usage"] == pytest.approx([1.5, 0.5])
+    assert day["pv"] == pytest.approx([1.0, 0.2])
+    assert tracker.store.simulation_soc() == {"battery_sub": pytest.approx(0.2)}
+    assert tracker.store.last_processed_slot() == start + timedelta(hours=1)
+    assert tracker.store.last_meter_values() == {
+        "grid_import": pytest.approx(101.4),
+        "grid_export": pytest.approx(10.2),
+        "usage": pytest.approx(202.0),
+        "pv": pytest.approx(51.2),
+    }
+    assert len(price_lookups) == 4
+    actual = hass.states.get("sensor.home_historical_actual_cost_today")
+    grid_only = hass.states.get("sensor.home_historical_grid_only_cost_today")
+    self_consumption = hass.states.get(
+        "sensor.home_historical_self_consumption_cost_today"
+    )
+    assert actual is not None
+    assert grid_only is not None
+    assert self_consumption is not None
+    assert float(actual.state) == pytest.approx(1.38)
+    assert float(grid_only.state) == pytest.approx(2.0)
+    assert float(self_consumption.state) == pytest.approx(0.0)
+    assert actual.attributes["slots"] == 2
 
 
 async def test_historical_cost_uses_cached_planner_prices_after_forecast_rolls(

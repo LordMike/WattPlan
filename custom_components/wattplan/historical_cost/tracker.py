@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 import logging
 from typing import Any, Callable
@@ -84,6 +85,7 @@ class HistoricalCostTracker:
         self._unsub_timer: CALLBACK_TYPE | None = None
         self._source_providers: dict[str, SourceProvider] = {}
         self._listeners: set[HistoricalUpdateListener] = set()
+        self._process_lock = asyncio.Lock()
 
     async def async_start(self) -> None:
         """Load state, seed cursors, and start scheduling."""
@@ -179,6 +181,14 @@ class HistoricalCostTracker:
         now: datetime | None = None,
     ) -> None:
         """Process the latest completed slot if one is ready."""
+        async with self._process_lock:
+            await self._async_process_completed_slot(now)
+
+    async def _async_process_completed_slot(
+        self,
+        now: datetime | None,
+    ) -> None:
+        """Process one completed slot while holding the transaction lock."""
         now = now or datetime.now(tz=UTC)
         completed_slot = self._floor_to_slot(now) - self._interval
         last_processed = self.store.last_processed_slot()
