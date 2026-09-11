@@ -506,6 +506,8 @@ def _solve_mpc_step(
     comfort_histories_now,
     prev_comfort_on,
     comfort_off_streaks_now,
+    comfort_lock_modes,
+    comfort_lock_remaining,
     rolling_window_slots,
     forced_discharge_first=None,
 ):
@@ -735,12 +737,17 @@ def _solve_mpc_step(
         limit_window = max_off + 1
         history = np.asarray(comfort_histories_now[c], dtype=np.int32)
         target_on = int(entity.target_on_slots_per_rolling_window)
+        locked_slots = min(max(int(comfort_lock_remaining[c]), 0), horizon)
+        locked_mode = float(comfort_lock_modes[c])
 
         for t in range(horizon):
             bounds[var["on"].start + t] = (0.0, 1.0)
             bounds[var["switch_abs"].start + t] = (0.0, None)
             integrality[var["on"].start + t] = highspy.HighsVarType.kInteger
             objective[var["switch_abs"].start + t] += penalty_switch
+
+        for t in range(locked_slots):
+            bounds[var["on"].start + t] = (locked_mode, locked_mode)
 
         for t in range(horizon):
             bounds[var["target_slack"].start + t] = (0.0, None)
@@ -782,6 +789,57 @@ def _solve_mpc_step(
                 A_ub.append(row)
                 b_ub.append(0.0)
 
+        min_on = int(entity.min_consecutive_on_slots)
+        min_off = int(entity.min_consecutive_off_slots)
+        for t in range(horizon):
+            previous_index = var["on"].start + t - 1 if t > 0 else None
+
+            if t + min_on <= horizon:
+                for future in range(t + 1, t + min_on):
+                    row = np.zeros(n_vars, dtype=np.float64)
+                    row[var["on"].start + t] = 1.0
+                    if previous_index is None:
+                        rhs = float(prev_comfort_on[c])
+                    else:
+                        row[previous_index] = -1.0
+                        rhs = 0.0
+                    row[var["on"].start + future] = -1.0
+                    A_ub.append(row)
+                    b_ub.append(rhs)
+            elif min_on > 1:
+                row = np.zeros(n_vars, dtype=np.float64)
+                row[var["on"].start + t] = 1.0
+                if previous_index is None:
+                    rhs = float(prev_comfort_on[c])
+                else:
+                    row[previous_index] = -1.0
+                    rhs = 0.0
+                A_ub.append(row)
+                b_ub.append(rhs)
+
+            if t + min_off <= horizon:
+                for future in range(t + 1, t + min_off):
+                    row = np.zeros(n_vars, dtype=np.float64)
+                    row[var["on"].start + t] = -1.0
+                    if previous_index is None:
+                        rhs = 1.0 - float(prev_comfort_on[c])
+                    else:
+                        row[previous_index] = 1.0
+                        rhs = 1.0
+                    row[var["on"].start + future] = 1.0
+                    A_ub.append(row)
+                    b_ub.append(rhs)
+            elif min_off > 1:
+                row = np.zeros(n_vars, dtype=np.float64)
+                row[var["on"].start + t] = -1.0
+                if previous_index is None:
+                    rhs = -float(prev_comfort_on[c])
+                else:
+                    row[previous_index] = 1.0
+                    rhs = 0.0
+                A_ub.append(row)
+                b_ub.append(rhs)
+
         for end in range(horizon):
             forecast_start = max(0, end - int(rolling_window_slots) + 1)
             historical_count = max(int(rolling_window_slots) - (end + 1), 0)
@@ -800,12 +858,12 @@ def _solve_mpc_step(
         initial_window = max(
             1, limit_window - int(max(0.0, comfort_off_streaks_now[c]))
         )
-        initial_window = min(initial_window, horizon)
-        row = np.zeros(n_vars, dtype=np.float64)
-        for t in range(initial_window):
-            row[var["on"].start + t] = -1.0
-        A_ub.append(row)
-        b_ub.append(-1.0)
+        if initial_window <= horizon:
+            row = np.zeros(n_vars, dtype=np.float64)
+            for t in range(initial_window):
+                row[var["on"].start + t] = -1.0
+            A_ub.append(row)
+            b_ub.append(-1.0)
 
         if horizon >= limit_window:
             for start in range(0, horizon - limit_window + 1):
@@ -1252,22 +1310,7 @@ def _run_mpc(
                     :, t
                 ].astype(np.int32)
         else:
-            locked_indices = [
-                i for i in range(num_comfort) if int(comfort_lock_remaining[i]) > 0
-            ]
-            unlocked_indices = [
-                i for i in range(num_comfort) if int(comfort_lock_remaining[i]) <= 0
-            ]
-
-            fixed_on_profile = np.zeros((num_comfort, horizon), dtype=np.float64)
-            for i in locked_indices:
-                fixed_on_profile[i, :] = float(comfort_lock_mode[i])
-
             usage_h = usage[t : t + horizon].astype(np.float64, copy=True)
-            for i in locked_indices:
-                usage_h += (
-                    float(comfort_entities[i].power_usage_kwh) * fixed_on_profile[i]
-                )
 
             prev_comfort_on = (
                 comfort_enabled[:, t - 1].astype(np.float64)
@@ -1285,44 +1328,33 @@ def _run_mpc(
                 usage_h=usage_h,
                 solar_h=solar_input[t : t + horizon],
                 battery_entities=battery_entities,
-                comfort_entities=[comfort_entities[i] for i in unlocked_indices],
+                comfort_entities=comfort_entities,
                 battery_levels_now=battery_levels[:, t],
                 battery_states_now=(
                     battery_states[:, t - 1]
                     if t > 0
                     else np.zeros(num_battery, dtype=np.int32)
                 ),
-                comfort_levels_now=comfort_levels[unlocked_indices, t]
-                if unlocked_indices
-                else np.zeros(0, dtype=np.float64),
-                comfort_histories_now=comfort_history[unlocked_indices, t]
-                if unlocked_indices
-                else np.zeros((0, history_slots), dtype=np.int32),
-                prev_comfort_on=prev_comfort_on[unlocked_indices]
-                if unlocked_indices
-                else np.zeros(0, dtype=np.float64),
-                comfort_off_streaks_now=comfort_off_streaks[unlocked_indices, t]
-                if unlocked_indices
-                else np.zeros(0, dtype=np.float64),
+                comfort_levels_now=comfort_levels[:, t],
+                comfort_histories_now=comfort_history[:, t],
+                prev_comfort_on=prev_comfort_on,
+                comfort_off_streaks_now=comfort_off_streaks[:, t],
+                comfort_lock_modes=comfort_lock_mode,
+                comfort_lock_remaining=comfort_lock_remaining,
                 rolling_window_slots=rolling_window_slots,
             )
             if solve_result is None:
                 raise RuntimeError("MPC solve failed for softened MILP model")
             successful_solves += 1
 
-            comfort_cmd = np.zeros(num_comfort, dtype=np.float64)
-            for i in locked_indices:
-                comfort_cmd[i] = float(comfort_lock_mode[i])
-            for pos, i in enumerate(unlocked_indices):
-                comfort_cmd[i] = float(solve_result["comfort_on"][pos])
-
             controls = {
                 "charge": solve_result["charge"],
                 "charge_grid": solve_result["charge_grid"],
                 "charge_pv": solve_result["charge_pv"],
                 "discharge": solve_result["discharge"],
-                "comfort_on": comfort_cmd,
+                "comfort_on": solve_result["comfort_on"],
             }
+            comfort_cmd = solve_result["comfort_on"]
             if infer_battery_preserve_policy:
                 modeled_load = _slot_modeled_load_kwh(
                     t,
@@ -1377,29 +1409,19 @@ def _run_mpc(
                         usage_h=counterfactual_usage_h,
                         solar_h=solar_input[t : t + horizon],
                         battery_entities=battery_entities,
-                        comfort_entities=[
-                            comfort_entities[i] for i in unlocked_indices
-                        ],
+                        comfort_entities=comfort_entities,
                         battery_levels_now=battery_levels[:, t],
                         battery_states_now=(
                             battery_states[:, t - 1]
                             if t > 0
                             else np.zeros(num_battery, dtype=np.int32)
                         ),
-                        comfort_levels_now=comfort_levels[unlocked_indices, t]
-                        if unlocked_indices
-                        else np.zeros(0, dtype=np.float64),
-                        comfort_histories_now=comfort_history[unlocked_indices, t]
-                        if unlocked_indices
-                        else np.zeros((0, history_slots), dtype=np.int32),
-                        prev_comfort_on=prev_comfort_on[unlocked_indices]
-                        if unlocked_indices
-                        else np.zeros(0, dtype=np.float64),
-                        comfort_off_streaks_now=comfort_off_streaks[
-                            unlocked_indices, t
-                        ]
-                        if unlocked_indices
-                        else np.zeros(0, dtype=np.float64),
+                        comfort_levels_now=comfort_levels[:, t],
+                        comfort_histories_now=comfort_history[:, t],
+                        prev_comfort_on=prev_comfort_on,
+                        comfort_off_streaks_now=comfort_off_streaks[:, t],
+                        comfort_lock_modes=comfort_lock_mode,
+                        comfort_lock_remaining=comfort_lock_remaining,
                         rolling_window_slots=rolling_window_slots,
                         forced_discharge_first={b: probe_kwh},
                     )

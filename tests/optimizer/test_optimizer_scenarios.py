@@ -298,6 +298,158 @@ def test_unavoidable_boundary_deficit_does_not_relax_later_windows():
     assert sum(combined[1:4]) == 2
 
 
+def _bounded_lock_payload():
+    return {
+        "grid_import_price_per_kwh": [10.0, 0.1, 10.0, 10.0],
+        "grid_export_price_per_kwh": [0.0] * 4,
+        "solar_input_kwh": [0.0] * 4,
+        "usage_kwh": [0.0] * 4,
+        "rolling_window_slots": 4,
+        "lookahead_slots": 4,
+        "battery_entities": [],
+        "comfort_entities": [
+            {
+                "name": "heatpump",
+                "target_on_slots_per_rolling_window": 1,
+                "min_consecutive_on_slots": 2,
+                "min_consecutive_off_slots": 1,
+                "max_consecutive_off_slots": 4,
+                "power_usage_kwh": 1.0,
+                "is_on_now": False,
+                "on_slots_last_rolling_window": 0,
+                "on_history": [False, False, False],
+                "off_streak_slots_now": 4,
+            }
+        ],
+    }
+
+
+def test_on_lock_is_bounded_and_later_comfort_slots_are_optimized():
+    """A new ON transition is fixed only through its remaining minimum run."""
+    result = _run_optimizer(_bounded_lock_payload())
+
+    schedule = _entity_schedule(result, "heatpump")
+    assert [point["enabled"] for point in schedule] == [True, True, False, False]
+
+
+def test_bounded_on_lock_does_not_create_false_future_battery_demand():
+    """Cheap charging must not be justified by extending an ON lock indefinitely."""
+    payload = _bounded_lock_payload()
+    payload["battery_entities"] = [
+        {
+            "name": "battery",
+            "initial_kwh": 0.0,
+            "minimum_kwh": 0.0,
+            "capacity_kwh": 2.0,
+            "charge_curve_kwh": [2.0],
+            "discharge_curve_kwh": [1.0],
+            "can_charge_from": 1,
+        }
+    ]
+
+    result = _run_optimizer(payload)
+
+    comfort = _entity_schedule(result, "heatpump")
+    battery = _entity_schedule(result, "battery")
+    assert [point["enabled"] for point in comfort] == [True, True, False, False]
+    assert all(point["level"] == pytest.approx(0.0) for point in battery)
+    assert result["projections"]["projected_cost"] == pytest.approx(10.1)
+    assert result["projections"]["projected_cost"] == pytest.approx(
+        _independent_projected_cost_for_unit_efficiency(payload, result)
+    )
+
+
+def test_off_lock_releases_before_a_required_minimum_on_run():
+    """An initial OFF lock may release into a solver-valid future ON run."""
+    payload = _bounded_lock_payload()
+    payload["grid_import_price_per_kwh"] = [10.0, 9.0, 1.0, 2.0]
+    payload["comfort_entities"][0].update(
+        {
+            "is_on_now": False,
+            "off_streak_slots_now": 0,
+            "min_consecutive_off_slots": 2,
+            "max_consecutive_off_slots": 4,
+            "on_history": [True, True, False],
+        }
+    )
+
+    result = _run_optimizer(payload)
+
+    schedule = _entity_schedule(result, "heatpump")
+    assert [point["enabled"] for point in schedule] == [False, False, True, True]
+
+
+def test_locked_off_tail_does_not_conflict_with_max_off_initial_window():
+    """A legitimate OFF run extending to the plan end must remain feasible."""
+    payload = _bounded_lock_payload()
+    payload["comfort_entities"][0].update(
+        {
+            "is_on_now": True,
+            "off_streak_slots_now": 0,
+            "min_consecutive_on_slots": 1,
+            "min_consecutive_off_slots": 3,
+            "max_consecutive_off_slots": 3,
+        }
+    )
+
+    result = _run_optimizer(payload)
+
+    schedule = _entity_schedule(result, "heatpump")
+    assert [point["enabled"] for point in schedule] == [True, False, False, False]
+
+
+def test_preserve_counterfactual_receives_same_bounded_comfort_lock(monkeypatch):
+    """Preserve inference must not use a different comfort feasibility model."""
+    payload = _bounded_lock_payload()
+    payload["grid_import_price_per_kwh"] = [0.1, 1.0, 1.0, 1.0]
+    payload["usage_kwh"] = [1.0] * 4
+    payload["battery_entities"] = [
+        {
+            "name": "battery",
+            "initial_kwh": 1.0,
+            "minimum_kwh": 0.0,
+            "capacity_kwh": 1.0,
+            "charge_curve_kwh": [0.0],
+            "discharge_curve_kwh": [1.0],
+            "can_charge_from": 0,
+        }
+    ]
+    payload["comfort_entities"][0].update(
+        {
+            "min_consecutive_on_slots": 1,
+            "min_consecutive_off_slots": 2,
+            "max_consecutive_off_slots": 4,
+            "off_streak_slots_now": 0,
+            "on_history": [True, True, True],
+        }
+    )
+    calls = []
+    original = optimizer._solve_mpc_step
+
+    def capture(**kwargs):
+        calls.append(
+            {
+                "base_timeslot": kwargs["base_timeslot"],
+                "forced": kwargs.get("forced_discharge_first"),
+                "modes": kwargs["comfort_lock_modes"].tolist(),
+                "remaining": kwargs["comfort_lock_remaining"].tolist(),
+                "comfort_count": len(kwargs["comfort_entities"]),
+            }
+        )
+        return original(**kwargs)
+
+    monkeypatch.setattr(optimizer, "_solve_mpc_step", capture)
+    _run_optimizer(payload)
+
+    primary = next(call for call in calls if call["base_timeslot"] == 0 and not call["forced"])
+    counterfactual = next(
+        call for call in calls if call["base_timeslot"] == 0 and call["forced"]
+    )
+    assert primary["modes"] == counterfactual["modes"] == [0]
+    assert primary["remaining"] == counterfactual["remaining"] == [2]
+    assert primary["comfort_count"] == counterfactual["comfort_count"] == 1
+
+
 def _independent_projected_cost_for_unit_efficiency(payload, result):
     """Evaluate public schedules whose batteries have unit efficiency."""
     for battery in payload["battery_entities"]:
