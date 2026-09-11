@@ -162,7 +162,19 @@ class ComfortEntityParams(BaseModel):
     )
     is_on_now: bool = Field(..., description="Current ON/OFF runtime state.")
     on_slots_last_rolling_window: int = Field(
-        ..., ge=0, description="Observed ON slots in previous rolling window."
+        0,
+        ge=0,
+        description=(
+            "Deprecated aggregate ON-slot count retained for input compatibility. "
+            "Rolling enforcement uses on_history."
+        ),
+    )
+    on_history: List[bool] | None = Field(
+        default=None,
+        description=(
+            "Ordered ON/OFF observations, oldest first, for the "
+            "rolling_window_slots - 1 slots immediately before the forecast."
+        ),
     )
     off_streak_slots_now: int = Field(
         ..., ge=0, description="Current consecutive OFF slots at planning start."
@@ -479,6 +491,13 @@ class OptimizationParams(BaseModel):
                 raise ValueError(
                     f"comfort_entities[{idx}].on_slots_last_rolling_window must be <= rolling_window_slots ({self.rolling_window_slots})"
                 )
+            if entity.on_history is not None and len(entity.on_history) != max(
+                int(self.rolling_window_slots) - 1, 0
+            ):
+                raise ValueError(
+                    f"comfort_entities[{idx}].on_history must contain exactly "
+                    f"rolling_window_slots - 1 ({self.rolling_window_slots - 1}) values"
+                )
             if entity.min_consecutive_on_slots >= solve_horizon:
                 raise ValueError(
                     f"comfort_entities[{idx}].min_consecutive_on_slots must be < solve horizon ({solve_horizon})"
@@ -527,6 +546,7 @@ class ComfortEntity:
     power_usage_kwh: float
     is_on_now: bool
     on_slots_last_rolling_window: int
+    on_history: np.ndarray | None
     off_streak_slots_now: int
     measured_power_source: str | None
     recent_avg_on_power_kw: float | None
@@ -561,6 +581,7 @@ class NormalizedState:
     comfort_levels: np.ndarray | None
     comfort_off_streaks: np.ndarray | None
     comfort_is_on: np.ndarray | None
+    comfort_history: np.ndarray | None
     comfort_lock_mode: np.ndarray
     comfort_lock_remaining: np.ndarray
 
@@ -695,6 +716,11 @@ def _parse_state_blob(state_blob):
             if "comfort_is_on" in obj
             else None
         )
+        comfort_history = (
+            np.asarray(obj["comfort_history"], dtype=np.int32)
+            if "comfort_history" in obj
+            else None
+        )
         comfort_lock_mode = np.asarray(obj["comfort_lock_mode"], dtype=np.float64)
         comfort_lock_remaining = np.asarray(
             obj["comfort_lock_remaining"], dtype=np.float64
@@ -741,6 +767,12 @@ def _parse_state_blob(state_blob):
         and comfort_is_on.size == 0
     ):
         comfort_is_on = comfort_is_on.reshape(0, num_steps + 1)
+    if (
+        comfort_history is not None
+        and comfort_history.ndim == 1
+        and comfort_history.size == 0
+    ):
+        comfort_history = comfort_history.reshape(0, num_steps + 1, 0)
     if comfort_lock_mode.ndim == 1 and comfort_lock_mode.size == 0:
         comfort_lock_mode = comfort_lock_mode.reshape(0, num_steps)
     if comfort_lock_remaining.ndim == 1 and comfort_lock_remaining.size == 0:
@@ -787,6 +819,15 @@ def _parse_state_blob(state_blob):
         and comfort_is_on.shape != expected_comfort_trajectory_shape
     ):
         raise ValueError("state.comfort_is_on shape mismatch")
+    if comfort_history is not None and (
+        comfort_history.ndim != 3
+        or comfort_history.shape[:2] != (comfort_on.shape[0], num_steps + 1)
+    ):
+        raise ValueError("state.comfort_history shape mismatch")
+    if comfort_history is not None and not np.all(
+        (comfort_history == 0) | (comfort_history == 1)
+    ):
+        raise ValueError("state.comfort_history must contain only 0/1 values")
     if comfort_lock_mode.ndim != 2 or comfort_lock_mode.shape[1] != num_steps:
         raise ValueError("state.comfort_lock_mode shape mismatch")
     if comfort_lock_remaining.ndim != 2 or comfort_lock_remaining.shape[1] != num_steps:
@@ -811,6 +852,8 @@ def _parse_state_blob(state_blob):
         state_series.append(("comfort_levels", comfort_levels))
     if comfort_off_streaks is not None:
         state_series.append(("comfort_off_streaks", comfort_off_streaks))
+    if comfort_history is not None:
+        state_series.append(("comfort_history", comfort_history))
     for series_name, series in state_series:
         if not np.all(np.isfinite(series)):
             raise ValueError(f"state.{series_name} must contain finite values")
@@ -832,6 +875,7 @@ def _parse_state_blob(state_blob):
         comfort_levels=comfort_levels,
         comfort_off_streaks=comfort_off_streaks,
         comfort_is_on=comfort_is_on,
+        comfort_history=comfort_history,
         comfort_lock_mode=comfort_lock_mode,
         comfort_lock_remaining=comfort_lock_remaining,
     )
@@ -888,6 +932,11 @@ def normalize_calculation_input(params: OptimizationParams):
             power_usage_kwh=float(entity.power_usage_kwh),
             is_on_now=bool(entity.is_on_now),
             on_slots_last_rolling_window=int(entity.on_slots_last_rolling_window),
+            on_history=(
+                np.asarray(entity.on_history, dtype=np.int32)
+                if entity.on_history is not None
+                else None
+            ),
             off_streak_slots_now=int(entity.off_streak_slots_now),
             measured_power_source=entity.measured_power_source,
             recent_avg_on_power_kw=(

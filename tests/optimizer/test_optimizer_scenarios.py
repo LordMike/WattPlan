@@ -134,6 +134,170 @@ def _entity_schedule(result, name):
     )
 
 
+def _rolling_comfort_payload(on_history):
+    return {
+        "grid_import_price_per_kwh": [10.0, 9.0, 1.0, 10.0],
+        "solar_input_kwh": [0.0] * 4,
+        "usage_kwh": [0.0] * 4,
+        "rolling_window_slots": 3,
+        "lookahead_slots": 4,
+        "battery_entities": [],
+        "comfort_entities": [
+            {
+                "name": "comfort",
+                "target_on_slots_per_rolling_window": 1,
+                "min_consecutive_on_slots": 1,
+                "min_consecutive_off_slots": 1,
+                "max_consecutive_off_slots": 4,
+                "power_usage_kwh": 1.0,
+                "is_on_now": False,
+                "on_slots_last_rolling_window": sum(on_history),
+                "on_history": on_history,
+                "off_streak_slots_now": 1,
+            }
+        ],
+    }
+
+
+def _assert_rolling_windows(on_history, schedule, *, window, target):
+    combined = [int(value) for value in on_history] + [
+        int(point["enabled"]) for point in schedule
+    ]
+    for start in range(len(combined) - window + 1):
+        assert sum(combined[start : start + window]) >= target
+
+
+def test_ordered_comfort_history_changes_boundary_requirement():
+    """Equal historical counts must not hide when ON credit leaves the window."""
+    oldest_on = _run_optimizer(_rolling_comfort_payload([True, False]))
+    newest_on = _run_optimizer(_rolling_comfort_payload([False, True]))
+    oldest_schedule = _entity_schedule(oldest_on, "comfort")
+    newest_schedule = _entity_schedule(newest_on, "comfort")
+
+    assert oldest_schedule[0]["enabled"] is False
+    assert oldest_schedule[1]["enabled"] is True
+    assert newest_schedule[0]["enabled"] is False
+    assert newest_schedule[1]["enabled"] is False
+    assert oldest_on["projections"]["projected_cost"] > newest_on["projections"][
+        "projected_cost"
+    ]
+    _assert_rolling_windows([True, False], oldest_schedule, window=3, target=1)
+    _assert_rolling_windows([False, True], newest_schedule, window=3, target=1)
+
+
+def test_every_complete_forecast_rolling_window_is_enforced():
+    """The target applies after all historical observations have rolled out."""
+    payload = _rolling_comfort_payload([False, True])
+    payload["grid_import_price_per_kwh"] = [10.0, 9.0, 1.0, 10.0, 9.0, 1.0]
+    payload["solar_input_kwh"] = [0.0] * 6
+    payload["usage_kwh"] = [0.0] * 6
+    result = _run_optimizer(payload)
+    schedule = _entity_schedule(result, "comfort")
+
+    _assert_rolling_windows([False, True], schedule, window=3, target=1)
+    assert "comfort_target_unmet" not in result["suboptimal_reasons"]
+
+
+def test_ordered_history_participates_in_state_reuse_validation():
+    """State reuse must reject a different history order with the same count."""
+    first = _run_optimizer(_rolling_comfort_payload([True, False]))
+    changed = _rolling_comfort_payload([False, True])
+    changed["state"] = first["state"]
+
+    result = _run_optimizer(changed)
+
+    assert result["reused_steps"] == 0
+    assert _entity_schedule(result, "comfort")[0]["enabled"] is False
+
+
+def test_matching_ordered_history_allows_state_reuse():
+    """Identical forecasts and observed ordered history may reuse prior controls."""
+    payload = _rolling_comfort_payload([True, False])
+    first = _run_optimizer(payload)
+
+    result = _run_optimizer({**payload, "state": first["state"]})
+
+    assert result["reused_steps"] == 4
+    assert _entity_schedule(result, "comfort") == _entity_schedule(first, "comfort")
+
+
+def test_rolling_replan_uses_observed_history_and_matches_cold_solve():
+    """A sliding forecast must carry the executed slot into ordered history."""
+    first_payload = _rolling_comfort_payload([False, True])
+    first_payload["grid_import_price_per_kwh"] = [10.0, 9.0, 1.0, 10.0, 9.0]
+    first_payload["solar_input_kwh"] = [0.0] * 5
+    first_payload["usage_kwh"] = [0.0] * 5
+    first = _run_optimizer(first_payload)
+    first_enabled = bool(_entity_schedule(first, "comfort")[0]["enabled"])
+
+    next_payload = _rolling_comfort_payload([True, first_enabled])
+    next_payload["grid_import_price_per_kwh"] = [9.0, 1.0, 10.0, 9.0, 1.0]
+    next_payload["solar_input_kwh"] = [0.0] * 5
+    next_payload["usage_kwh"] = [0.0] * 5
+    next_payload["comfort_entities"][0]["is_on_now"] = first_enabled
+    next_payload["comfort_entities"][0]["off_streak_slots_now"] = (
+        0 if first_enabled else 1
+    )
+    cold = _run_optimizer(next_payload)
+    next_payload["state"] = first["state"]
+
+    replanned = _run_optimizer(next_payload)
+
+    assert replanned["reused_steps"] == 0
+    assert _entity_schedule(replanned, "comfort") == _entity_schedule(cold, "comfort")
+    _assert_rolling_windows(
+        [True, first_enabled],
+        _entity_schedule(replanned, "comfort"),
+        window=3,
+        target=1,
+    )
+
+
+def test_missing_ordered_history_is_conservative_and_reported():
+    """Legacy aggregate input must not be treated as confident ordered history."""
+    payload = _rolling_comfort_payload([True, False])
+    comfort = payload["comfort_entities"][0]
+    comfort.pop("on_history")
+    comfort["on_slots_last_rolling_window"] = 1
+
+    result = _run_optimizer(payload)
+
+    assert _entity_schedule(result, "comfort")[0]["enabled"] is True
+    assert "comfort_history_unavailable" in result["suboptimal_reasons"]
+
+
+def test_unavoidable_boundary_deficit_is_reported():
+    """An active OFF lock may force a deficit, which must remain visible."""
+    payload = _rolling_comfort_payload([False, False])
+    comfort = payload["comfort_entities"][0]
+    comfort["min_consecutive_off_slots"] = 2
+    comfort["off_streak_slots_now"] = 0
+
+    result = _run_optimizer(payload)
+
+    assert _entity_schedule(result, "comfort")[0]["enabled"] is False
+    assert "comfort_target_unmet" in result["suboptimal_reasons"]
+
+
+def test_unavoidable_boundary_deficit_does_not_relax_later_windows():
+    """Slack for an impossible boundary must not excuse a feasible next window."""
+    payload = _rolling_comfort_payload([False, False])
+    payload["grid_import_price_per_kwh"] = [10.0, 9.0, 1.0, 10.0]
+    comfort = payload["comfort_entities"][0]
+    comfort["target_on_slots_per_rolling_window"] = 2
+    comfort["is_on_now"] = True
+    comfort["off_streak_slots_now"] = 0
+
+    result = _run_optimizer(payload)
+    schedule = _entity_schedule(result, "comfort")
+
+    assert schedule[0]["enabled"] is True
+    assert schedule[1]["enabled"] is True
+    assert "comfort_target_unmet" in result["suboptimal_reasons"]
+    combined = [False, False] + [point["enabled"] for point in schedule]
+    assert sum(combined[1:4]) == 2
+
+
 def _independent_projected_cost_for_unit_efficiency(payload, result):
     """Evaluate public schedules whose batteries have unit efficiency."""
     for battery in payload["battery_entities"]:
@@ -366,7 +530,8 @@ def test_complex_48h_input_returns_valid_result():
                 "max_consecutive_off_slots": 6,
                 "power_usage_kwh": 2.5,
                 "is_on_now": False,
-                "on_slots_last_rolling_window": 3,
+                "on_slots_last_rolling_window": 8,
+                "on_history": [False] * 15 + [True] * 8,
                 "off_streak_slots_now": 1,
             },
             {
@@ -377,7 +542,8 @@ def test_complex_48h_input_returns_valid_result():
                 "max_consecutive_off_slots": 5,
                 "power_usage_kwh": 1.8,
                 "is_on_now": True,
-                "on_slots_last_rolling_window": 6,
+                "on_slots_last_rolling_window": 10,
+                "on_history": [False] * 13 + [True] * 10,
                 "off_streak_slots_now": 0,
             },
         ],
@@ -418,6 +584,7 @@ def test_full_battery_serves_mandatory_comfort_only_demand():
         "grid_import_price_per_kwh": [1.0, 1.0, 1.0, 1.0],
         "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
         "usage_kwh": [0.0, 0.0, 0.0, 0.0],
+        "rolling_window_slots": 4,
         "battery_entities": [
             {
                 "name": "house_battery",
@@ -437,6 +604,7 @@ def test_full_battery_serves_mandatory_comfort_only_demand():
                 "power_usage_kwh": 1.0,
                 "is_on_now": True,
                 "on_slots_last_rolling_window": 0,
+                "on_history": [True, True, True],
                 "off_streak_slots_now": 0,
             }
         ],
@@ -468,6 +636,7 @@ def test_pv_serves_comfort_before_charging_battery_from_surplus():
         "grid_import_price_per_kwh": [1.0, 1.0, 1.0, 1.0],
         "solar_input_kwh": [2.0, 0.0, 0.0, 0.0],
         "usage_kwh": [0.0, 0.0, 0.0, 0.0],
+        "rolling_window_slots": 4,
         "battery_entities": [
             {
                 "name": "house_battery",
@@ -487,6 +656,7 @@ def test_pv_serves_comfort_before_charging_battery_from_surplus():
                 "power_usage_kwh": 1.0,
                 "is_on_now": True,
                 "on_slots_last_rolling_window": 0,
+                "on_history": [True, True, True],
                 "off_streak_slots_now": 0,
             }
         ],
@@ -574,6 +744,7 @@ def test_replan_uses_observed_comfort_history_when_forecast_window_slides():
         "grid_export_price_per_kwh": [0.0] * 6,
         "solar_input_kwh": [0.0] * 6,
         "usage_kwh": [0.0] * 6,
+        "rolling_window_slots": 6,
         "battery_entities": [],
         "comfort_entities": [
             {
@@ -585,6 +756,7 @@ def test_replan_uses_observed_comfort_history_when_forecast_window_slides():
                 "power_usage_kwh": 1.0,
                 "is_on_now": False,
                 "on_slots_last_rolling_window": 3,
+                "on_history": [True, True, True, False, False],
                 "off_streak_slots_now": 0,
             }
         ],
@@ -597,7 +769,8 @@ def test_replan_uses_observed_comfort_history_when_forecast_window_slides():
         "comfort_entities": [
             {
                 **first_payload["comfort_entities"][0],
-                "on_slots_last_rolling_window": 0,
+                "on_slots_last_rolling_window": 2,
+                "on_history": [False, False, False, True, True],
                 "off_streak_slots_now": 1,
             }
         ],
@@ -608,8 +781,12 @@ def test_replan_uses_observed_comfort_history_when_forecast_window_slides():
     for result in (cold_result, warm_result):
         _assert_common_result_shape(result, intervals=6, expected_entities=1)
         schedule = _entity_schedule(result, "water_heater")
-        assert sum(bool(point["enabled"]) for point in schedule) >= 3
-        assert result["projections"]["projected_cost"] == pytest.approx(3.5, abs=1e-6)
+        _assert_rolling_windows(
+            current_payload["comfort_entities"][0]["on_history"],
+            schedule,
+            window=6,
+            target=3,
+        )
         assert result["projections"]["projected_cost"] == pytest.approx(
             _independent_projected_cost_for_unit_efficiency(current_payload, result),
             abs=1e-6,
@@ -682,6 +859,7 @@ def test_soc_replan_preserves_active_comfort_minimum_on_commitment():
         "grid_export_price_per_kwh": [0.0] * 6,
         "solar_input_kwh": [0.0] * 6,
         "usage_kwh": [0.0] * 6,
+        "rolling_window_slots": 6,
         "battery_entities": [
             {
                 "name": "home_battery",
@@ -703,6 +881,7 @@ def test_soc_replan_preserves_active_comfort_minimum_on_commitment():
                 "power_usage_kwh": 1.0,
                 "is_on_now": False,
                 "on_slots_last_rolling_window": 0,
+                "on_history": [True, True, False, False, False],
                 "off_streak_slots_now": 4,
             }
         ],
@@ -723,7 +902,8 @@ def test_soc_replan_preserves_active_comfort_minimum_on_commitment():
             {
                 **first_payload["comfort_entities"][0],
                 "is_on_now": True,
-                "on_slots_last_rolling_window": 1,
+                "on_slots_last_rolling_window": 2,
+                "on_history": [True, False, False, False, True],
                 "off_streak_slots_now": 0,
             }
         ],
@@ -745,6 +925,7 @@ def test_soc_replan_preserves_observed_comfort_minimum_off_commitment():
         "grid_export_price_per_kwh": [0.0] * 6,
         "solar_input_kwh": [0.0] * 6,
         "usage_kwh": [0.0] * 6,
+        "rolling_window_slots": 6,
         "battery_entities": [
             {
                 "name": "home_battery",
@@ -765,7 +946,8 @@ def test_soc_replan_preserves_observed_comfort_minimum_off_commitment():
                 "max_consecutive_off_slots": 5,
                 "power_usage_kwh": 1.0,
                 "is_on_now": False,
-                "on_slots_last_rolling_window": 0,
+                "on_slots_last_rolling_window": 1,
+                "on_history": [False, False, False, False, True],
                 "off_streak_slots_now": 3,
             }
         ],
@@ -785,6 +967,7 @@ def test_soc_replan_preserves_observed_comfort_minimum_off_commitment():
         "comfort_entities": [
             {
                 **first_payload["comfort_entities"][0],
+                "on_history": [False, False, False, True, False],
                 "off_streak_slots_now": 0,
             }
         ],
@@ -1077,6 +1260,7 @@ def test_signed_negative_import_schedules_comfort_at_the_paid_slot(
         "grid_export_price_per_kwh": [0.0, 0.0, 0.0, 0.0],
         "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
         "usage_kwh": [0.0, 0.0, 0.0, 0.0],
+        "rolling_window_slots": 4,
         "battery_entities": [],
         "comfort_entities": [
             {
@@ -1087,7 +1271,8 @@ def test_signed_negative_import_schedules_comfort_at_the_paid_slot(
                 "max_consecutive_off_slots": 4,
                 "power_usage_kwh": 1.0,
                 "is_on_now": True,
-                "on_slots_last_rolling_window": 0,
+                "on_slots_last_rolling_window": 1,
+                "on_history": [False, False, True],
                 "off_streak_slots_now": 0,
             }
         ],

@@ -29,16 +29,24 @@ class HistoricalOnOffProvider:
         self._history_cache = RollingHistoryCache(hass, entity_id)
 
     async def async_runtime_state(
-        self, *, rolling_window_slots: int, slot_minutes: int
-    ) -> tuple[bool, int, int]:
-        """Return `(is_on_now, on_slots_last_window, off_streak_slots_now)`."""
+        self,
+        *,
+        rolling_window_slots: int,
+        slot_minutes: int,
+        forecast_start: datetime | None = None,
+    ) -> tuple[bool, list[bool] | None, int, int]:
+        """Return current state, ordered history, aggregate ON slots, and OFF streak."""
         state = self._hass.states.get(self._entity_id)
         if state is None:
             raise ValueError(f"On/off source `{self._entity_id}` was not found")
 
         now = datetime.now(tz=UTC)
         slot_seconds = slot_minutes * 60
-        window_start = now - timedelta(minutes=rolling_window_slots * slot_minutes)
+        history_end = forecast_start or datetime.fromtimestamp(
+            (int(now.timestamp()) // slot_seconds) * slot_seconds, tz=UTC
+        )
+        history_slots = max(rolling_window_slots - 1, 0)
+        window_start = history_end - timedelta(minutes=history_slots * slot_minutes)
         is_on_now = state.state == STATE_ON
         off_streak_slots_now = 0
         if not is_on_now:
@@ -46,14 +54,24 @@ class HistoricalOnOffProvider:
             off_streak_slots_now = int(off_seconds // slot_seconds)
 
         if "recorder" not in self._hass.config.components:
-            return is_on_now, 0, off_streak_slots_now
+            return is_on_now, None, 0, off_streak_slots_now
 
-        states = await self._history_cache.async_fetch(window_start=window_start, now=now)
+        if history_slots == 0:
+            return is_on_now, [], 0, off_streak_slots_now
+
+        states = await self._history_cache.async_fetch(
+            window_start=window_start, now=history_end
+        )
         samples = self._samples_from_states(states)
-        on_seconds = self._on_seconds_between(samples=samples, start=window_start, end=now)
-        on_slots = int(round(on_seconds / slot_seconds))
-        on_slots = max(0, min(rolling_window_slots, on_slots))
-        return is_on_now, on_slots, off_streak_slots_now
+        if not samples or samples[0].at > window_start:
+            return is_on_now, None, 0, off_streak_slots_now
+        on_history = []
+        for slot in range(history_slots):
+            start = window_start + timedelta(seconds=slot * slot_seconds)
+            end = start + timedelta(seconds=slot_seconds)
+            on_seconds = self._on_seconds_between(samples=samples, start=start, end=end)
+            on_history.append(on_seconds >= slot_seconds / 2)
+        return is_on_now, on_history, sum(on_history), off_streak_slots_now
 
     def _samples_from_states(self, states: list[object]) -> list[OnOffSample]:
         """Convert recorder states into deduplicated on/off samples."""

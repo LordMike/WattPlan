@@ -106,6 +106,26 @@ def _charge_ingress_permissions(entity):
     )
 
 
+def _initial_comfort_history(entity, rolling_window_slots):
+    history_slots = max(int(rolling_window_slots) - 1, 0)
+    if entity.on_history is None:
+        # A legacy aggregate over W prior slots guarantees only max(count-k, 0)
+        # ON observations after k oldest slots have left the window. Placing that
+        # guaranteed credit at the oldest edge models those lower bounds without
+        # claiming an order the caller did not provide.
+        history = np.zeros(history_slots, dtype=np.int32)
+        guaranteed_on = min(
+            max(int(entity.on_slots_last_rolling_window) - 1, 0), history_slots
+        )
+        history[:guaranteed_on] = 1
+        return history
+    return np.asarray(entity.on_history, dtype=np.int32).copy()
+
+
+def _comfort_window_deficit(history, target):
+    return max(float(target) - float(np.sum(history)), 0.0)
+
+
 def _build_reuse_plan(
     previous_state,
     grid_import_prices,
@@ -115,6 +135,7 @@ def _build_reuse_plan(
     total_steps,
     battery_entities,
     comfort_entities,
+    rolling_window_slots,
     expected_fingerprint,
 ):
     if previous_state is None:
@@ -137,6 +158,7 @@ def _build_reuse_plan(
     comfort_levels = previous_state.comfort_levels
     comfort_off_streaks = previous_state.comfort_off_streaks
     comfort_is_on = previous_state.comfort_is_on
+    comfort_history = previous_state.comfort_history
     comfort_lock_mode = previous_state.comfort_lock_mode
     comfort_lock_remaining = previous_state.comfort_lock_remaining
 
@@ -174,6 +196,15 @@ def _build_reuse_plan(
         old_steps + 1,
     ):
         return None
+    expected_history_shape = (
+        num_comfort,
+        old_steps + 1,
+        max(int(rolling_window_slots) - 1, 0),
+    )
+    if num_comfort > 0 and (
+        comfort_history is None or comfort_history.shape != expected_history_shape
+    ):
+        return None
     if comfort_lock_mode.shape[0] != num_comfort:
         return None
     if comfort_lock_remaining.shape[0] != num_comfort:
@@ -189,14 +220,20 @@ def _build_reuse_plan(
     )
     actual_comfort_levels = np.asarray(
         [
-            max(
-                float(entity.target_on_slots_per_rolling_window)
-                - float(entity.on_slots_last_rolling_window),
-                0.0,
+            _comfort_window_deficit(
+                _initial_comfort_history(entity, rolling_window_slots),
+                entity.target_on_slots_per_rolling_window,
             )
             for entity in comfort_entities
         ],
         dtype=np.float64,
+    )
+    actual_comfort_history = np.asarray(
+        [
+            _initial_comfort_history(entity, rolling_window_slots)
+            for entity in comfort_entities
+        ],
+        dtype=np.int32,
     )
     actual_comfort_off_streaks = np.asarray(
         [
@@ -264,6 +301,12 @@ def _build_reuse_plan(
                 actual_comfort_levels,
                 atol=1e-6,
                 rtol=0.0,
+            )
+            and (
+                num_comfort == 0
+                or np.array_equal(
+                    comfort_history[:, offset_steps, :], actual_comfort_history
+                )
             )
             and np.allclose(
                 comfort_off_streaks[:, offset_steps],
@@ -460,9 +503,10 @@ def _solve_mpc_step(
     battery_levels_now,
     battery_states_now,
     comfort_levels_now,
+    comfort_histories_now,
     prev_comfort_on,
     comfort_off_streaks_now,
-    remaining_steps_total,
+    rolling_window_slots,
     forced_discharge_first=None,
 ):
     horizon = len(prices_h)
@@ -494,7 +538,7 @@ def _solve_mpc_step(
                 "on": idx.add(horizon),
                 "level": idx.add(horizon + 1),
                 "switch_abs": idx.add(horizon),
-                "target_slack": idx.add(1),
+                "target_slack": idx.add(horizon),
             }
         )
 
@@ -689,11 +733,8 @@ def _solve_mpc_step(
         var = comfort_vars[c]
         max_off = int(entity.max_consecutive_off_slots)
         limit_window = max_off + 1
-        remaining_now = float(comfort_levels_now[c])
-        min_on_this_window = max(
-            0.0,
-            remaining_now - max(float(remaining_steps_total - horizon), 0.0),
-        )
+        history = np.asarray(comfort_histories_now[c], dtype=np.int32)
+        target_on = int(entity.target_on_slots_per_rolling_window)
 
         for t in range(horizon):
             bounds[var["on"].start + t] = (0.0, 1.0)
@@ -701,8 +742,9 @@ def _solve_mpc_step(
             integrality[var["on"].start + t] = highspy.HighsVarType.kInteger
             objective[var["switch_abs"].start + t] += penalty_switch
 
-        bounds[var["target_slack"].start] = (0.0, None)
-        objective[var["target_slack"].start] += penalty_comfort_target
+        for t in range(horizon):
+            bounds[var["target_slack"].start + t] = (0.0, None)
+            objective[var["target_slack"].start + t] += penalty_comfort_target
 
         for t in range(horizon + 1):
             bounds[var["level"].start + t] = (-float(horizon + 24), None)
@@ -740,12 +782,20 @@ def _solve_mpc_step(
                 A_ub.append(row)
                 b_ub.append(0.0)
 
-        row = np.zeros(n_vars, dtype=np.float64)
-        for t in range(horizon):
-            row[var["on"].start + t] = -1.0
-        row[var["target_slack"].start] = -1.0
-        A_ub.append(row)
-        b_ub.append(-float(min_on_this_window))
+        for end in range(horizon):
+            forecast_start = max(0, end - int(rolling_window_slots) + 1)
+            historical_count = max(int(rolling_window_slots) - (end + 1), 0)
+            known_on = (
+                int(np.sum(history[-historical_count:]))
+                if historical_count > 0
+                else 0
+            )
+            row = np.zeros(n_vars, dtype=np.float64)
+            for t in range(forecast_start, end + 1):
+                row[var["on"].start + t] = -1.0
+            row[var["target_slack"].start + end] = -1.0
+            A_ub.append(row)
+            b_ub.append(-float(target_on - known_on))
 
         initial_window = max(
             1, limit_window - int(max(0.0, comfort_off_streaks_now[c]))
@@ -1105,6 +1155,7 @@ def _run_mpc(
     usage,
     battery_entities,
     comfort_entities,
+    rolling_window_slots,
     reuse_plan,
     lookahead_slots,
     infer_battery_preserve_policy,
@@ -1129,15 +1180,19 @@ def _run_mpc(
     comfort_lock_remaining_series = np.zeros(
         (num_comfort, total_steps), dtype=np.float64
     )
+    history_slots = max(int(rolling_window_slots) - 1, 0)
+    comfort_history = np.zeros(
+        (num_comfort, total_steps + 1, history_slots), dtype=np.int32
+    )
 
     for i, entity in enumerate(battery_entities):
         battery_levels[i, 0] = float(entity.initial_kwh)
     for i, entity in enumerate(comfort_entities):
-        # We represent comfort level as remaining required ON slots in horizon context.
-        comfort_levels[i, 0] = max(
-            float(entity.target_on_slots_per_rolling_window)
-            - float(entity.on_slots_last_rolling_window),
-            0.0,
+        initial_history = _initial_comfort_history(entity, rolling_window_slots)
+        comfort_history[i, 0] = initial_history
+        comfort_levels[i, 0] = _comfort_window_deficit(
+            initial_history,
+            entity.target_on_slots_per_rolling_window,
         )
         if bool(entity.is_on_now):
             comfort_off_streaks[i, 0] = 0.0
@@ -1240,13 +1295,16 @@ def _run_mpc(
                 comfort_levels_now=comfort_levels[unlocked_indices, t]
                 if unlocked_indices
                 else np.zeros(0, dtype=np.float64),
+                comfort_histories_now=comfort_history[unlocked_indices, t]
+                if unlocked_indices
+                else np.zeros((0, history_slots), dtype=np.int32),
                 prev_comfort_on=prev_comfort_on[unlocked_indices]
                 if unlocked_indices
                 else np.zeros(0, dtype=np.float64),
                 comfort_off_streaks_now=comfort_off_streaks[unlocked_indices, t]
                 if unlocked_indices
                 else np.zeros(0, dtype=np.float64),
-                remaining_steps_total=total_steps - t,
+                rolling_window_slots=rolling_window_slots,
             )
             if solve_result is None:
                 raise RuntimeError("MPC solve failed for softened MILP model")
@@ -1331,6 +1389,9 @@ def _run_mpc(
                         comfort_levels_now=comfort_levels[unlocked_indices, t]
                         if unlocked_indices
                         else np.zeros(0, dtype=np.float64),
+                        comfort_histories_now=comfort_history[unlocked_indices, t]
+                        if unlocked_indices
+                        else np.zeros((0, history_slots), dtype=np.int32),
                         prev_comfort_on=prev_comfort_on[unlocked_indices]
                         if unlocked_indices
                         else np.zeros(0, dtype=np.float64),
@@ -1339,7 +1400,7 @@ def _run_mpc(
                         ]
                         if unlocked_indices
                         else np.zeros(0, dtype=np.float64),
-                        remaining_steps_total=total_steps - t,
+                        rolling_window_slots=rolling_window_slots,
                         forced_discharge_first={b: probe_kwh},
                     )
                     if counterfactual is None or _objective_is_worse(
@@ -1383,6 +1444,17 @@ def _run_mpc(
             comfort_on[:, t] = comfort_enabled[:, t].astype(np.float64)
 
         for i, entity in enumerate(comfort_entities):
+            if history_slots > 0:
+                combined = np.append(
+                    comfort_history[i, t], int(comfort_enabled[i, t])
+                )
+                comfort_history[i, t + 1] = combined[-history_slots:]
+            comfort_levels[i, t + 1] = _comfort_window_deficit(
+                comfort_history[i, t + 1],
+                entity.target_on_slots_per_rolling_window,
+            )
+
+        for i, entity in enumerate(comfort_entities):
             prev_enabled = (
                 int(1 if entity.is_on_now else 0)
                 if t == 0
@@ -1420,6 +1492,7 @@ def _run_mpc(
         "battery_preserve": battery_preserve,
         "grid_export": grid_export,
         "comfort_on": comfort_on,
+        "comfort_history": comfort_history,
         "comfort_lock_mode": comfort_lock_mode_series,
         "comfort_lock_remaining": comfort_lock_remaining_series,
         "reused_steps": reused_steps,
@@ -1440,6 +1513,7 @@ def _score_schedule(
     battery_discharge,
     battery_states,
     comfort_enabled,
+    rolling_window_slots,
 ):
     total_steps = len(prices)
     total_price = 0.0
@@ -1502,10 +1576,21 @@ def _score_schedule(
             reasons.add("battery_target_unmet")
 
     for i, entity in enumerate(comfort_entities):
-        remaining_on_slots = float(comfort_levels[i, -1])
-        if remaining_on_slots > EPSILON:
-            penalty += 1000.0 * remaining_on_slots
-            reasons.add("comfort_target_unmet")
+        if entity.on_history is None:
+            reasons.add("comfort_history_unavailable")
+        combined = np.concatenate(
+            (
+                _initial_comfort_history(entity, rolling_window_slots),
+                comfort_enabled[i].astype(np.int32),
+            )
+        )
+        target_on = int(entity.target_on_slots_per_rolling_window)
+        for end in range(int(rolling_window_slots) - 1, combined.shape[0]):
+            window = combined[end - int(rolling_window_slots) + 1 : end + 1]
+            deficit = _comfort_window_deficit(window, target_on)
+            if deficit > EPSILON:
+                penalty += 1000.0 * deficit
+                reasons.add("comfort_target_unmet")
 
         streak = 0
         max_streak = 0
@@ -1752,6 +1837,7 @@ def optimize_internal(normalized: CalculationInput):
         total_steps=total_steps,
         battery_entities=battery_entities,
         comfort_entities=comfort_entities,
+        rolling_window_slots=normalized.rolling_window_slots,
         expected_fingerprint=fingerprint,
     )
 
@@ -1763,6 +1849,7 @@ def optimize_internal(normalized: CalculationInput):
         usage,
         battery_entities,
         comfort_entities,
+        normalized.rolling_window_slots,
         reuse_plan,
         normalized.lookahead_slots,
         normalized.infer_battery_preserve_policy,
@@ -1783,6 +1870,7 @@ def optimize_internal(normalized: CalculationInput):
             battery_discharge=result["battery_discharge"],
             battery_states=result["battery_states"],
             comfort_enabled=result["comfort_enabled"],
+            rolling_window_slots=normalized.rolling_window_slots,
         )
     )
     baseline_cost_array = _baseline_cost_per_slot(
@@ -1909,6 +1997,7 @@ def optimize_internal(normalized: CalculationInput):
         "battery_discharge": result["battery_discharge"].tolist(),
         "battery_preserve": result["battery_preserve"].astype(bool).tolist(),
         "comfort_on": result["comfort_on"].tolist(),
+        "comfort_history": result["comfort_history"].tolist(),
         "comfort_levels": result["comfort_levels"].tolist(),
         "comfort_off_streaks": result["comfort_off_streaks"].tolist(),
         "comfort_is_on": np.concatenate(

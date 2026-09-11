@@ -102,7 +102,8 @@ result = optimize(params)
 | `max_consecutive_off_slots` | `int` | Yes | - | `>= 1`, `>= min_consecutive_off_slots` | Max OFF streak before force-ON. |
 | `power_usage_kwh` | `float` | Yes | - | Finite, `> 0` | Energy draw when ON (kWh per slot). |
 | `is_on_now` | `bool` | Yes | - | - | Current ON/OFF runtime state. |
-| `on_slots_last_rolling_window` | `int` | Yes | - | `>= 0`, `<= rolling_window_slots` | Observed ON slots in prior rolling window. |
+| `on_slots_last_rolling_window` | `int` | No | `0` | `>= 0`, `<= rolling_window_slots` | Deprecated aggregate retained for compatibility when ordered history is unavailable. |
+| `on_history` | `list[bool] \| null` | No | `null` | Exactly `rolling_window_slots - 1` values when present | Ordered observed states, oldest first, immediately before forecast slot 0. Used to enforce every rolling window. |
 | `off_streak_slots_now` | `int` | Yes | - | `>= 0` | Current OFF streak (slots). |
 | `measured_power_source` | `str \| null` | No | `null` | - | Optional source of observed power telemetry. |
 | `recent_avg_on_power_kw` | `float \| null` | No | `null` | Finite, `> 0` | Optional observed ON power average. |
@@ -126,7 +127,7 @@ Optional entities provide advisory start-time suggestions and do not change the 
 `state` is an opaque base64 blob returned by one solve and accepted in the next.
 - You should store and pass it back as-is.
 - Do not parse or mutate it in client code.
-- The optimizer may reuse overlap from prior solve data when the complete requested forecast is already covered and configuration, observed battery SoC, and observed comfort runtime state match the prior plan at the detected overlap offset. Runtime state includes the comfort entity's current on/off state, remaining rolling-window requirement, and off streak. If reality differs from the expected prior trajectory, or a rolling request appends newly visible forecast slots, WattPlan re-solves the request instead of replaying stale controls. Applicable comfort minimum-on/off locks are still carried into that fresh solve. This conservative invalidation increases solve work on normal sliding forecasts, but it does not extend the configured MPC lookahead or make distant tail data influence the current action. Older opaque state blobs without runtime trajectories remain valid inputs but are not reused.
+- The optimizer may reuse overlap from prior solve data when the complete requested forecast is already covered and configuration, observed battery SoC, and observed comfort runtime state match the prior plan at the detected overlap offset. Runtime state includes the comfort entity's current on/off state, ordered rolling ON/OFF history, rolling-window deficit, and off streak. If reality differs from the expected prior trajectory, or a rolling request appends newly visible forecast slots, WattPlan re-solves the request instead of replaying stale controls. Applicable comfort minimum-on/off locks are still carried into that fresh solve. This conservative invalidation increases solve work on normal sliding forecasts, but it does not extend the configured MPC lookahead or make distant tail data influence the current action. Older opaque state blobs without ordered runtime history remain valid inputs but are not reused.
 
 ## Full Request Example (Small)
 ```jsonc
@@ -136,7 +137,7 @@ Optional entities provide advisory start-time suggestions and do not change the 
   "grid_export_price_per_kwh": [0.00, 0.00, 0.05, 0.08, 0.10, 0.08, 0.02, 0.00],
   "solar_input_kwh":       [0.0,  0.1,  0.5,  1.0,  0.8,  0.3,  0.0,  0.0],
   "usage_kwh":             [1.2,  1.1,  1.0,  0.9,  1.0,  1.2,  1.3,  1.4],
-  "rolling_window_slots": 96,
+  "rolling_window_slots": 8,
   "lookahead_slots": 48,
 
   // Controllable storage: the model tracks grid/PV charge and discharge flows.
@@ -171,6 +172,7 @@ Optional entities provide advisory start-time suggestions and do not change the 
       "power_usage_kwh": 1.1,
       "is_on_now": false,
       "on_slots_last_rolling_window": 3,
+      "on_history": [false, false, true, true, true, false, false],
       "off_streak_slots_now": 1,
       "measured_power_source": null,
       "recent_avg_on_power_kw": null
@@ -265,6 +267,7 @@ Current machine-readable keys include:
 - `battery_min_unmet`: At least one battery dropped below its configured `minimum_kwh` in the solved schedule.
 - `battery_target_unmet`: A battery `target` constraint (`at_least`/`at_most`/`exact`) was not met at its target timeslot.
 - `comfort_target_unmet`: A comfort entity did not achieve its required ON slots within the rolling window.
+- `comfort_history_unavailable`: Ordered pre-forecast history was unavailable. The optimizer used only aggregate credit guaranteed for every possible ordering, so it does not claim history-dependent comfort validity.
 - `comfort_max_off_unmet`: A comfort entity exceeded its configured `max_consecutive_off_slots`.
 
 ## Validation Behavior

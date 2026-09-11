@@ -51,21 +51,23 @@ async def test_provider_without_recorder_uses_current_state(
     hass.states.async_set("binary_sensor.heating", "on")
     provider = HistoricalOnOffProvider(hass, "binary_sensor.heating")
 
-    is_on_now, on_slots, off_streak_slots = await provider.async_runtime_state(
+    is_on_now, on_history, on_slots, off_streak_slots = await provider.async_runtime_state(
         rolling_window_slots=4, slot_minutes=15
     )
 
     assert is_on_now is True
+    assert on_history is None
     assert on_slots == 0
     assert off_streak_slots == 0
 
 
+@pytest.mark.parametrize("minute", [0, 10])
 async def test_provider_uses_history_to_compute_on_slots(
-    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, minute: int
 ) -> None:
     """Use recorder data to compute on-time over the rolling window."""
     monkeypatch.setattr(provider_module, "datetime", _TestDatetime)
-    _TestDatetime._now = datetime(2026, 1, 1, 1, 0, tzinfo=UTC)
+    _TestDatetime._now = datetime(2026, 1, 1, 1, minute, tzinfo=UTC)
     hass.config.components.add("recorder")
     hass.states.async_set("binary_sensor.heating", "on")
 
@@ -93,13 +95,113 @@ async def test_provider_uses_history_to_compute_on_slots(
     monkeypatch.setattr(cache_module, "get_instance", lambda _hass: recorder)
 
     provider = HistoricalOnOffProvider(hass, entity_id)
-    is_on_now, on_slots, _off_streak_slots = await provider.async_runtime_state(
+    is_on_now, on_history, on_slots, _off_streak_slots = await provider.async_runtime_state(
         rolling_window_slots=4, slot_minutes=15
     )
 
     assert is_on_now is True
+    assert on_history == [True, True, False]
     assert on_slots == 2
-    assert recorder.fetch_starts == [datetime(2026, 1, 1, 0, 0, tzinfo=UTC)]
+    assert recorder.fetch_starts == [datetime(2026, 1, 1, 0, 15, tzinfo=UTC)]
+
+
+@pytest.mark.parametrize(
+    ("states", "expected_history"),
+    [
+        (
+            [
+                ("on", 15),
+                ("off", 30),
+                ("on", 45),
+            ],
+            [True, False, True],
+        ),
+        (
+            [
+                ("off", 15),
+                ("on", 30),
+            ],
+            [False, True, True],
+        ),
+    ],
+)
+async def test_provider_preserves_history_order_with_identical_on_counts(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    states: list[tuple[str, int]],
+    expected_history: list[bool],
+) -> None:
+    """Return slot order, not only an aggregate ON count."""
+    monkeypatch.setattr(provider_module, "datetime", _TestDatetime)
+    _TestDatetime._now = datetime(2026, 1, 1, 1, 0, tzinfo=UTC)
+    hass.config.components.add("recorder")
+    entity_id = "binary_sensor.heating_order"
+    hass.states.async_set(entity_id, states[-1][0])
+    recorder = _FakeRecorder(
+        responses=[
+            {
+                entity_id: [
+                    SimpleNamespace(
+                        state=state,
+                        last_changed=datetime(2026, 1, 1, 0, minute, tzinfo=UTC),
+                    )
+                    for state, minute in states
+                ]
+            }
+        ]
+    )
+    monkeypatch.setattr(cache_module, "get_instance", lambda _hass: recorder)
+
+    provider = HistoricalOnOffProvider(hass, entity_id)
+    _is_on, on_history, on_slots, _off_streak = await provider.async_runtime_state(
+        rolling_window_slots=4, slot_minutes=15
+    )
+
+    assert on_history == expected_history
+    assert on_slots == 2
+
+
+async def test_provider_aligns_history_to_explicit_forecast_boundary(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep the request boundary when source fetching crosses a slot boundary."""
+    monkeypatch.setattr(provider_module, "datetime", _TestDatetime)
+    _TestDatetime._now = datetime(2026, 1, 1, 1, 40, tzinfo=UTC)
+    hass.config.components.add("recorder")
+    entity_id = "binary_sensor.heating_boundary"
+    hass.states.async_set(entity_id, "on")
+    recorder = _FakeRecorder(
+        responses=[
+            {
+                entity_id: [
+                    SimpleNamespace(
+                        state="off",
+                        last_changed=datetime(2026, 1, 1, 0, 15, tzinfo=UTC),
+                    ),
+                    SimpleNamespace(
+                        state="on",
+                        last_changed=datetime(2026, 1, 1, 0, 45, tzinfo=UTC),
+                    ),
+                    SimpleNamespace(
+                        state="off",
+                        last_changed=datetime(2026, 1, 1, 1, 0, tzinfo=UTC),
+                    ),
+                ]
+            }
+        ]
+    )
+    monkeypatch.setattr(cache_module, "get_instance", lambda _hass: recorder)
+
+    provider = HistoricalOnOffProvider(hass, entity_id)
+    _is_on, on_history, on_slots, _off_streak = await provider.async_runtime_state(
+        rolling_window_slots=4,
+        slot_minutes=15,
+        forecast_start=datetime(2026, 1, 1, 1, 15, tzinfo=UTC),
+    )
+
+    assert recorder.fetch_starts == [datetime(2026, 1, 1, 0, 30, tzinfo=UTC)]
+    assert on_history == [False, True, False]
+    assert on_slots == 1
 
 
 async def test_provider_fetches_incrementally_from_cache_end(
@@ -139,7 +241,7 @@ async def test_provider_fetches_incrementally_from_cache_end(
     await provider.async_runtime_state(rolling_window_slots=4, slot_minutes=15)
 
     assert recorder.fetch_starts == [
-        datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+        datetime(2026, 1, 1, 0, 15, tzinfo=UTC),
         datetime(2026, 1, 1, 1, 0, tzinfo=UTC),
     ]
 

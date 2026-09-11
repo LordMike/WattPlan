@@ -53,6 +53,16 @@ After this, the coordinator holds four slot-aligned numeric arrays that are pass
 
 The integration keeps plan coverage separate from economic lookahead. Plan coverage determines the length of these arrays and the complete schedule returned to Home Assistant. Economic lookahead determines how many future slots may influence each current MPC action. Users edit lookahead in hours, while config entries persist the resulting whole-slot value so the optimizer boundary stays resolution-independent. New setups default to 12 hours. Entries created before configurable lookahead are migrated once to the historical 22-slot value, displayed as 5.5 hours at 15-minute resolution, 11 hours at 30-minute resolution, or 22 hours at 60-minute resolution. Planner and comfort flows reject changes whose effective solve horizon is not longer than each comfort load's minimum ON/OFF duration.
 
+Comfort runtime acquisition samples recorder history into ordered ON/OFF values
+for the `rolling_window_slots - 1` completed slots immediately before the
+forecast. Sampling ends at the planner request's exact forecast boundary rather
+than the wall-clock instant, including when planning occurs partway through a
+slot. The optimizer carries that order through each MPC step and opaque state so
+every history/forecast and forecast-only rolling window is constrained.
+If ordered history is unavailable, only aggregate credit guaranteed regardless
+of ordering is used, and the returned plan is explicitly marked with
+`comfort_history_unavailable`.
+
 Source health is tracked alongside the values. A source can be healthy, unavailable, or incomplete. Import price is required. Usage is optional to configure, but if configured and failing it blocks planning. PV and export price are non-blocking optional inputs; when unavailable, planning can continue with degraded assumptions.
 
 Battery assets are resolved independently before optimizer input is built. If a battery has an availability source and that binary sensor is `off`, the battery is omitted from the current optimizer request without degrading overall status. If availability cannot be trusted, or if an expected SoC value is missing or non-numeric, only that battery is omitted and the plan is marked degraded. The optimizer still receives the remaining batteries, comfort loads, optional loads, and can run with an empty battery list.

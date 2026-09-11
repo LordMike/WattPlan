@@ -284,10 +284,11 @@ class PlanningRequestBuilder:
                 rolling_window_slots_set.add(rolling_window_slots)
                 on_off_source = str(subentry.data[CONF_ON_OFF_SOURCE])
                 try:
-                    is_on_now, on_slots_last_window, off_streak_slots_now = (
+                    is_on_now, on_history, on_slots_last_window, off_streak_slots_now = (
                         await self._on_off_provider(on_off_source).async_runtime_state(
                             rolling_window_slots=rolling_window_slots,
                             slot_minutes=slot_minutes,
+                            forecast_start=window.start_at,
                         )
                     )
                 except ValueError as err:
@@ -332,6 +333,7 @@ class PlanningRequestBuilder:
                         * (slot_minutes / 60),
                         "is_on_now": is_on_now,
                         "on_slots_last_rolling_window": on_slots_last_window,
+                        "on_history": on_history,
                         "off_streak_slots_now": off_streak_slots_now,
                         "measured_power_source": subentry.data.get(CONF_MEASURED_POWER_SOURCE),
                     }
