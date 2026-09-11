@@ -3378,6 +3378,35 @@ def test_deadband_is_enforced_inside_milp_without_losing_arbitrage(
     )
 
 
+def test_projection_excludes_heuristic_throughput_and_switch_penalties():
+    result = _run_optimizer(
+        {
+            "grid_import_price_per_kwh": [0.10, 1.0, 1.0, 1.0],
+            "usage_kwh": [0.0, 1.0, 0.0, 0.0],
+            "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
+            "throughput_cost_per_kwh": 0.02,
+            "mode_switch_cost": 0.01,
+            "battery_entities": [
+                {
+                    "name": "battery",
+                    "initial_kwh": 0.0,
+                    "minimum_kwh": 0.0,
+                    "capacity_kwh": 1.0,
+                    "charge_curve_kwh": [1.0],
+                    "discharge_curve_kwh": [1.0],
+                    "can_charge_from": 1,
+                }
+            ],
+            "comfort_entities": [],
+        }
+    )
+
+    projections = result["projections"]
+    assert projections["baseline_cost"] == pytest.approx(1.0)
+    assert projections["projected_cost"] == pytest.approx(0.10)
+    assert projections["projected_savings_cost"] == pytest.approx(0.90)
+
+
 def test_prefer_pv_surplus_charging_sinks_surplus_into_battery():
     base_payload = {
         "grid_import_price_per_kwh": [0.2, 0.2, 0.2, 0.2],

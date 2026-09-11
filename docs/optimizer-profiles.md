@@ -2,7 +2,7 @@
 
 This page describes the user-facing optimizer profiles exposed by the Home Assistant integration.
 
-These profiles are integration presets. Internally, the optimizer still operates on numeric controls such as throughput cost, action deadband, and mode-switch cost. The integration translates the selected profile into those numeric values before calling the optimizer.
+These profiles are integration presets. Internally, the optimizer operates on numeric controls such as throughput penalty, action deadband, and mode-switch penalty. The compatible optimizer API retains the historical field names `throughput_cost_per_kwh` and `mode_switch_cost`, but their values are heuristic objective weights, not monetary estimates of battery degradation or switching wear. They influence which plan the optimizer prefers; they are not added to WattPlan's tariff-only projected cost or savings fields. The integration translates the selected profile into those numeric values before calling the optimizer.
 
 ## When to use each profile
 
@@ -55,3 +55,5 @@ Profiles do not raise the configured battery minimum.
 If you want more reserve left in a battery, set that battery's minimum energy directly in the battery configuration. Profiles only control how willing WattPlan is to move battery energy around.
 
 Profiles also do not replace battery targets. If you need a battery, such as an EV, to reach a specific level by a specific time, use a target. A common Home Assistant setup is an automation that sets a weekday morning target and adjusts it for holidays or other patterns.
+
+Projected cost and savings remain estimates of grid import cost minus export revenue under the configured tariffs. They do not claim savings after battery degradation, switching wear, or other ownership costs.

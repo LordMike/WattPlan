@@ -46,9 +46,9 @@ result = optimize(params)
 | `usage_kwh` | `list[float]` | Yes* | `[]` | Must match `len(grid_import_price_per_kwh)`, finite, `>= 0` | Per-timeslot base load forecast (kWh per timeslot). |
 | `rolling_window_slots` | `int` | No | `24` | `>= 1` | Slot count used for comfort rolling-window ON accounting. |
 | `lookahead_slots` | `int` | No | `22` | `2..672` | Maximum future slots considered when selecting each current action. Direct API callers that omit it retain the historical 22-slot behavior. The full supplied horizon is still returned. |
-| `throughput_cost_per_kwh` | `float` | No | `0.0` | Finite, `>= 0` | Extra cost on charge/discharge throughput to reduce cycling. |
+| `throughput_cost_per_kwh` | `float` | No | `0.0` | Finite, `>= 0` | Heuristic objective weight per kWh of charge/discharge throughput. It discourages cycling but is not a monetary battery-wear estimate. |
 | `action_deadband_kwh` | `float` | No | `0.0` | Finite, `>= 0` | Battery flow is constrained to zero or at least this inclusive threshold. |
-| `mode_switch_cost` | `float` | No | `0.0` | Finite, `>= 0` | Extra cost on changing battery behavior between slots. |
+| `mode_switch_cost` | `float` | No | `0.0` | Finite, `>= 0` | Heuristic objective weight that discourages changing modeled battery behavior. It is not a monetary switching or wear estimate. |
 | `infer_battery_preserve_policy` | `bool` | No | `true` | - | Enables the model-backed counterfactual used to emit `preserve` battery policy states. When disabled, all `battery_preserve` booleans are `false` and non-grid-charging battery slots fall back to `self_consume`. |
 | `battery_entities` | `list[BatteryEntityParams]` | Yes | - | May be empty | Main controllable storage entities. |
 | `comfort_entities` | `list[ComfortEntityParams]` | Yes | - | May be empty | Required-but-shiftable comfort entities. |
@@ -109,7 +109,7 @@ result = optimize(params)
 | `recent_avg_on_power_kw` | `float \| null` | No | `null` | Finite, `> 0` | Optional observed ON power average. |
 
 ## Optional Entity Model (`OptionalEntityParams`)
-Optional entities provide advisory start-time suggestions and do not change the optimized battery/comfort schedule. Each candidate is valued by replaying the supplied forecast horizon from the original battery state under the unchanged published battery modes and comfort schedule. The replay applies the candidate load to physical PV, battery, import, and export flows, including later cost caused by changed battery state, and compares it with the same fixed-policy replay without the load. Signed import and export tariffs are used in both replays.
+Optional entities provide advisory start-time suggestions and do not change the optimized battery/comfort schedule. Each candidate is valued by replaying the supplied forecast horizon from the original battery state under the unchanged published battery modes and comfort schedule. The replay applies the candidate load to physical PV, battery, import, and export flows, including later tariff cost caused by changed battery state, and compares it with the same fixed-policy replay without the load. Signed import and export tariffs are used in both replays. Heuristic throughput and mode-switch weights are not added to replay costs or used to rank optional-load starts.
 | Field | Type | Required | Default | Constraints | Notes |
 |---|---|---:|---|---|---|
 | `name` | `str` | Yes | - | Non-empty | Unique globally. |
@@ -247,13 +247,14 @@ If `infer_battery_preserve_policy` is disabled, the `battery_preserve` boolean a
 - Battery schedule points encode policy directly in `state`: `preserve`, `self_consume`, or `grid_charge`.
 - `optional_entity_options` is advisory and computed on top of that baseline.
 - Optional entities do not affect each other and do not modify `entities`.
-- Each option's `incremental_cost` is its fixed-policy replay cost minus the no-added-load fixed-policy replay cost under the same signed tariffs. The replay can change hypothetical battery energy flows and later SoC, but it does not reoptimize or mutate the returned schedule or opaque state.
+- Each option's `incremental_cost` is its fixed-policy tariff replay cost minus the no-added-load fixed-policy tariff replay cost under the same signed tariffs. The replay can change hypothetical battery energy flows and later SoC, but it does not reoptimize or mutate the returned schedule or opaque state. Heuristic throughput and mode-switch weights are excluded.
 - Alternatives are independent suggestions. Their costs do not assume that multiple options or optional loads run together.
 - Ranking is optimal only among the configured candidate starts under the published fixed modes and supplied forecast horizon. No terminal battery value beyond that horizon is invented.
 
 ### `projections` Fields
-- `baseline_cost`: Baseline net energy cost across the horizon, including export revenue when `grid_export_price_per_kwh` is provided.
-- `projected_cost`: Projected net cost for the optimized schedule (`grid imports - grid export revenue`).
+- All projection cost and savings fields are tariff-only monetary estimates. They use supplied signed import/export tariffs and exclude the heuristic `throughput_cost_per_kwh` and `mode_switch_cost` objective weights. They therefore do not estimate battery degradation, switching wear, or total ownership cost.
+- `baseline_cost`: Baseline net tariff cost across the horizon, including export revenue when `grid_export_price_per_kwh` is provided.
+- `projected_cost`: Projected net tariff cost for the optimized schedule (`grid imports - grid export revenue`).
 - `projected_savings_cost`: `baseline_cost - projected_cost`.
 - `projected_savings_pct`: `(1 - projected_cost / baseline_cost) * 100`, which is equivalent to `(projected_savings_cost / baseline_cost) * 100` when `baseline_cost > 0`. The optimizer still emits the raw numeric result; Home Assistant sensors may choose not to expose extreme values as entity state.
 - `per_slot`: List with one object per timeslot (same index/order as input arrays), each containing:

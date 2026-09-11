@@ -324,13 +324,23 @@ class OptimizationParams(BaseModel):
         ),
     )
     throughput_cost_per_kwh: float = Field(
-        0.0, description="Additional cost applied to charging/discharging throughput."
+        0.0,
+        description=(
+            "Heuristic objective weight applied per kWh of charge/discharge "
+            "throughput to discourage cycling. It is not a monetary wear estimate "
+            "and is excluded from tariff cost and savings projections."
+        ),
     )
     action_deadband_kwh: float = Field(
         0.0, description="Commands smaller than this are treated as neutral flow."
     )
     mode_switch_cost: float = Field(
-        0.0, description="Cost for switching between modeled charge/idle/discharge flow."
+        0.0,
+        description=(
+            "Heuristic objective weight discouraging changes between modeled "
+            "charge/idle/discharge behavior. It is not a monetary wear estimate "
+            "and is excluded from tariff cost and savings projections."
+        ),
     )
     infer_battery_preserve_policy: bool = Field(
         True,
