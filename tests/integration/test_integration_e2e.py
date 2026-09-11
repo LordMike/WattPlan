@@ -26,6 +26,8 @@ from custom_components.wattplan.const import (
     CONF_MIN_OPTION_GAP_MINUTES,
     CONF_MINIMUM_KWH,
     CONF_ON_OFF_SOURCE,
+    CONF_OPTIMIZER_LOOKAHEAD_HOURS,
+    CONF_OPTIMIZER_LOOKAHEAD_SLOTS,
     CONF_OPTIONS_COUNT,
     CONF_PLANNING_ENABLED,
     CONF_ROLLING_WINDOW_HOURS,
@@ -60,6 +62,7 @@ from homeassistant.const import (
     STATE_UNKNOWN,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.util import dt as dt_util
 
@@ -255,6 +258,9 @@ def _entry(
     subentries_data: list[config_entries.ConfigSubentryData],
     sources: dict[str, dict[str, Any]] | None = None,
     options: dict[str, Any] | None = None,
+    slot_minutes: int = 60,
+    hours_to_plan: int = 4,
+    minor_version: int = 2,
 ) -> MockConfigEntry:
     """Build a mock WattPlan config entry."""
     return MockConfigEntry(
@@ -262,8 +268,8 @@ def _entry(
         title=title,
         data={
             CONF_NAME: title,
-            CONF_SLOT_MINUTES: 60,
-            CONF_HOURS_TO_PLAN: 4,
+            CONF_SLOT_MINUTES: slot_minutes,
+            CONF_HOURS_TO_PLAN: hours_to_plan,
             CONF_SOURCES: sources or _base_sources(),
         },
         options=options
@@ -271,6 +277,7 @@ def _entry(
             CONF_PLANNING_ENABLED: False,
             CONF_ACTION_EMISSION_ENABLED: False,
         },
+        minor_version=minor_version,
         subentries_data=subentries_data,
     )
 
@@ -311,6 +318,115 @@ async def _run_emit(
     if entry_id is not None:
         payload["entry_id"] = entry_id
     await hass.services.async_call(DOMAIN, SERVICE_REFRESH_SENSORS, payload, blocking=True)
+
+
+@pytest.mark.parametrize(
+    ("slot_minutes", "legacy_hours", "edited_slots"),
+    [(15, 5.5, 48), (30, 11.0, 24), (60, 22.0, 12)],
+)
+async def test_legacy_lookahead_migrates_and_can_be_edited_in_hours(
+    hass: HomeAssistant,
+    slot_minutes: int,
+    legacy_hours: float,
+    edited_slots: int,
+) -> None:
+    """Legacy entries should keep 22 slots, display them honestly, then edit."""
+    horizon_slots = 12 * 60 // slot_minutes
+    values = [0.2] * horizon_slots
+    sources = {
+        CONF_SOURCE_IMPORT_PRICE: {
+            CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+            CONF_TEMPLATE: f"{{{{ {values!r} }}}}",
+        },
+        CONF_SOURCE_USAGE: {
+            CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+            CONF_TEMPLATE: f"{{{{ {[1.0] * horizon_slots!r} }}}}",
+        },
+        CONF_SOURCE_PV: {
+            CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+            CONF_TEMPLATE: f"{{{{ {[0.0] * horizon_slots!r} }}}}",
+        },
+    }
+    options = {
+        CONF_PLANNING_ENABLED: True,
+        CONF_ACTION_EMISSION_ENABLED: False,
+    }
+    entry = _entry(
+        title=f"Legacy Home {slot_minutes}",
+        subentries_data=[],
+        sources=sources,
+        options=options,
+        slot_minutes=slot_minutes,
+        hours_to_plan=12,
+        minor_version=1,
+    )
+    captured = []
+
+    def capture_params(params: Any) -> dict[str, object]:
+        captured.append(params)
+        return _fake_optimize(params)
+
+    with patch(
+        "custom_components.wattplan.coordinator.optimize", side_effect=capture_params
+    ):
+        await _setup_entry(hass, entry)
+        assert entry.minor_version == 2
+        assert entry.options[CONF_OPTIMIZER_LOOKAHEAD_SLOTS] == 22
+        assert captured[-1].lookahead_slots == 22
+
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"next_step_id": "planner_core"}
+        )
+        schema = result["data_schema"].schema
+        marker = next(
+            key
+            for key in schema
+            if getattr(key, "schema", None) == CONF_OPTIMIZER_LOOKAHEAD_HOURS
+        )
+        assert marker.default() == legacy_hours
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {
+                CONF_SLOT_MINUTES: str(slot_minutes),
+                CONF_HOURS_TO_PLAN: "12",
+                CONF_OPTIMIZER_LOOKAHEAD_HOURS: 12,
+            },
+        )
+        assert result["type"] is FlowResultType.MENU
+        await _run_optimize(hass, entry_id=entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert entry.options[CONF_OPTIMIZER_LOOKAHEAD_SLOTS] == edited_slots
+    assert captured[-1].lookahead_slots == edited_slots
+
+
+async def test_runtime_missing_lookahead_falls_back_to_22_slots(
+    hass: HomeAssistant,
+) -> None:
+    """Runtime assembly should preserve old behavior even before migration."""
+    entry = _entry(
+        title="Unmigrated Runtime",
+        subentries_data=[],
+        options={
+            CONF_PLANNING_ENABLED: True,
+            CONF_ACTION_EMISSION_ENABLED: False,
+        },
+        minor_version=2,
+    )
+    captured = []
+
+    def capture_params(params: Any) -> dict[str, object]:
+        captured.append(params)
+        return _fake_optimize(params)
+
+    with patch(
+        "custom_components.wattplan.coordinator.optimize", side_effect=capture_params
+    ):
+        await _setup_entry(hass, entry)
+
+    assert CONF_OPTIMIZER_LOOKAHEAD_SLOTS not in entry.options
+    assert captured[-1].lookahead_slots == 22
 
 
 async def test_run_services_are_isolated_by_name(hass: HomeAssistant) -> None:

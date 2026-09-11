@@ -149,7 +149,9 @@ class ComfortSubentryFlowHandler(ConfigSubentryFlow):
             if _subentry_name_in_use(self._get_entry(), user_input[CONF_NAME]):
                 errors["base"] = "name_not_unique"
             else:
-                errors.update(_validate_comfort_data(user_input))
+                errors.update(
+                    _validate_comfort_data(user_input, entry=self._get_entry())
+                )
             if not errors:
                 self._pending_input = dict(user_input)
                 return await self.async_step_complete()
@@ -200,7 +202,9 @@ class ComfortSubentryFlowHandler(ConfigSubentryFlow):
             ):
                 errors["base"] = "name_not_unique"
             else:
-                errors.update(_validate_comfort_data(user_input))
+                errors.update(
+                    _validate_comfort_data(user_input, entry=self._get_entry())
+                )
 
             if not errors:
                 self._pending_input = dict(user_input)

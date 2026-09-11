@@ -37,6 +37,7 @@ from ..const import (
     CONF_MIN_OPTION_GAP_MINUTES,
     CONF_MINIMUM_KWH,
     CONF_ON_OFF_SOURCE,
+    CONF_OPTIMIZER_LOOKAHEAD_SLOTS,
     CONF_OPTIMIZER_PROFILE,
     CONF_OPTIONS_COUNT,
     CONF_ROLLING_WINDOW_HOURS,
@@ -51,6 +52,7 @@ from ..const import (
     CONF_SOURCES,
     CONF_TARGET_ON_HOURS_PER_WINDOW,
     CONF_PREFER_PV_SURPLUS_CHARGING,
+    LEGACY_OPTIMIZER_LOOKAHEAD_SLOTS,
     OPTIMIZER_PROFILE_BALANCED,
     SOURCE_MODE_BUILT_IN,
     SOURCE_MODE_NOT_USED,
@@ -129,6 +131,12 @@ class PlanningRequestBuilder:
         slot_minutes = int(entry.data[CONF_SLOT_MINUTES])
         hours_to_plan = int(entry.data[CONF_HOURS_TO_PLAN])
         expected_slots = int((hours_to_plan * 60) / slot_minutes)
+        lookahead_slots = int(
+            entry.options.get(
+                CONF_OPTIMIZER_LOOKAHEAD_SLOTS,
+                LEGACY_OPTIMIZER_LOOKAHEAD_SLOTS,
+            )
+        )
         window = SourceWindow(
             start_at=self._floor_to_slot(datetime.now(tz=UTC), slot_minutes),
             slot_minutes=slot_minutes,
@@ -382,6 +390,7 @@ class PlanningRequestBuilder:
                     "rolling_window_slots": (
                         next(iter(rolling_window_slots_set)) if rolling_window_slots_set else 24
                     ),
+                    "lookahead_slots": lookahead_slots,
                     **PROFILE_SETTINGS.get(
                         str(entry.options.get(CONF_OPTIMIZER_PROFILE, OPTIMIZER_PROFILE_BALANCED)),
                         PROFILE_SETTINGS[OPTIMIZER_PROFILE_BALANCED],

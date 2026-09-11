@@ -17,7 +17,6 @@ except ImportError:
     highspy = None
 
 
-MPC_HORIZON = 22
 EPSILON = 1e-6
 AVG_PRICE_SENTINEL = 1000.0
 PRESERVE_PROBE_MIN_KWH = 0.01
@@ -974,6 +973,7 @@ def _run_mpc(
     battery_entities,
     comfort_entities,
     reuse_plan,
+    lookahead_slots,
     infer_battery_preserve_policy,
 ):
     num_battery = len(battery_entities)
@@ -1042,7 +1042,7 @@ def _run_mpc(
                 )
 
     for t in range(total_steps):
-        horizon = min(MPC_HORIZON, total_steps - t)
+        horizon = min(lookahead_slots, total_steps - t)
 
         if t < reused_steps:
             controls = {
@@ -1530,6 +1530,7 @@ def optimize_internal(normalized: CalculationInput):
         battery_entities,
         comfort_entities,
         reuse_plan,
+        normalized.lookahead_slots,
         normalized.infer_battery_preserve_policy,
     )
     execution_time = time.time() - start_time

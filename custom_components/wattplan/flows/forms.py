@@ -16,20 +16,27 @@ from ..const import (
     CONF_DURATION_MINUTES,
     CONF_ENERGY_KWH,
     CONF_EXPECTED_POWER_KW,
+    CONF_HOURS_TO_PLAN,
     CONF_MAX_CONSECUTIVE_OFF_MINUTES,
     CONF_MIN_CONSECUTIVE_OFF_MINUTES,
     CONF_MIN_CONSECUTIVE_ON_MINUTES,
     CONF_MIN_OPTION_GAP_MINUTES,
     CONF_MINIMUM_KWH,
     CONF_OPTIONS_COUNT,
+    CONF_OPTIMIZER_LOOKAHEAD_HOURS,
+    CONF_OPTIMIZER_LOOKAHEAD_SLOTS,
     CONF_PREFER_PV_SURPLUS_CHARGING,
     CONF_ROLLING_WINDOW_HOURS,
     CONF_RUN_WITHIN_HOURS,
+    CONF_SLOT_MINUTES,
     CONF_TARGET_ON_HOURS_PER_WINDOW,
+    LEGACY_OPTIMIZER_LOOKAHEAD_SLOTS,
+    SUBENTRY_TYPE_COMFORT,
 )
 from .source_shared import (
     MAX_NAME_LENGTH,
     SECTION_BATTERY_ADVANCED,
+    _lookahead_slots_from_hours,
     _optional_max_distinct_options,
     _validate_text_field,
 )
@@ -92,7 +99,14 @@ def _battery_form_defaults(data: dict[str, Any]) -> dict[str, Any]:
     return defaults
 
 
-def _validate_comfort_data(data: dict[str, Any]) -> dict[str, str]:
+def _comfort_duration_slots(minutes: int, slot_minutes: int) -> int:
+    """Convert a comfort minimum duration to planner slots."""
+    return max(1, int(round(minutes / slot_minutes)))
+
+
+def _validate_comfort_data(
+    data: dict[str, Any], *, entry: ConfigEntry | None = None
+) -> dict[str, str]:
     """Validate comfort values for better UX."""
     errors: dict[str, str] = {}
     _validate_text_field(
@@ -110,7 +124,52 @@ def _validate_comfort_data(data: dict[str, Any]) -> dict[str, str]:
         errors[CONF_MAX_CONSECUTIVE_OFF_MINUTES] = "comfort_duration_exceeds_window"
     if float(data[CONF_EXPECTED_POWER_KW]) <= 0:
         errors[CONF_EXPECTED_POWER_KW] = "comfort_expected_power_invalid"
+    if entry is not None:
+        slot_minutes = int(entry.data[CONF_SLOT_MINUTES])
+        plan_slots = int(entry.data[CONF_HOURS_TO_PLAN]) * 60 // slot_minutes
+        lookahead_slots = int(
+            entry.options.get(
+                CONF_OPTIMIZER_LOOKAHEAD_SLOTS,
+                LEGACY_OPTIMIZER_LOOKAHEAD_SLOTS,
+            )
+        )
+        solve_horizon = min(plan_slots, lookahead_slots)
+        for field in (
+            CONF_MIN_CONSECUTIVE_ON_MINUTES,
+            CONF_MIN_CONSECUTIVE_OFF_MINUTES,
+        ):
+            if _comfort_duration_slots(int(data[field]), slot_minutes) >= solve_horizon:
+                errors[field] = "comfort_duration_exceeds_lookahead"
     return errors
+
+
+def _validate_core_lookahead_for_comforts(
+    entry: ConfigEntry, data: dict[str, Any]
+) -> dict[str, str]:
+    """Reject planner changes that make existing comfort loads invalid."""
+    slot_minutes = int(data[CONF_SLOT_MINUTES])
+    plan_slots = int(data[CONF_HOURS_TO_PLAN]) * 60 // slot_minutes
+    lookahead_slots = _lookahead_slots_from_hours(
+        float(data[CONF_OPTIMIZER_LOOKAHEAD_HOURS]), slot_minutes
+    )
+    solve_horizon = min(plan_slots, lookahead_slots)
+    for subentry in entry.subentries.values():
+        if subentry.subentry_type != SUBENTRY_TYPE_COMFORT:
+            continue
+        if any(
+            _comfort_duration_slots(int(subentry.data[field]), slot_minutes)
+            >= solve_horizon
+            for field in (
+                CONF_MIN_CONSECUTIVE_ON_MINUTES,
+                CONF_MIN_CONSECUTIVE_OFF_MINUTES,
+            )
+        ):
+            return {
+                CONF_OPTIMIZER_LOOKAHEAD_HOURS: (
+                    "optimizer_lookahead_too_short_for_comfort"
+                )
+            }
+    return {}
 
 
 def _validate_optional_data(data: dict[str, Any]) -> dict[str, str]:

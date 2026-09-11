@@ -9,7 +9,7 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-SOLVE_HORIZON_SLOTS = 22
+DEFAULT_LOOKAHEAD_SLOTS = 22
 
 
 class ChargeSource(IntFlag):
@@ -302,6 +302,15 @@ class OptimizationParams(BaseModel):
         ge=1,
         description="Rolling window size in slots used by comfort ON-slot accounting.",
     )
+    lookahead_slots: int = Field(
+        DEFAULT_LOOKAHEAD_SLOTS,
+        ge=2,
+        le=672,
+        description=(
+            "Maximum number of future slots considered when choosing each action. "
+            "The returned plan still covers the full supplied horizon."
+        ),
+    )
     throughput_cost_per_kwh: float = Field(
         0.0, description="Additional cost applied to charging/discharging throughput."
     )
@@ -389,7 +398,7 @@ class OptimizationParams(BaseModel):
             if value < 0.0:
                 raise ValueError(f"{field_name} must be >= 0")
         horizon = len(self.grid_import_price_per_kwh)
-        solve_horizon = min(SOLVE_HORIZON_SLOTS, horizon)
+        solve_horizon = min(self.lookahead_slots, horizon)
         if len(self.grid_export_price_per_kwh) == 0:
             self.grid_export_price_per_kwh = [0.0] * horizon
         elif len(self.grid_export_price_per_kwh) != horizon:
@@ -564,6 +573,7 @@ class CalculationInput:
     solar_input: np.ndarray
     usage: np.ndarray
     rolling_window_slots: int
+    lookahead_slots: int
     infer_battery_preserve_policy: bool
     battery_entities: List[BatteryEntity]
     comfort_entities: List[ComfortEntity]
@@ -576,6 +586,7 @@ def _entity_fingerprint(
     battery_entities,
     comfort_entities,
     rolling_window_slots,
+    lookahead_slots,
     infer_battery_preserve_policy,
 ):
     # Reuse must only happen when the optimization problem is materially the
@@ -625,6 +636,7 @@ def _entity_fingerprint(
             for e in comfort_entities
         ],
         "rolling_window_slots": int(rolling_window_slots),
+        "lookahead_slots": int(lookahead_slots),
         "infer_battery_preserve_policy": bool(infer_battery_preserve_policy),
     }
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
@@ -910,6 +922,7 @@ def normalize_calculation_input(params: OptimizationParams):
         battery_entities,
         comfort_entities,
         params.rolling_window_slots,
+        params.lookahead_slots,
         params.infer_battery_preserve_policy,
     )
     state = _parse_state_blob(params.state)
@@ -921,6 +934,7 @@ def normalize_calculation_input(params: OptimizationParams):
         solar_input=solar_input,
         usage=usage,
         rolling_window_slots=int(params.rolling_window_slots),
+        lookahead_slots=int(params.lookahead_slots),
         infer_battery_preserve_policy=bool(params.infer_battery_preserve_policy),
         battery_entities=battery_entities,
         comfort_entities=comfort_entities,

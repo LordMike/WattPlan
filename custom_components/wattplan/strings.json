@@ -12,12 +12,14 @@
         "submit": "Next",
         "data": {
           "optimizer_profile": "Optimizer profile",
+          "optimizer_lookahead_hours": "Economic lookahead (hours)",
           "name": "Setup name",
           "slot_minutes": "Resolution (minutes)",
           "hours_to_plan": "How many hours ahead should the plan cover"
         },
         "data_description": {
           "optimizer_profile": "Choose how actively WattPlan should use batteries.\n\n- Aggressive: Favors savings and accepts more battery movement.\n- Balanced: Good default for most homes; balances savings and calmer battery behavior.\n- Conservative: Avoids smaller moves and keeps battery behavior steadier.\n\n[Read more here](https://github.com/LordMike/WattPlan/blob/main/docs/optimizer-profiles.md).",
+          "optimizer_lookahead_hours": "How far ahead prices and forecasts may influence the current action. New setups default to 12 hours. The plan still covers the full planning horizon, and lookahead is capped by that available coverage. WattPlan converts hours to whole slots using the selected resolution. Longer lookahead can improve timing across morning and evening price periods, but increases computation time. Comfort minimum-on and minimum-off durations must each be shorter than the effective lookahead.",
           "name": "This name will identify this WattPlan setup in Home Assistant.",
           "slot_minutes": "This is the plan resolution. A lower value means more detailed plans and more required forecast values.",
           "hours_to_plan": "WattPlan needs forecasts that cover the full selected period."
@@ -25,7 +27,7 @@
       },
       "setup_complete": {
         "title": "Setup complete",
-        "description": "You have now set up the **{setup_name}** WattPlan planner.\n\nCurrent planner settings:\n- Resolution: **{slot_minutes} minutes**\n- Planning horizon: **{plan_hours} hours**\n- Price source: **{price_source}**\n- Usage source: **{usage_source}**\n- PV source: **{pv_source}**\n- Export price source: **{export_price_source}**\n\nWattPlan will now begin producing plans on its schedule and after relevant setup changes.\n\n**Does this work?** WattPlan continuously pulls the configured forecast data, updates its plan, and exposes the current integration health through the `status` sensors. If something goes wrong, degraded and failed states are shown there and actionable source issues appear in Home Assistant Repairs. [Read more about error handling](https://github.com/LordMike/WattPlan/blob/main/docs/error-handling.md)\n\nPlanning and optimization are only part of the setup. To really benefit, WattPlan needs something that can shift load away from expensive periods and into cheaper ones.\n\nGood next steps:\n- Add a **battery** if you want WattPlan to plan charging and discharging\n- Add **optional loads** such as a washing machine if you want WattPlan to suggest when people should start them\n- Add **comfort loads** if you want WattPlan to shift flexible always-needed loads\n- Create automations that translate WattPlan action entities into real device commands\n\nIn practice, batteries, optional loads, and comfort loads are the main ways to turn plans into savings.\n\nClick **Finish** to complete the integration setup and give the new planner device a name and/or area.",
+        "description": "You have now set up the **{setup_name}** WattPlan planner.\n\nCurrent planner settings:\n- Resolution: **{slot_minutes} minutes**\n- Planning horizon: **{plan_hours} hours**\n- Economic lookahead: **{lookahead_hours} hours**\n- Price source: **{price_source}**\n- Usage source: **{usage_source}**\n- PV source: **{pv_source}**\n- Export price source: **{export_price_source}**\n\nWattPlan will now begin producing plans on its schedule and after relevant setup changes.\n\n**Does this work?** WattPlan continuously pulls the configured forecast data, updates its plan, and exposes the current integration health through the `status` sensors. If something goes wrong, degraded and failed states are shown there and actionable source issues appear in Home Assistant Repairs. [Read more about error handling](https://github.com/LordMike/WattPlan/blob/main/docs/error-handling.md)\n\nPlanning and optimization are only part of the setup. To really benefit, WattPlan needs something that can shift load away from expensive periods and into cheaper ones.\n\nGood next steps:\n- Add a **battery** if you want WattPlan to plan charging and discharging\n- Add **optional loads** such as a washing machine if you want WattPlan to suggest when people should start them\n- Add **comfort loads** if you want WattPlan to shift flexible always-needed loads\n- Create automations that translate WattPlan action entities into real device commands\n\nIn practice, batteries, optional loads, and comfort loads are the main ways to turn plans into savings.\n\nClick **Finish** to complete the integration setup and give the new planner device a name and/or area.",
         "submit": "Finish"
       },
       "source_price": {
@@ -700,7 +702,9 @@
       "template_invalid_structure": "Template returned text. Return a native list of objects or numeric values.",
       "source_fetch_error": "Source data could not be fetched. Check entity/template settings and try again.",
       "energy_provider_none_available": "No loaded Home Assistant Energy solar forecast providers were found.",
-      "energy_provider_unavailable": "The selected Energy solar forecast provider is unavailable or returned no forecast data."
+      "energy_provider_unavailable": "The selected Energy solar forecast provider is unavailable or returned no forecast data.",
+      "optimizer_lookahead_invalid_resolution": "Choose a lookahead that converts to a whole number of slots at the selected resolution and contains at least two slots.",
+      "optimizer_lookahead_too_short_for_comfort": "Increase economic lookahead or reduce the minimum-on/minimum-off duration of the configured comfort loads. Each minimum duration must be shorter than the effective lookahead and plan coverage."
     }
   },
   "options": {
@@ -727,11 +731,13 @@
         "description": "Set interval size and planning horizon. These values define how many forecast values are required.",
         "data": {
           "optimizer_profile": "Optimizer profile",
+          "optimizer_lookahead_hours": "Economic lookahead (hours)",
           "slot_minutes": "Resolution (minutes)",
           "hours_to_plan": "How many hours ahead should the plan cover"
         },
         "data_description": {
           "optimizer_profile": "Choose how actively WattPlan should use batteries.\n\n- Aggressive: Favors savings and accepts more battery movement.\n- Balanced: Good default for most homes; balances savings and calmer battery behavior.\n- Conservative: Avoids smaller moves and keeps battery behavior steadier.\n\n[Read more here](https://github.com/LordMike/WattPlan/blob/main/docs/optimizer-profiles.md).",
+          "optimizer_lookahead_hours": "The displayed value is the current economic lookahead duration. Existing setups retain the historical 22-slot behavior: 5.5 hours at 15-minute resolution, 11 hours at 30-minute resolution, or 22 hours at 60-minute resolution. The plan still covers the full planning horizon, and lookahead is capped by that available coverage. WattPlan converts this duration to whole slots using the selected resolution. Longer lookahead can improve timing but increases computation time. Comfort minimum-on and minimum-off durations must each be shorter than the effective lookahead.",
           "slot_minutes": "This is the plan resolution. A lower value means more detailed plans and more required forecast values.",
           "hours_to_plan": "WattPlan needs forecasts that cover the full selected period."
         }
@@ -1477,6 +1483,9 @@
       "battery_minimum_exceeds_capacity": "Set the minimum battery energy below the battery capacity.",
       "comfort_target_on_hours_invalid": "Set target on-time to be less than or equal to the window duration.",
       "comfort_duration_exceeds_window": "Set this duration to be less than or equal to the window duration.",
+      "comfort_duration_exceeds_lookahead": "Set this duration shorter than the planner's effective economic lookahead and plan coverage, or increase economic lookahead in General settings.",
+      "optimizer_lookahead_invalid_resolution": "Choose a lookahead that converts to a whole number of slots at the selected resolution and contains at least two slots.",
+      "optimizer_lookahead_too_short_for_comfort": "Increase economic lookahead or reduce the minimum-on/minimum-off duration of the configured comfort loads. Each minimum duration must be shorter than the effective lookahead and plan coverage.",
       "comfort_expected_power_invalid": "Set expected power above 0 kW.",
       "energy_kwh_required": "Please enter the energy needed in kWh.",
       "optional_energy_must_be_positive": "Set energy above 0 kWh.",
@@ -1661,6 +1670,7 @@
         "text_too_long": "That is too long. Please shorten it.",
         "comfort_target_on_hours_invalid": "Set target on-time to be less than or equal to the window duration.",
         "comfort_duration_exceeds_window": "Set this duration to be less than or equal to the window duration.",
+        "comfort_duration_exceeds_lookahead": "Set this duration shorter than the planner's effective economic lookahead and plan coverage, or increase economic lookahead in General settings.",
         "comfort_expected_power_invalid": "Set expected power above 0 kW."
       },
       "abort": {

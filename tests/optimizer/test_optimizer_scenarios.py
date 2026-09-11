@@ -17,6 +17,102 @@ def _run_optimizer(input_payload):
     return assert_plan_invariants(optimizer.optimize(params))
 
 
+def _lookahead_payload(lookahead_slots):
+    """Return a battery case with a high-price slot near the 12-hour edge."""
+    prices = [0.1, *([0.2] * 46), 1.0]
+    usage = [0.0] * 47 + [1.0]
+    return {
+        "grid_import_price_per_kwh": prices,
+        "solar_input_kwh": [0.0] * 48,
+        "usage_kwh": usage,
+        "lookahead_slots": lookahead_slots,
+        "battery_entities": [
+            {
+                "name": "battery",
+                "initial_kwh": 0.0,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 1.0,
+                "charge_curve_kwh": [1.0],
+                "discharge_curve_kwh": [1.0],
+                "can_charge_from": 1,
+            }
+        ],
+        "comfort_entities": [],
+    }
+
+
+def test_twelve_hour_lookahead_can_change_current_action():
+    """A price at the 12-hour edge should only affect a long enough solve."""
+    short_result = _run_optimizer(_lookahead_payload(16))
+    twelve_hour_result = _run_optimizer(_lookahead_payload(48))
+
+    short_first = _entity_schedule(short_result, "battery")[0]
+    twelve_hour_first = _entity_schedule(twelve_hour_result, "battery")[0]
+    assert len(_entity_schedule(short_result, "battery")) == 48
+    assert len(_entity_schedule(twelve_hour_result, "battery")) == 48
+    assert short_first["state"] == "self_consume"
+    assert short_first["level"] == pytest.approx(0.0)
+    assert twelve_hour_first["state"] == "grid_charge"
+    assert twelve_hour_first["level"] == pytest.approx(1.0)
+    assert short_result["projections"]["projected_cost"] == pytest.approx(
+        _independent_projected_cost_for_unit_efficiency(
+            _lookahead_payload(16), short_result
+        )
+    )
+    assert twelve_hour_result["projections"]["projected_cost"] == pytest.approx(
+        _independent_projected_cost_for_unit_efficiency(
+            _lookahead_payload(48), twelve_hour_result
+        )
+    )
+    assert twelve_hour_result["projections"]["projected_cost"] < (
+        short_result["projections"]["projected_cost"]
+    )
+
+
+def test_lookahead_change_invalidates_reusable_state():
+    """Controls solved under another lookahead must not be replayed."""
+    first_result = _run_optimizer(_lookahead_payload(16))
+    next_payload = _lookahead_payload(48)
+    next_payload["state"] = first_result["state"]
+
+    next_result = _run_optimizer(next_payload)
+    cold_result = _run_optimizer(_lookahead_payload(48))
+
+    assert next_result["reused_steps"] == 0
+    assert _entity_schedule(next_result, "battery")[0]["state"] == "grid_charge"
+    assert _entity_schedule(next_result, "battery")[0]["level"] == pytest.approx(1.0)
+    assert next_result["projections"]["projected_cost"] == pytest.approx(
+        cold_result["projections"]["projected_cost"]
+    )
+
+
+def test_lookahead_validation_uses_configured_solve_horizon():
+    """Lookahead bounds and comfort locks should fail at model validation."""
+    default_payload = _lookahead_payload(16)
+    default_payload.pop("lookahead_slots")
+    assert optimizer.OptimizationParams(**default_payload).lookahead_slots == 22
+
+    with pytest.raises(ValidationError):
+        optimizer.OptimizationParams(**_lookahead_payload(1))
+
+    payload = _lookahead_payload(4)
+    payload["comfort_entities"] = [
+        {
+            "name": "comfort",
+            "target_on_slots_per_rolling_window": 1,
+            "min_consecutive_on_slots": 4,
+            "min_consecutive_off_slots": 1,
+            "max_consecutive_off_slots": 4,
+            "power_usage_kwh": 1.0,
+            "is_on_now": False,
+            "on_slots_last_rolling_window": 0,
+            "off_streak_slots_now": 0,
+        }
+    ]
+    with pytest.raises(ValidationError, match=r"solve horizon \(4\)"):
+        optimizer.OptimizationParams(**payload)
+
+
 def _level_increase_count(schedule, *, initial_level):
     """Return how many schedule points increase the battery level."""
     increases = 0

@@ -33,6 +33,8 @@ from custom_components.wattplan.const import (
     CONF_MIN_OPTION_GAP_MINUTES,
     CONF_MINIMUM_KWH,
     CONF_ON_OFF_SOURCE,
+    CONF_OPTIMIZER_LOOKAHEAD_HOURS,
+    CONF_OPTIMIZER_LOOKAHEAD_SLOTS,
     CONF_OPTIONS_COUNT,
     CONF_PLANNING_ENABLED,
     CONF_ROLLING_WINDOW_HOURS,
@@ -263,6 +265,7 @@ async def test_form(hass: HomeAssistant, mock_setup_entry: AsyncMock) -> None:
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "planner_setup"
+    assert _schema_default(result, CONF_OPTIMIZER_LOOKAHEAD_HOURS) == 12.0
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
@@ -270,6 +273,7 @@ async def test_form(hass: HomeAssistant, mock_setup_entry: AsyncMock) -> None:
             CONF_NAME: "Home",
             CONF_SLOT_MINUTES: "60",
             CONF_HOURS_TO_PLAN: "12",
+            CONF_OPTIMIZER_LOOKAHEAD_HOURS: "6",
         },
     )
     assert result["type"] is FlowResultType.FORM
@@ -328,6 +332,8 @@ async def test_form(hass: HomeAssistant, mock_setup_entry: AsyncMock) -> None:
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "Home"
     assert len(mock_setup_entry.mock_calls) == 1
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    assert entry.options[CONF_OPTIMIZER_LOOKAHEAD_SLOTS] == 6
 
 
 async def test_multiple_setups_allowed(
@@ -881,6 +887,119 @@ async def test_options_planner_timers_both_enabled_saves_without_warning(
     assert updated is not None
     assert updated.options[CONF_PLANNING_ENABLED] is True
     assert updated.options[CONF_ACTION_EMISSION_ENABLED] is True
+
+
+async def test_options_planner_core_defaults_existing_entry_and_saves_lookahead(
+    hass: HomeAssistant, mock_setup_entry: AsyncMock
+) -> None:
+    """A missing persisted value should expose the legacy 22-slot duration."""
+    entry = await _create_basic_entry(hass)
+    hass.config_entries.async_update_entry(
+        entry,
+        options={
+            key: value
+            for key, value in entry.options.items()
+            if key != CONF_OPTIMIZER_LOOKAHEAD_SLOTS
+        },
+    )
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "planner_core"}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert _schema_default(result, CONF_OPTIMIZER_LOOKAHEAD_HOURS) == 22.0
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_SLOT_MINUTES: "60",
+            CONF_HOURS_TO_PLAN: "24",
+            CONF_OPTIMIZER_LOOKAHEAD_HOURS: 8,
+        },
+    )
+    assert result["type"] is FlowResultType.MENU
+    updated = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated is not None
+    assert updated.options[CONF_OPTIMIZER_LOOKAHEAD_SLOTS] == 8
+
+
+async def test_options_rejects_lookahead_shorter_than_existing_comfort_minimum(
+    hass: HomeAssistant, mock_setup_entry: AsyncMock
+) -> None:
+    """Core edits should not save a lookahead that breaks comfort validation."""
+    entry = await _create_basic_entry(hass)
+    hass.config_entries.async_update_entry(
+        entry,
+        options={**entry.options, CONF_OPTIMIZER_LOOKAHEAD_SLOTS: 22},
+    )
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, SUBENTRY_TYPE_COMFORT), context={"source": "user"}
+    )
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"],
+        {
+            CONF_NAME: "Long cycle heat",
+            CONF_ROLLING_WINDOW_HOURS: 24,
+            CONF_TARGET_ON_HOURS_PER_WINDOW: 8,
+            CONF_MIN_CONSECUTIVE_ON_MINUTES: 16 * 60,
+            CONF_MIN_CONSECUTIVE_OFF_MINUTES: 60,
+            CONF_MAX_CONSECUTIVE_OFF_MINUTES: 16 * 60,
+            CONF_ON_OFF_SOURCE: "binary_sensor.long_cycle_heat",
+            CONF_EXPECTED_POWER_KW: 1.5,
+        },
+    )
+    result = await _finish_subentry_if_needed(hass, result)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "planner_core"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_SLOT_MINUTES: "60",
+            CONF_HOURS_TO_PLAN: "24",
+            CONF_OPTIMIZER_LOOKAHEAD_HOURS: 12,
+        },
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {
+        CONF_OPTIMIZER_LOOKAHEAD_HOURS: "optimizer_lookahead_too_short_for_comfort"
+    }
+    updated = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated is not None
+    assert updated.options[CONF_OPTIMIZER_LOOKAHEAD_SLOTS] == 22
+
+
+async def test_comfort_flow_rejects_minimum_equal_to_effective_lookahead(
+    hass: HomeAssistant, mock_setup_entry: AsyncMock
+) -> None:
+    """Comfort edits should fail before they can break later planning."""
+    entry = await _create_basic_entry(hass)
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, SUBENTRY_TYPE_COMFORT), context={"source": "user"}
+    )
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"],
+        {
+            CONF_NAME: "Long cycle heat",
+            CONF_ROLLING_WINDOW_HOURS: 24,
+            CONF_TARGET_ON_HOURS_PER_WINDOW: 8,
+            CONF_MIN_CONSECUTIVE_ON_MINUTES: 12 * 60,
+            CONF_MIN_CONSECUTIVE_OFF_MINUTES: 60,
+            CONF_MAX_CONSECUTIVE_OFF_MINUTES: 12 * 60,
+            CONF_ON_OFF_SOURCE: "binary_sensor.long_cycle_heat",
+            CONF_EXPECTED_POWER_KW: 1.5,
+        },
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"][CONF_MIN_CONSECUTIVE_ON_MINUTES] == (
+        "comfort_duration_exceeds_lookahead"
+    )
 
 
 async def test_options_planner_timers_planning_disabled_requires_acknowledgement(

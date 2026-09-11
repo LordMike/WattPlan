@@ -8,13 +8,14 @@ This document describes the direct Python API for the optimizer packaged inside 
 
 The optimizer is model-predictive-control (MPC) based.
 
-If you are using WattPlan through the Home Assistant integration, see [optimizer-profiles.md](optimizer-profiles.md) for the user-facing `Aggressive`, `Balanced`, and `Conservative` presets. Those profiles are integration-level presets that map onto the numeric optimizer fields documented here.
+If you are using WattPlan through the Home Assistant integration, see [optimizer-profiles.md](optimizer-profiles.md) for the user-facing `Aggressive`, `Balanced`, and `Conservative` presets. Those profiles are integration-level presets that map onto the numeric optimizer fields documented here. New Home Assistant setups use a 12-hour economic lookahead. Existing setups are migrated to the historical 22-slot lookahead and may edit the displayed duration in General settings.
 
 ## Time Resolution (Timeslots)
 All time-indexed fields use **timeslots**.
 - A timeslot is one fixed slice of time at your chosen resolution (for example, 15 minutes).
 - Every array index corresponds to one timeslot.
 - The API does not enforce a specific minutes-per-timeslot value; the caller is responsible for consistent input resolution.
+- `lookahead_slots` is also expressed in this same resolution. The Home Assistant integration converts its hour-based economic lookahead setting to slots (`hours * 60 / slot_minutes`).
 
 ## Conceptual Model
 The solve combines three kinds of entities:
@@ -38,6 +39,7 @@ result = optimize(params)
 | `solar_input_kwh` | `list[float]` | Yes* | `[]` | Must match `len(grid_import_price_per_kwh)`, finite, `>= 0` | Per-timeslot PV forecast (kWh per timeslot). |
 | `usage_kwh` | `list[float]` | Yes* | `[]` | Must match `len(grid_import_price_per_kwh)`, finite, `>= 0` | Per-timeslot base load forecast (kWh per timeslot). |
 | `rolling_window_slots` | `int` | No | `24` | `>= 1` | Slot count used for comfort rolling-window ON accounting. |
+| `lookahead_slots` | `int` | No | `22` | `2..672` | Maximum future slots considered when selecting each current action. Direct API callers that omit it retain the historical 22-slot behavior. The full supplied horizon is still returned. |
 | `throughput_cost_per_kwh` | `float` | No | `0.0` | Finite, `>= 0` | Extra cost on charge/discharge throughput to reduce cycling. |
 | `action_deadband_kwh` | `float` | No | `0.0` | Finite, `>= 0` | Modeled flow commands smaller than this are treated as neutral flow. |
 | `mode_switch_cost` | `float` | No | `0.0` | Finite, `>= 0` | Extra cost on changing battery behavior between slots. |
@@ -52,6 +54,7 @@ result = optimize(params)
 **Additional Global Constraints:**
 - Unknown fields are rejected (`extra="forbid"`).
 - Entity names must be unique across battery + comfort + optional groups (case-insensitive).
+- Comfort minimum ON/OFF durations must each be shorter than `min(lookahead_slots, horizon)`.
 
 ## Battery Entity Model (`BatteryEntityParams`)
 | Field | Type | Required | Default | Constraints | Notes |
@@ -128,6 +131,7 @@ Optional entities provide advisory start-time suggestions and do not change the 
   "solar_input_kwh":       [0.0,  0.1,  0.5,  1.0,  0.8,  0.3,  0.0,  0.0],
   "usage_kwh":             [1.2,  1.1,  1.0,  0.9,  1.0,  1.2,  1.3,  1.4],
   "rolling_window_slots": 96,
+  "lookahead_slots": 48,
 
   // Controllable storage: the model tracks grid/PV charge and discharge flows.
   "battery_entities": [

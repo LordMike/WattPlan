@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
+import math
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -76,6 +77,8 @@ from ..const import (
     CONF_MIN_OPTION_GAP_MINUTES,
     CONF_MINIMUM_KWH,
     CONF_ON_OFF_SOURCE,
+    CONF_OPTIMIZER_LOOKAHEAD_HOURS,
+    CONF_OPTIMIZER_LOOKAHEAD_SLOTS,
     CONF_OPTIONS_COUNT,
     CONF_PLANNING_ENABLED,
     CONF_OPTIMIZER_PROFILE,
@@ -97,12 +100,14 @@ from ..const import (
     CONF_TIME_KEY,
     CONF_VALUE_KEY,
     DOMAIN,
+    DEFAULT_OPTIMIZER_LOOKAHEAD_HOURS,
     EDGE_FILL_MODE_HOLD,
     EDGE_FILL_MODE_NONE,
     FIXUP_PROFILE_EXTEND,
     FIXUP_PROFILE_REPAIR,
     FIXUP_PROFILE_STRICT,
     HOURS_TO_PLAN_OPTIONS,
+    LEGACY_OPTIMIZER_LOOKAHEAD_SLOTS,
     OPTIMIZER_PROFILE_AGGRESSIVE,
     OPTIMIZER_PROFILE_BALANCED,
     OPTIMIZER_PROFILE_CONSERVATIVE,
@@ -1068,6 +1073,13 @@ def _core_schema(
     defaults = defaults or {}
     slot_default = str(defaults.get(CONF_SLOT_MINUTES, 15))
     hours_default = str(defaults.get(CONF_HOURS_TO_PLAN, 48))
+    lookahead_default = str(
+        defaults.get(
+            CONF_OPTIMIZER_LOOKAHEAD_HOURS,
+            DEFAULT_OPTIMIZER_LOOKAHEAD_HOURS,
+        )
+    )
+    lookahead_step = int(slot_default) / 60
     schema: dict[Any, Any] = {}
     profile_field = None
     if include_profile:
@@ -1095,6 +1107,17 @@ def _core_schema(
                 mode=selector.SelectSelectorMode.DROPDOWN,
             )
         ),
+        vol.Required(
+            CONF_OPTIMIZER_LOOKAHEAD_HOURS,
+            default=float(lookahead_default),
+        ): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=lookahead_step * 2,
+                max=168,
+                step=lookahead_step,
+                mode=selector.NumberSelectorMode.BOX,
+            )
+        ),
     })
     if include_profile and not profile_last:
         assert profile_field is not None
@@ -1114,7 +1137,23 @@ def _normalize_core_input(user_input: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(user_input)
     normalized[CONF_SLOT_MINUTES] = int(normalized[CONF_SLOT_MINUTES])
     normalized[CONF_HOURS_TO_PLAN] = int(normalized[CONF_HOURS_TO_PLAN])
+    normalized[CONF_OPTIMIZER_LOOKAHEAD_HOURS] = float(
+        normalized.get(
+            CONF_OPTIMIZER_LOOKAHEAD_HOURS,
+            DEFAULT_OPTIMIZER_LOOKAHEAD_HOURS,
+        )
+    )
     return normalized
+
+
+def _lookahead_slots_from_hours(hours: float, slot_minutes: int) -> int:
+    """Convert a user-facing duration to optimizer slots."""
+    return int(round(float(hours) * 60 / slot_minutes))
+
+
+def _lookahead_hours_from_slots(slots: int, slot_minutes: int) -> float:
+    """Convert persisted optimizer slots to a user-facing duration."""
+    return float(slots) * slot_minutes / 60
 
 
 def _source_mode_schema(
@@ -1568,6 +1607,20 @@ def _validate_core_data(
             CONF_NAME,
             errors,
             max_length=MAX_NAME_LENGTH,
+        )
+    slot_minutes = int(data[CONF_SLOT_MINUTES])
+    lookahead_hours = float(
+        data.get(CONF_OPTIMIZER_LOOKAHEAD_HOURS, DEFAULT_OPTIMIZER_LOOKAHEAD_HOURS)
+    )
+    exact_slots = lookahead_hours * 60 / slot_minutes
+    lookahead_slots = _lookahead_slots_from_hours(lookahead_hours, slot_minutes)
+    if (
+        not math.isclose(exact_slots, lookahead_slots, abs_tol=1e-9)
+        or lookahead_slots < 2
+        or lookahead_slots > 672
+    ):
+        errors[CONF_OPTIMIZER_LOOKAHEAD_HOURS] = (
+            "optimizer_lookahead_invalid_resolution"
         )
     return errors
 
