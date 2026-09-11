@@ -123,7 +123,10 @@ class HistoricalCostStore:
             self.data["last_processed_slot"] = _utc_iso(last_processed_slot)
             self.data.pop("meter_cursor_seeded", None)
         if last_meter_values is not None:
-            self.data["last_meter_values"] = dict(last_meter_values)
+            self.data["last_meter_values"] = {
+                str(key): _finite_float(value) if value is not None else None
+                for key, value in last_meter_values.items()
+            }
         if meter_config is not None:
             self.data["meter_config"] = dict(meter_config)
         self.mark_dirty()
@@ -149,7 +152,7 @@ class HistoricalCostStore:
                 values[str(key)] = None
                 continue
             try:
-                values[str(key)] = float(value)
+                values[str(key)] = _finite_float(value)
             except (TypeError, ValueError):
                 values[str(key)] = None
         return values
@@ -180,9 +183,11 @@ class HistoricalCostStore:
             if not isinstance(payload, dict):
                 continue
             try:
-                result[str(subentry_id)] = float(payload["soc_kwh"])
+                value = _finite_float(payload["soc_kwh"])
             except (KeyError, TypeError, ValueError):
                 continue
+            if value is not None:
+                result[str(subentry_id)] = value
         return result
 
     def update_simulation_soc(self, soc_by_battery: dict[str, float]) -> None:
@@ -192,8 +197,9 @@ class HistoricalCostStore:
             {},
         )
         state["batteries"] = {
-            subentry_id: {"soc_kwh": float(soc)}
+            subentry_id: {"soc_kwh": value}
             for subentry_id, soc in soc_by_battery.items()
+            if (value := _finite_float(soc)) is not None
         }
 
     def remember_price_series(
@@ -244,6 +250,7 @@ class HistoricalCostStore:
 
     def append_slot(self, record: SlotRecord) -> None:
         """Append one slot fact record to retained history."""
+        record = _sanitize_record(record)
         local_day = self._local_date(record.start).isoformat()
         days = self.data.setdefault("days", {})
         day_payload = days.setdefault(local_day, empty_day_payload())
@@ -306,13 +313,19 @@ class HistoricalCostStore:
         now = now or datetime.now(tz=UTC)
         period_start, period_end = self._period_bounds(period, now)
         records = list(self._records_between(period_start, period_end))
-        missing_slots = sum(1 for record in records if int(record.flags) != 0)
+        missing_slots = 0
         values: list[float] = []
         for record in records:
             value = self._record_value(record, metric=metric, scenario=scenario)
-            if value is not None:
+            if int(record.flags) != 0 or value is None:
+                missing_slots += 1
+            if value is not None and math.isfinite(value):
                 values.append(value)
-        total = round(sum(values), 4) if values else None
+        try:
+            summed = math.fsum(values)
+        except OverflowError:
+            summed = math.inf
+        total = round(summed, 4) if values and math.isfinite(summed) else None
         if total is None and not records and self._tracking_intersects_period(
             period_start, period_end
         ):
@@ -360,19 +373,25 @@ class HistoricalCostStore:
                 return None
             if record.grid_import is None or record.grid_export is None:
                 return None
-            return actual_cost(
-                grid_import=record.grid_import,
-                grid_export=record.grid_export,
-                import_price=record.import_price,
-                export_price=record.export_price,
-            )
+            try:
+                return actual_cost(
+                    grid_import=record.grid_import,
+                    grid_export=record.grid_export,
+                    import_price=record.import_price,
+                    export_price=record.export_price,
+                )
+            except ValueError:
+                return None
         if scenario == SCENARIO_GRID_ONLY:
             if record.usage is None:
                 return None
-            return grid_only_cost(
-                usage=record.usage,
-                import_price=record.import_price,
-            )
+            try:
+                return grid_only_cost(
+                    usage=record.usage,
+                    import_price=record.import_price,
+                )
+            except ValueError:
+                return None
         if scenario == SCENARIO_SELF_CONSUMPTION:
             if record.flags & (
                 EXPORT_DEPENDENT_BAD_SLOT_FLAGS | FLAG_SELF_CONSUMPTION_UNAVAILABLE
@@ -385,12 +404,15 @@ class HistoricalCostStore:
                 or record.self_consumption_grid_export is None
             ):
                 return None
-            return actual_cost(
-                grid_import=record.self_consumption_grid_import,
-                grid_export=record.self_consumption_grid_export,
-                import_price=record.import_price,
-                export_price=record.export_price,
-            )
+            try:
+                return actual_cost(
+                    grid_import=record.self_consumption_grid_import,
+                    grid_export=record.self_consumption_grid_export,
+                    import_price=record.import_price,
+                    export_price=record.export_price,
+                )
+            except ValueError:
+                return None
         return None
 
     def _records_between(
@@ -420,7 +442,8 @@ class HistoricalCostStore:
     def _record_from_day(
         self, day_payload: dict[str, Any], index: int, start: datetime
     ) -> SlotRecord:
-        return SlotRecord(
+        flags = int(_optional_float_at(day_payload, "flags", index) or 0)
+        record = SlotRecord(
             start=start,
             import_price=_optional_float_at(day_payload, "import_price", index),
             export_price=_optional_float_at(day_payload, "export_price", index),
@@ -438,8 +461,9 @@ class HistoricalCostStore:
                 "self_consumption_grid_export",
                 index,
             ),
-            flags=int(_optional_float_at(day_payload, "flags", index) or 0),
+            flags=flags,
         )
+        return _sanitize_record(record, persisted_payload=day_payload, index=index)
 
     def _period_bounds(
         self, period: str, now: datetime
@@ -514,6 +538,20 @@ class HistoricalCostStore:
             migrated["days"] = {}
         if not isinstance(migrated.get("simulation_state"), dict):
             migrated["simulation_state"] = {}
+        migrated["last_meter_values"] = {
+            str(key): _finite_float(value) if value is not None else None
+            for key, value in migrated["last_meter_values"].items()
+        }
+        simulation_state = migrated["simulation_state"].get("self_consumption")
+        if isinstance(simulation_state, dict):
+            batteries = simulation_state.get("batteries")
+            if isinstance(batteries, dict):
+                simulation_state["batteries"] = {
+                    str(key): {"soc_kwh": value}
+                    for key, item in batteries.items()
+                    if isinstance(item, dict)
+                    and (value := _finite_float(item.get("soc_kwh"))) is not None
+                }
         for slot_key, price_payload in list(migrated["price_cache"].items()):
             if not isinstance(price_payload, dict):
                 del migrated["price_cache"][slot_key]
@@ -532,6 +570,7 @@ class HistoricalCostStore:
             for array_key in DAY_ARRAY_KEYS:
                 if not isinstance(day_payload.get(array_key), list):
                     day_payload[array_key] = []
+            _sanitize_day_payload(day_payload)
         return migrated
 
 
@@ -543,9 +582,91 @@ def _optional_float_at(payload: dict[str, Any], key: str, index: int) -> float |
     if value is None:
         return None
     try:
-        return float(value)
+        return _finite_float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _sanitize_record(
+    record: SlotRecord,
+    *,
+    persisted_payload: dict[str, Any] | None = None,
+    index: int | None = None,
+) -> SlotRecord:
+    """Remove nonfinite slot values and mark their coverage explicitly missing."""
+    values = {
+        "import_price": _finite_float(record.import_price),
+        "export_price": _finite_float(record.export_price),
+        "grid_import": _finite_float(record.grid_import),
+        "grid_export": _finite_float(record.grid_export),
+        "usage": _finite_float(record.usage),
+        "pv": _finite_float(record.pv),
+        "self_consumption_grid_import": _finite_float(
+            record.self_consumption_grid_import
+        ),
+        "self_consumption_grid_export": _finite_float(
+            record.self_consumption_grid_export
+        ),
+    }
+    flags = int(record.flags)
+
+    def _was_nonfinite(key: str, original: float | None) -> bool:
+        if persisted_payload is None or index is None:
+            return original is not None and values[key] is None
+        raw_values = persisted_payload.get(key)
+        if not isinstance(raw_values, list) or index >= len(raw_values):
+            return False
+        raw = raw_values[index]
+        return raw is not None and _finite_float(raw) is None
+
+    if _was_nonfinite("import_price", record.import_price):
+        flags |= FLAG_MISSING_IMPORT_PRICE
+    if _was_nonfinite("export_price", record.export_price):
+        flags |= FLAG_MISSING_EXPORT_PRICE
+    if any(
+        _was_nonfinite(key, getattr(record, key))
+        for key in ("grid_import", "grid_export", "usage", "pv")
+    ):
+        flags |= FLAG_MISSING_METER
+    if any(
+        _was_nonfinite(key, getattr(record, key))
+        for key in (
+            "self_consumption_grid_import",
+            "self_consumption_grid_export",
+        )
+    ):
+        flags |= FLAG_SELF_CONSUMPTION_UNAVAILABLE
+    return SlotRecord(start=record.start, flags=flags, **values)
+
+
+def _sanitize_day_payload(day_payload: dict[str, Any]) -> None:
+    """Sanitize persisted slot arrays without dropping historical records."""
+    starts = day_payload["starts"]
+    flags = day_payload["flags"]
+    while len(flags) < len(starts):
+        flags.append(0)
+    flag_by_key = {
+        "import_price": FLAG_MISSING_IMPORT_PRICE,
+        "export_price": FLAG_MISSING_EXPORT_PRICE,
+        "grid_import": FLAG_MISSING_METER,
+        "grid_export": FLAG_MISSING_METER,
+        "usage": FLAG_MISSING_METER,
+        "pv": FLAG_MISSING_METER,
+        "self_consumption_grid_import": FLAG_SELF_CONSUMPTION_UNAVAILABLE,
+        "self_consumption_grid_export": FLAG_SELF_CONSUMPTION_UNAVAILABLE,
+    }
+    for key, invalid_flag in flag_by_key.items():
+        values = day_payload[key]
+        for index, raw in enumerate(values):
+            if raw is None:
+                continue
+            value = _finite_float(raw)
+            values[index] = value
+            if value is None and index < len(flags):
+                flags[index] = int(_finite_float(flags[index]) or 0) | invalid_flag
+    for index, raw in enumerate(flags):
+        value = _finite_float(raw)
+        flags[index] = int(value) if value is not None else FLAG_GAP
 
 
 def _finite_float(value: Any) -> float | None:

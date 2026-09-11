@@ -74,8 +74,13 @@ from custom_components.wattplan.historical_cost.models import (
     FLAG_GAP,
     FLAG_METER_RESET,
     FLAG_MISSING_IMPORT_PRICE,
+    FLAG_MISSING_METER,
+    HistoricalMetric,
+    SCENARIO_ACTUAL,
+    SlotRecord,
 )
 from custom_components.wattplan.historical_cost.store import HistoricalCostStore
+from custom_components.wattplan.historical_cost.tracker import HistoricalCostTracker
 from custom_components.wattplan.test_plan_invariants import assert_plan_invariants
 import pytest
 
@@ -1348,6 +1353,164 @@ async def test_historical_cost_tracking_flags_meter_reset_and_missing_price(
         STATE_UNAVAILABLE,
         STATE_UNKNOWN,
     }
+
+
+@pytest.mark.parametrize("invalid_state", ["nan", "inf", "-inf"])
+async def test_historical_meter_nonfinite_recovery_requires_new_finite_baseline(
+    hass: HomeAssistant,
+    freezer,
+    invalid_state: str,
+) -> None:
+    """Nonfinite readings must leave two missing slots before finite deltas resume."""
+    start = datetime(2026, 5, 24, 10, 0, tzinfo=UTC)
+    freezer.move_to(start)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: 15,
+            CONF_HOURS_TO_PLAN: 1,
+            CONF_SOURCES: {
+                CONF_SOURCE_IMPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [1.0, 1.0, 1.0, 1.0] }}",
+                },
+            },
+        },
+        options={
+            **_historical_options(),
+            CONF_HISTORICAL_GRID_EXPORT_SENSOR: None,
+            CONF_HISTORICAL_PV_SENSOR: None,
+            CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION: False,
+        },
+    )
+    entry.add_to_hass(hass)
+    _set_energy_meter(hass, "sensor.grid_import_total", 100.0)
+    _set_energy_meter(hass, "sensor.usage_total", 200.0)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    tracker = entry.runtime_data.historical_tracker
+    assert tracker is not None
+    tracker.remember_price_series(
+        start_at=start,
+        slot_minutes=15,
+        import_prices=[1.0] * 4,
+        export_prices=[0.0] * 4,
+    )
+
+    for minutes, grid_import, usage in (
+        (15, invalid_state, invalid_state),
+        (30, 102.0, 203.0),
+        (45, 103.0, 204.0),
+    ):
+        freezer.move_to(start + timedelta(minutes=minutes, seconds=2))
+        _set_energy_meter(hass, "sensor.grid_import_total", grid_import)
+        _set_energy_meter(hass, "sensor.usage_total", usage)
+        await tracker.async_process_completed_slot()
+
+    day = tracker.store.data["days"]["2026-05-24"]
+    assert day["flags"] == [FLAG_MISSING_METER, FLAG_MISSING_METER, 0]
+    assert day["grid_import"] == [None, None, pytest.approx(1.0)]
+    assert day["usage"] == [None, None, pytest.approx(1.0)]
+    assert tracker.store.last_meter_values()["grid_import"] == pytest.approx(103.0)
+    summary = tracker.store.summary(
+        metric=HistoricalMetric.COST,
+        period="today",
+        scenario=SCENARIO_ACTUAL,
+        now=start + timedelta(hours=1),
+    )
+    assert summary.value == pytest.approx(1.0)
+    assert summary.slots == 3
+    assert summary.missing_slots == 2
+
+
+async def test_historical_meter_delta_overflow_is_missing(hass: HomeAssistant) -> None:
+    """Finite readings whose subtraction overflows must not create a valid delta."""
+    tracker = type("Tracker", (), {})()
+    tracker._meter_deltas = HistoricalCostTracker._meter_deltas.__get__(tracker)
+
+    deltas, flags = tracker._meter_deltas(
+        {"grid_import": -1e308, "grid_export": 0.0, "usage": 0.0, "pv": 0.0},
+        {"grid_import": 1e308, "grid_export": 0.0, "usage": 0.0, "pv": 0.0},
+    )
+
+    assert deltas["grid_import"] is None
+    assert flags == FLAG_MISSING_METER
+
+
+async def test_historical_store_sanitizes_nonfinite_persisted_values(
+    hass: HomeAssistant,
+) -> None:
+    """Load must preserve records but make corrupt numerics explicitly missing."""
+    store = HistoricalCostStore(
+        hass, entry_id="corrupt-entry", slot_minutes=60, currency="DKK"
+    )
+    starts = [f"2026-09-11T{hour:02d}:00:00Z" for hour in range(12, 16)]
+    payload = {
+        "version": 1,
+        "slot_minutes": 60,
+        "currency": "DKK",
+        "tracking_started_at": starts[0],
+        "last_processed_slot": starts[-1],
+        "last_meter_values": {"grid_import": float("nan"), "usage": 4.0},
+        "meter_config": {},
+        "price_cache": {},
+        "simulation_state": {
+            "self_consumption": {
+                "batteries": {
+                    "bad": {"soc_kwh": float("inf")},
+                    "good": {"soc_kwh": 1.0},
+                }
+            }
+        },
+        "days": {
+            "2026-09-11": {
+                "starts": starts,
+                "import_price": [-1.0, float("nan"), 1e308, 1e308],
+                "export_price": [0.0, 0.0, 0.0, 0.0],
+                "grid_import": [1.0, 1.0, 1e308, 1e308],
+                "grid_export": [0.0, 0.0, 0.0, 0.0],
+                "usage": [1.0, 1.0, 1.0, 1.0],
+                "pv": [0.0, 0.0, 0.0, 0.0],
+                "self_consumption_grid_import": [1.0, 1.0, 1.0, 1.0],
+                "self_consumption_grid_export": [0.0, 0.0, 0.0, 0.0],
+                "flags": [0, 0, 0, 0],
+            }
+        },
+    }
+    with patch.object(store._store, "async_load", return_value=payload):
+        await store.async_load()
+
+    day = store.data["days"]["2026-09-11"]
+    assert day["import_price"] == [-1.0, None, 1e308, 1e308]
+    assert day["flags"] == [0, FLAG_MISSING_IMPORT_PRICE, 0, 0]
+    assert store.last_meter_values() == {"grid_import": None, "usage": 4.0}
+    assert store.simulation_soc() == {"good": 1.0}
+    summary = store.summary(
+        metric=HistoricalMetric.COST,
+        period="today",
+        scenario=SCENARIO_ACTUAL,
+        now=datetime(2026, 9, 11, 18, 0, tzinfo=UTC),
+    )
+    assert summary.value == pytest.approx(-1.0)
+    assert summary.slots == 4
+    assert summary.missing_slots == 3
+
+    store.append_slot(
+        SlotRecord(
+            start=datetime(2026, 9, 11, 16, 0, tzinfo=UTC),
+            import_price=float("-inf"),
+            export_price=0.0,
+            grid_import=float("nan"),
+            grid_export=0.0,
+            usage=1.0,
+            pv=0.0,
+        )
+    )
+    assert day["import_price"][-1] is None
+    assert day["grid_import"][-1] is None
+    assert day["flags"][-1] == FLAG_MISSING_IMPORT_PRICE | FLAG_MISSING_METER
 
 
 async def test_historical_cost_store_prunes_old_days(hass: HomeAssistant) -> None:

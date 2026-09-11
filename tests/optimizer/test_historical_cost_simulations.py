@@ -90,3 +90,26 @@ def test_self_consumption_discharge_limit_is_delivered_energy() -> None:
 
     assert result.grid_import == pytest.approx(0.0)
     assert result.soc_by_battery["battery"] == pytest.approx(0.75)
+
+
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), float("-inf")])
+def test_historical_simulation_rejects_nonfinite_inputs(invalid: float) -> None:
+    """Simulation must reject corrupt energy, state, and configuration values."""
+    with pytest.raises(ValueError, match="must be finite"):
+        simulate_self_consumption_slot(
+            usage=invalid,
+            pv=0.0,
+            batteries=[],
+            soc_by_battery={},
+        )
+    with pytest.raises(ValueError, match="must be finite"):
+        BatterySimulationConfig(
+            subentry_id="battery",
+            minimum_kwh=0.0,
+            capacity_kwh=invalid,
+            max_charge_kwh=1.0,
+            max_discharge_kwh=1.0,
+            charge_efficiency=1.0,
+            discharge_efficiency=1.0,
+            can_charge_from_pv=True,
+        )

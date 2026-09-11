@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 import logging
+import math
 from typing import Any, Callable
 
 from homeassistant.components.sensor import SensorDeviceClass
@@ -161,7 +162,7 @@ class HistoricalCostTracker:
         """Return current self-consumption simulation state attributes."""
         soc_kwh = self.store.simulation_soc()
         battery_configs = {
-            battery.subentry_id: battery for battery in self._battery_configs()
+            battery.subentry_id: battery for battery in (self._battery_configs() or [])
         }
         soc_percent: dict[str, float] = {}
         for subentry_id, soc in soc_kwh.items():
@@ -363,6 +364,10 @@ class HistoricalCostTracker:
                 flags |= FLAG_MISSING_METER
                 continue
             delta = float(current_value) - float(previous_value)
+            if not math.isfinite(delta):
+                deltas[key] = None
+                flags |= FLAG_MISSING_METER
+                continue
             if delta < 0.0:
                 deltas[key] = None
                 flags |= FLAG_METER_RESET
@@ -400,9 +405,10 @@ class HistoricalCostTracker:
         if not values:
             return None
         try:
-            return float(values[0])
+            value = float(values[0])
         except (TypeError, ValueError):
             return None
+        return value if math.isfinite(value) else None
 
     async def _async_export_price(self, slot_start: datetime) -> float | None:
         """Return export price, defaulting disabled export value to zero."""
@@ -445,25 +451,34 @@ class HistoricalCostTracker:
         if usage is None or pv is None:
             return None
         batteries = self._battery_configs()
+        if batteries is None:
+            return None
         soc = self.store.simulation_soc()
         if any(battery.subentry_id not in soc for battery in batteries):
             self._seed_self_consumption_soc()
             soc = self.store.simulation_soc()
         if any(battery.subentry_id not in soc for battery in batteries):
             return None
-        result = simulate_self_consumption_slot(
-            usage=float(usage),
-            pv=float(pv),
-            batteries=batteries,
-            soc_by_battery=soc,
-        )
+        try:
+            result = simulate_self_consumption_slot(
+                usage=float(usage),
+                pv=float(pv),
+                batteries=batteries,
+                soc_by_battery=soc,
+            )
+        except ValueError:
+            return None
         self.store.update_simulation_soc(result.soc_by_battery)
         return result.grid_import, result.grid_export
 
     def _seed_self_consumption_soc(self) -> None:
         """Seed self-consumption simulation SoC from configured battery sources."""
         soc: dict[str, float] = {}
-        for battery in self._battery_configs():
+        batteries = self._battery_configs()
+        if batteries is None:
+            self.store.update_simulation_soc({})
+            return
+        for battery in batteries:
             subentry = self.entry.subentries.get(battery.subentry_id)
             if subentry is None:
                 continue
@@ -479,34 +494,37 @@ class HistoricalCostTracker:
             )
         self.store.update_simulation_soc(soc)
 
-    def _battery_configs(self) -> list[BatterySimulationConfig]:
+    def _battery_configs(self) -> list[BatterySimulationConfig] | None:
         """Return configured batteries in config-entry order."""
         batteries: list[BatterySimulationConfig] = []
         for subentry in self.entry.subentries.values():
             if subentry.subentry_type != SUBENTRY_TYPE_BATTERY:
                 continue
-            batteries.append(
-                BatterySimulationConfig(
-                    subentry_id=subentry.subentry_id,
-                    minimum_kwh=float(subentry.data[CONF_MINIMUM_KWH]),
-                    capacity_kwh=float(subentry.data[CONF_CAPACITY_KWH]),
-                    max_charge_kwh=self._kw_to_slot_kwh(
-                        float(subentry.data[CONF_MAX_CHARGE_KW])
-                    ),
-                    max_discharge_kwh=self._kw_to_slot_kwh(
-                        float(subentry.data[CONF_MAX_DISCHARGE_KW])
-                    ),
-                    charge_efficiency=float(
-                        subentry.data.get(CONF_CHARGE_EFFICIENCY, 0.9)
-                    ),
-                    discharge_efficiency=float(
-                        subentry.data.get(CONF_DISCHARGE_EFFICIENCY, 0.9)
-                    ),
-                    can_charge_from_pv=bool(
-                        subentry.data.get(CONF_CAN_CHARGE_FROM_PV, True)
-                    ),
+            try:
+                batteries.append(
+                    BatterySimulationConfig(
+                        subentry_id=subentry.subentry_id,
+                        minimum_kwh=float(subentry.data[CONF_MINIMUM_KWH]),
+                        capacity_kwh=float(subentry.data[CONF_CAPACITY_KWH]),
+                        max_charge_kwh=self._kw_to_slot_kwh(
+                            float(subentry.data[CONF_MAX_CHARGE_KW])
+                        ),
+                        max_discharge_kwh=self._kw_to_slot_kwh(
+                            float(subentry.data[CONF_MAX_DISCHARGE_KW])
+                        ),
+                        charge_efficiency=float(
+                            subentry.data.get(CONF_CHARGE_EFFICIENCY, 0.9)
+                        ),
+                        discharge_efficiency=float(
+                            subentry.data.get(CONF_DISCHARGE_EFFICIENCY, 0.9)
+                        ),
+                        can_charge_from_pv=bool(
+                            subentry.data.get(CONF_CAN_CHARGE_FROM_PV, True)
+                        ),
+                    )
                 )
-            )
+            except (KeyError, TypeError, ValueError):
+                return None
         return batteries
 
     def _meter_config(self) -> dict[str, str | None]:
@@ -532,9 +550,10 @@ class HistoricalCostTracker:
         if state is None or state.state in {STATE_UNKNOWN, STATE_UNAVAILABLE}:
             return None
         try:
-            return float(state.state)
+            value = float(state.state)
         except (TypeError, ValueError):
             return None
+        return value if math.isfinite(value) else None
 
     def _kw_to_slot_kwh(self, power_kw: float) -> float:
         return power_kw * (self.slot_minutes / 60.0)
