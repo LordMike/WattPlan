@@ -860,6 +860,7 @@ def test_optional_entities_return_independent_start_options_without_affecting_sc
 
     # Optional entities must not alter the optimized schedule.
     assert with_optional["entities"] == without_optional["entities"]
+    assert with_optional["state"] == without_optional["state"]
 
     by_name = {
         row["name"]: row["options"] for row in with_optional["optional_entity_options"]
@@ -873,22 +874,23 @@ def test_optional_entities_return_independent_start_options_without_affecting_sc
     assert by_name["dryer"][0]["start_timeslot"] in {3, 4}
 
 
-def test_optional_entities_consider_pv_surplus_not_just_price():
+@pytest.mark.parametrize(
+    ("export_value", "expected_order", "expected_costs"),
+    [
+        (0.0, [0, 1, 2], {0: 0.0, 1: 0.1, 2: 0.2}),
+        (0.04, [0, 1, 2], {0: 0.08, 1: 0.14, 2: 0.2}),
+        (0.2, [2, 1, 0], {0: 0.4, 1: 0.3, 2: 0.2}),
+    ],
+)
+def test_optional_entities_value_pv_export_opportunity_cost(
+    export_value, expected_order, expected_costs
+):
     payload = {
-        "grid_import_price_per_kwh": [0.05, 0.05, 0.40, 0.40],
-        "solar_input_kwh": [0.0, 0.0, 4.0, 4.0],
-        "usage_kwh": [2.0, 2.0, 0.0, 0.0],
-        "battery_entities": [
-            {
-                "name": "home_battery",
-                "initial_kwh": 0.0,
-                "minimum_kwh": 0.0,
-                "capacity_kwh": 1.0,
-                "charge_curve_kwh": [0.0],
-                "discharge_curve_kwh": [0.0],
-                "can_charge_from": 1,
-            }
-        ],
+        "grid_import_price_per_kwh": [0.4, 0.4, 0.1, 0.1],
+        "grid_export_price_per_kwh": [export_value] * 4,
+        "solar_input_kwh": [2.0, 2.0, 0.0, 0.0],
+        "usage_kwh": [0.0, 0.0, 0.0, 0.0],
+        "battery_entities": [],
         "comfort_entities": [],
         "optional_entities": [
             {
@@ -897,7 +899,7 @@ def test_optional_entities_consider_pv_surplus_not_just_price():
                 "start_after_timeslot": 0,
                 "start_before_timeslot": 4,
                 "energy_kwh": 2.0,
-                "options": 2,
+                "options": 3,
                 "min_option_gap_timeslots": 0,
                 "allow_overlapping_options": True,
             }
@@ -907,9 +909,13 @@ def test_optional_entities_consider_pv_surplus_not_just_price():
     result = _run_optimizer(payload)
     options = result["optional_entity_options"][0]["options"]
 
-    # Despite high price in timeslots 2-3, PV surplus should make it the best start.
-    assert options[0]["start_timeslot"] == 2
-    assert options[0]["incremental_cost"] == pytest.approx(0.0)
+    assert [option["start_timeslot"] for option in options] == expected_order
+    costs_by_start = {
+        option["start_timeslot"]: option["incremental_cost"] for option in options
+    }
+    # Starts 0/1/2 respectively displace 2/1/0 kWh of export and import 0/1/2 kWh.
+    for start, expected_cost in expected_costs.items():
+        assert costs_by_start[start] == pytest.approx(expected_cost)
     assert result["suboptimal"] is False
 
 
@@ -950,30 +956,21 @@ def test_optional_entities_favor_negative_price_slots():
     assert result["suboptimal"] is False
 
 
-def test_optional_entities_favor_negative_price_with_pv_surplus_area():
+def test_optional_negative_import_with_pv_uses_export_tariff_until_surplus_is_gone():
     payload = {
-        "grid_import_price_per_kwh": [0.05, 0.05, -0.30, -0.30],
-        "solar_input_kwh": [0.0, 0.0, 4.0, 4.0],
-        "usage_kwh": [2.0, 2.0, 0.0, 0.0],
-        "battery_entities": [
-            {
-                "name": "home_battery",
-                "initial_kwh": 0.0,
-                "minimum_kwh": 0.0,
-                "capacity_kwh": 1.0,
-                "charge_curve_kwh": [0.0],
-                "discharge_curve_kwh": [0.0],
-                "can_charge_from": 1,
-            }
-        ],
+        "grid_import_price_per_kwh": [-0.1, 0.05, -0.3, -0.3],
+        "grid_export_price_per_kwh": [0.0, 0.0, 0.2, 0.2],
+        "solar_input_kwh": [0.0, 0.0, 2.0, 2.0],
+        "usage_kwh": [0.0, 0.0, 0.0, 0.0],
+        "battery_entities": [],
         "comfort_entities": [],
         "optional_entities": [
             {
                 "name": "dryer",
-                "duration_timeslots": 2,
+                "duration_timeslots": 1,
                 "start_after_timeslot": 0,
                 "start_before_timeslot": 4,
-                "energy_kwh": 2.0,
+                "energy_kwh": 1.0,
                 "options": 1,
                 "min_option_gap_timeslots": 0,
                 "allow_overlapping_options": True,
@@ -983,8 +980,288 @@ def test_optional_entities_favor_negative_price_with_pv_surplus_area():
 
     result = _run_optimizer(payload)
     option = result["optional_entity_options"][0]["options"][0]
-    assert option["start_timeslot"] == 2
+    # Slot 0 imports at -0.10. A PV slot does not import at -0.30; it gives up
+    # 0.20 of export revenue, so its incremental cost is +0.20 instead.
+    assert option["start_timeslot"] == 0
+    assert option["incremental_cost"] == pytest.approx(-0.1)
     assert result["suboptimal"] is False
+
+
+def test_optional_load_can_avoid_a_negative_export_tariff():
+    payload = {
+        "grid_import_price_per_kwh": [0.4, 0.1, 0.3, 0.3],
+        "grid_export_price_per_kwh": [-0.2, 0.0, 0.0, 0.0],
+        "solar_input_kwh": [1.0, 0.0, 0.0, 0.0],
+        "usage_kwh": [0.0, 0.0, 0.0, 0.0],
+        "battery_entities": [],
+        "comfort_entities": [],
+        "optional_entities": [
+            {
+                "name": "water_heater",
+                "duration_timeslots": 1,
+                "start_after_timeslot": 0,
+                "start_before_timeslot": 2,
+                "energy_kwh": 1.0,
+                "options": 2,
+                "min_option_gap_timeslots": 0,
+                "allow_overlapping_options": True,
+            }
+        ],
+    }
+
+    result = _run_optimizer(payload)
+    options = result["optional_entity_options"][0]["options"]
+
+    assert [option["start_timeslot"] for option in options] == [0, 1]
+    assert options[0]["incremental_cost"] == pytest.approx(-0.2)
+    assert options[1]["incremental_cost"] == pytest.approx(0.1)
+
+
+def test_optional_policy_replay_reduces_pv_charging_before_importing():
+    payload = {
+        "grid_import_price_per_kwh": [0.5, 0.2, 0.3, 0.3],
+        "grid_export_price_per_kwh": [0.0, 0.0, 0.0, 0.0],
+        "solar_input_kwh": [2.0, 0.0, 0.0, 0.0],
+        "usage_kwh": [0.0, 0.0, 0.0, 0.0],
+        "battery_entities": [
+            {
+                "name": "lossy_battery",
+                "initial_kwh": 0.0,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 1.0,
+                "charge_curve_kwh": [2.0],
+                "discharge_curve_kwh": [0.0],
+                "charge_efficiency": 0.5,
+                "can_charge_from": 2,
+                "prefer_pv_surplus_charging": True,
+            }
+        ],
+        "comfort_entities": [],
+        "optional_entities": [
+            {
+                "name": "dishwasher",
+                "duration_timeslots": 1,
+                "start_after_timeslot": 0,
+                "start_before_timeslot": 2,
+                "energy_kwh": 1.0,
+                "options": 2,
+                "min_option_gap_timeslots": 0,
+                "allow_overlapping_options": True,
+            }
+        ],
+    }
+
+    result = _run_optimizer(payload)
+    options = result["optional_entity_options"][0]["options"]
+
+    assert _entity_schedule(result, "lossy_battery")[0]["level"] == pytest.approx(1.0)
+    # The candidate uses 1 kWh of PV and reduces battery input from 2 to 1 kWh.
+    # With no later demand there is no immediate or deferred grid cost.
+    assert [option["start_timeslot"] for option in options] == [0, 1]
+    assert options[0]["incremental_cost"] == pytest.approx(0.0)
+    assert options[1]["incremental_cost"] == pytest.approx(0.2)
+
+
+def test_optional_policy_replay_prices_deferred_cost_from_reduced_pv_charging():
+    payload = {
+        "grid_import_price_per_kwh": [0.5, 0.4, 0.3, 0.3],
+        "grid_export_price_per_kwh": [0.0, 0.0, 0.0, 0.0],
+        "solar_input_kwh": [2.0, 0.0, 0.0, 0.0],
+        "usage_kwh": [0.0, 1.0, 0.0, 0.0],
+        "battery_entities": [
+            {
+                "name": "lossy_battery",
+                "initial_kwh": 0.0,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 1.0,
+                "charge_curve_kwh": [2.0],
+                "discharge_curve_kwh": [1.0],
+                "charge_efficiency": 0.5,
+                "can_charge_from": 2,
+                "prefer_pv_surplus_charging": True,
+            }
+        ],
+        "comfort_entities": [],
+        "optional_entities": [
+            {
+                "name": "dishwasher",
+                "duration_timeslots": 1,
+                "start_after_timeslot": 0,
+                "start_before_timeslot": 3,
+                "energy_kwh": 1.0,
+                "options": 3,
+                "min_option_gap_timeslots": 0,
+                "allow_overlapping_options": True,
+            }
+        ],
+    }
+
+    without_optional = _run_optimizer(
+        {key: value for key, value in payload.items() if key != "optional_entities"}
+    )
+    result = _run_optimizer(payload)
+    options = result["optional_entity_options"][0]["options"]
+
+    assert result["entities"] == without_optional["entities"]
+    assert result["state"] == without_optional["state"]
+    assert [option["start_timeslot"] for option in options] == [0, 2, 1]
+    # Start 0 leaves 0.5 kWh less stored, causing 0.5 kWh import at 0.40 later.
+    assert options[0]["incremental_cost"] == pytest.approx(0.2)
+    assert options[1]["incremental_cost"] == pytest.approx(0.3)
+    assert options[2]["incremental_cost"] == pytest.approx(0.4)
+
+
+def test_optional_policy_replay_respects_preserve_mode():
+    payload = {
+        "grid_import_price_per_kwh": [0.1, 1.0, 0.3, 0.3],
+        "grid_export_price_per_kwh": [0.0, 0.0, 0.0, 0.0],
+        "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
+        "usage_kwh": [1.0, 1.0, 0.0, 0.0],
+        "battery_entities": [
+            {
+                "name": "battery",
+                "initial_kwh": 1.0,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 1.0,
+                "charge_curve_kwh": [0.0],
+                "discharge_curve_kwh": [1.0],
+                "can_charge_from": 0,
+            }
+        ],
+        "comfort_entities": [],
+        "optional_entities": [
+            {
+                "name": "dishwasher",
+                "duration_timeslots": 1,
+                "start_after_timeslot": 0,
+                "start_before_timeslot": 3,
+                "energy_kwh": 1.0,
+                "options": 3,
+                "min_option_gap_timeslots": 0,
+                "allow_overlapping_options": True,
+            }
+        ],
+    }
+
+    result = _run_optimizer(payload)
+    schedule = _entity_schedule(result, "battery")
+    options = result["optional_entity_options"][0]["options"]
+
+    assert schedule[0]["state"] == "preserve"
+    assert schedule[1]["state"] == "self_consume"
+    assert [option["start_timeslot"] for option in options] == [0, 2, 1]
+    assert options[0]["incremental_cost"] == pytest.approx(0.1)
+    assert options[1]["incremental_cost"] == pytest.approx(0.3)
+    assert options[2]["incremental_cost"] == pytest.approx(1.0)
+
+
+def test_optional_policy_replay_does_not_raise_idle_battery_to_reserve():
+    params = optimizer.OptimizationParams(
+        grid_import_price_per_kwh=[0.0, 0.0, 1.0, 0.0],
+        grid_export_price_per_kwh=[0.0, 0.0, 0.0, 0.0],
+        solar_input_kwh=[0.0, 0.5, 0.0, 0.0],
+        usage_kwh=[0.0, 0.0, 0.5, 0.0],
+        battery_entities=[
+            {
+                "name": "recovering_battery",
+                "initial_kwh": 0.5,
+                "minimum_kwh": 1.0,
+                "capacity_kwh": 2.0,
+                "charge_curve_kwh": [1.0],
+                "discharge_curve_kwh": [1.0],
+                "can_charge_from": 2,
+            },
+            {
+                "name": "serving_battery",
+                "initial_kwh": 1.0,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 1.0,
+                "charge_curve_kwh": [0.0],
+                "discharge_curve_kwh": [1.0],
+                "can_charge_from": 0,
+            },
+        ],
+        comfort_entities=[],
+    )
+    normalized = optimizer.normalize_calculation_input(params)
+    modes = [
+        ["preserve", "preserve", "self_consume", "preserve"],
+        ["self_consume", "preserve", "preserve", "preserve"],
+    ]
+    comfort_enabled = optimizer.np.zeros((0, 4), dtype=optimizer.np.int32)
+
+    baseline_cost = optimizer._replay_policy_cost(
+        normalized.grid_import_prices,
+        normalized.grid_export_prices,
+        normalized.usage,
+        normalized.solar_input,
+        normalized.battery_entities,
+        modes,
+        comfort_enabled,
+        normalized.comfort_entities,
+        optimizer.np.zeros(4, dtype=optimizer.np.float64),
+    )
+    candidate_cost = optimizer._replay_policy_cost(
+        normalized.grid_import_prices,
+        normalized.grid_export_prices,
+        normalized.usage,
+        normalized.solar_input,
+        normalized.battery_entities,
+        modes,
+        comfort_enabled,
+        normalized.comfort_entities,
+        optimizer.np.asarray([1.0, 0.0, 0.0, 0.0]),
+    )
+
+    # The second battery supplies the appliance at slot 0. The idle first
+    # battery remains at 0.5 kWh, then recovers only to its 1.0 kWh reserve
+    # from PV, so both replays still import 0.5 kWh at slot 2.
+    assert baseline_cost == pytest.approx(0.5)
+    assert candidate_cost == pytest.approx(0.5)
+    assert candidate_cost - baseline_cost == pytest.approx(0.0)
+
+
+def test_optional_policy_replay_includes_fixed_comfort_demand():
+    payload = {
+        "grid_import_price_per_kwh": [0.5, 0.2, 0.3, 0.3],
+        "grid_export_price_per_kwh": [0.0, 0.0, 0.0, 0.0],
+        "solar_input_kwh": [1.0, 0.0, 0.0, 0.0],
+        "usage_kwh": [0.0, 0.0, 0.0, 0.0],
+        "battery_entities": [],
+        "comfort_entities": [
+            {
+                "name": "heatpump",
+                "target_on_slots_per_rolling_window": 4,
+                "min_consecutive_on_slots": 1,
+                "min_consecutive_off_slots": 1,
+                "max_consecutive_off_slots": 1,
+                "power_usage_kwh": 1.0,
+                "is_on_now": True,
+                "on_slots_last_rolling_window": 0,
+                "off_streak_slots_now": 0,
+            }
+        ],
+        "optional_entities": [
+            {
+                "name": "water_heater",
+                "duration_timeslots": 1,
+                "start_after_timeslot": 0,
+                "start_before_timeslot": 2,
+                "energy_kwh": 1.0,
+                "options": 2,
+                "min_option_gap_timeslots": 0,
+                "allow_overlapping_options": True,
+            }
+        ],
+    }
+
+    result = _run_optimizer(payload)
+    options = result["optional_entity_options"][0]["options"]
+
+    assert all(point["enabled"] for point in _entity_schedule(result, "heatpump"))
+    assert [option["start_timeslot"] for option in options] == [1, 0]
+    assert options[0]["incremental_cost"] == pytest.approx(0.2)
+    assert options[1]["incremental_cost"] == pytest.approx(0.5)
 
 
 def test_feed_in_prices_shift_pv_charging_to_lower_export_value_slots():

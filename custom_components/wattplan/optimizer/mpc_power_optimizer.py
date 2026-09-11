@@ -1405,27 +1405,110 @@ def _score_schedule(
     )
 
 
-def _baseline_net_import(
+def _replay_policy_cost(
+    grid_import_prices,
+    grid_export_prices,
     usage,
     solar_input,
-    battery_levels,
+    battery_entities,
+    battery_modes,
     comfort_enabled,
     comfort_entities,
+    optional_usage,
 ):
+    """Replay grid cost under fixed battery modes and comfort actions."""
     total_steps = len(usage)
-    baseline = np.zeros(total_steps, dtype=np.float64)
+    battery_levels = np.asarray(
+        [float(entity.initial_kwh) for entity in battery_entities],
+        dtype=np.float64,
+    )
+    total_cost = 0.0
 
     for t in range(total_steps):
         total_usage = float(usage[t])
         for i, entity in enumerate(comfort_entities):
             if comfort_enabled[i, t] == 1:
                 total_usage += float(entity.power_usage_kwh)
+        total_usage += float(optional_usage[t])
 
-        battery_delta = float(np.sum(battery_levels[:, t + 1] - battery_levels[:, t]))
-        net = total_usage + battery_delta - float(solar_input[t])
-        baseline[t] = net
+        remaining_deficit = max(total_usage - float(solar_input[t]), 0.0)
+        remaining_surplus = max(float(solar_input[t]) - total_usage, 0.0)
+        charge_limits = np.zeros(len(battery_entities), dtype=np.float64)
+        pv_charge = np.zeros(len(battery_entities), dtype=np.float64)
 
-    return baseline
+        # Preserve the runtime's stable input-order allocation of finite PV.
+        for i, entity in enumerate(battery_entities):
+            charge_limit, _ = _battery_power_limits(entity, battery_levels[i])
+            charge_limits[i] = charge_limit
+            _, can_charge_from_pv = _charge_ingress_permissions(entity)
+            if not can_charge_from_pv or remaining_surplus <= EPSILON:
+                continue
+            capacity_input = max(
+                float(entity.capacity_kwh) - battery_levels[i], 0.0
+            ) / float(entity.charge_efficiency)
+            pv_charge[i] = min(charge_limit, capacity_input, remaining_surplus)
+            battery_levels[i] += pv_charge[i] * float(entity.charge_efficiency)
+            battery_levels[i] = min(
+                battery_levels[i], float(entity.capacity_kwh)
+            )
+            remaining_surplus -= pv_charge[i]
+
+        discharge_requests = np.zeros(len(battery_entities), dtype=np.float64)
+        if remaining_deficit > EPSILON:
+            for i, entity in enumerate(battery_entities):
+                if battery_modes[i][t] != "self_consume":
+                    continue
+                _, discharge_limit = _battery_power_limits(entity, battery_levels[i])
+                available = (
+                    max(battery_levels[i] - float(entity.minimum_kwh), 0.0)
+                    * float(entity.discharge_efficiency)
+                )
+                discharge_requests[i] = min(discharge_limit, available)
+
+            requested_discharge = float(np.sum(discharge_requests))
+            if requested_discharge > EPSILON:
+                # Share a limited deficit proportionally across eligible batteries.
+                scale = min(1.0, remaining_deficit / requested_discharge)
+                discharge = discharge_requests * scale
+                remaining_deficit = max(
+                    remaining_deficit - float(np.sum(discharge)), 0.0
+                )
+                for i, entity in enumerate(battery_entities):
+                    if discharge[i] <= 0.0:
+                        continue
+                    battery_levels[i] -= discharge[i] / float(
+                        entity.discharge_efficiency
+                    )
+                    battery_levels[i] = max(
+                        battery_levels[i], float(entity.minimum_kwh)
+                    )
+
+        grid_charge = 0.0
+        for i, entity in enumerate(battery_entities):
+            if battery_modes[i][t] != "grid_charge":
+                continue
+            can_charge_from_grid, _ = _charge_ingress_permissions(entity)
+            if not can_charge_from_grid:
+                continue
+            capacity_input = max(
+                float(entity.capacity_kwh) - battery_levels[i], 0.0
+            ) / float(entity.charge_efficiency)
+            charge_input = min(
+                max(charge_limits[i] - pv_charge[i], 0.0),
+                capacity_input,
+            )
+            battery_levels[i] += charge_input * float(entity.charge_efficiency)
+            battery_levels[i] = min(
+                battery_levels[i], float(entity.capacity_kwh)
+            )
+            grid_charge += charge_input
+
+        total_cost += (
+            float(grid_import_prices[t]) * (remaining_deficit + grid_charge)
+            - float(grid_export_prices[t]) * remaining_surplus
+        )
+
+    return float(total_cost)
 
 
 def _baseline_cost_per_slot(grid_import_prices, grid_export_prices, usage, solar_input):
@@ -1434,25 +1517,37 @@ def _baseline_cost_per_slot(grid_import_prices, grid_export_prices, usage, solar
     return grid_import_prices * net_import - grid_export_prices * net_export
 
 
-def _optional_entity_options(entity, grid_import_prices, baseline_net_import):
+def _optional_entity_options(
+    entity,
+    grid_import_prices,
+    grid_export_prices,
+    usage,
+    solar_input,
+    battery_entities,
+    battery_modes,
+    comfort_enabled,
+    comfort_entities,
+    baseline_policy_cost,
+):
     duration = entity.duration_timeslots
     profile = entity.energy_profile
+    total_steps = len(grid_import_prices)
     candidates = []
     for start_timeslot in range(entity.start_min, entity.start_max + 1):
-        base_slice = baseline_net_import[start_timeslot : start_timeslot + duration]
-        loaded_slice = base_slice + profile
-        price_slice = grid_import_prices[start_timeslot : start_timeslot + duration]
-        base_cost = np.where(
-            price_slice < 0.0,
-            price_slice * base_slice,
-            price_slice * np.maximum(base_slice, 0.0),
+        optional_usage = np.zeros(total_steps, dtype=np.float64)
+        optional_usage[start_timeslot : start_timeslot + duration] = profile
+        loaded_cost = _replay_policy_cost(
+            grid_import_prices=grid_import_prices,
+            grid_export_prices=grid_export_prices,
+            usage=usage,
+            solar_input=solar_input,
+            battery_entities=battery_entities,
+            battery_modes=battery_modes,
+            comfort_enabled=comfort_enabled,
+            comfort_entities=comfort_entities,
+            optional_usage=optional_usage,
         )
-        loaded_cost = np.where(
-            price_slice < 0.0,
-            price_slice * loaded_slice,
-            price_slice * np.maximum(loaded_slice, 0.0),
-        )
-        incremental_cost = float(np.sum(loaded_cost - base_cost))
+        incremental_cost = float(loaded_cost - baseline_policy_cost)
         candidates.append((start_timeslot, incremental_cost))
 
     candidates.sort(key=lambda item: (item[1], item[0]))
@@ -1621,25 +1716,44 @@ def optimize_internal(normalized: CalculationInput):
             }
         )
 
-    baseline_net_import = _baseline_net_import(
-        usage=usage,
-        solar_input=solar_input,
-        battery_levels=result["battery_levels"],
-        comfort_enabled=result["comfort_enabled"],
-        comfort_entities=comfort_entities,
-    )
     optional_entity_options = []
-    for optional in optional_entities:
-        optional_entity_options.append(
-            {
-                "name": optional.name,
-                "options": _optional_entity_options(
-                    entity=optional,
-                    grid_import_prices=grid_import_prices,
-                    baseline_net_import=baseline_net_import,
-                ),
-            }
+    if optional_entities:
+        battery_modes = [
+            [
+                _battery_schedule_state(result, entity, battery_index, t)
+                for t in range(total_steps)
+            ]
+            for battery_index, entity in enumerate(battery_entities)
+        ]
+        baseline_policy_cost = _replay_policy_cost(
+            grid_import_prices=grid_import_prices,
+            grid_export_prices=grid_export_prices,
+            usage=usage,
+            solar_input=solar_input,
+            battery_entities=battery_entities,
+            battery_modes=battery_modes,
+            comfort_enabled=result["comfort_enabled"],
+            comfort_entities=comfort_entities,
+            optional_usage=np.zeros(total_steps, dtype=np.float64),
         )
+        for optional in optional_entities:
+            optional_entity_options.append(
+                {
+                    "name": optional.name,
+                    "options": _optional_entity_options(
+                        entity=optional,
+                        grid_import_prices=grid_import_prices,
+                        grid_export_prices=grid_export_prices,
+                        usage=usage,
+                        solar_input=solar_input,
+                        battery_entities=battery_entities,
+                        battery_modes=battery_modes,
+                        comfort_enabled=result["comfort_enabled"],
+                        comfort_entities=comfort_entities,
+                        baseline_policy_cost=baseline_policy_cost,
+                    ),
+                }
+            )
 
     state_obj = {
         "v": 1,

@@ -102,7 +102,7 @@ result = optimize(params)
 | `recent_avg_on_power_kw` | `float \| null` | No | `null` | Finite, `> 0` | Optional observed ON power average. |
 
 ## Optional Entity Model (`OptionalEntityParams`)
-Optional entities provide advisory start-time suggestions and do not change the optimized battery/comfort schedule.
+Optional entities provide advisory start-time suggestions and do not change the optimized battery/comfort schedule. Each candidate is valued by replaying the supplied forecast horizon from the original battery state under the unchanged published battery modes and comfort schedule. The replay applies the candidate load to physical PV, battery, import, and export flows, including later cost caused by changed battery state, and compares it with the same fixed-policy replay without the load. Signed import and export tariffs are used in both replays.
 | Field | Type | Required | Default | Constraints | Notes |
 |---|---|---:|---|---|---|
 | `name` | `str` | Yes | - | Non-empty | Unique globally. |
@@ -237,6 +237,9 @@ If `infer_battery_preserve_policy` is disabled, the `battery_preserve` boolean a
 - Battery schedule points encode policy directly in `state`: `preserve`, `self_consume`, or `grid_charge`.
 - `optional_entity_options` is advisory and computed on top of that baseline.
 - Optional entities do not affect each other and do not modify `entities`.
+- Each option's `incremental_cost` is its fixed-policy replay cost minus the no-added-load fixed-policy replay cost under the same signed tariffs. The replay can change hypothetical battery energy flows and later SoC, but it does not reoptimize or mutate the returned schedule or opaque state.
+- Alternatives are independent suggestions. Their costs do not assume that multiple options or optional loads run together.
+- Ranking is optimal only among the configured candidate starts under the published fixed modes and supplied forecast horizon. No terminal battery value beyond that horizon is invented.
 
 ### `projections` Fields
 - `baseline_cost`: Baseline net energy cost across the horizon, including export revenue when `grid_export_price_per_kwh` is provided.
