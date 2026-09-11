@@ -75,8 +75,10 @@ from custom_components.wattplan.historical_cost.models import (
     FLAG_METER_RESET,
     FLAG_MISSING_IMPORT_PRICE,
     FLAG_MISSING_METER,
+    FLAG_SELF_CONSUMPTION_UNAVAILABLE,
     HistoricalMetric,
     SCENARIO_ACTUAL,
+    SCENARIO_SELF_CONSUMPTION,
     SlotRecord,
 )
 from custom_components.wattplan.historical_cost.store import HistoricalCostStore
@@ -1419,6 +1421,91 @@ async def test_scheduled_tick_processes_historical_costs(
     actual = hass.states.get("sensor.home_historical_actual_cost_today")
     assert actual is not None
     assert float(actual.state) == pytest.approx(0.98)
+
+
+async def test_historical_sensors_keep_grid_metrics_when_pv_is_missing(
+    hass: HomeAssistant,
+    freezer,
+) -> None:
+    """A missing PV meter should affect only the self-consumption reference."""
+    start = datetime(2026, 5, 24, 12, 0, tzinfo=UTC)
+    freezer.move_to(start + timedelta(hours=1, seconds=2))
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: 60,
+            CONF_HOURS_TO_PLAN: 4,
+            CONF_SOURCES: {
+                CONF_SOURCE_IMPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [1.0, 1.0, 1.0, 1.0] }}",
+                },
+            },
+        },
+        options=_historical_options(),
+    )
+    entry.add_to_hass(hass)
+    _set_energy_meter(hass, "sensor.grid_import_total", 100.0)
+    _set_energy_meter(hass, "sensor.grid_export_total", 10.0)
+    _set_energy_meter(hass, "sensor.usage_total", 200.0)
+    _set_energy_meter(hass, "sensor.pv_total", 50.0)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    tracker = entry.runtime_data.historical_tracker
+    assert tracker is not None
+    tracker.store.update_metadata(
+        last_processed_slot=start - timedelta(hours=1),
+        last_meter_values={
+            "grid_import": 100.0,
+            "grid_export": 10.0,
+            "usage": 200.0,
+            "pv": 50.0,
+        },
+        meter_config={
+            "grid_import": "sensor.grid_import_total",
+            "grid_export": "sensor.grid_export_total",
+            "usage": "sensor.usage_total",
+            "pv": "sensor.pv_total",
+        },
+    )
+    _set_energy_meter(hass, "sensor.grid_import_total", 101.0)
+    _set_energy_meter(hass, "sensor.grid_export_total", 10.0)
+    _set_energy_meter(hass, "sensor.usage_total", 202.0)
+    hass.states.async_set("sensor.pv_total", STATE_UNAVAILABLE)
+
+    await tracker.async_process_completed_slot()
+    await hass.async_block_till_done()
+
+    day = tracker.store.data["days"]["2026-05-24"]
+    assert day["flags"] == [
+        FLAG_MISSING_METER | FLAG_SELF_CONSUMPTION_UNAVAILABLE
+    ]
+    expected = {
+        "sensor.home_historical_actual_cost_today": 1.0,
+        "sensor.home_historical_grid_only_cost_today": 2.0,
+        "sensor.home_historical_savings_vs_grid_only_today": 1.0,
+    }
+    for entity_id, value in expected.items():
+        state = hass.states.get(entity_id)
+        assert state is not None
+        assert float(state.state) == pytest.approx(value)
+        assert state.attributes["slots"] == 1
+        assert state.attributes["missing_slots"] == 0
+
+    self_consumption = hass.states.get(
+        "sensor.home_historical_self_consumption_cost_today"
+    )
+    assert self_consumption is not None
+    assert self_consumption.state == STATE_UNAVAILABLE
+    summary = tracker.store.summary(
+        metric=HistoricalMetric.COST,
+        period="today",
+        scenario=SCENARIO_SELF_CONSUMPTION,
+    )
+    assert summary.missing_slots == 1
 
 
 async def test_historical_cost_tracking_flags_meter_reset_and_missing_price(

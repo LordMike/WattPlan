@@ -18,7 +18,6 @@ from .models import (
     FLAG_MISSING_EXPORT_PRICE,
     FLAG_MISSING_IMPORT_PRICE,
     FLAG_MISSING_METER,
-    FLAG_METER_RESET,
     FLAG_SELF_CONSUMPTION_UNAVAILABLE,
     HistoricalMetric,
     PERIOD_THIS_MONTH,
@@ -35,13 +34,7 @@ from .models import (
 )
 from .simulations import actual_cost, grid_only_cost
 
-BAD_SLOT_FLAGS = (
-    FLAG_GAP
-    | FLAG_MISSING_IMPORT_PRICE
-    | FLAG_MISSING_METER
-    | FLAG_METER_RESET
-)
-EXPORT_DEPENDENT_BAD_SLOT_FLAGS = BAD_SLOT_FLAGS | FLAG_MISSING_EXPORT_PRICE
+IMPORT_DEPENDENT_BAD_SLOT_FLAGS = FLAG_GAP | FLAG_MISSING_IMPORT_PRICE
 
 
 @dataclass(frozen=True, slots=True)
@@ -389,7 +382,7 @@ class HistoricalCostStore:
         values: list[float] = []
         for record in records:
             value = self._record_value(record, metric=metric, scenario=scenario)
-            if int(record.flags) != 0 or value is None:
+            if value is None:
                 missing_slots += 1
             if value is not None and math.isfinite(value):
                 values.append(value)
@@ -443,10 +436,13 @@ class HistoricalCostStore:
         return baseline - actual
 
     def _scenario_cost(self, record: SlotRecord, scenario: str) -> float | None:
-        if record.flags & BAD_SLOT_FLAGS or record.import_price is None:
+        if (
+            record.flags & IMPORT_DEPENDENT_BAD_SLOT_FLAGS
+            or record.import_price is None
+        ):
             return None
         if scenario == SCENARIO_ACTUAL:
-            if record.flags & EXPORT_DEPENDENT_BAD_SLOT_FLAGS:
+            if record.flags & FLAG_MISSING_EXPORT_PRICE:
                 return None
             if record.export_price is None:
                 return None
@@ -473,14 +469,17 @@ class HistoricalCostStore:
                 return None
         if scenario == SCENARIO_SELF_CONSUMPTION:
             if record.flags & (
-                EXPORT_DEPENDENT_BAD_SLOT_FLAGS | FLAG_SELF_CONSUMPTION_UNAVAILABLE
+                FLAG_MISSING_EXPORT_PRICE | FLAG_SELF_CONSUMPTION_UNAVAILABLE
             ):
                 return None
             if record.export_price is None:
                 return None
             if (
-                record.self_consumption_grid_import is None
+                record.usage is None
+                or record.pv is None
+                or record.self_consumption_grid_import is None
                 or record.self_consumption_grid_export is None
+                or record.self_consumption_segment_id is None
             ):
                 return None
             try:
