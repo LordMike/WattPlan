@@ -23,6 +23,11 @@ PRESERVE_PROBE_MIN_KWH = 0.01
 PRESERVE_OBJECTIVE_TOLERANCE = 1e-7
 
 
+def _meets_action_deadband(amount: float, deadband: float) -> bool:
+    """Return whether a positive flow reaches the inclusive action threshold."""
+    return float(amount) > EPSILON and float(amount) + EPSILON >= float(deadband)
+
+
 def piecewise_value_interpolated(level_array, curve):
     curve = np.asarray(curve, dtype=np.float64)
     n = len(curve)
@@ -465,13 +470,16 @@ def _solve_mpc_step(
     num_comfort = len(comfort_entities)
     idx = _IndexBuilder()
     battery_vars = []
-    for _ in range(num_battery):
+    for entity in battery_entities:
+        has_deadband = float(entity.action_deadband_kwh) > 0.0
         battery_vars.append(
             {
                 "charge_grid": idx.add(horizon),
                 "charge_pv": idx.add(horizon),
                 "discharge": idx.add(horizon),
                 "charge_mode": idx.add(horizon),
+                "charge_active": idx.add(horizon) if has_deadband else None,
+                "discharge_active": idx.add(horizon) if has_deadband else None,
                 "level": idx.add(horizon + 1),
                 "min_slack": idx.add(horizon),
                 "target_under": idx.add(1),
@@ -545,6 +553,7 @@ def _solve_mpc_step(
         can_charge_from_grid, can_charge_from_pv = _charge_ingress_permissions(entity)
         throughput_penalty = float(entity.throughput_cost_per_kwh)
         mode_switch_cost = float(entity.mode_switch_cost)
+        action_deadband = float(entity.action_deadband_kwh)
         previous_state = int(battery_states_now[b]) if battery_states_now.size else 0
 
         for t in range(horizon):
@@ -557,6 +566,15 @@ def _solve_mpc_step(
             integrality[var["charge_mode"].start + t] = (
                 highspy.HighsVarType.kInteger
             )
+            if action_deadband > 0.0:
+                bounds[var["charge_active"].start + t] = (0.0, 1.0)
+                bounds[var["discharge_active"].start + t] = (0.0, 1.0)
+                integrality[var["charge_active"].start + t] = (
+                    highspy.HighsVarType.kInteger
+                )
+                integrality[var["discharge_active"].start + t] = (
+                    highspy.HighsVarType.kInteger
+                )
             # Keep minimum state-of-charge as a hard floor.
             bounds[var["min_slack"].start + t] = (0.0, 0.0)
             bounds[var["target_under"].start] = (0.0, None)
@@ -586,6 +604,34 @@ def _solve_mpc_step(
             row[var["charge_mode"].start + t] = discharge_limit
             A_ub.append(row)
             b_ub.append(discharge_limit)
+
+            if action_deadband > 0.0:
+                # Commands are neutral or large enough to survive application.
+                row = np.zeros(n_vars, dtype=np.float64)
+                row[var["charge_grid"].start + t] = 1.0
+                row[var["charge_pv"].start + t] = 1.0
+                row[var["charge_active"].start + t] = -charge_limit
+                A_ub.append(row)
+                b_ub.append(0.0)
+
+                row = np.zeros(n_vars, dtype=np.float64)
+                row[var["charge_grid"].start + t] = -1.0
+                row[var["charge_pv"].start + t] = -1.0
+                row[var["charge_active"].start + t] = action_deadband
+                A_ub.append(row)
+                b_ub.append(0.0)
+
+                row = np.zeros(n_vars, dtype=np.float64)
+                row[var["discharge"].start + t] = 1.0
+                row[var["discharge_active"].start + t] = -discharge_limit
+                A_ub.append(row)
+                b_ub.append(0.0)
+
+                row = np.zeros(n_vars, dtype=np.float64)
+                row[var["discharge"].start + t] = -1.0
+                row[var["discharge_active"].start + t] = action_deadband
+                A_ub.append(row)
+                b_ub.append(0.0)
 
         for t in range(horizon + 1):
             bounds[var["level"].start + t] = (0.0, capacity)
@@ -957,7 +1003,7 @@ def _apply_controls_step(
             pv_surplus_remaining = max(pv_surplus_remaining - actual_pv, 0.0)
             actual_grid = requested_grid
 
-            if actual_grid + actual_pv < action_deadband:
+            if not _meets_action_deadband(actual_grid + actual_pv, action_deadband):
                 pv_surplus_remaining += actual_pv
                 actual_grid = 0.0
                 actual_pv = 0.0
@@ -969,7 +1015,9 @@ def _apply_controls_step(
             ):
                 extra_capacity = max(max_charge - (actual_grid + actual_pv), 0.0)
                 extra_pv = min(extra_capacity, pv_surplus_remaining)
-                if actual_grid + actual_pv + extra_pv >= action_deadband:
+                if _meets_action_deadband(
+                    actual_grid + actual_pv + extra_pv, action_deadband
+                ):
                     actual_pv += extra_pv
                     pv_surplus_remaining = max(pv_surplus_remaining - extra_pv, 0.0)
 
@@ -983,7 +1031,7 @@ def _apply_controls_step(
             and pv_surplus_remaining > EPSILON
         ):
             extra_pv = min(max_charge, pv_surplus_remaining)
-            if extra_pv >= action_deadband:
+            if _meets_action_deadband(extra_pv, action_deadband):
                 charge_pv_amounts[i] = extra_pv
                 charge_amounts[i] = extra_pv
                 pv_surplus_remaining = max(pv_surplus_remaining - extra_pv, 0.0)
@@ -993,7 +1041,7 @@ def _apply_controls_step(
         discharge_request = min(
             requested_discharge, discharge_limit, available_for_discharge
         )
-        if discharge_request >= action_deadband:
+        if _meets_action_deadband(discharge_request, action_deadband):
             discharge_requests[i] = discharge_request
 
     demand_before_discharge = (
@@ -1010,7 +1058,9 @@ def _apply_controls_step(
         discharge_amounts = discharge_requests
 
     for i, entity in enumerate(battery_entities):
-        if discharge_amounts[i] < float(entity.action_deadband_kwh):
+        if not _meets_action_deadband(
+            discharge_amounts[i], float(entity.action_deadband_kwh)
+        ):
             discharge_amounts[i] = 0.0
 
     battery_states = np.zeros(num_battery, dtype=np.int32)
@@ -1225,9 +1275,13 @@ def _run_mpc(
                 pv_surplus = max(float(solar_input[t]) - modeled_load, 0.0)
                 for b, entity in enumerate(battery_entities):
                     action_deadband = max(float(entity.action_deadband_kwh), EPSILON)
-                    if float(solve_result["charge_grid"][b]) > action_deadband:
+                    if _meets_action_deadband(
+                        float(solve_result["charge_grid"][b]), action_deadband
+                    ):
                         continue
-                    if float(solve_result["discharge"][b]) > action_deadband:
+                    if _meets_action_deadband(
+                        float(solve_result["discharge"][b]), action_deadband
+                    ):
                         continue
 
                     available = _battery_available_discharge_kwh(
@@ -1668,8 +1722,10 @@ def _battery_schedule_state(
     timeslot: int,
 ) -> str:
     """Return the serialized battery policy state for one schedule slot."""
-    action_deadband = max(float(entity.action_deadband_kwh), EPSILON)
-    if result["battery_charge_grid"][battery_index, timeslot] > action_deadband:
+    action_deadband = float(entity.action_deadband_kwh)
+    if _meets_action_deadband(
+        result["battery_charge_grid"][battery_index, timeslot], action_deadband
+    ):
         return "grid_charge"
     if bool(result["battery_preserve"][battery_index, timeslot]):
         return "preserve"

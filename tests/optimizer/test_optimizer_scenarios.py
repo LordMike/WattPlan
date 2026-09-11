@@ -1543,6 +1543,32 @@ def test_battery_schedule_state_defaults_pv_or_neutral_flow_to_self_consume():
     assert optimizer._battery_schedule_state(result, entity, 0, 1) == "self_consume"
 
 
+def test_battery_schedule_state_includes_exact_deadband_boundary():
+    entity = optimizer.BatteryEntity(
+        name="battery",
+        initial_kwh=0.0,
+        minimum_kwh=0.0,
+        capacity_kwh=1.0,
+        target=None,
+        charge_curve_kwh=[1.0],
+        discharge_curve_kwh=[1.0],
+        charge_efficiency=1.0,
+        discharge_efficiency=1.0,
+        throughput_cost_per_kwh=0.0,
+        action_deadband_kwh=0.05,
+        mode_switch_cost=0.0,
+        prefer_pv_surplus_charging=False,
+        can_charge_from=1,
+    )
+    result = {
+        "battery_charge_grid": optimizer.np.asarray([[0.05, 0.049]]),
+        "battery_preserve": optimizer.np.asarray([[False, False]]),
+    }
+
+    assert optimizer._battery_schedule_state(result, entity, 0, 0) == "grid_charge"
+    assert optimizer._battery_schedule_state(result, entity, 0, 1) == "self_consume"
+
+
 def test_model_marks_preserve_when_forced_discharge_now_is_more_expensive():
     payload = {
         "grid_import_price_per_kwh": [0.10, 1.00, 1.00, 1.00],
@@ -2972,6 +2998,46 @@ def test_conservative_profile_suppresses_tiny_battery_moves():
     assert all(
         point["state"] == "self_consume"
         for point in with_profile["entities"][0]["schedule"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("throughput_cost_per_kwh", "mode_switch_cost"),
+    [(0.0, 0.0), (0.02, 0.01)],
+)
+def test_deadband_is_enforced_inside_milp_without_losing_arbitrage(
+    throughput_cost_per_kwh, mode_switch_cost
+):
+    result = _run_optimizer(
+        {
+            "grid_import_price_per_kwh": [0.10, 1.0, 1.0, 1.0],
+            "usage_kwh": [0.0, 0.04, 0.04, 0.04],
+            "solar_input_kwh": [0.0, 0.0, 0.0, 0.0],
+            "action_deadband_kwh": 0.05,
+            "throughput_cost_per_kwh": throughput_cost_per_kwh,
+            "mode_switch_cost": mode_switch_cost,
+            "battery_entities": [
+                {
+                    "name": "battery",
+                    "initial_kwh": 0.0,
+                    "minimum_kwh": 0.0,
+                    "capacity_kwh": 1.0,
+                    "charge_curve_kwh": [1.0],
+                    "discharge_curve_kwh": [1.0],
+                    "can_charge_from": 1,
+                }
+            ],
+            "comfort_entities": [],
+        }
+    )
+
+    projections = result["projections"]
+    assert projections["baseline_cost"] == pytest.approx(0.12)
+    assert projections["projected_cost"] == pytest.approx(0.12)
+    assert projections["projected_savings_cost"] == pytest.approx(0.0)
+    assert all(
+        point["state"] == "self_consume"
+        for point in result["entities"][0]["schedule"]
     )
 
 
