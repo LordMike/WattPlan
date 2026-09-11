@@ -92,10 +92,33 @@ class HistoricalCostTracker:
         """Load state, seed cursors, and start scheduling."""
         await self.store.async_load()
         if self._meter_config() != self.store.data.get("meter_config"):
-            await self._async_seed(datetime.now(tz=UTC))
+            await self._async_seed(
+                datetime.now(tz=UTC), simulation_reason="meter_configuration_changed"
+            )
             return
         if not self.store.last_meter_values():
-            await self._async_seed(datetime.now(tz=UTC))
+            await self._async_seed(
+                datetime.now(tz=UTC), simulation_reason="tracking_initialized"
+            )
+            return
+        if self.scenario_enabled(SCENARIO_SELF_CONSUMPTION):
+            configuration = self._simulation_configuration()
+            continuity = self.store.simulation_continuity()
+            if continuity["configuration"] != configuration:
+                await self._async_seed(
+                    datetime.now(tz=UTC),
+                    simulation_reason="battery_configuration_changed",
+                )
+                return
+            expected_ids = {item["subentry_id"] for item in configuration}
+            if continuity["valid"] and set(self.store.simulation_soc()) != expected_ids:
+                self.store.invalidate_simulation(
+                    at=datetime.now(tz=UTC), reason="invalid_persisted_state"
+                )
+        else:
+            self.store.invalidate_simulation(
+                at=datetime.now(tz=UTC), reason="scenario_disabled"
+            )
         self._schedule_next(datetime.now(tz=UTC))
 
     async def async_shutdown(self) -> None:
@@ -161,6 +184,7 @@ class HistoricalCostTracker:
     def self_consumption_simulation_attributes(self) -> dict[str, Any]:
         """Return current self-consumption simulation state attributes."""
         soc_kwh = self.store.simulation_soc()
+        continuity = self.store.simulation_continuity()
         battery_configs = {
             battery.subentry_id: battery for battery in (self._battery_configs() or [])
         }
@@ -175,6 +199,12 @@ class HistoricalCostTracker:
             "simulated_soc_percent_by_battery": soc_percent,
             "simulation_soc_seeded_from_real_soc": True,
             "simulation_soc_resyncs_each_slot": False,
+            "reference_continuity_valid": continuity["valid"],
+            "reference_segment_id": continuity["segment_id"],
+            "reference_segment_started_at": continuity["segment_started_at"],
+            "reference_segment_reason": continuity["segment_reason"],
+            "reference_untrusted_since": continuity["untrusted_since"],
+            "reference_untrusted_reason": continuity["untrusted_reason"],
         }
 
     async def async_process_completed_slot(
@@ -207,17 +237,33 @@ class HistoricalCostTracker:
         if completed_slot < next_slot:
             return
         if completed_slot != next_slot:
+            self.store.invalidate_simulation(
+                at=next_slot, reason="skipped_slot_boundary"
+            )
             missing_slot = next_slot
             while missing_slot <= completed_slot:
                 await self._async_append_gap(missing_slot, FLAG_GAP)
                 missing_slot += self._interval
-            await self._async_seed(now, processed_slot=completed_slot)
+            await self._async_seed(
+                now,
+                processed_slot=completed_slot,
+                simulation_reason="reinitialized_after_skipped_slots",
+            )
             self._notify()
             return
 
         current_meters, meter_flags = self._read_meter_values()
         previous_meters = self.store.last_meter_values()
         deltas, delta_flags = self._meter_deltas(previous_meters, current_meters)
+        for key in ("grid_import", "grid_export", "usage", "pv"):
+            previous_value = previous_meters.get(key)
+            current_value = current_meters.get(key)
+            if (
+                previous_value is not None
+                and current_value is not None
+                and current_value < previous_value
+            ):
+                current_meters[key] = None
         flags = meter_flags | delta_flags
         import_price = await self._async_price(CONF_SOURCE_IMPORT_PRICE, completed_slot)
         if import_price is None:
@@ -228,8 +274,9 @@ class HistoricalCostTracker:
 
         self_import: float | None = None
         self_export: float | None = None
+        simulation: tuple[float, float] | None = None
         if self.scenario_enabled("self_consumption"):
-            simulation = self._simulate_self_consumption(deltas)
+            simulation = self._simulate_self_consumption(deltas, completed_slot)
             if simulation is None:
                 flags |= FLAG_SELF_CONSUMPTION_UNAVAILABLE
             else:
@@ -245,6 +292,11 @@ class HistoricalCostTracker:
             pv=deltas.get("pv"),
             self_consumption_grid_import=self_import,
             self_consumption_grid_export=self_export,
+            self_consumption_segment_id=(
+                self.store.simulation_continuity()["segment_id"]
+                if simulation is not None
+                else None
+            ),
             flags=flags,
         )
         self.store.append_slot(record)
@@ -254,6 +306,16 @@ class HistoricalCostTracker:
             meter_config=self._meter_config(),
         )
         self.store.data.pop("meter_cursor_seeded", None)
+        if (
+            self.scenario_enabled(SCENARIO_SELF_CONSUMPTION)
+            and simulation is None
+            and current_meters.get("usage") is not None
+            and current_meters.get("pv") is not None
+        ):
+            self._start_self_consumption_segment(
+                completed_slot + self._interval,
+                reason="reinitialized_after_untrusted_slot",
+            )
         self._notify()
 
     async def async_refresh(self, now: datetime | None = None) -> None:
@@ -290,12 +352,16 @@ class HistoricalCostTracker:
         now: datetime,
         *,
         processed_slot: datetime | None = None,
+        simulation_reason: str = "explicit_reinitialization",
     ) -> None:
         """Seed meter cursors and self-consumption SoC without creating a slot."""
         meters, _flags = self._read_meter_values()
         seed_slot = processed_slot or self._floor_to_slot(now)
         if self.scenario_enabled("self_consumption"):
-            self._seed_self_consumption_soc()
+            boundary = (
+                seed_slot + self._interval if processed_slot is not None else seed_slot
+            )
+            self._start_self_consumption_segment(boundary, reason=simulation_reason)
         self.store.update_metadata(
             last_processed_slot=seed_slot,
             last_meter_values=meters,
@@ -317,6 +383,7 @@ class HistoricalCostTracker:
             grid_export=None,
             usage=None,
             pv=None,
+            self_consumption_segment_id=None,
             flags=flags,
         )
         self.store.append_slot(record)
@@ -444,20 +511,29 @@ class HistoricalCostTracker:
     def _simulate_self_consumption(
         self,
         deltas: dict[str, float | None],
+        slot_start: datetime,
     ) -> tuple[float, float] | None:
         """Run and persist one self-consumption simulation slot."""
         usage = deltas.get("usage")
         pv = deltas.get("pv")
         if usage is None or pv is None:
+            self.store.invalidate_simulation(
+                at=slot_start, reason="missing_usage_or_pv"
+            )
             return None
         batteries = self._battery_configs()
         if batteries is None:
+            self.store.invalidate_simulation(
+                at=slot_start, reason="invalid_battery_configuration"
+            )
+            return None
+        if not self.store.simulation_continuity()["valid"]:
             return None
         soc = self.store.simulation_soc()
-        if any(battery.subentry_id not in soc for battery in batteries):
-            self._seed_self_consumption_soc()
-            soc = self.store.simulation_soc()
-        if any(battery.subentry_id not in soc for battery in batteries):
+        if {battery.subentry_id for battery in batteries} != set(soc):
+            self.store.invalidate_simulation(
+                at=slot_start, reason="invalid_persisted_state"
+            )
             return None
         try:
             result = simulate_self_consumption_slot(
@@ -467,17 +543,24 @@ class HistoricalCostTracker:
                 soc_by_battery=soc,
             )
         except ValueError:
+            self.store.invalidate_simulation(
+                at=slot_start, reason="invalid_simulation_state"
+            )
             return None
         self.store.update_simulation_soc(result.soc_by_battery)
         return result.grid_import, result.grid_export
 
-    def _seed_self_consumption_soc(self) -> None:
-        """Seed self-consumption simulation SoC from configured battery sources."""
+    def _start_self_consumption_segment(
+        self, started_at: datetime, *, reason: str
+    ) -> bool:
+        """Start a visible comparison segment from real SoC at one boundary."""
         soc: dict[str, float] = {}
         batteries = self._battery_configs()
         if batteries is None:
-            self.store.update_simulation_soc({})
-            return
+            self.store.invalidate_simulation(
+                at=started_at, reason="invalid_battery_configuration"
+            )
+            return False
         for battery in batteries:
             subentry = self.entry.subentries.get(battery.subentry_id)
             if subentry is None:
@@ -492,7 +575,38 @@ class HistoricalCostTracker:
                 battery.minimum_kwh,
                 min(battery.capacity_kwh, raw),
             )
-        self.store.update_simulation_soc(soc)
+        if len(soc) != len(batteries):
+            self.store.invalidate_simulation(
+                at=started_at, reason="missing_initial_battery_soc"
+            )
+            return False
+        return self.store.start_simulation_segment(
+            soc,
+            started_at=started_at,
+            reason=reason,
+            configuration=self._simulation_configuration(batteries),
+        )
+
+    def _simulation_configuration(
+        self, batteries: list[BatterySimulationConfig] | None = None
+    ) -> list[dict[str, Any]]:
+        """Return stable inputs whose changes require a new reference segment."""
+        batteries = self._battery_configs() if batteries is None else batteries
+        if batteries is None:
+            return []
+        return [
+            {
+                "subentry_id": battery.subentry_id,
+                "minimum_kwh": battery.minimum_kwh,
+                "capacity_kwh": battery.capacity_kwh,
+                "max_charge_kwh": battery.max_charge_kwh,
+                "max_discharge_kwh": battery.max_discharge_kwh,
+                "charge_efficiency": battery.charge_efficiency,
+                "discharge_efficiency": battery.discharge_efficiency,
+                "can_charge_from_pv": battery.can_charge_from_pv,
+            }
+            for battery in batteries
+        ]
 
     def _battery_configs(self) -> list[BatterySimulationConfig] | None:
         """Return configured batteries in config-entry order."""

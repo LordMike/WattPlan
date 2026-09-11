@@ -49,7 +49,24 @@ When historical tracking first reads the cumulative meters partway through a slo
 
 The reference scenarios are not predictions. They are recalculated from the same measured usage and PV facts that occurred in the completed slots.
 
-The simple self-consumption simulation is seeded once from the real battery SoC and then keeps its own simulated SoC. It does not re-sync every slot, because doing so would mix actual WattPlan-controlled behavior into the counterfactual baseline.
+The simple self-consumption simulation keeps its own simulated SoC within each
+comparison segment. It does not re-sync every slot, because doing so would mix
+actual WattPlan-controlled behavior into the counterfactual baseline.
+
+Missing usage/PV, counter resets, skipped boundaries, or invalid simulation state
+invalidate reference continuity. The affected reference costs are unavailable.
+Once finite meter baselines and real battery SoC are available, tracking starts a
+new explicitly identified segment; it does not reconstruct the missing history.
+Sensor attributes expose continuity validity, the segment start/reason, and the
+segment IDs represented in period totals. Totals across segments describe the
+observed comparison segments, not one uninterrupted counterfactual. Missing
+tariffs alone do not interrupt the energy simulation when usage and PV are known.
+
+When older stored history has no continuity metadata, reference values from its
+first retained missing usage/PV interval onward are conservatively marked
+unavailable. Actual meter facts remain retained. Historical reference totals may
+therefore change after upgrading rather than continue displaying unverified gains
+or losses.
 
 ## Entities
 

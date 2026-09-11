@@ -846,17 +846,18 @@ async def test_historical_cost_tracking_processes_scenarios_and_entities(
 
 
 @pytest.mark.parametrize(
-    "missing_pv",
+    "variant",
     [
-        False,
-        pytest.param(True, marks=pytest.mark.xfail(
-            strict=True,
-            reason="G1: missing PV freezes reference SoC and creates false negative savings",
-        )),
+        "complete",
+        "missing_pv",
+        "missing_price",
+        "usage_reset",
+        "skipped_boundary",
+        "missing_simulation_state",
     ],
 )
 async def test_identical_self_consumption_execution_has_zero_reported_savings(
-    hass: HomeAssistant, freezer, missing_pv: bool,
+    hass: HomeAssistant, freezer, variant: str,
 ) -> None:
     """A fixed self-consumption policy must not lose to itself after a meter gap.
 
@@ -912,22 +913,64 @@ async def test_identical_self_consumption_execution_has_zero_reported_savings(
     )
     tracker.store.data.pop("meter_cursor_seeded", None)
     tracker.store.update_simulation_soc({"battery_sub": 1.0})
-    for hour in (1, 2, 3):
+    if variant == "missing_simulation_state":
+        tracker.store.update_simulation_soc({})
+
+    original_price = tracker._async_price
+
+    async def _price_with_gap(source_key: str, slot_start: datetime) -> float | None:
+        if (
+            variant == "missing_price"
+            and source_key == CONF_SOURCE_IMPORT_PRICE
+            and slot_start == start
+        ):
+            return None
+        return await original_price(source_key, slot_start)
+
+    hours = (1, 3, 4) if variant == "skipped_boundary" else (1, 2, 3)
+    for hour in hours:
         now = start + timedelta(hours=hour, seconds=1)
         freezer.move_to(now)
         _set_energy_meter(hass, "sensor.grid_import_total", float(hour - 1))
-        _set_energy_meter(hass, "sensor.usage_total", float(hour))
+        _set_energy_meter(
+            hass,
+            "sensor.usage_total",
+            -1.0 if variant == "usage_reset" and hour == 1 else float(hour),
+        )
         _set_energy_meter(hass, "sensor.pv_total",
-                          float("nan") if missing_pv and hour == 1 else 0.0)
+                          float("nan") if variant == "missing_pv" and hour == 1 else 0.0)
         hass.states.async_set("sensor.battery_soc", "0.0",
                              {"unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR})
-        await tracker.async_process_completed_slot(now)
+        with patch.object(tracker, "_async_price", side_effect=_price_with_gap):
+            await tracker.async_process_completed_slot(now)
         await hass.async_block_till_done()
     sensor = hass.states.get("sensor.home_historical_savings_vs_self_consumption_today")
     assert sensor is not None
-    assert sensor.attributes["slots"] == 3
-    assert sensor.attributes["missing_slots"] == (2 if missing_pv else 0)
+    assert sensor.attributes["slots"] == (4 if variant == "skipped_boundary" else 3)
+    assert sensor.attributes["missing_slots"] == (
+        2
+        if variant in {"missing_pv", "usage_reset", "skipped_boundary"}
+        else 1
+        if variant in {"missing_price", "missing_simulation_state"}
+        else 0
+    )
     assert float(sensor.state) == pytest.approx(0.0)
+    assert sensor.attributes["reference_continuity_valid"] is True
+    if variant in {"missing_pv", "usage_reset", "missing_simulation_state"}:
+        assert sensor.attributes["reference_segment_ids"] == ["segment-2"]
+        assert sensor.attributes["reference_segment_reason"] == (
+            "reinitialized_after_untrusted_slot"
+        )
+    elif variant == "skipped_boundary":
+        assert sensor.attributes["reference_segment_ids"] == [
+            "segment-1",
+            "segment-2",
+        ]
+        assert sensor.attributes["reference_segment_reason"] == (
+            "reinitialized_after_skipped_slots"
+        )
+    else:
+        assert sensor.attributes["reference_segment_ids"] == ["segment-1"]
 
 
 async def test_refresh_sensors_service_processes_historical_costs(
@@ -1571,7 +1614,11 @@ async def test_historical_store_sanitizes_nonfinite_persisted_values(
     assert day["import_price"] == [-1.0, None, 1e308, 1e308]
     assert day["flags"] == [0, FLAG_MISSING_IMPORT_PRICE, 0, 0]
     assert store.last_meter_values() == {"grid_import": None, "usage": 4.0}
-    assert store.simulation_soc() == {"good": 1.0}
+    assert store.simulation_soc() == {}
+    assert store.simulation_continuity()["valid"] is False
+    assert store.simulation_continuity()["untrusted_reason"] == (
+        "legacy_state_unverifiable"
+    )
     summary = store.summary(
         metric=HistoricalMetric.COST,
         period="today",
@@ -1650,6 +1697,134 @@ async def test_historical_cost_store_migrates_missing_price_cache(
     )
 
     assert migrated["price_cache"] == {}
+
+
+async def test_historical_store_persists_valid_reference_segment(
+    hass: HomeAssistant,
+) -> None:
+    """A valid reference segment and its provenance survive a store restart."""
+    started_at = datetime(2026, 9, 11, 12, 0, tzinfo=UTC)
+    first = HistoricalCostStore(
+        hass, entry_id="continuity-entry", slot_minutes=60, currency="DKK"
+    )
+    await first.async_load()
+    configuration = [{"subentry_id": "battery", "capacity_kwh": 1.0}]
+    assert first.start_simulation_segment(
+        {"battery": 0.75},
+        started_at=started_at,
+        reason="tracking_initialized",
+        configuration=configuration,
+    )
+    payload = first.data
+
+    restored = HistoricalCostStore(
+        hass, entry_id="continuity-entry", slot_minutes=60, currency="DKK"
+    )
+    with patch.object(restored._store, "async_load", return_value=payload):
+        await restored.async_load()
+
+    assert restored.simulation_soc() == {"battery": pytest.approx(0.75)}
+    assert restored.simulation_continuity() == {
+        "valid": True,
+        "segment_id": "segment-1",
+        "segment_started_at": "2026-09-11T12:00:00Z",
+        "segment_reason": "tracking_initialized",
+        "untrusted_since": None,
+        "untrusted_reason": None,
+        "configuration": configuration,
+    }
+
+
+async def test_historical_store_rejects_corrupt_valid_reference_state(
+    hass: HomeAssistant,
+) -> None:
+    """A persisted valid marker cannot make nonfinite simulation state trusted."""
+    store = HistoricalCostStore(
+        hass, entry_id="bad-continuity", slot_minutes=60, currency="DKK"
+    )
+    payload = {
+        "version": 1,
+        "slot_minutes": 60,
+        "currency": "DKK",
+        "tracking_started_at": "2026-09-11T10:00:00Z",
+        "last_processed_slot": "2026-09-11T11:00:00Z",
+        "last_meter_values": {},
+        "meter_config": {},
+        "price_cache": {},
+        "days": {},
+        "simulation_state": {
+            "self_consumption": {
+                "batteries": {"battery": {"soc_kwh": float("nan")}},
+                "valid": True,
+                "segment_counter": 1,
+                "segment_id": "segment-1",
+                "configuration": [{"subentry_id": "battery"}],
+            }
+        },
+    }
+    with patch.object(store._store, "async_load", return_value=payload):
+        await store.async_load()
+
+    assert store.simulation_soc() == {}
+    assert store.simulation_continuity()["valid"] is False
+    assert store.simulation_continuity()["untrusted_reason"] == (
+        "invalid_persisted_state"
+    )
+
+
+async def test_historical_store_invalidates_legacy_reference_after_energy_gap(
+    hass: HomeAssistant,
+) -> None:
+    """Upgrade must not preserve already-invented post-gap reference losses."""
+    store = HistoricalCostStore(
+        hass, entry_id="legacy-gap", slot_minutes=60, currency="DKK"
+    )
+    payload = {
+        "version": 1,
+        "slot_minutes": 60,
+        "currency": "DKK",
+        "tracking_started_at": "2026-09-11T10:00:00Z",
+        "last_processed_slot": "2026-09-11T12:00:00Z",
+        "last_meter_values": {},
+        "meter_config": {},
+        "price_cache": {},
+        "simulation_state": {
+            "self_consumption": {"batteries": {"battery": {"soc_kwh": 1.0}}}
+        },
+        "days": {
+            "2026-09-11": {
+                "starts": [
+                    "2026-09-11T10:00:00Z",
+                    "2026-09-11T11:00:00Z",
+                    "2026-09-11T12:00:00Z",
+                ],
+                "import_price": [1.0, 1.0, 1.0],
+                "export_price": [0.0, 0.0, 0.0],
+                "grid_import": [0.0, None, 1.0],
+                "grid_export": [0.0, None, 0.0],
+                "usage": [1.0, None, 1.0],
+                "pv": [0.0, None, 0.0],
+                "self_consumption_grid_import": [0.0, None, 0.0],
+                "self_consumption_grid_export": [0.0, None, 0.0],
+                "flags": [0, FLAG_MISSING_METER, 0],
+            }
+        },
+    }
+    with patch.object(store._store, "async_load", return_value=payload):
+        await store.async_load()
+
+    day = store.data["days"]["2026-09-11"]
+    assert day["self_consumption_grid_import"] == [0.0, None, None]
+    assert day["self_consumption_segment_id"] == ["legacy-segment-1", None, None]
+    summary = store.summary(
+        metric=HistoricalMetric.SAVINGS_VS_SELF_CONSUMPTION,
+        period="today",
+        scenario=None,
+        now=datetime(2026, 9, 11, 18, tzinfo=UTC),
+    )
+    assert summary.value == pytest.approx(0.0)
+    assert summary.missing_slots == 2
+    assert summary.reference_segment_ids == ("legacy-segment-1",)
 
 
 async def test_battery_action_sensor_uses_source_specific_charge_state(

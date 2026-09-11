@@ -56,6 +56,7 @@ class HistoricalPeriodSummary:
     period_start: str
     period_end: str
     scenario: str | None
+    reference_segment_ids: tuple[str, ...]
 
 
 class HistoricalCostStore:
@@ -190,6 +191,74 @@ class HistoricalCostStore:
                 result[str(subentry_id)] = value
         return result
 
+    def simulation_continuity(self) -> dict[str, Any]:
+        """Return persisted self-consumption continuity metadata."""
+        state = self.data.setdefault("simulation_state", {}).setdefault(
+            "self_consumption", {}
+        )
+        return {
+            "valid": state.get("valid") is True,
+            "segment_id": state.get("segment_id"),
+            "segment_started_at": state.get("segment_started_at"),
+            "segment_reason": state.get("segment_reason"),
+            "untrusted_since": state.get("untrusted_since"),
+            "untrusted_reason": state.get("untrusted_reason"),
+            "configuration": state.get("configuration"),
+        }
+
+    def start_simulation_segment(
+        self,
+        soc_by_battery: dict[str, float],
+        *,
+        started_at: datetime,
+        reason: str,
+        configuration: list[dict[str, Any]],
+    ) -> bool:
+        """Initialize a new explicitly identified comparison segment."""
+        sanitized = {
+            str(subentry_id): {"soc_kwh": value}
+            for subentry_id, soc in soc_by_battery.items()
+            if (value := _finite_float(soc)) is not None
+        }
+        if len(sanitized) != len(soc_by_battery):
+            return False
+        state = self.data.setdefault("simulation_state", {}).setdefault(
+            "self_consumption", {}
+        )
+        counter = int(_finite_float(state.get("segment_counter")) or 0) + 1
+        state.update(
+            {
+                "batteries": sanitized,
+                "valid": True,
+                "segment_counter": counter,
+                "segment_id": f"segment-{counter}",
+                "segment_started_at": _utc_iso(started_at),
+                "segment_reason": reason,
+                "untrusted_since": None,
+                "untrusted_reason": None,
+                "configuration": configuration,
+            }
+        )
+        self.mark_dirty()
+        return True
+
+    def invalidate_simulation(self, *, at: datetime, reason: str) -> None:
+        """Mark reference state untrusted without altering earlier slot totals."""
+        state = self.data.setdefault("simulation_state", {}).setdefault(
+            "self_consumption", {}
+        )
+        if state.get("valid") is not True and state.get("untrusted_reason") == reason:
+            return
+        state.update(
+            {
+                "batteries": {},
+                "valid": False,
+                "untrusted_since": _utc_iso(at),
+                "untrusted_reason": reason,
+            }
+        )
+        self.mark_dirty()
+
     def update_simulation_soc(self, soc_by_battery: dict[str, float]) -> None:
         """Persist self-consumption battery SoC state."""
         state = self.data.setdefault("simulation_state", {}).setdefault(
@@ -269,6 +338,9 @@ class HistoricalCostStore:
         day_payload["self_consumption_grid_export"].append(
             record.self_consumption_grid_export
         )
+        day_payload["self_consumption_segment_id"].append(
+            record.self_consumption_segment_id
+        )
         day_payload["flags"].append(int(record.flags))
         self.data["last_processed_slot"] = _utc_iso(record.start)
         self.mark_dirty()
@@ -339,6 +411,13 @@ class HistoricalCostStore:
             period_start=period_start.isoformat(),
             period_end=period_end.isoformat(),
             scenario=scenario,
+            reference_segment_ids=tuple(
+                dict.fromkeys(
+                    record.self_consumption_segment_id
+                    for record in records
+                    if record.self_consumption_segment_id is not None
+                )
+            ),
         )
 
     def _record_value(
@@ -461,6 +540,9 @@ class HistoricalCostStore:
                 "self_consumption_grid_export",
                 index,
             ),
+            self_consumption_segment_id=_optional_str_at(
+                day_payload, "self_consumption_segment_id", index
+            ),
             flags=flags,
         )
         return _sanitize_record(record, persisted_payload=day_payload, index=index)
@@ -543,15 +625,45 @@ class HistoricalCostStore:
             for key, value in migrated["last_meter_values"].items()
         }
         simulation_state = migrated["simulation_state"].get("self_consumption")
-        if isinstance(simulation_state, dict):
-            batteries = simulation_state.get("batteries")
-            if isinstance(batteries, dict):
-                simulation_state["batteries"] = {
-                    str(key): {"soc_kwh": value}
-                    for key, item in batteries.items()
-                    if isinstance(item, dict)
-                    and (value := _finite_float(item.get("soc_kwh"))) is not None
+        if not isinstance(simulation_state, dict):
+            simulation_state = {}
+            migrated["simulation_state"]["self_consumption"] = simulation_state
+        legacy_reference_state = "valid" not in simulation_state
+        batteries = simulation_state.get("batteries")
+        if not isinstance(batteries, dict):
+            batteries = {}
+        sanitized_batteries = {
+            str(key): {"soc_kwh": value}
+            for key, item in batteries.items()
+            if isinstance(item, dict)
+            and (value := _finite_float(item.get("soc_kwh"))) is not None
+        }
+        simulation_state["batteries"] = sanitized_batteries
+        if simulation_state.get("valid") is True and len(sanitized_batteries) != len(
+            batteries
+        ):
+            simulation_state.update(
+                {
+                    "batteries": {},
+                    "valid": False,
+                    "untrusted_since": migrated.get("last_processed_slot"),
+                    "untrusted_reason": "invalid_persisted_state",
                 }
+            )
+        if "valid" not in simulation_state:
+            simulation_state.update(
+                {
+                    "batteries": {},
+                    "valid": False,
+                    "segment_counter": 0,
+                    "segment_id": None,
+                    "segment_started_at": None,
+                    "segment_reason": None,
+                    "untrusted_since": migrated.get("last_processed_slot"),
+                    "untrusted_reason": "legacy_state_unverifiable",
+                    "configuration": None,
+                }
+            )
         for slot_key, price_payload in list(migrated["price_cache"].items()):
             if not isinstance(price_payload, dict):
                 del migrated["price_cache"][slot_key]
@@ -571,6 +683,8 @@ class HistoricalCostStore:
                 if not isinstance(day_payload.get(array_key), list):
                     day_payload[array_key] = []
             _sanitize_day_payload(day_payload)
+        if legacy_reference_state:
+            _invalidate_legacy_reference_after_energy_gap(migrated["days"])
         return migrated
 
 
@@ -585,6 +699,14 @@ def _optional_float_at(payload: dict[str, Any], key: str, index: int) -> float |
         return _finite_float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _optional_str_at(payload: dict[str, Any], key: str, index: int) -> str | None:
+    values = payload.get(key, [])
+    if not isinstance(values, list) or index >= len(values):
+        return None
+    value = values[index]
+    return str(value) if value else None
 
 
 def _sanitize_record(
@@ -636,7 +758,12 @@ def _sanitize_record(
         )
     ):
         flags |= FLAG_SELF_CONSUMPTION_UNAVAILABLE
-    return SlotRecord(start=record.start, flags=flags, **values)
+    return SlotRecord(
+        start=record.start,
+        flags=flags,
+        self_consumption_segment_id=record.self_consumption_segment_id,
+        **values,
+    )
 
 
 def _sanitize_day_payload(day_payload: dict[str, Any]) -> None:
@@ -667,6 +794,46 @@ def _sanitize_day_payload(day_payload: dict[str, Any]) -> None:
     for index, raw in enumerate(flags):
         value = _finite_float(raw)
         flags[index] = int(value) if value is not None else FLAG_GAP
+
+
+def _invalidate_legacy_reference_after_energy_gap(
+    days: dict[str, dict[str, Any]],
+) -> None:
+    """Retain legacy pre-gap values but reject old post-gap reference state."""
+    trusted = True
+    records: list[tuple[str, int, dict[str, Any]]] = []
+    for day_payload in days.values():
+        for index, raw_start in enumerate(day_payload.get("starts", [])):
+            records.append((str(raw_start), index, day_payload))
+    for _start, index, day_payload in sorted(records, key=lambda item: item[0]):
+        usage = _optional_float_at(day_payload, "usage", index)
+        pv = _optional_float_at(day_payload, "pv", index)
+        if usage is None or pv is None:
+            trusted = False
+        segment_ids = day_payload["self_consumption_segment_id"]
+        while len(segment_ids) <= index:
+            segment_ids.append(None)
+        if trusted:
+            if (
+                _optional_float_at(day_payload, "self_consumption_grid_import", index)
+                is not None
+                and _optional_float_at(
+                    day_payload, "self_consumption_grid_export", index
+                )
+                is not None
+            ):
+                segment_ids[index] = "legacy-segment-1"
+            continue
+        for key in (
+            "self_consumption_grid_import",
+            "self_consumption_grid_export",
+        ):
+            values = day_payload[key]
+            while len(values) <= index:
+                values.append(None)
+            values[index] = None
+        segment_ids[index] = None
+        day_payload["flags"][index] |= FLAG_SELF_CONSUMPTION_UNAVAILABLE
 
 
 def _finite_float(value: Any) -> float | None:

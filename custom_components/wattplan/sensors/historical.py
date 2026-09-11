@@ -172,6 +172,8 @@ class HistoricalCostSensor(SensorEntity):
             "scenario": summary.scenario,
         }
         if self._is_self_consumption_sensor():
+            attributes["reference_segment_ids"] = list(summary.reference_segment_ids)
+            attributes["reference_segment_count"] = len(summary.reference_segment_ids)
             attributes.update(self._tracker.self_consumption_simulation_attributes())
         return attributes
 

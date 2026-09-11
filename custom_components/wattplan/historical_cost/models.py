@@ -35,6 +35,7 @@ DAY_ARRAY_KEYS: tuple[str, ...] = (
     "pv",
     "self_consumption_grid_import",
     "self_consumption_grid_export",
+    "self_consumption_segment_id",
     "flags",
 )
 
@@ -73,6 +74,7 @@ class SlotRecord:
     flags: int = 0
     self_consumption_grid_import: float | None = None
     self_consumption_grid_export: float | None = None
+    self_consumption_segment_id: str | None = None
 
 
 def default_store_payload(
@@ -92,6 +94,14 @@ def default_store_payload(
         "simulation_state": {
             "self_consumption": {
                 "batteries": {},
+                "valid": False,
+                "segment_counter": 0,
+                "segment_id": None,
+                "segment_started_at": None,
+                "segment_reason": None,
+                "untrusted_since": started_at.isoformat(),
+                "untrusted_reason": "not_initialized",
+                "configuration": None,
             }
         },
     }
