@@ -1,5 +1,6 @@
 import json
 import math
+import random
 
 import pytest
 from pydantic import ValidationError
@@ -398,8 +399,8 @@ def test_locked_off_tail_does_not_conflict_with_max_off_initial_window():
     assert [point["enabled"] for point in schedule] == [True, False, False, False]
 
 
-def test_preserve_counterfactual_receives_same_bounded_comfort_lock(monkeypatch):
-    """Preserve inference must not use a different comfort feasibility model."""
+def test_preserve_counterfactual_uses_the_same_fixed_comfort_demand(monkeypatch):
+    """Comfort demand is fixed outside both the primary and probe MILPs."""
     payload = _bounded_lock_payload()
     payload["grid_import_price_per_kwh"] = [0.1, 1.0, 1.0, 1.0]
     payload["usage_kwh"] = [1.0] * 4
@@ -431,9 +432,14 @@ def test_preserve_counterfactual_receives_same_bounded_comfort_lock(monkeypatch)
             {
                 "base_timeslot": kwargs["base_timeslot"],
                 "forced": kwargs.get("forced_discharge_first"),
-                "modes": kwargs["comfort_lock_modes"].tolist(),
-                "remaining": kwargs["comfort_lock_remaining"].tolist(),
-                "comfort_count": len(kwargs["comfort_entities"]),
+                "comfort_solver_args": set(kwargs).intersection(
+                    {
+                        "comfort_entities",
+                        "comfort_lock_modes",
+                        "comfort_lock_remaining",
+                    }
+                ),
+                "usage": kwargs["usage_h"].copy(),
             }
         )
         return original(**kwargs)
@@ -445,9 +451,253 @@ def test_preserve_counterfactual_receives_same_bounded_comfort_lock(monkeypatch)
     counterfactual = next(
         call for call in calls if call["base_timeslot"] == 0 and call["forced"]
     )
-    assert primary["modes"] == counterfactual["modes"] == [0]
-    assert primary["remaining"] == counterfactual["remaining"] == [2]
-    assert primary["comfort_count"] == counterfactual["comfort_count"] == 1
+    assert primary["comfort_solver_args"] == counterfactual["comfort_solver_args"] == set()
+    assert counterfactual["usage"][1:] == pytest.approx(primary["usage"][1:])
+    assert counterfactual["usage"][0] > primary["usage"][0]
+
+
+def test_minimum_off_transition_looks_ahead_for_rolling_feasibility():
+    """A feasible ON state must not enter an OFF lock that causes a later deficit."""
+    payload = _rolling_comfort_payload([False, True, False])
+    payload["rolling_window_slots"] = 4
+    payload["comfort_entities"][0].update(
+        target_on_slots_per_rolling_window=2,
+        min_consecutive_off_slots=3,
+        max_consecutive_off_slots=3,
+        is_on_now=True,
+        on_history=[True, False, True],
+    )
+
+    schedule = _entity_schedule(_run_optimizer(payload), "comfort")
+
+    assert schedule[0]["enabled"] is True
+    _assert_rolling_windows([True, False, True], schedule, window=4, target=2)
+
+
+def test_terminal_comfort_transition_leaves_room_for_complete_minimum_run():
+    """Do not enter an OFF run whose forced terminal ON run cannot complete."""
+    payload = _rolling_comfort_payload([True] * 9)
+    payload["grid_import_price_per_kwh"] = [0.2] * 8
+    payload["solar_input_kwh"] = [0.0] * 8
+    payload["usage_kwh"] = [0.0] * 8
+    payload["rolling_window_slots"] = 10
+    payload["comfort_entities"][0].update(
+        target_on_slots_per_rolling_window=1,
+        min_consecutive_on_slots=3,
+        min_consecutive_off_slots=3,
+        max_consecutive_off_slots=3,
+        is_on_now=True,
+        on_slots_last_rolling_window=9,
+        on_history=[True] * 9,
+        off_streak_slots_now=0,
+    )
+    comfort = optimizer.normalize_calculation_input(
+        optimizer.OptimizationParams(**payload)
+    ).comfort_entities[0]
+
+    schedule = optimizer._fixed_comfort_schedule(
+        [comfort], 10, 8, optimizer.np.asarray([1]), optimizer.np.asarray([3])
+    )[0].astype(bool).tolist()
+
+    assert schedule == [True, True, True, True, True, False, False, False]
+
+
+def test_fixed_comfort_demand_matches_emitted_schedule_when_max_off_breaks_lock(
+    monkeypatch,
+):
+    """A forced max-off transition must be included in battery-model demand."""
+    payload = _rolling_comfort_payload([False, False])
+    payload["usage_kwh"] = [0.0] * 4
+    payload["comfort_entities"][0].update(
+        power_usage_kwh=0.75,
+        min_consecutive_on_slots=2,
+        min_consecutive_off_slots=3,
+        max_consecutive_off_slots=3,
+        off_streak_slots_now=3,
+    )
+    normalized = optimizer.normalize_calculation_input(
+        optimizer.OptimizationParams(**payload)
+    )
+    reuse = {
+        "overlap_steps": 0,
+        "initial_comfort_lock_mode": optimizer.np.asarray([0]),
+        "initial_comfort_lock_remaining": optimizer.np.asarray([3]),
+    }
+    modeled_first_slot_loads = []
+    original = optimizer._solve_mpc_step
+
+    def capture(**kwargs):
+        if kwargs.get("forced_discharge_first") is None:
+            modeled_first_slot_loads.append(float(kwargs["usage_h"][0]))
+        return original(**kwargs)
+
+    monkeypatch.setattr(optimizer, "_solve_mpc_step", capture)
+    result = optimizer.optimize_internal(normalized, reuse_plan_override=reuse)
+    emitted = [point["enabled"] for point in _entity_schedule(result, "comfort")]
+
+    assert emitted[:2] == [True, True]
+    assert modeled_first_slot_loads == pytest.approx(
+        [0.75 if enabled else 0.0 for enabled in emitted]
+    )
+    assert "comfort_min_run_unmet" in result["suboptimal_reasons"]
+
+
+def test_infeasible_terminal_comfort_run_is_reported_suboptimal():
+    """A lock-delayed ON run that cannot finish must not score as healthy."""
+    payload = _rolling_comfort_payload([True] * 9)
+    payload["grid_import_price_per_kwh"] = [0.2] * 4
+    payload["solar_input_kwh"] = [0.0] * 4
+    payload["usage_kwh"] = [0.0] * 4
+    payload["rolling_window_slots"] = 10
+    payload["comfort_entities"][0].update(
+        target_on_slots_per_rolling_window=1,
+        min_consecutive_on_slots=3,
+        min_consecutive_off_slots=2,
+        max_consecutive_off_slots=2,
+        is_on_now=False,
+        on_slots_last_rolling_window=9,
+        on_history=[True] * 9,
+        off_streak_slots_now=0,
+    )
+    normalized = optimizer.normalize_calculation_input(
+        optimizer.OptimizationParams(**payload)
+    )
+    reuse = {
+        "overlap_steps": 0,
+        "initial_comfort_lock_mode": optimizer.np.asarray([0]),
+        "initial_comfort_lock_remaining": optimizer.np.asarray([2]),
+    }
+
+    result = optimizer.optimize_internal(normalized, reuse_plan_override=reuse)
+
+    assert [
+        point["enabled"] for point in _entity_schedule(result, "comfort")
+    ] == [False, False, True, True]
+    assert result["suboptimal"] is True
+    assert "comfort_min_run_unmet" in result["suboptimal_reasons"]
+
+
+def test_fixed_comfort_scheduler_matches_short_horizon_feasibility_oracle():
+    """A feasible short case must not acquire an avoidable comfort violation."""
+    rng = random.Random(20260912)
+    checked = 0
+    attempts = 0
+    horizon = 8
+
+    def trailing_off(history):
+        count = 0
+        for value in reversed(history):
+            if value:
+                break
+            count += 1
+        return count
+
+    def valid_schedule(bits, *, history, current, lock, target, min_on, min_off, max_off):
+        if any(bits[t] != current for t in range(min(lock, horizon))):
+            return False
+        previous = current
+        for t, enabled in enumerate(bits):
+            if enabled != previous:
+                minimum = min_on if enabled else min_off
+                if t + minimum > horizon or any(
+                    value != enabled for value in bits[t : t + minimum]
+                ):
+                    return False
+            previous = enabled
+        off_streak = 0 if current else min(max_off, trailing_off(history))
+        for enabled in bits:
+            off_streak = 0 if enabled else off_streak + 1
+            if off_streak > max_off:
+                return False
+        combined = history + list(bits)
+        window = len(history) + 1
+        return all(
+            sum(combined[end - window + 1 : end + 1]) >= target
+            for end in range(window - 1, len(combined))
+        )
+
+    while checked < 100 and attempts < 5000:
+        attempts += 1
+        window = rng.choice((3, 4, 5))
+        target = rng.randint(1, window)
+        min_on = rng.randint(1, 3)
+        min_off = rng.randint(1, 3)
+        max_off = rng.randint(min_off, 4)
+        current = bool(rng.getrandbits(1))
+        history = [bool(rng.getrandbits(1)) for _ in range(window - 1)]
+        history[-1] = current
+        current_minimum = min_on if current else min_off
+        lock = rng.randint(0, min(current_minimum - 1, horizon))
+        candidates = (
+            tuple(bool(mask & (1 << t)) for t in range(horizon))
+            for mask in range(1 << horizon)
+        )
+        feasible = next(
+            (
+                bits
+                for bits in candidates
+                if valid_schedule(
+                    bits,
+                    history=history,
+                    current=current,
+                    lock=lock,
+                    target=target,
+                    min_on=min_on,
+                    min_off=min_off,
+                    max_off=max_off,
+                )
+            ),
+            None,
+        )
+        if feasible is None:
+            continue
+        payload = _rolling_comfort_payload(history)
+        payload["grid_import_price_per_kwh"] = [0.2] * horizon
+        payload["solar_input_kwh"] = [0.0] * horizon
+        payload["usage_kwh"] = [0.0] * horizon
+        payload["rolling_window_slots"] = window
+        payload["comfort_entities"][0].update(
+            target_on_slots_per_rolling_window=target,
+            min_consecutive_on_slots=min_on,
+            min_consecutive_off_slots=min_off,
+            max_consecutive_off_slots=max_off,
+            is_on_now=current,
+            on_slots_last_rolling_window=sum(history),
+            on_history=history,
+            off_streak_slots_now=(
+                0
+                if current
+                else min(max_off, trailing_off(history))
+            ),
+        )
+        comfort = optimizer.normalize_calculation_input(
+            optimizer.OptimizationParams(**payload)
+        ).comfort_entities[0]
+        actual = optimizer._fixed_comfort_schedule(
+            [comfort],
+            window,
+            horizon,
+            optimizer.np.asarray([int(current)]),
+            optimizer.np.asarray([lock]),
+        )[0].astype(bool).tolist()
+
+        assert valid_schedule(
+            actual,
+            history=history,
+            current=current,
+            lock=lock,
+            target=target,
+            min_on=min_on,
+            min_off=min_off,
+            max_off=max_off,
+        ), (
+            f"avoidable violation for history={history}, current={current}, "
+            f"lock={lock}, target={target}, min_on={min_on}, "
+            f"min_off={min_off}, max_off={max_off}; feasible={feasible}, actual={actual}"
+        )
+        checked += 1
+
+    assert checked == 100
 
 
 def _independent_projected_cost_for_unit_efficiency(payload, result):
@@ -1397,16 +1647,11 @@ def test_signed_negative_import_charges_at_the_more_negative_slot(
     assert result["projections"]["projected_cost"] == pytest.approx(-0.5)
 
 
-@pytest.mark.parametrize(
-    ("prices", "enabled_slot"),
-    [
-        ([-1.0, 0.2, 0.3, 0.4], 0),
-        ([0.2, -1.0, 0.3, 0.4], 1),
-    ],
-)
-def test_signed_negative_import_schedules_comfort_at_the_paid_slot(
-    prices, enabled_slot
-):
+@pytest.mark.parametrize("prices", [
+    [-1.0, 0.2, 0.3, 0.4],
+    [0.2, -1.0, 0.3, 0.4],
+])
+def test_comfort_schedule_is_constraint_driven_not_tariff_driven(prices):
     payload = {
         "grid_import_price_per_kwh": prices,
         "grid_export_price_per_kwh": [0.0, 0.0, 0.0, 0.0],
@@ -1431,11 +1676,14 @@ def test_signed_negative_import_schedules_comfort_at_the_paid_slot(
     }
 
     result = _run_optimizer(payload)
+    reference = _run_optimizer({
+        **payload,
+        "grid_import_price_per_kwh": [0.2, 0.2, 0.2, 0.2],
+    })
     schedule = _entity_schedule(result, "heatpump")
 
-    assert schedule[enabled_slot]["enabled"] is True
-    if enabled_slot == 1:
-        assert schedule[0]["enabled"] is False
+    assert schedule == _entity_schedule(reference, "heatpump")
+    _assert_rolling_windows([False, False, True], schedule, window=4, target=1)
     expected_cost = sum(
         prices[slot] for slot, point in enumerate(schedule) if point["enabled"]
     )

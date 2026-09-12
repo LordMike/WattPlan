@@ -2,6 +2,7 @@ import base64
 import hashlib
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from enum import IntFlag
 from typing import List
 
@@ -10,6 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 DEFAULT_LOOKAHEAD_SLOTS = 22
+# Saved controls from the former tariff-optimized comfort model are not reusable.
+COMFORT_SCHEDULER_VERSION = 1
 
 
 class ChargeSource(IntFlag):
@@ -292,6 +295,26 @@ class OptionalEntityParams(BaseModel):
 class OptimizationParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    plan_start: datetime | None = Field(
+        None,
+        description="Timezone-aware start of forecast slot zero; enables aligned prefix refresh.",
+    )
+    slot_minutes: int = Field(
+        15, ge=1, le=1440, description="Duration of a forecast slot when plan_start is supplied."
+    )
+
+    @field_validator("plan_start")
+    @classmethod
+    def _validate_plan_start(cls, value):
+        if value is None:
+            return None
+        if value.utcoffset() is None:
+            raise ValueError("plan_start must include a timezone")
+        try:
+            return value.astimezone(UTC)
+        except (ValueError, OverflowError) as exc:
+            raise ValueError("plan_start must be representable in UTC") from exc
+
     grid_import_price_per_kwh: List[float] = Field(
         ...,
         description="List of grid import prices (in currency per kWh).",
@@ -420,6 +443,11 @@ class OptimizationParams(BaseModel):
             if value < 0.0:
                 raise ValueError(f"{field_name} must be >= 0")
         horizon = len(self.grid_import_price_per_kwh)
+        if self.plan_start is not None:
+            try:
+                self.plan_start + timedelta(minutes=self.slot_minutes * horizon)
+            except OverflowError as exc:
+                raise ValueError("plan_start and horizon exceed the datetime range") from exc
         solve_horizon = min(self.lookahead_slots, horizon)
         if len(self.grid_export_price_per_kwh) == 0:
             self.grid_export_price_per_kwh = [0.0] * horizon
@@ -670,6 +698,8 @@ def _entity_fingerprint(
         "lookahead_slots": int(lookahead_slots),
         "infer_battery_preserve_policy": bool(infer_battery_preserve_policy),
     }
+    if comfort_entities:
+        payload["comfort_scheduler_version"] = COMFORT_SCHEDULER_VERSION
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
 

@@ -162,7 +162,8 @@ Comfort loads are loads that must still run regularly but can be shifted. Typica
 - Hot water
 - Circulation or utility pumps
 
-WattPlan plans them as on/off decisions with comfort-related constraints.
+WattPlan generates their on/off schedule from rolling runtime and minimum-run
+constraints. Comfort timing is deterministic, not shifted according to tariffs.
 
 ### When to Use Them
 Use a comfort load when:

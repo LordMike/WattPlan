@@ -383,6 +383,8 @@ class PlanningRequestBuilder:
                 "hours_to_plan": hours_to_plan,
                 "window": window,
                 "optimizer_params": {
+                    "plan_start": window.start_at.isoformat(),
+                    "slot_minutes": slot_minutes,
                     "grid_import_price_per_kwh": price_values,
                     "grid_export_price_per_kwh": (
                         export_price_values if export_price_values is not None else [0.0] * expected_slots

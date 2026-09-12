@@ -373,6 +373,11 @@ async def test_legacy_lookahead_migrates_and_can_be_edited_in_hours(
         assert entry.minor_version == 2
         assert entry.options[CONF_OPTIMIZER_LOOKAHEAD_SLOTS] == 22
         assert captured[-1].lookahead_slots == 22
+        assert captured[-1].slot_minutes == slot_minutes
+        assert captured[-1].plan_start is not None
+        assert captured[-1].plan_start.utcoffset() == timedelta(0)
+        assert captured[-1].plan_start.second == 0
+        assert captured[-1].plan_start.minute % slot_minutes == 0
 
         result = await hass.config_entries.options.async_init(entry.entry_id)
         result = await hass.config_entries.options.async_configure(
