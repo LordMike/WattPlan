@@ -63,26 +63,37 @@ Run only integration tests:
 ## Optimizer benchmarks
 
 Run the captured low-PV scenario at the production 144-slot, 48-slot-lookahead
-shape, including five timestamp-aligned planning steps that cross a scheduled
+shape. `--compare-mip-starts` runs warm and cold full plans, while `--serial`
+adds repeated five-step timestamp-aligned trajectories that cross a scheduled
 full refresh:
 
 ```bash
-python scripts/benchmark_optimizer.py --scenario low-pv --serial
+python scripts/benchmark_optimizer.py --scenario low-pv --slots 144 --lookahead 48 --repeats 3 --serial --compare-mip-starts
 ```
 
 The `live-export` scenario uses another captured Home Assistant forecast. The
 deterministic `stress` scenario adds three heterogeneous batteries, deadbands,
-signed tariffs, nonlinear power curves, targets, and preserve probes; increase
-its workload explicitly when solver timing is too short to distinguish:
+signed tariffs, nonlinear power curves, and targets; increase its workload
+explicitly when solver timing is too short to distinguish:
 
 ```bash
 python scripts/benchmark_optimizer.py --scenario stress --slots 288 --lookahead 96 --repeats 1
+```
+
+Use `preserve-probe` when the measurement must exercise counterfactual preserve
+solves. The JSON `probe_calls` field confirms that the path ran:
+
+```bash
+python scripts/benchmark_optimizer.py --scenario preserve-probe --slots 24 --lookahead 8 --repeats 15
 ```
 
 Use the same Python environment and machine for paired comparisons. Report the
 full sample list, not only the median, and do not extrapolate x86 timings to ARM.
 Pass `--disable-mip-starts` to measure the cold solver path under the identical
 scenario, full/prefix cadence, and forecast workload.
+
+See [Optimizer benchmark findings](optimizer-benchmarks.md) for the recorded
+September 2026 measurements and rejected experiments.
 
 ## Packaging
 

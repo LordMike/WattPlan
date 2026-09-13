@@ -123,7 +123,10 @@ shifted; the current action slot and newly appended terminal slot remain
 unknown, and the previous decisions are never fixed as constraints. HiGHS may
 use up to ten nodes to complete a partial start. A rejected start falls back to
 the same cold model, and prefix-only refreshes skip starts because their small
-solve count does not repay completion overhead.
+solve count does not repay completion overhead. Integer assignments are only
+extracted from full primary solves that will feed the next adjacent solve;
+prefix solves, no-deadband solves, and preserve probes avoid building unused
+hint dictionaries.
 
 MILP constraints are assembled as sparse rows and passed to HiGHS in a
 column-wise sparse matrix. The solver backend still accepts dense rows for
