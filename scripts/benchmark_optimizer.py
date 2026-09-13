@@ -9,10 +9,17 @@ import json
 import math
 import platform
 import statistics
+import subprocess
+import sys
 import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import highspy
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from custom_components.wattplan.optimizer import OptimizationParams, optimize
 from custom_components.wattplan.optimizer import mpc_power_optimizer as core
@@ -20,6 +27,26 @@ from tests.optimizer.test_optimizer_scenarios import (
     _live_exported_deye_low_pv_low_soc_payload,
     _live_grid_export_benchmark_payload,
 )
+
+
+def _git_state():
+    revision_result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    if revision_result.returncode != 0:
+        return None, None
+    dirty_result = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    return revision_result.stdout.strip(), (
+        bool(dirty_result.stdout) if dirty_result.returncode == 0 else None
+    )
 
 
 def _extend(payload, slots):
@@ -34,6 +61,20 @@ def _extend(payload, slots):
         if values:
             repeats = (slots + len(values) - 1) // len(values)
             result[key] = (values * repeats)[:slots]
+    for battery in result.get("battery_entities", []):
+        target = battery.get("target")
+        if target is not None and int(target["timeslot"]) >= slots:
+            target["timeslot"] = slots - 1
+    optional_entities = []
+    for entity in result.get("optional_entities", []):
+        end = min(int(entity["start_before_timeslot"]), slots)
+        if end - int(entity["duration_timeslots"]) < int(
+            entity.get("start_after_timeslot", 0)
+        ):
+            continue
+        entity["start_before_timeslot"] = end
+        optional_entities.append(entity)
+    result["optional_entities"] = optional_entities
     result["lookahead_slots"] = min(48, slots)
     result["plan_start"] = datetime(2026, 3, 9, tzinfo=UTC)
     return result
@@ -122,6 +163,32 @@ def _stress_payload(slots, lookahead):
     }
 
 
+def _preserve_probe_payload(slots, lookahead):
+    prices = ([0.10, 1.00, 1.00, 1.00] * ((slots + 3) // 4))[:slots]
+    return {
+        "plan_start": datetime(2026, 9, 13, tzinfo=UTC),
+        "slot_minutes": 15,
+        "grid_import_price_per_kwh": prices,
+        "grid_export_price_per_kwh": [0.0] * slots,
+        "solar_input_kwh": [0.0] * slots,
+        "usage_kwh": [1.0] * slots,
+        "lookahead_slots": lookahead,
+        "action_deadband_kwh": 0.005,
+        "battery_entities": [
+            {
+                "name": "preserve-probe-battery",
+                "initial_kwh": 1.0,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 1.0,
+                "charge_curve_kwh": [0.0],
+                "discharge_curve_kwh": [1.0],
+                "can_charge_from": 0,
+            }
+        ],
+        "comfort_entities": [],
+    }
+
+
 def _scenario(name, slots, lookahead):
     if name == "live-export":
         payload, export_prices = _live_grid_export_benchmark_payload()
@@ -129,6 +196,8 @@ def _scenario(name, slots, lookahead):
         result = _extend(payload, slots)
     elif name == "low-pv":
         result = _extend(_live_exported_deye_low_pv_low_soc_payload(), slots)
+    elif name == "preserve-probe":
+        return _preserve_probe_payload(slots, lookahead)
     else:
         return _stress_payload(slots, lookahead)
     result["lookahead_slots"] = lookahead
@@ -199,7 +268,7 @@ def _measure(payload, repeats, *, force_full=True, disable_mip_starts=False):
             "total_calls": len(solver_calls),
             "probe_calls": len(solver_calls) - primary_solves,
             "submitted_starts": len(started),
-            "accepted_starts": sum(
+            "successful_start_submissions": sum(
                 row["start"] == highspy.HighsStatus.kOk for row in started
             ),
             "total_wrapper_seconds": sum(row["total"] for row in solver_calls),
@@ -216,7 +285,9 @@ def _measure(payload, repeats, *, force_full=True, disable_mip_starts=False):
 
 def _shifted(payload, tick, state, previous):
     result = copy.deepcopy(payload)
-    result["plan_start"] = payload["plan_start"] + timedelta(minutes=15 * tick)
+    result["plan_start"] = payload["plan_start"] + timedelta(
+        minutes=int(payload.get("slot_minutes", 15)) * tick
+    )
     result["state"] = state
     for key in (
         "grid_import_price_per_kwh",
@@ -226,12 +297,38 @@ def _shifted(payload, tick, state, previous):
     ):
         values = result[key]
         result[key] = values[tick:] + values[:tick]
-    for battery, entity in zip(result["battery_entities"], previous["entities"]):
-        battery["initial_kwh"] = entity["schedule"][0]["level"]
+    battery_results = {
+        entity["name"]: entity
+        for entity in previous["entities"]
+        if entity["type"] == "battery"
+    }
+    for battery in result["battery_entities"]:
+        battery["initial_kwh"] = battery_results[battery["name"]]["schedule"][0][
+            "level"
+        ]
+        target = battery.get("target")
+        if target is not None:
+            timeslot = int(target["timeslot"]) - tick
+            if timeslot < 0:
+                battery.pop("target")
+            else:
+                target["timeslot"] = timeslot
+    optional_entities = []
+    for entity in result.get("optional_entities", []):
+        entity["start_after_timeslot"] = max(
+            int(entity.get("start_after_timeslot", 0)) - tick, 0
+        )
+        entity["start_before_timeslot"] = int(entity["start_before_timeslot"]) - tick
+        if entity["start_before_timeslot"] - int(
+            entity["duration_timeslots"]
+        ) < entity["start_after_timeslot"]:
+            continue
+        optional_entities.append(entity)
+    result["optional_entities"] = optional_entities
     return result
 
 
-def _serial(payload, *, disable_mip_starts=False):
+def _serial_trajectory(payload, *, disable_mip_starts=False):
     rows = []
     state = None
     previous = None
@@ -258,39 +355,127 @@ def _serial(payload, *, disable_mip_starts=False):
     return rows
 
 
+def _sample_summary(samples):
+    return {
+        "median_seconds": statistics.median(samples) if samples else None,
+        "samples_seconds": samples,
+    }
+
+
+def _serial_summary(trajectories):
+    full_samples = []
+    prefix_samples = []
+    cadence_counts = {}
+    for trajectory in trajectories:
+        for row in trajectory:
+            cadence = row["cadence"]
+            cadence_counts[cadence] = cadence_counts.get(cadence, 0) + 1
+            if cadence == "repair":
+                prefix_samples.append(row["seconds"])
+            else:
+                full_samples.append(row["seconds"])
+    return {
+        "trajectories": trajectories,
+        "full": _sample_summary(full_samples),
+        "prefix": _sample_summary(prefix_samples),
+        "cadence_counts": cadence_counts,
+    }
+
+
+def _measure_serial(payload, repeats, *, disable_mip_starts=False):
+    return _serial_summary(
+        [
+            _serial_trajectory(payload, disable_mip_starts=disable_mip_starts)
+            for _ in range(repeats)
+        ]
+    )
+
+
+def _paired_serial(payload, repeats):
+    trajectories = {"warm": [], "cold": []}
+    pairs = []
+    for repeat in range(repeats):
+        labels = ("warm", "cold") if repeat % 2 == 0 else ("cold", "warm")
+        current = {}
+        for label in labels:
+            trajectory = _serial_trajectory(
+                payload, disable_mip_starts=label == "cold"
+            )
+            trajectories[label].append(trajectory)
+            current[label] = trajectory
+        warm_total = sum(row["seconds"] for row in current["warm"])
+        cold_total = sum(row["seconds"] for row in current["cold"])
+        pairs.append(
+            {
+                "warm_total_seconds": warm_total,
+                "cold_total_seconds": cold_total,
+                "warm_minus_cold_seconds": warm_total - cold_total,
+            }
+        )
+    return {
+        "warm": _serial_summary(trajectories["warm"]),
+        "cold": _serial_summary(trajectories["cold"]),
+        "pairs": pairs,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--scenario", choices=("live-export", "low-pv", "stress"), default="low-pv"
+        "--scenario",
+        choices=("live-export", "low-pv", "preserve-probe", "stress"),
+        default="low-pv",
     )
     parser.add_argument("--slots", type=int, default=144)
     parser.add_argument("--lookahead", type=int, default=48)
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--serial", action="store_true")
     parser.add_argument("--disable-mip-starts", action="store_true")
+    parser.add_argument("--compare-mip-starts", action="store_true")
     args = parser.parse_args()
+    if args.compare_mip_starts and args.disable_mip_starts:
+        parser.error("--compare-mip-starts cannot be combined with --disable-mip-starts")
 
     payload = _scenario(args.scenario, args.slots, args.lookahead)
+    revision, dirty = _git_state()
     report = {
         "environment": {
             "platform": platform.platform(),
             "python": platform.python_version(),
             "highspy": highspy.Highs().version(),
+            "git_revision": revision,
+            "git_dirty": dirty,
         },
         "scenario": args.scenario,
         "slots": args.slots,
         "lookahead": args.lookahead,
-        "mip_starts": not args.disable_mip_starts,
-        "full": _measure(
+    }
+    if args.compare_mip_starts:
+        report["variants"] = {
+            label: {
+                "full": _measure(
+                    payload,
+                    args.repeats,
+                    disable_mip_starts=label == "cold",
+                )
+            }
+            for label in ("warm", "cold")
+        }
+        if args.serial:
+            report["serial_comparison"] = _paired_serial(payload, args.repeats)
+    else:
+        report["mip_starts"] = not args.disable_mip_starts
+        report["full"] = _measure(
             payload,
             args.repeats,
             disable_mip_starts=args.disable_mip_starts,
-        ),
-    }
-    if args.serial:
-        report["serial"] = _serial(
-            payload, disable_mip_starts=args.disable_mip_starts
         )
+        if args.serial:
+            report["serial"] = _measure_serial(
+                payload,
+                args.repeats,
+                disable_mip_starts=args.disable_mip_starts,
+            )
     print(json.dumps(report, indent=2))
 
 
