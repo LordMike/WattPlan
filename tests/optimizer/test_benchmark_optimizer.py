@@ -88,14 +88,18 @@ def test_shifted_trajectory_drops_expired_target():
 def test_serial_summary_separates_full_and_prefix_distributions():
     trajectories = [
         [
-            {"cadence": "full", "seconds": 3.0},
-            {"cadence": "repair", "seconds": 1.0},
-            {"cadence": "repair", "seconds": 2.0},
-            {"cadence": "fallback_full", "seconds": 4.0},
+            {"cadence": "full", "seconds": 3.0, "quality": {"valid": True}},
+            {"cadence": "repair", "seconds": 1.0, "quality": {"valid": True}},
+            {"cadence": "repair", "seconds": 2.0, "quality": {"valid": True}},
+            {
+                "cadence": "fallback_full",
+                "seconds": 4.0,
+                "quality": {"valid": True},
+            },
         ],
         [
-            {"cadence": "full", "seconds": 5.0},
-            {"cadence": "repair", "seconds": 3.0},
+            {"cadence": "full", "seconds": 5.0, "quality": {"valid": True}},
+            {"cadence": "repair", "seconds": 3.0, "quality": {"valid": True}},
         ],
     ]
 
@@ -130,3 +134,52 @@ def test_git_state_is_best_effort(monkeypatch):
     monkeypatch.setattr(benchmark.subprocess, "run", lambda *args, **kwargs: Failed())
 
     assert benchmark._git_state() == (None, None)
+
+
+def test_paired_full_alternates_order_and_aggregates_raw_results(monkeypatch):
+    calls = []
+
+    def measured(_payload, repeats, *, disable_mip_starts=False, **_kwargs):
+        assert repeats == 1
+        label = "cold" if disable_mip_starts else "warm"
+        calls.append(label)
+        sample = float(len(calls))
+        cost = 10.0 if label == "warm" else 10.0
+        return {
+            "median_seconds": sample,
+            "samples_seconds": [sample],
+            "primary_solves": 4,
+            "projected_cost": cost,
+            "projected_costs": [cost],
+            "quality_valid": True,
+            "quality": [{"valid": True}],
+            "solver": {
+                "total_calls": 4,
+                "probe_calls": 0,
+                "submitted_starts": 3 if label == "warm" else 0,
+                "successful_start_submissions": 3 if label == "warm" else 0,
+                "total_wrapper_seconds": sample,
+                "total_highs_seconds": sample / 2,
+                "total_nodes": 1,
+                "max_model": {
+                    "variables": 10,
+                    "integer_variables": 5,
+                    "rows": 8,
+                    "nonzeros": 20,
+                },
+            },
+        }
+
+    monkeypatch.setattr(benchmark, "_measure", measured)
+    report = benchmark._paired_full({}, repeats=3)
+
+    assert calls == ["warm", "cold", "cold", "warm", "warm", "cold"]
+    assert report["warm"]["samples_seconds"] == [1.0, 4.0, 5.0]
+    assert report["cold"]["samples_seconds"] == [2.0, 3.0, 6.0]
+    assert report["warm"]["solver"]["submitted_starts"] == 9
+    assert report["cold"]["solver"]["submitted_starts"] == 0
+    assert [pair["execution_order"] for pair in report["pairs"]] == [
+        ["warm", "cold"],
+        ["cold", "warm"],
+        ["warm", "cold"],
+    ]

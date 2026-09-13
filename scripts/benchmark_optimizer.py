@@ -222,8 +222,48 @@ def _run(payload, *, force_full, disable_mip_starts=False):
         core._use_mip_starts = original
 
 
+def _result_quality(payload, result):
+    schedules = {
+        entity["name"]: entity["schedule"]
+        for entity in result["entities"]
+        if entity["type"] == "battery"
+    }
+    bounds_valid = True
+    targets_valid = True
+    for battery in payload.get("battery_entities", []):
+        schedule = schedules[battery["name"]]
+        minimum = float(battery["minimum_kwh"])
+        capacity = float(battery["capacity_kwh"])
+        bounds_valid = bounds_valid and all(
+            minimum - core.EPSILON <= float(point["level"]) <= capacity + core.EPSILON
+            for point in schedule
+        )
+        target = battery.get("target")
+        if target is None:
+            continue
+        level = float(schedule[int(target["timeslot"])]["level"])
+        value = float(target["soc_kwh"])
+        tolerance = float(target.get("tolerance_kwh", 0.0))
+        mode = target.get("mode", "at_least")
+        if mode in ("at_least", "exact"):
+            targets_valid = targets_valid and level >= value - tolerance - core.EPSILON
+        if mode in ("at_most", "exact"):
+            targets_valid = targets_valid and level <= value + tolerance + core.EPSILON
+    cost_valid = math.isfinite(float(result["projections"]["projected_cost"]))
+    reasons = list(result["suboptimal_reasons"])
+    return {
+        "valid": cost_valid and bounds_valid and targets_valid and not reasons,
+        "finite_projected_cost": cost_valid,
+        "battery_bounds_valid": bounds_valid,
+        "targets_valid": targets_valid,
+        "suboptimal_reasons": reasons,
+    }
+
+
 def _measure(payload, repeats, *, force_full=True, disable_mip_starts=False):
     samples = []
+    projected_costs = []
+    qualities = []
     solver_calls = []
     result = None
     original_solve = core._solve_lp
@@ -254,6 +294,8 @@ def _measure(payload, repeats, *, force_full=True, disable_mip_starts=False):
                 disable_mip_starts=disable_mip_starts,
             )
             samples.append(elapsed)
+            projected_costs.append(result["projections"]["projected_cost"])
+            qualities.append(_result_quality(payload, result))
     finally:
         core._solve_lp = original_solve
 
@@ -263,7 +305,10 @@ def _measure(payload, repeats, *, force_full=True, disable_mip_starts=False):
         "median_seconds": statistics.median(samples),
         "samples_seconds": samples,
         "primary_solves": result["successful_solves"],
-        "projected_cost": result["projections"]["projected_cost"],
+        "projected_cost": projected_costs[-1],
+        "projected_costs": projected_costs,
+        "quality_valid": all(quality["valid"] for quality in qualities),
+        "quality": qualities,
         "solver": {
             "total_calls": len(solver_calls),
             "probe_calls": len(solver_calls) - primary_solves,
@@ -281,6 +326,74 @@ def _measure(payload, repeats, *, force_full=True, disable_mip_starts=False):
         },
     }
     return report
+
+
+def _aggregate_measurements(reports):
+    samples = [sample for report in reports for sample in report["samples_seconds"]]
+    costs = [cost for report in reports for cost in report["projected_costs"]]
+    qualities = [quality for report in reports for quality in report["quality"]]
+    solver_rows = [report["solver"] for report in reports]
+    return {
+        "median_seconds": statistics.median(samples),
+        "samples_seconds": samples,
+        "primary_solves": reports[-1]["primary_solves"],
+        "projected_cost": costs[-1],
+        "projected_costs": costs,
+        "quality_valid": all(quality["valid"] for quality in qualities),
+        "quality": qualities,
+        "solver": {
+            key: sum(row[key] for row in solver_rows)
+            for key in (
+                "total_calls",
+                "probe_calls",
+                "submitted_starts",
+                "successful_start_submissions",
+                "total_wrapper_seconds",
+                "total_highs_seconds",
+                "total_nodes",
+            )
+        }
+        | {
+            "max_model": {
+                key: max(row["max_model"][key] for row in solver_rows)
+                for key in ("variables", "integer_variables", "rows", "nonzeros")
+            }
+        },
+    }
+
+
+def _paired_full(payload, repeats):
+    reports = {"warm": [], "cold": []}
+    pairs = []
+    for repeat in range(repeats):
+        labels = ("warm", "cold") if repeat % 2 == 0 else ("cold", "warm")
+        current = {}
+        for label in labels:
+            report = _measure(
+                payload,
+                1,
+                disable_mip_starts=label == "cold",
+            )
+            reports[label].append(report)
+            current[label] = report
+        pairs.append(
+            {
+                "execution_order": list(labels),
+                "warm_seconds": current["warm"]["samples_seconds"][0],
+                "cold_seconds": current["cold"]["samples_seconds"][0],
+                "warm_minus_cold_seconds": (
+                    current["warm"]["samples_seconds"][0]
+                    - current["cold"]["samples_seconds"][0]
+                ),
+                "warm_projected_cost": current["warm"]["projected_cost"],
+                "cold_projected_cost": current["cold"]["projected_cost"],
+            }
+        )
+    return {
+        "warm": _aggregate_measurements(reports["warm"]),
+        "cold": _aggregate_measurements(reports["cold"]),
+        "pairs": pairs,
+    }
 
 
 def _shifted(payload, tick, state, previous):
@@ -348,6 +461,7 @@ def _serial_trajectory(payload, *, disable_mip_starts=False):
                 "seconds": elapsed,
                 "primary_solves": result["successful_solves"],
                 "projected_cost": result["projections"]["projected_cost"],
+                "quality": _result_quality(current, result),
             }
         )
         state = result["state"]
@@ -379,6 +493,11 @@ def _serial_summary(trajectories):
         "full": _sample_summary(full_samples),
         "prefix": _sample_summary(prefix_samples),
         "cadence_counts": cadence_counts,
+        "quality_valid": all(
+            row["quality"]["valid"]
+            for trajectory in trajectories
+            for row in trajectory
+        ),
     }
 
 
@@ -451,16 +570,12 @@ def main():
         "lookahead": args.lookahead,
     }
     if args.compare_mip_starts:
+        full_comparison = _paired_full(payload, args.repeats)
         report["variants"] = {
-            label: {
-                "full": _measure(
-                    payload,
-                    args.repeats,
-                    disable_mip_starts=label == "cold",
-                )
-            }
+            label: {"full": full_comparison[label]}
             for label in ("warm", "cold")
         }
+        report["standalone_pairs"] = full_comparison["pairs"]
         if args.serial:
             report["serial_comparison"] = _paired_serial(payload, args.repeats)
     else:
