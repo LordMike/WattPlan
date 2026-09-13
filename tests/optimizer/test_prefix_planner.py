@@ -186,6 +186,47 @@ def test_public_api_runs_eight_steps_and_retains_full_forecast(monkeypatch):
         assert result["cadence"]["phase"] == (0 if tick == 4 else tick)
 
 
+def test_prefix_refresh_skips_mip_start_completion_overhead(monkeypatch):
+    request = payload(horizon=16)
+    request["infer_battery_preserve_policy"] = False
+    request["action_deadband_kwh"] = 0.05
+    request["battery_entities"] = [{
+        "name": "battery", "initial_kwh": 1.0, "minimum_kwh": 0.0,
+        "capacity_kwh": 2.0, "charge_curve_kwh": [0.5],
+        "discharge_curve_kwh": [0.5], "can_charge_from": 3,
+    }]
+    result = optimize(OptimizationParams(**request))
+    original = planner.core._solve_lp
+    starts = []
+
+    def capture(*args, **kwargs):
+        starts.append(kwargs.get("mip_start"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(planner.core, "_solve_lp", capture)
+    for tick in range(1, 5):
+        request = payload(tick, result["state"], horizon=16)
+        request["infer_battery_preserve_policy"] = False
+        request["action_deadband_kwh"] = 0.05
+        request["battery_entities"] = [{
+            "name": "battery",
+            "initial_kwh": result["entities"][0]["schedule"][0]["level"],
+            "minimum_kwh": 0.0,
+            "capacity_kwh": 2.0,
+            "charge_curve_kwh": [0.5],
+            "discharge_curve_kwh": [0.5],
+            "can_charge_from": 3,
+        }]
+        starts.clear()
+        result = optimize(OptimizationParams(**request))
+        if tick < 4:
+            assert result["cadence"]["mode"] == "repair"
+            assert not any(start is not None for start in starts)
+        else:
+            assert result["cadence"]["mode"] == "full"
+            assert any(start is not None for start in starts)
+
+
 def test_issued_comfort_lock_is_not_advanced_by_duplicate_call(stub_core):
     request = payload(1)
     request["comfort_entities"] = [{

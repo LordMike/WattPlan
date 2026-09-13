@@ -30,3 +30,54 @@ def test_highs_sparse_conversion_preserves_mixed_milp_rows():
     assert result.success
     assert result.objective_value == pytest.approx(2.0)
     assert result.x == pytest.approx([2.0, 0.0, 0.0, 0.0])
+
+
+def test_adjacent_mip_start_shifts_only_overlapping_integer_slots():
+    previous = {
+        "horizon": 4,
+        "battery": [
+            {
+                "charge_mode": np.asarray([0.0, 1.0, 0.0, 1.0]),
+                "charge_active": np.asarray([1.0, 0.0, 1.0, 0.0]),
+                "discharge_active": None,
+            }
+        ],
+        "grid_import_mode": np.asarray([1.0, 0.0, 1.0, 0.0]),
+        "pv_surplus_mode": np.asarray([0.0, 1.0, 0.0, 1.0]),
+    }
+    battery_vars = [
+        {
+            "charge_mode": slice(0, 3),
+            "charge_active": slice(3, 6),
+            "discharge_active": None,
+        }
+    ]
+
+    indices, values = optimizer._shift_mip_start(
+        previous,
+        3,
+        battery_vars,
+        slice(6, 9),
+        slice(9, 12),
+    )
+
+    assert indices == list(range(12))
+    assert values == pytest.approx(
+        [1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]
+    )
+
+
+def test_adjacent_mip_start_rejects_incompatible_shape():
+    assert optimizer._shift_mip_start(
+        {"horizon": 4, "battery": []},
+        3,
+        [
+            {
+                "charge_mode": slice(0, 3),
+                "charge_active": None,
+                "discharge_active": None,
+            }
+        ],
+        slice(3, 6),
+        slice(6, 9),
+    ) is None

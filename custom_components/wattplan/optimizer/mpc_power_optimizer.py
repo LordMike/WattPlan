@@ -467,7 +467,16 @@ def _build_reuse_plan(
     return reuse_plan
 
 
-def _solve_lp(objective, A_ub, b_ub, A_eq, b_eq, bounds, integrality=None):
+def _solve_lp(
+    objective,
+    A_ub,
+    b_ub,
+    A_eq,
+    b_eq,
+    bounds,
+    integrality=None,
+    mip_start=None,
+):
     if highspy is None:
         raise RuntimeError("highspy is required but not installed")
 
@@ -551,14 +560,42 @@ def _solve_lp(objective, A_ub, b_ub, A_eq, b_eq, bounds, integrality=None):
     highs = highspy.Highs()
     highs.setOptionValue("output_flag", False)
     highs.passModel(lp)
+    mip_start_status = None
+    if mip_start is not None:
+        start_indices, start_values = mip_start
+        highs.setOptionValue("mip_max_start_nodes", 10)
+        mip_start_status = highs.setSolution(
+            len(start_indices),
+            np.asarray(start_indices, dtype=np.int32),
+            np.asarray(start_values, dtype=np.float64),
+        )
+        if mip_start_status != highspy.HighsStatus.kOk:
+            highs = highspy.Highs()
+            highs.setOptionValue("output_flag", False)
+            highs.passModel(lp)
     highs.run()
     model_status = highs.getModelStatus()
+    info = highs.getInfo()
 
     class _HighspyResult:
         def __init__(self, success, x, objective_value=None):
             self.success = success
             self.x = x
             self.objective_value = objective_value
+            self.mip_start_status = mip_start_status
+            self.mip_node_count = int(info.mip_node_count)
+            self.mip_dual_bound = float(info.mip_dual_bound)
+            self.mip_gap = float(info.mip_gap)
+            self.solver_runtime = float(highs.getRunTime())
+            self.num_variables = int(n_vars)
+            self.num_integer_variables = int(
+                sum(
+                    value != highspy.HighsVarType.kContinuous
+                    for value in (integrality or [])
+                )
+            )
+            self.num_rows = int(total_rows)
+            self.num_nonzeros = int(values.size)
 
     if model_status != highspy.HighsModelStatus.kOptimal:
         return _HighspyResult(False, None)
@@ -584,6 +621,90 @@ class _IndexBuilder:
         return slice(start, self.offset)
 
 
+def _extract_mip_start(
+    x, horizon, battery_vars, grid_import_mode, pv_surplus_mode
+):
+    return {
+        "horizon": horizon,
+        "battery": [
+            {
+                name: x[var[name]].copy() if var[name] is not None else None
+                for name in ("charge_mode", "charge_active", "discharge_active")
+            }
+            for var in battery_vars
+        ],
+        "grid_import_mode": x[grid_import_mode].copy(),
+        "pv_surplus_mode": x[pv_surplus_mode].copy(),
+    }
+
+
+def _shift_mip_start(
+    mip_start,
+    horizon,
+    battery_vars,
+    grid_import_mode,
+    pv_surplus_mode,
+    *,
+    omit_first=False,
+):
+    if not isinstance(mip_start, dict):
+        return None
+    previous_horizon = mip_start.get("horizon")
+    previous_battery = mip_start.get("battery")
+    if (
+        not isinstance(previous_horizon, int)
+        or previous_horizon <= 1
+        or not isinstance(previous_battery, list)
+        or len(previous_battery) != len(battery_vars)
+    ):
+        return None
+    overlap = min(horizon, previous_horizon - 1)
+    if overlap <= 0:
+        return None
+
+    start_indices = []
+    start_values = []
+    for b, var in enumerate(battery_vars):
+        if not isinstance(previous_battery[b], dict):
+            return None
+        for name in ("charge_mode", "charge_active", "discharge_active"):
+            current = var[name]
+            previous = previous_battery[b].get(name)
+            if current is None or previous is None:
+                continue
+            previous = np.asarray(previous, dtype=np.float64)
+            if previous.shape != (previous_horizon,):
+                return None
+            first = 1 if not omit_first else 2
+            count = overlap if not omit_first else max(overlap - 1, 0)
+            current_start = current.start + (1 if omit_first else 0)
+            start_indices.extend(range(current_start, current_start + count))
+            start_values.extend(previous[first : first + count])
+
+    for name, current in (
+        ("grid_import_mode", grid_import_mode),
+        ("pv_surplus_mode", pv_surplus_mode),
+    ):
+        previous = np.asarray(mip_start.get(name), dtype=np.float64)
+        if previous.shape != (previous_horizon,):
+            return None
+        first = 1 if not omit_first else 2
+        count = overlap if not omit_first else max(overlap - 1, 0)
+        current_start = current.start + (1 if omit_first else 0)
+        start_indices.extend(range(current_start, current_start + count))
+        start_values.extend(previous[first : first + count])
+
+    if not start_indices:
+        return None
+    return start_indices, start_values
+
+
+def _use_mip_starts(battery_entities):
+    return any(
+        float(entity.action_deadband_kwh) > EPSILON for entity in battery_entities
+    )
+
+
 def _solve_mpc_step(
     base_timeslot,
     prices_h,
@@ -594,6 +715,7 @@ def _solve_mpc_step(
     battery_levels_now,
     battery_states_now,
     forced_discharge_first=None,
+    mip_start=None,
 ):
     horizon = len(prices_h)
     num_battery = len(battery_entities)
@@ -863,6 +985,14 @@ def _solve_mpc_step(
             float(solar_h[t]) - float(usage_h[t]) + surplus_relaxation
         )
 
+    shifted_mip_start = _shift_mip_start(
+        mip_start,
+        horizon,
+        battery_vars,
+        grid_import_mode,
+        pv_surplus_mode,
+        omit_first=True,
+    )
     result = _solve_lp(
         objective=objective,
         A_ub=np.asarray(A_ub, dtype=np.float64) if A_ub else None,
@@ -871,6 +1001,7 @@ def _solve_mpc_step(
         b_eq=np.asarray(b_eq, dtype=np.float64) if b_eq else None,
         bounds=bounds,
         integrality=integrality,
+        mip_start=shifted_mip_start,
     )
 
     if not result.success:
@@ -895,6 +1026,9 @@ def _solve_mpc_step(
         "charge_pv": charge_pv_cmd,
         "discharge": discharge_cmd,
         "objective_value": float(result.objective_value),
+        "mip_start": _extract_mip_start(
+            x, horizon, battery_vars, grid_import_mode, pv_surplus_mode
+        ),
     }
 
 
@@ -1327,6 +1461,8 @@ def _run_mpc(
     )
     initial_comfort_lock_mode = comfort_lock_mode.copy()
     initial_comfort_lock_remaining = comfort_lock_remaining.copy()
+    use_mip_starts = policy_tail_start is None and _use_mip_starts(battery_entities)
+    primary_mip_start = None
 
     for t in range(total_steps):
         horizon = min(lookahead_slots, total_steps - t)
@@ -1387,10 +1523,13 @@ def _run_mpc(
                     if t > 0
                     else np.zeros(num_battery, dtype=np.int32)
                 ),
+                mip_start=primary_mip_start if use_mip_starts else None,
             )
             if solve_result is None:
                 raise RuntimeError("MPC solve failed for softened MILP model")
             successful_solves += 1
+            if use_mip_starts:
+                primary_mip_start = solve_result.get("mip_start")
 
             controls = {
                 "charge": solve_result["charge"],

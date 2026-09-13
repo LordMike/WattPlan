@@ -81,6 +81,8 @@ python scripts/benchmark_optimizer.py --scenario stress --slots 288 --lookahead 
 
 Use the same Python environment and machine for paired comparisons. Report the
 full sample list, not only the median, and do not extrapolate x86 timings to ARM.
+Pass `--disable-mip-starts` to measure the cold solver path under the identical
+scenario, full/prefix cadence, and forecast workload.
 
 ## Packaging
 

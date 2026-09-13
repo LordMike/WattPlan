@@ -135,30 +135,83 @@ def _scenario(name, slots, lookahead):
     return result
 
 
-def _run(payload, *, force_full):
+def _run(payload, *, force_full, disable_mip_starts=False):
     params = OptimizationParams(**payload)
+    original = core._use_mip_starts
+    if disable_mip_starts:
+        core._use_mip_starts = lambda _entities: False
     start = time.perf_counter()
-    if force_full:
-        result = core.optimize_internal(
-            core.normalize_calculation_input(params), reuse_plan_override=None
-        )
-    else:
-        result = optimize(params)
-    return result, time.perf_counter() - start
+    try:
+        if force_full:
+            result = core.optimize_internal(
+                core.normalize_calculation_input(params), reuse_plan_override=None
+            )
+        else:
+            result = optimize(params)
+        return result, time.perf_counter() - start
+    finally:
+        core._use_mip_starts = original
 
 
-def _measure(payload, repeats, *, force_full=True):
+def _measure(payload, repeats, *, force_full=True, disable_mip_starts=False):
     samples = []
+    solver_calls = []
     result = None
-    for _ in range(repeats):
-        result, elapsed = _run(payload, force_full=force_full)
-        samples.append(elapsed)
-    return {
+    original_solve = core._solve_lp
+
+    def measured_solve(*args, **kwargs):
+        start = time.perf_counter()
+        solved = original_solve(*args, **kwargs)
+        solver_calls.append(
+            {
+                "total": time.perf_counter() - start,
+                "solver": solved.solver_runtime,
+                "nodes": solved.mip_node_count,
+                "start": solved.mip_start_status,
+                "variables": solved.num_variables,
+                "integer_variables": solved.num_integer_variables,
+                "rows": solved.num_rows,
+                "nonzeros": solved.num_nonzeros,
+            }
+        )
+        return solved
+
+    core._solve_lp = measured_solve
+    try:
+        for _ in range(repeats):
+            result, elapsed = _run(
+                payload,
+                force_full=force_full,
+                disable_mip_starts=disable_mip_starts,
+            )
+            samples.append(elapsed)
+    finally:
+        core._solve_lp = original_solve
+
+    primary_solves = result["successful_solves"] * repeats
+    started = [row for row in solver_calls if row["start"] is not None]
+    report = {
         "median_seconds": statistics.median(samples),
         "samples_seconds": samples,
         "primary_solves": result["successful_solves"],
         "projected_cost": result["projections"]["projected_cost"],
+        "solver": {
+            "total_calls": len(solver_calls),
+            "probe_calls": len(solver_calls) - primary_solves,
+            "submitted_starts": len(started),
+            "accepted_starts": sum(
+                row["start"] == highspy.HighsStatus.kOk for row in started
+            ),
+            "total_wrapper_seconds": sum(row["total"] for row in solver_calls),
+            "total_highs_seconds": sum(row["solver"] for row in solver_calls),
+            "total_nodes": sum(row["nodes"] for row in solver_calls),
+            "max_model": {
+                key: max(row[key] for row in solver_calls)
+                for key in ("variables", "integer_variables", "rows", "nonzeros")
+            },
+        },
     }
+    return report
 
 
 def _shifted(payload, tick, state, previous):
@@ -178,7 +231,7 @@ def _shifted(payload, tick, state, previous):
     return result
 
 
-def _serial(payload):
+def _serial(payload, *, disable_mip_starts=False):
     rows = []
     state = None
     previous = None
@@ -186,7 +239,11 @@ def _serial(payload):
         current = copy.deepcopy(payload) if tick == 0 else _shifted(
             payload, tick, state, previous
         )
-        result, elapsed = _run(current, force_full=False)
+        result, elapsed = _run(
+            current,
+            force_full=False,
+            disable_mip_starts=disable_mip_starts,
+        )
         rows.append(
             {
                 "tick": tick,
@@ -210,6 +267,7 @@ def main():
     parser.add_argument("--lookahead", type=int, default=48)
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--serial", action="store_true")
+    parser.add_argument("--disable-mip-starts", action="store_true")
     args = parser.parse_args()
 
     payload = _scenario(args.scenario, args.slots, args.lookahead)
@@ -222,10 +280,17 @@ def main():
         "scenario": args.scenario,
         "slots": args.slots,
         "lookahead": args.lookahead,
-        "full": _measure(payload, args.repeats),
+        "mip_starts": not args.disable_mip_starts,
+        "full": _measure(
+            payload,
+            args.repeats,
+            disable_mip_starts=args.disable_mip_starts,
+        ),
     }
     if args.serial:
-        report["serial"] = _serial(payload)
+        report["serial"] = _serial(
+            payload, disable_mip_starts=args.disable_mip_starts
+        )
     print(json.dumps(report, indent=2))
 
 
