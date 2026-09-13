@@ -467,6 +467,22 @@ def _build_reuse_plan(
     return reuse_plan
 
 
+class _SparseRow:
+    def __init__(self):
+        self.values = {}
+
+    def __getitem__(self, index):
+        return self.values.get(int(index), 0.0)
+
+    def __setitem__(self, index, value):
+        index = int(index)
+        value = float(value)
+        if abs(value) > EPSILON:
+            self.values[index] = value
+        else:
+            self.values.pop(index, None)
+
+
 def _solve_lp(
     objective,
     A_ub,
@@ -490,11 +506,29 @@ def _solve_lp(
         dtype=np.float64,
     )
 
-    ub_rows = 0 if A_ub is None else int(A_ub.shape[0])
-    eq_rows = 0 if A_eq is None else int(A_eq.shape[0])
+    ub_rows = 0 if A_ub is None else len(A_ub)
+    eq_rows = 0 if A_eq is None else len(A_eq)
     total_rows = ub_rows + eq_rows
+    sparse_rows = (
+        total_rows > 0
+        and isinstance((A_ub if ub_rows else A_eq)[0], _SparseRow)
+    )
 
-    if total_rows == 0:
+    if sparse_rows:
+        a_all = None
+        row_lower = np.concatenate(
+            (
+                np.full(ub_rows, -highspy.kHighsInf, dtype=np.float64),
+                np.asarray(b_eq, dtype=np.float64),
+            )
+        )
+        row_upper = np.concatenate(
+            (
+                np.asarray(b_ub, dtype=np.float64),
+                np.asarray(b_eq, dtype=np.float64),
+            )
+        )
+    elif total_rows == 0:
         a_all = np.zeros((0, n_vars), dtype=np.float64)
         row_lower = np.zeros(0, dtype=np.float64)
         row_upper = np.zeros(0, dtype=np.float64)
@@ -521,23 +555,38 @@ def _solve_lp(
         row_lower = np.asarray(b_eq, dtype=np.float64)
         row_upper = np.asarray(b_eq, dtype=np.float64)
 
-    a_dense = np.asarray(a_all, dtype=np.float64)
-    nz_rows, nz_cols = np.nonzero(np.abs(a_dense) > EPSILON)
     start = np.zeros(n_vars + 1, dtype=np.int32)
-    if nz_rows.size:
-        order = np.argsort(nz_cols, kind="stable")
-        np.cumsum(
-            np.bincount(nz_cols, minlength=n_vars),
-            out=start[1:],
-            dtype=np.int32,
+    if sparse_rows:
+        columns = [[] for _ in range(n_vars)]
+        rows = [*(A_ub or []), *(A_eq or [])]
+        for row_index, row in enumerate(rows):
+            for col_index, value in row.values.items():
+                columns[col_index].append((row_index, value))
+        counts = np.fromiter((len(column) for column in columns), dtype=np.int32)
+        np.cumsum(counts, out=start[1:], dtype=np.int32)
+        index = np.fromiter(
+            (row for column in columns for row, _ in column), dtype=np.int32
         )
-        index = nz_rows[order].astype(np.int32, copy=False)
-        values = a_dense[nz_rows[order], nz_cols[order]].astype(
-            np.float64, copy=False
+        values = np.fromiter(
+            (value for column in columns for _, value in column), dtype=np.float64
         )
     else:
-        index = np.zeros(0, dtype=np.int32)
-        values = np.zeros(0, dtype=np.float64)
+        a_dense = np.asarray(a_all, dtype=np.float64)
+        nz_rows, nz_cols = np.nonzero(np.abs(a_dense) > EPSILON)
+        if nz_rows.size:
+            order = np.argsort(nz_cols, kind="stable")
+            np.cumsum(
+                np.bincount(nz_cols, minlength=n_vars),
+                out=start[1:],
+                dtype=np.int32,
+            )
+            index = nz_rows[order].astype(np.int32, copy=False)
+            values = a_dense[nz_rows[order], nz_cols[order]].astype(
+                np.float64, copy=False
+            )
+        else:
+            index = np.zeros(0, dtype=np.int32)
+            values = np.zeros(0, dtype=np.float64)
 
     lp = highspy.HighsLp()
     lp.num_col_ = int(n_vars)
@@ -827,14 +876,14 @@ def _solve_mpc_step(
                 if previous_state != 2:
                     objective[var["discharge"].start + t] += mode_switch_cost
 
-            row = np.zeros(n_vars, dtype=np.float64)
+            row = _SparseRow()
             row[var["charge_grid"].start + t] = 1.0
             row[var["charge_pv"].start + t] = 1.0
             row[var["charge_mode"].start + t] = -charge_limit
             A_ub.append(row)
             b_ub.append(0.0)
 
-            row = np.zeros(n_vars, dtype=np.float64)
+            row = _SparseRow()
             row[var["discharge"].start + t] = 1.0
             row[var["charge_mode"].start + t] = discharge_limit
             A_ub.append(row)
@@ -842,27 +891,27 @@ def _solve_mpc_step(
 
             if action_deadband > 0.0:
                 # Commands are neutral or large enough to survive application.
-                row = np.zeros(n_vars, dtype=np.float64)
+                row = _SparseRow()
                 row[var["charge_grid"].start + t] = 1.0
                 row[var["charge_pv"].start + t] = 1.0
                 row[var["charge_active"].start + t] = -charge_limit
                 A_ub.append(row)
                 b_ub.append(0.0)
 
-                row = np.zeros(n_vars, dtype=np.float64)
+                row = _SparseRow()
                 row[var["charge_grid"].start + t] = -1.0
                 row[var["charge_pv"].start + t] = -1.0
                 row[var["charge_active"].start + t] = action_deadband
                 A_ub.append(row)
                 b_ub.append(0.0)
 
-                row = np.zeros(n_vars, dtype=np.float64)
+                row = _SparseRow()
                 row[var["discharge"].start + t] = 1.0
                 row[var["discharge_active"].start + t] = -discharge_limit
                 A_ub.append(row)
                 b_ub.append(0.0)
 
-                row = np.zeros(n_vars, dtype=np.float64)
+                row = _SparseRow()
                 row[var["discharge"].start + t] = -1.0
                 row[var["discharge_active"].start + t] = action_deadband
                 A_ub.append(row)
@@ -871,13 +920,13 @@ def _solve_mpc_step(
         for t in range(horizon + 1):
             bounds[var["level"].start + t] = (0.0, capacity)
 
-        row = np.zeros(n_vars, dtype=np.float64)
+        row = _SparseRow()
         row[var["level"].start] = 1.0
         A_eq.append(row)
         b_eq.append(float(battery_levels_now[b]))
 
         for t in range(horizon):
-            row = np.zeros(n_vars, dtype=np.float64)
+            row = _SparseRow()
             row[var["level"].start + t + 1] = 1.0
             row[var["level"].start + t] = -1.0
             row[var["charge_grid"].start + t] = -charge_eff
@@ -886,7 +935,7 @@ def _solve_mpc_step(
             A_eq.append(row)
             b_eq.append(0.0)
 
-            row = np.zeros(n_vars, dtype=np.float64)
+            row = _SparseRow()
             row[var["level"].start + t + 1] = -1.0
             row[var["min_slack"].start + t] = -1.0
             A_ub.append(row)
@@ -897,13 +946,13 @@ def _solve_mpc_step(
             local_level_idx = target["timeslot"] - base_timeslot + 1
             if 1 <= local_level_idx <= horizon:
                 if target["lower_kwh"] is not None:
-                    row = np.zeros(n_vars, dtype=np.float64)
+                    row = _SparseRow()
                     row[var["level"].start + local_level_idx] = -1.0
                     row[var["target_under"].start] = -1.0
                     A_ub.append(row)
                     b_ub.append(-float(target["lower_kwh"]))
                 if target["upper_kwh"] is not None:
-                    row = np.zeros(n_vars, dtype=np.float64)
+                    row = _SparseRow()
                     row[var["level"].start + local_level_idx] = 1.0
                     row[var["target_over"].start] = -1.0
                     A_ub.append(row)
@@ -915,7 +964,7 @@ def _solve_mpc_step(
             else float(forced_discharge_first.get(b, 0.0))
         )
         if forced_discharge > EPSILON and horizon > 0:
-            row = np.zeros(n_vars, dtype=np.float64)
+            row = _SparseRow()
             row[var["discharge"].start] = -1.0
             A_ub.append(row)
             b_ub.append(-forced_discharge)
@@ -925,19 +974,19 @@ def _solve_mpc_step(
         export_upper = max(float(solar_h[t]), 0.0)
 
         # Signed tariffs need explicit site direction rather than objective clamps.
-        row = np.zeros(n_vars, dtype=np.float64)
+        row = _SparseRow()
         row[grid_import.start + t] = 1.0
         row[grid_import_mode.start + t] = -import_upper
         A_ub.append(row)
         b_ub.append(0.0)
 
-        row = np.zeros(n_vars, dtype=np.float64)
+        row = _SparseRow()
         row[grid_export.start + t] = 1.0
         row[grid_import_mode.start + t] = export_upper
         A_ub.append(row)
         b_ub.append(export_upper)
 
-        row = np.zeros(n_vars, dtype=np.float64)
+        row = _SparseRow()
         row[grid_import.start + t] = -1.0
         row[grid_export.start + t] = 1.0
 
@@ -950,7 +999,7 @@ def _solve_mpc_step(
         b_eq.append(float(solar_h[t]) - float(usage_h[t]))
 
         # Grid-labeled battery energy must be backed by actual grid import.
-        row = np.zeros(n_vars, dtype=np.float64)
+        row = _SparseRow()
         row[grid_import.start + t] = -1.0
         for b in range(num_battery):
             row[battery_vars[b]["charge_grid"].start + t] = 1.0
@@ -958,7 +1007,7 @@ def _solve_mpc_step(
         b_ub.append(0.0)
 
         # Battery discharge may serve modeled load, not charging or export loops.
-        row = np.zeros(n_vars, dtype=np.float64)
+        row = _SparseRow()
         for b in range(num_battery):
             row[battery_vars[b]["discharge"].start + t] = 1.0
         A_ub.append(row)
@@ -966,7 +1015,7 @@ def _solve_mpc_step(
 
         # PV charging and export share only surplus after household/comfort load.
         surplus_upper = max(float(solar_h[t]), 0.0)
-        row = np.zeros(n_vars, dtype=np.float64)
+        row = _SparseRow()
         row[grid_export.start + t] = 1.0
         for b in range(num_battery):
             row[battery_vars[b]["charge_pv"].start + t] = 1.0
@@ -974,7 +1023,7 @@ def _solve_mpc_step(
         A_ub.append(row)
         b_ub.append(0.0)
 
-        row = np.zeros(n_vars, dtype=np.float64)
+        row = _SparseRow()
         row[grid_export.start + t] = 1.0
         for b in range(num_battery):
             row[battery_vars[b]["charge_pv"].start + t] = 1.0
@@ -995,9 +1044,9 @@ def _solve_mpc_step(
     )
     result = _solve_lp(
         objective=objective,
-        A_ub=np.asarray(A_ub, dtype=np.float64) if A_ub else None,
+        A_ub=A_ub or None,
         b_ub=np.asarray(b_ub, dtype=np.float64) if b_ub else None,
-        A_eq=np.asarray(A_eq, dtype=np.float64) if A_eq else None,
+        A_eq=A_eq or None,
         b_eq=np.asarray(b_eq, dtype=np.float64) if b_eq else None,
         bounds=bounds,
         integrality=integrality,

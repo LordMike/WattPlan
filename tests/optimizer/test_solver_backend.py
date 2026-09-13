@@ -32,6 +32,37 @@ def test_highs_sparse_conversion_preserves_mixed_milp_rows():
     assert result.x == pytest.approx([2.0, 0.0, 0.0, 0.0])
 
 
+def test_direct_sparse_rows_match_dense_solver_input():
+    upper = optimizer._SparseRow()
+    upper[0] = 1.0
+    upper[1] = 1.0
+    link = optimizer._SparseRow()
+    link[1] = -1.0
+    link[2] = 1.0
+    equality = optimizer._SparseRow()
+    equality[0] = 1.0
+    equality[2] = 1.0
+
+    result = optimizer._solve_lp(
+        objective=np.asarray([1.0, 2.0, 0.5, 0.0]),
+        A_ub=[upper, link],
+        b_ub=np.asarray([3.0, 0.0]),
+        A_eq=[equality],
+        b_eq=np.asarray([2.0]),
+        bounds=[(0.0, None), (0.0, 1.0), (0.0, None), (0.0, 0.0)],
+        integrality=[
+            highspy.HighsVarType.kContinuous,
+            highspy.HighsVarType.kInteger,
+            highspy.HighsVarType.kContinuous,
+            highspy.HighsVarType.kContinuous,
+        ],
+    )
+
+    assert result.success
+    assert result.objective_value == pytest.approx(2.0)
+    assert result.x == pytest.approx([2.0, 0.0, 0.0, 0.0])
+
+
 def test_adjacent_mip_start_shifts_only_overlapping_integer_slots():
     previous = {
         "horizon": 4,

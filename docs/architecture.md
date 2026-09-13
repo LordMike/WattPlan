@@ -125,6 +125,10 @@ use up to ten nodes to complete a partial start. A rejected start falls back to
 the same cold model, and prefix-only refreshes skip starts because their small
 solve count does not repay completion overhead.
 
+MILP constraints are assembled as sparse rows and passed to HiGHS in a
+column-wise sparse matrix. The solver backend still accepts dense rows for
+focused tests, but the MPC path never allocates a dense rows-by-variables model.
+
 The opaque state includes bounded clock/configuration metadata, published battery policies, and expiry receipts for first-slot comfort commitments. Same-slot requests do not shift the schedule or consume another cadence phase. Missing/incompatible timing and skipped/reversed windows fall back to a full calculation. Untimed direct API calls retain their full-plan timing/reuse behavior and use the same deterministic comfort scheduler. A comfort-scheduler version in state fingerprints prevents reusing controls from the previous tariff-optimized model. Cached battery controls are also rejected if recomputing comfort changes the demand they were solved for. Future-tail freshness and fallback reasons are exposed in optimizer results, while the integration still publishes a complete schedule on each successful call.
 
 That boundary is the main extraction seam if the optimizer is ever split into its own package later.
