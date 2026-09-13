@@ -9,15 +9,16 @@ without a leading `v`, in:
 Run the test suite and validate the HACS archive before committing:
 
 ```bash
+NEXT_VERSION=0.6.0-alpha
 ./scripts/run_tests.sh
 python scripts/build_hacs_zip.py \
   --output-name wattplan.zip \
-  --validate-manifest-version 0.5.0
+  --validate-manifest-version "$NEXT_VERSION"
 ```
 
 Commit and push the version change to `main`, then create and push a matching
-SemVer tag such as `v0.5.0`. The optional `v` prefix is not part of the version
-stored in the files.
+SemVer tag such as `v0.6.0-alpha`. The optional `v` prefix is not part of the
+version stored in the files.
 
 Managed CI reruns validation, requires the manifest version to match the tag,
 builds `wattplan.zip`, and creates or updates the GitHub Release with generated

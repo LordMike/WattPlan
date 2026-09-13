@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wattplan"
-version = "0.5.0"
+version = "0.6.0-alpha"
 requires-python = ">=3.14"
 dependencies = [
   "numpy",
