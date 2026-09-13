@@ -304,6 +304,30 @@ def test_partial_mip_start_does_not_constrain_final_solution():
     assert warm.x[1] == pytest.approx(0.0)
 
 
+def test_accepted_mip_start_with_no_feasible_completion_is_not_constraining():
+    link = optimizer._SparseRow()
+    link[0] = -1.0
+    link[1] = 2.0
+    result = optimizer._solve_lp(
+        objective=np.asarray([0.0, -1.0]),
+        A_ub=[link],
+        b_ub=np.asarray([0.0]),
+        A_eq=None,
+        b_eq=None,
+        bounds=[(0.0, 1.0), (0.0, 1.0)],
+        integrality=[
+            highspy.HighsVarType.kContinuous,
+            highspy.HighsVarType.kInteger,
+        ],
+        mip_start=([1], [1.0]),
+    )
+
+    assert result.success
+    assert result.mip_start_status == highspy.HighsStatus.kOk
+    assert result.objective_value == pytest.approx(0.0)
+    assert result.x == pytest.approx([0.0, 0.0])
+
+
 def test_non_ok_mip_start_submission_retries_cold(monkeypatch):
     real_highs = highspy.Highs
     instances = []
