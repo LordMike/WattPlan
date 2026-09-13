@@ -2269,7 +2269,7 @@ def test_battery_target_does_not_create_preserve_policy_by_itself():
     )
 
 
-def test_live_exported_deye_low_pv_low_soc_flips_between_battery_policies():
+def _live_exported_deye_low_pv_low_soc_payload():
     # Exported from wattplan.export_planner_input on 2026-04-22 for the live
     # Home Assistant setup, then adjusted to model a mediocre PV day with the
     # battery starting at 30% SoC. This is intentionally close to the real case
@@ -2445,7 +2445,11 @@ def test_live_exported_deye_low_pv_low_soc_flips_between_battery_policies():
         ],
     }
 
-    result = _run_optimizer(payload)
+    return payload
+
+
+def test_live_exported_deye_low_pv_low_soc_flips_between_battery_policies():
+    result = _run_optimizer(_live_exported_deye_low_pv_low_soc_payload())
     schedule = result["entities"][0]["schedule"]
 
     assert [point["state"] for point in schedule] == [
@@ -2487,7 +2491,7 @@ def test_live_exported_deye_low_pv_low_soc_flips_between_battery_policies():
     assert schedule[29]["level"] == pytest.approx(1.0)
 
 
-def test_live_grid_export_benchmark_scenario_uses_real_15min_stromligning_values():
+def _live_grid_export_benchmark_payload():
     # Live Home Assistant data captured on 2026-03-09 in Europe/Copenhagen.
     # Strømligning is native 15-minute price data. Deye daily energy totals are
     # available as hourly recorder statistics, so each hourly kWh delta is split
@@ -2739,6 +2743,11 @@ def test_live_grid_export_benchmark_scenario_uses_real_15min_stromligning_values
         "comfort_entities": [],
     }
 
+    return base_payload, feed_in_prices
+
+
+def test_live_grid_export_benchmark_scenario_uses_real_15min_stromligning_values():
+    base_payload, feed_in_prices = _live_grid_export_benchmark_payload()
     without_feed_in = _run_optimizer(base_payload)
     with_feed_in = _run_optimizer(
         {

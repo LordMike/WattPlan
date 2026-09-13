@@ -60,6 +60,28 @@ Run only integration tests:
 ./scripts/run_tests.sh tests/integration
 ```
 
+## Optimizer benchmarks
+
+Run the captured low-PV scenario at the production 144-slot, 48-slot-lookahead
+shape, including five timestamp-aligned planning steps that cross a scheduled
+full refresh:
+
+```bash
+python scripts/benchmark_optimizer.py --scenario low-pv --serial
+```
+
+The `live-export` scenario uses another captured Home Assistant forecast. The
+deterministic `stress` scenario adds three heterogeneous batteries, deadbands,
+signed tariffs, nonlinear power curves, targets, and preserve probes; increase
+its workload explicitly when solver timing is too short to distinguish:
+
+```bash
+python scripts/benchmark_optimizer.py --scenario stress --slots 288 --lookahead 96 --repeats 1
+```
+
+Use the same Python environment and machine for paired comparisons. Report the
+full sample list, not only the median, and do not extrapolate x86 timings to ARM.
+
 ## Packaging
 
 Build a local HACS artifact:

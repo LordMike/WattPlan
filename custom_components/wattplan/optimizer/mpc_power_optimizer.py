@@ -513,21 +513,19 @@ def _solve_lp(objective, A_ub, b_ub, A_eq, b_eq, bounds, integrality=None):
         row_upper = np.asarray(b_eq, dtype=np.float64)
 
     a_dense = np.asarray(a_all, dtype=np.float64)
+    nz_rows, nz_cols = np.nonzero(np.abs(a_dense) > EPSILON)
     start = np.zeros(n_vars + 1, dtype=np.int32)
-    index_parts = []
-    value_parts = []
-    nnz = 0
-    for col in range(n_vars):
-        col_vals = a_dense[:, col]
-        nz_rows = np.flatnonzero(np.abs(col_vals) > EPSILON)
-        if nz_rows.size > 0:
-            index_parts.append(nz_rows.astype(np.int32, copy=False))
-            value_parts.append(col_vals[nz_rows].astype(np.float64, copy=False))
-            nnz += int(nz_rows.size)
-        start[col + 1] = nnz
-    if index_parts:
-        index = np.concatenate(index_parts)
-        values = np.concatenate(value_parts)
+    if nz_rows.size:
+        order = np.argsort(nz_cols, kind="stable")
+        np.cumsum(
+            np.bincount(nz_cols, minlength=n_vars),
+            out=start[1:],
+            dtype=np.int32,
+        )
+        index = nz_rows[order].astype(np.int32, copy=False)
+        values = a_dense[nz_rows[order], nz_cols[order]].astype(
+            np.float64, copy=False
+        )
     else:
         index = np.zeros(0, dtype=np.int32)
         values = np.zeros(0, dtype=np.float64)
