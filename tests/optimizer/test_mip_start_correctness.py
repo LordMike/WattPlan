@@ -161,3 +161,44 @@ def test_preserve_probes_stay_cold_and_do_not_replace_primary_hint(monkeypatch):
     for previous, current in zip(primaries, primaries[1:]):
         assert current["input"] is previous["output"]
         assert all(current["input"] is not probe["output"] for probe in probes)
+
+
+def test_mip_start_extraction_only_runs_for_consuming_primary_solves(monkeypatch):
+    payload = {
+        "grid_import_price_per_kwh": [0.10, 1.00, 1.00, 1.00],
+        "grid_export_price_per_kwh": [0.0] * 4,
+        "solar_input_kwh": [0.0] * 4,
+        "usage_kwh": [1.0] * 4,
+        "lookahead_slots": 4,
+        "action_deadband_kwh": 0.005,
+        "battery_entities": [
+            {
+                "name": "battery",
+                "initial_kwh": 1.0,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 1.0,
+                "charge_curve_kwh": [0.0],
+                "discharge_curve_kwh": [1.0],
+                "can_charge_from": 0,
+            }
+        ],
+        "comfort_entities": [],
+    }
+    extractions = 0
+    original = optimizer._extract_mip_start
+
+    def capture(*args, **kwargs):
+        nonlocal extractions
+        extractions += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(optimizer, "_extract_mip_start", capture)
+    result = _run(payload)
+
+    assert result["successful_solves"] == 4
+    assert extractions == result["successful_solves"]
+
+    payload["action_deadband_kwh"] = 0.0
+    extractions = 0
+    _run(payload)
+    assert extractions == 0

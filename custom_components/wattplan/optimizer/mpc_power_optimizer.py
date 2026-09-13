@@ -770,6 +770,7 @@ def _solve_mpc_step(
     battery_states_now,
     forced_discharge_first=None,
     mip_start=None,
+    return_mip_start=False,
 ):
     horizon = len(prices_h)
     num_battery = len(battery_entities)
@@ -1074,16 +1075,18 @@ def _solve_mpc_step(
         [x[battery_vars[b]["discharge"].start] for b in range(num_battery)],
         dtype=np.float64,
     )
-    return {
+    solve_result = {
         "charge": charge_grid_cmd + charge_pv_cmd,
         "charge_grid": charge_grid_cmd,
         "charge_pv": charge_pv_cmd,
         "discharge": discharge_cmd,
         "objective_value": float(result.objective_value),
-        "mip_start": _extract_mip_start(
-            x, horizon, battery_vars, grid_import_mode, pv_surplus_mode
-        ),
     }
+    if return_mip_start:
+        solve_result["mip_start"] = _extract_mip_start(
+            x, horizon, battery_vars, grid_import_mode, pv_surplus_mode
+        )
+    return solve_result
 
 
 def _battery_available_discharge_kwh(entity: BatteryEntity, level: float) -> float:
@@ -1578,6 +1581,7 @@ def _run_mpc(
                     else np.zeros(num_battery, dtype=np.int32)
                 ),
                 mip_start=primary_mip_start if use_mip_starts else None,
+                return_mip_start=use_mip_starts,
             )
             if solve_result is None:
                 raise RuntimeError("MPC solve failed for softened MILP model")
