@@ -122,11 +122,13 @@ adjacent MPC solves. Only future overlapping integer mode assignments are
 shifted; the current action slot and newly appended terminal slot remain
 unknown, and the previous decisions are never fixed as constraints. HiGHS may
 use up to ten nodes to complete a partial start. A rejected start falls back to
-the same cold model, and prefix-only refreshes skip starts because their small
-solve count does not repay completion overhead. Integer assignments are only
-extracted from full primary solves that will feed the next adjacent solve;
-prefix solves, no-deadband solves, and preserve probes avoid building unused
-hint dictionaries.
+the same cold model. Starts are enabled only when the effective initial solve
+horizon is at least 40 slots; shorter measured workloads did not reliably repay
+completion overhead. Prefix-only refreshes also skip starts because their small
+solve count does not repay that overhead. Integer assignments are only extracted
+from eligible full primary solves that will feed the next adjacent solve; prefix
+solves, short-horizon solves, no-deadband solves, and preserve probes avoid
+building unused hint dictionaries.
 
 MILP constraints are assembled as sparse rows and passed to HiGHS in a
 column-wise sparse matrix. The solver backend still accepts dense rows for

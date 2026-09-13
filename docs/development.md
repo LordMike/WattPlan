@@ -92,6 +92,12 @@ full sample list, not only the median, and do not extrapolate x86 timings to ARM
 Pass `--disable-mip-starts` to measure the cold solver path under the identical
 scenario, full/prefix cadence, and forecast workload.
 
+Production submits MIP starts only when the effective initial lookahead is at
+least 40 slots. Below that boundary, `--compare-mip-starts` intentionally
+compares two cold executions so the benchmark reflects deployed behavior. The
+historical forced warm/cold eligibility matrix and its exact pre-gate revision
+are recorded in the findings document.
+
 See [Optimizer benchmark findings](optimizer-benchmarks.md) for the recorded
 September 2026 measurements and rejected experiments.
 

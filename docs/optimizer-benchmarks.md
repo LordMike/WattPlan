@@ -9,10 +9,13 @@ x86-64 results, not release guarantees.
 - Python: 3.14.3
 - highspy: 1.15.1
 - NumPy: 2.3.2
-- Benchmark revision: `a954a509d9c46fb6c3f2a02e49e2c18ee6a6dcc8`
+- Final benchmark revision: `516b44adeb934a832b412e794dd218651aa9a0a8`
+- Pre-gate matrix revision: `b5d2f3f`
+- Alternating benchmark harness: `bf11cea`
 - MIP-start implementation: `d997f69`
 - Sparse-row implementation: `821b727`
 - Conditional hint extraction: `5140714`
+- Effective-lookahead gate: `516b44a`
 
 Linux Git cannot resolve this Windows-created worktree's `.git` pointer, so the
 benchmark JSON reports null `git_revision` and `git_dirty` fields in this setup.
@@ -29,12 +32,12 @@ python scripts/benchmark_optimizer.py --scenario low-pv --slots 144 --lookahead 
 The `low-pv` input is derived from a captured Home Assistant planner export.
 Warm and cold projected costs matched within floating-point tolerance.
 
-Standalone full-plan samples:
+Standalone full-plan samples on the final revision:
 
 | Variant | Median | Samples (seconds) |
 | --- | ---: | --- |
-| Warm | 2.0106 | 1.9757, 2.0106, 2.0218 |
-| Cold | 2.5482 | 2.6208, 2.5482, 2.4941 |
+| Warm | 2.1676 | 2.2146, 2.1676, 2.1038 |
+| Cold | 2.7543 | 2.8526, 2.7543, 2.6731 |
 
 The warm median was about 21% lower. All 426 attempted starts across the three
 warm runs returned `HighsStatus.kOk`. The benchmark names this
@@ -48,12 +51,103 @@ repair path intentionally does not submit starts.
 
 | Variant | Full median | Full samples (seconds) | Repair median | Repair samples (seconds) |
 | --- | ---: | --- | ---: | --- |
-| Warm | 1.9825 | 1.9902, 1.9543, 1.9385, 1.9961, 1.9856, 1.9793 | 0.1917 | 0.2234, 0.1605, 0.1594, 0.1956, 0.1945, 0.1539, 0.2044, 0.1917, 0.1683 |
-| Cold | 2.4985 | 2.5173, 2.5212, 2.4798, 2.4584, 2.5605, 2.4687 | 0.1783 | 0.2096, 0.1652, 0.1529, 0.1856, 0.1963, 0.1562, 0.1902, 0.1783, 0.1728 |
+| Warm | 1.9696 | 2.0451, 1.9984, 1.9745, 1.9177, 1.9647, 1.9302 | 0.1747 | 0.1944, 0.1747, 0.1599, 0.1953, 0.1597, 0.1748, 0.1741, 0.1843, 0.1597 |
+| Cold | 2.4600 | 2.5628, 2.4609, 2.4566, 2.4501, 2.5012, 2.4591 | 0.1791 | 0.1906, 0.1791, 0.1530, 0.2063, 0.1572, 0.1509, 0.1853, 0.1819, 0.1483 |
 
-Warm-minus-cold total trajectory differences were `-1.0784s`, `-0.9977s`, and
-`-1.0411s`. The repair medians should be treated as run-order noise: both
+Warm-minus-cold total trajectory differences were `-0.9740s`, `-0.9991s`, and
+`-1.0629s`. Every trajectory reported exactly two `full` and three `repair`
+calls; there were no fallback full refreshes. Warm and cold projected costs
+matched at every tick within floating-point tolerance, and every plan passed the
+benchmark's finite-value, schedule-bound, balance, and target checks. The repair
+medians should be treated as run-order noise: both
 variants execute the same cold eight-solve prefix path.
+
+## MIP-Start Eligibility Gate
+
+Short workloads consistently spent more time completing partial starts than
+they saved in the primary solve. Raw integer-variable count did not provide a
+safe threshold: the three-battery stress case improved at 220 integers but
+regressed at 264. Configured/effective lookahead showed the clearest conservative
+boundary across the captured and heterogeneous layouts.
+
+The table below used the alternating warm-first/cold-first harness at the
+pre-gate revision `b5d2f3f`. The 40-slot and 48-slot rows use the same solver and
+harness behavior as the final revision because those cases remain eligible. A
+negative warm-minus-cold result favors warm starts.
+
+| Scenario | Slots x lookahead | Warm median | Cold median | Paired result |
+| --- | ---: | ---: | ---: | --- |
+| Captured low-PV | 24 x 8 | 0.2762s | 0.1870s | Warm slower in 7/7 |
+| Captured low-PV | 48 x 24 | 0.5744s | 0.5813s | Mixed / neutral |
+| Captured low-PV | 144 x 32 | 2.2939s | 2.3843s | Mixed |
+| Captured low-PV | 144 x 36 | 1.9921s | 2.1615s | Warm faster in 5/5 |
+| Stress | 48 x 32 | 2.4354s | 2.4914s | Warm faster in 3/5 |
+| Stress | 48 x 36 | 2.2145s | 2.0548s | Warm slower in 5/5 |
+| Captured low-PV | 48 x 40 | 0.5903s | 0.7737s | Warm faster in 5/5 |
+| Captured low-PV | 144 x 40 | 2.2422s | 2.5671s | Warm faster in 5/5 |
+| Stress | 48 x 40 | 2.6440s | 2.8224s | Warm faster in 4/5 |
+| Stress | 48 x 48 | 2.7477s | 2.7826s | Mixed, warm median lower |
+
+Production now submits starts only when the effective initial solve horizon is
+at least 40 slots. This disables the repeatable short-horizon regressions while
+retaining the measured benefit at the production 144 x 48 shape and larger hard
+cases. It is a workload-derived guard, not a claim that every 40-plus-slot solve
+will be faster. Deadband, full-plan, adjacent-primary-solve, and no-probe rules
+still apply.
+
+Post-gate checks on `516b44a` confirmed the behavior:
+
+- Low-PV 24 x 8, seven pairs: both labels submitted zero starts, returned the
+  identical `1.3803171958` projected cost, and passed physical checks. Pair
+  timing was mixed because both labels executed the same cold path.
+- Low-PV 144 x 48, three pairs: warm submitted 426 starts, costs matched within
+  floating-point tolerance, all plans passed physical checks, and warm was
+  faster in all three pairs.
+
+Matrix command template:
+
+```bash
+python scripts/benchmark_optimizer.py --scenario <low-pv-or-stress> --slots <slots> --lookahead <slots> --repeats 5 --compare-mip-starts
+```
+
+Reproduce the below-gate warm/cold rows from the recorded pre-gate revision;
+on the final revision the warm label intentionally follows production policy
+and therefore remains cold below 40 effective slots.
+
+## Hardest Relevant Scenarios
+
+No named historical worst-case fixture exists in the repository. Of the two
+captured fixtures, `low-pv` is the hardest relevant MIP-start case because it
+uses a deadband and exercises integer mode decisions; `live-export` has no
+deadband and therefore cannot consume starts. The production-shape comparison
+above is the retained normal cadence case.
+
+The deterministic `stress` scenario is the harder synthetic complement: three
+heterogeneous batteries, nonlinear curves, deadbands, signed tariffs, and fixed
+targets. It was measured at 144 x 96 with two alternating standalone pairs and
+two complete alternating five-tick trajectories:
+
+```bash
+python scripts/benchmark_optimizer.py --scenario stress --slots 144 --lookahead 96 --repeats 2 --serial --compare-mip-starts
+```
+
+| Variant | Standalone median | Samples (seconds) | Serial full median | Serial full samples (seconds) | Repair median |
+| --- | ---: | --- | ---: | --- | ---: |
+| Warm | 14.6192 | 14.6457, 14.5927 | 16.2142 | 14.4442, 17.1547, 15.2737, 18.5685 | 3.4143 |
+| Cold | 26.7440 | 26.8436, 26.6444 | 28.7474 | 26.5632, 28.3985, 32.0786, 29.0964 | 3.4451 |
+
+Warm-minus-cold standalone differences were `-12.1980s` and `-12.0518s`.
+Trajectory differences were `-23.0389s` and `-28.0495s`. Both variants recorded
+exactly four `full` and six `repair` calls across the two trajectories, with no
+fallback full refreshes, and all ten plans per variant passed physical-quality
+checks.
+
+The stress tariff-only projection differed by about `0.0115` cost units on full
+ticks (`-58.2477` warm versus `-58.2362` cold). Both solves were optimal for the
+complete objective, which also contains throughput and mode terms, so different
+optimal schedules can have slightly different tariff-only projections. Repair
+ticks matched, and neither start constrained the model or weakened physical
+validity.
 
 ## Conditional Hint Extraction
 
@@ -81,9 +175,9 @@ to `0.1714s`, as expected for eight small solves.
 - Passing starts into preserve probes was rejected. A 15-run live-export median
   moved from about `0.707s` to `0.825s`; 285 submissions returned `kOk`, while
   total node count did not improve.
-- Warm starts are workload-dependent. A small 24-slot, 8-slot-lookahead low-PV
-  check was slower warm (`0.293s`) than cold (`0.180s`). Starts therefore remain
-  limited to adjacent, full, deadband-enabled primary solves.
+- Warm starts are workload-dependent. The eligibility matrix above led to the
+  40-slot effective-lookahead gate in addition to the adjacent, full,
+  deadband-enabled primary-solve restrictions.
 
 ## Limitations
 
