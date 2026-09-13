@@ -516,18 +516,23 @@ def _solve_lp(
 
     if sparse_rows:
         a_all = None
+        ub_bounds = (
+            np.asarray(b_ub, dtype=np.float64)
+            if ub_rows
+            else np.zeros(0, dtype=np.float64)
+        )
+        eq_bounds = (
+            np.asarray(b_eq, dtype=np.float64)
+            if eq_rows
+            else np.zeros(0, dtype=np.float64)
+        )
         row_lower = np.concatenate(
             (
                 np.full(ub_rows, -highspy.kHighsInf, dtype=np.float64),
-                np.asarray(b_eq, dtype=np.float64),
+                eq_bounds,
             )
         )
-        row_upper = np.concatenate(
-            (
-                np.asarray(b_ub, dtype=np.float64),
-                np.asarray(b_eq, dtype=np.float64),
-            )
-        )
+        row_upper = np.concatenate((ub_bounds, eq_bounds))
     elif total_rows == 0:
         a_all = np.zeros((0, n_vars), dtype=np.float64)
         row_lower = np.zeros(0, dtype=np.float64)
