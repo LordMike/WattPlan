@@ -123,7 +123,7 @@ def test_preserve_probe_scenario_records_counterfactual_solver_calls():
     )
 
     assert report["solver"]["probe_calls"] > 0
-    assert report["solver"]["submitted_starts"] > 0
+    assert report["solver"]["submitted_starts"] == 0
 
 
 def test_git_state_is_best_effort(monkeypatch):

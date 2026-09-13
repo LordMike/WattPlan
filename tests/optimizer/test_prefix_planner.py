@@ -187,7 +187,7 @@ def test_public_api_runs_eight_steps_and_retains_full_forecast(monkeypatch):
 
 
 def test_prefix_refresh_skips_mip_start_completion_overhead(monkeypatch):
-    request = payload(horizon=16)
+    request = payload(horizon=48)
     request["infer_battery_preserve_policy"] = False
     request["action_deadband_kwh"] = 0.05
     request["battery_entities"] = [{
@@ -205,7 +205,7 @@ def test_prefix_refresh_skips_mip_start_completion_overhead(monkeypatch):
 
     monkeypatch.setattr(planner.core, "_solve_lp", capture)
     for tick in range(1, 5):
-        request = payload(tick, result["state"], horizon=16)
+        request = payload(tick, result["state"], horizon=48)
         request["infer_battery_preserve_policy"] = False
         request["action_deadband_kwh"] = 0.05
         request["battery_entities"] = [{

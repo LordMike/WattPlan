@@ -21,6 +21,7 @@ EPSILON = 1e-6
 AVG_PRICE_SENTINEL = 1000.0
 PRESERVE_PROBE_MIN_KWH = 0.01
 PRESERVE_OBJECTIVE_TOLERANCE = 1e-7
+MIP_START_MIN_LOOKAHEAD_SLOTS = 40
 _AUTO_REUSE = object()
 
 
@@ -753,8 +754,8 @@ def _shift_mip_start(
     return start_indices, start_values
 
 
-def _use_mip_starts(battery_entities):
-    return any(
+def _use_mip_starts(battery_entities, lookahead_slots):
+    return int(lookahead_slots) >= MIP_START_MIN_LOOKAHEAD_SLOTS and any(
         float(entity.action_deadband_kwh) > EPSILON for entity in battery_entities
     )
 
@@ -1518,7 +1519,9 @@ def _run_mpc(
     )
     initial_comfort_lock_mode = comfort_lock_mode.copy()
     initial_comfort_lock_remaining = comfort_lock_remaining.copy()
-    use_mip_starts = policy_tail_start is None and _use_mip_starts(battery_entities)
+    use_mip_starts = policy_tail_start is None and _use_mip_starts(
+        battery_entities, min(lookahead_slots, total_steps)
+    )
     primary_mip_start = None
 
     for t in range(total_steps):

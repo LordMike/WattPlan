@@ -208,7 +208,7 @@ def _run(payload, *, force_full, disable_mip_starts=False):
     params = OptimizationParams(**payload)
     original = core._use_mip_starts
     if disable_mip_starts:
-        core._use_mip_starts = lambda _entities: False
+        core._use_mip_starts = lambda _entities, _lookahead: False
     start = time.perf_counter()
     try:
         if force_full:

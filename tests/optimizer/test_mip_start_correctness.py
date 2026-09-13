@@ -91,7 +91,9 @@ def _assert_physical_plan(payload, result):
 def test_full_plan_warm_starts_match_cold_optimal_cost_and_constraints(monkeypatch):
     payload = _representative_payload()
     with monkeypatch.context() as cold_patch:
-        cold_patch.setattr(optimizer, "_use_mip_starts", lambda _entities: False)
+        cold_patch.setattr(
+            optimizer, "_use_mip_starts", lambda _entities, _lookahead: False
+        )
         cold = _run(payload)
 
     submitted_starts = []
@@ -102,6 +104,9 @@ def test_full_plan_warm_starts_match_cold_optimal_cost_and_constraints(monkeypat
         return original(*args, **kwargs)
 
     monkeypatch.setattr(optimizer, "_solve_lp", capture)
+    monkeypatch.setattr(
+        optimizer, "_use_mip_starts", lambda _entities, _lookahead: True
+    )
     warm = _run(payload)
 
     assert any(start is not None for start in submitted_starts)
@@ -150,6 +155,9 @@ def test_preserve_probes_stay_cold_and_do_not_replace_primary_hint(monkeypatch):
         return result
 
     monkeypatch.setattr(optimizer, "_solve_mpc_step", capture)
+    monkeypatch.setattr(
+        optimizer, "_use_mip_starts", lambda _entities, _lookahead: True
+    )
     result = _run(payload)
 
     probes = [event for event in events if event["probe"]]
@@ -193,7 +201,11 @@ def test_mip_start_extraction_only_runs_for_consuming_primary_solves(monkeypatch
         return original(*args, **kwargs)
 
     monkeypatch.setattr(optimizer, "_extract_mip_start", capture)
-    result = _run(payload)
+    with monkeypatch.context() as warm_patch:
+        warm_patch.setattr(
+            optimizer, "_use_mip_starts", lambda _entities, _lookahead: True
+        )
+        result = _run(payload)
 
     assert result["successful_solves"] == 4
     assert extractions == result["successful_solves"]
@@ -202,3 +214,33 @@ def test_mip_start_extraction_only_runs_for_consuming_primary_solves(monkeypatch
     extractions = 0
     _run(payload)
     assert extractions == 0
+
+
+def test_mip_start_eligibility_requires_deadband_and_long_effective_lookahead(
+    monkeypatch,
+):
+    payload = _representative_payload()
+    entities = optimizer.normalize_calculation_input(
+        optimizer.OptimizationParams(**payload)
+    ).battery_entities
+
+    assert not optimizer._use_mip_starts(entities, 39)
+    assert optimizer._use_mip_starts(entities, 40)
+
+    payload["lookahead_slots"] = 40
+    starts = []
+    original = optimizer._solve_lp
+
+    def capture(*args, **kwargs):
+        starts.append(kwargs.get("mip_start"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(optimizer, "_solve_lp", capture)
+    _run(payload)
+    assert not any(start is not None for start in starts)
+
+    payload["action_deadband_kwh"] = 0.0
+    entities = optimizer.normalize_calculation_input(
+        optimizer.OptimizationParams(**payload)
+    ).battery_entities
+    assert not optimizer._use_mip_starts(entities, 48)
