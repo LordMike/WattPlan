@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from scripts import benchmark_optimizer as benchmark
+from tests.optimizer.benchmark_cases import CASE_METADATA, build_case
 
 
 def _payload():
@@ -123,7 +124,80 @@ def test_preserve_probe_scenario_records_counterfactual_solver_calls():
     )
 
     assert report["solver"]["probe_calls"] > 0
+    assert report["solver"]["primary_calls"] == report["primary_solves"]
     assert report["solver"]["submitted_starts"] == 0
+    assert (
+        report["solver"]["total_wrapper_seconds"]
+        >= report["solver"]["total_highs_seconds"]
+    )
+    assert report["solver"]["max_probe_model"]["variables"] > 0
+    assert report["timing"]["end_to_end_seconds"]["median_seconds"] > 0
+
+
+def test_solver_summary_supports_zero_native_calls():
+    report = benchmark._solver_summary([], [])
+
+    assert report["total_calls"] == 0
+    assert report["primary_calls"] == 0
+    assert report["probe_calls"] == 0
+    assert report["total_wrapper_seconds"] == 0
+    assert report["total_highs_seconds"] == 0
+    assert report["model_construction_seconds"] == 0
+    assert report["max_model"] == {
+        "variables": 0,
+        "integer_variables": 0,
+        "rows": 0,
+        "nonzeros": 0,
+    }
+
+
+def test_session_one_cases_cover_required_asset_shapes():
+    assert set(CASE_METADATA) == {
+        "no-assets-no-pv",
+        "no-battery-comfort-no-pv",
+        "no-battery-comfort-pv",
+        "battery-zero-pv",
+        "charge-only-battery",
+        "mixed-batteries-pv",
+        "comfort-flexible",
+        "comfort-tight",
+    }
+
+    no_assets = build_case("no-assets-no-pv", slots=12, lookahead=8)
+    assert no_assets["battery_entities"] == []
+    assert no_assets["comfort_entities"] == []
+    assert no_assets["solar_input_kwh"] == [0.0] * 12
+
+    zero_pv = build_case("battery-zero-pv", slots=12, lookahead=8)
+    assert len(zero_pv["battery_entities"]) == 1
+    assert zero_pv["solar_input_kwh"] == [0.0] * 12
+
+    charge_only = build_case("charge-only-battery", slots=12, lookahead=8)
+    assert charge_only["battery_entities"][0]["discharge_curve_kwh"] == [0.0]
+    assert charge_only["battery_entities"][0]["can_charge_from"] == 1
+
+    mixed = build_case("mixed-batteries-pv", slots=48, lookahead=8)
+    assert len(mixed["battery_entities"]) == 2
+    assert any(mixed["solar_input_kwh"])
+    assert CASE_METADATA["comfort-tight"]["provenance"] == (
+        "synthetic-historical-substitute"
+    )
+    for name in CASE_METADATA:
+        benchmark.OptimizationParams(**build_case(name, slots=48, lookahead=8))
+
+
+def test_serial_trajectory_records_solver_breakdown_per_tick():
+    trajectory = benchmark._serial_trajectory(
+        build_case("no-assets-no-pv", slots=4, lookahead=4)
+    )
+
+    assert len(trajectory) == 5
+    assert all("timing" in row and "solver" in row for row in trajectory)
+    assert all(
+        row["solver"]["primary_calls"] == row["primary_solves"]
+        for row in trajectory
+    )
+    assert all(row["solver"]["probe_calls"] == 0 for row in trajectory)
 
 
 def test_git_state_is_best_effort(monkeypatch):
@@ -145,6 +219,45 @@ def test_paired_full_alternates_order_and_aggregates_raw_results(monkeypatch):
         calls.append(label)
         sample = float(len(calls))
         cost = 10.0 if label == "warm" else 10.0
+        solver = benchmark._solver_summary(
+            [
+                {
+                    "role": "primary",
+                    "wrapper_seconds": sample / 4,
+                    "native_seconds": sample / 8,
+                    "nodes": 1,
+                    "start_submitted": label == "warm" and index < 3,
+                    "start_accepted": label == "warm" and index < 3,
+                    "start_status": (
+                        "HighsStatus.kOk"
+                        if label == "warm" and index < 3
+                        else None
+                    ),
+                    "variables": 10,
+                    "integer_variables": 5,
+                    "rows": 8,
+                    "nonzeros": 20,
+                }
+                for index in range(4)
+            ],
+            [
+                {
+                    "role": "primary",
+                    "base_timeslot": index,
+                    "horizon": 4 - index,
+                    "step_seconds": sample / 4,
+                    "model_construction_seconds": 0.0,
+                    "native_calls": 1,
+                }
+                for index in range(4)
+            ],
+        )
+        timing = {
+            "end_to_end_seconds": sample,
+            "parameter_validation_seconds": 0.0,
+            "normalization_seconds": 0.0,
+            "planner_seconds": sample,
+        }
         return {
             "median_seconds": sample,
             "samples_seconds": [sample],
@@ -153,21 +266,9 @@ def test_paired_full_alternates_order_and_aggregates_raw_results(monkeypatch):
             "projected_costs": [cost],
             "quality_valid": True,
             "quality": [{"valid": True}],
-            "solver": {
-                "total_calls": 4,
-                "probe_calls": 0,
-                "submitted_starts": 3 if label == "warm" else 0,
-                "successful_start_submissions": 3 if label == "warm" else 0,
-                "total_wrapper_seconds": sample,
-                "total_highs_seconds": sample / 2,
-                "total_nodes": 1,
-                "max_model": {
-                    "variables": 10,
-                    "integer_variables": 5,
-                    "rows": 8,
-                    "nonzeros": 20,
-                },
-            },
+            "timing": benchmark._timing_summary([timing], [solver]),
+            "runs": [{"timing": timing, "solver": solver}],
+            "solver": solver,
         }
 
     monkeypatch.setattr(benchmark, "_measure", measured)

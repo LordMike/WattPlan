@@ -7,6 +7,7 @@ import argparse
 import copy
 import json
 import math
+import os
 import platform
 import statistics
 import subprocess
@@ -16,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import highspy
+import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -23,6 +25,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from custom_components.wattplan.optimizer import OptimizationParams, optimize
 from custom_components.wattplan.optimizer import mpc_power_optimizer as core
+from tests.optimizer.benchmark_cases import CASE_METADATA, build_case
 from tests.optimizer.test_optimizer_scenarios import (
     _live_exported_deye_low_pv_low_soc_payload,
     _live_grid_export_benchmark_payload,
@@ -190,6 +193,8 @@ def _preserve_probe_payload(slots, lookahead):
 
 
 def _scenario(name, slots, lookahead):
+    if name in CASE_METADATA:
+        return build_case(name, slots, lookahead)
     if name == "live-export":
         payload, export_prices = _live_grid_export_benchmark_payload()
         payload["grid_export_price_per_kwh"] = export_prices
@@ -204,20 +209,148 @@ def _scenario(name, slots, lookahead):
     return result
 
 
+class _SolverRecorder:
+    """Capture solver roles, wrapper/native time, and model construction cost."""
+
+    def __init__(self):
+        self.native_calls = []
+        self.step_calls = []
+        self._role = None
+
+    def __enter__(self):
+        self._original_solve = core._solve_lp
+        self._original_step = core._solve_mpc_step
+
+        def measured_solve(*args, **kwargs):
+            start = time.perf_counter()
+            solved = self._original_solve(*args, **kwargs)
+            start_status = solved.mip_start_status
+            self.native_calls.append(
+                {
+                    "role": self._role or "unclassified",
+                    "wrapper_seconds": time.perf_counter() - start,
+                    "native_seconds": solved.solver_runtime,
+                    "nodes": solved.mip_node_count,
+                    "start_submitted": start_status is not None,
+                    "start_accepted": start_status == highspy.HighsStatus.kOk,
+                    "start_status": None if start_status is None else str(start_status),
+                    "variables": solved.num_variables,
+                    "integer_variables": solved.num_integer_variables,
+                    "rows": solved.num_rows,
+                    "nonzeros": solved.num_nonzeros,
+                }
+            )
+            return solved
+
+        def measured_step(*args, **kwargs):
+            role = "probe" if kwargs.get("forced_discharge_first") else "primary"
+            previous_role = self._role
+            self._role = role
+            native_start = len(self.native_calls)
+            start = time.perf_counter()
+            try:
+                return self._original_step(*args, **kwargs)
+            finally:
+                elapsed = time.perf_counter() - start
+                native_calls = self.native_calls[native_start:]
+                native_wrapper = sum(row["wrapper_seconds"] for row in native_calls)
+                self.step_calls.append(
+                    {
+                        "role": role,
+                        "base_timeslot": kwargs.get("base_timeslot"),
+                        "horizon": len(kwargs.get("prices_h", [])),
+                        "step_seconds": elapsed,
+                        "model_construction_seconds": max(elapsed - native_wrapper, 0.0),
+                        "native_calls": len(native_calls),
+                    }
+                )
+                self._role = previous_role
+
+        core._solve_lp = measured_solve
+        core._solve_mpc_step = measured_step
+        return self
+
+    def __exit__(self, _exc_type, _exc, _traceback):
+        core._solve_lp = self._original_solve
+        core._solve_mpc_step = self._original_step
+
+    def summary(self):
+        return _solver_summary(self.native_calls, self.step_calls)
+
+
+def _empty_model_size():
+    return {
+        "variables": 0,
+        "integer_variables": 0,
+        "rows": 0,
+        "nonzeros": 0,
+    }
+
+
+def _max_model(rows):
+    if not rows:
+        return _empty_model_size()
+    return {
+        key: max(row[key] for row in rows)
+        for key in ("variables", "integer_variables", "rows", "nonzeros")
+    }
+
+
+def _solver_summary(native_calls, step_calls):
+    started = [row for row in native_calls if row["start_submitted"]]
+    primary = [row for row in native_calls if row["role"] == "primary"]
+    probes = [row for row in native_calls if row["role"] == "probe"]
+    wrapper_seconds = sum(row["wrapper_seconds"] for row in native_calls)
+    native_seconds = sum(row["native_seconds"] for row in native_calls)
+    return {
+        "total_calls": len(native_calls),
+        "primary_calls": len(primary),
+        "probe_calls": len(probes),
+        "unclassified_calls": len(native_calls) - len(primary) - len(probes),
+        "submitted_starts": len(started),
+        "successful_start_submissions": sum(row["start_accepted"] for row in started),
+        "total_wrapper_seconds": wrapper_seconds,
+        "total_highs_seconds": native_seconds,
+        "wrapper_overhead_seconds": max(wrapper_seconds - native_seconds, 0.0),
+        "model_construction_seconds": sum(
+            row["model_construction_seconds"] for row in step_calls
+        ),
+        "total_step_seconds": sum(row["step_seconds"] for row in step_calls),
+        "total_nodes": sum(row["nodes"] for row in native_calls),
+        "max_model": _max_model(native_calls),
+        "max_primary_model": _max_model(primary),
+        "max_probe_model": _max_model(probes),
+        "calls": native_calls,
+        "steps": step_calls,
+    }
+
+
 def _run(payload, *, force_full, disable_mip_starts=False):
+    end_to_end_start = time.perf_counter()
+    params_start = time.perf_counter()
     params = OptimizationParams(**payload)
+    params_seconds = time.perf_counter() - params_start
     original = core._use_mip_starts
     if disable_mip_starts:
         core._use_mip_starts = lambda _entities, _lookahead: False
-    start = time.perf_counter()
     try:
         if force_full:
-            result = core.optimize_internal(
-                core.normalize_calculation_input(params), reuse_plan_override=None
-            )
+            normalization_start = time.perf_counter()
+            normalized = core.normalize_calculation_input(params)
+            normalization_seconds = time.perf_counter() - normalization_start
+            planner_start = time.perf_counter()
+            result = core.optimize_internal(normalized, reuse_plan_override=None)
         else:
+            normalization_seconds = None
+            planner_start = time.perf_counter()
             result = optimize(params)
-        return result, time.perf_counter() - start
+        planner_seconds = time.perf_counter() - planner_start
+        return result, {
+            "end_to_end_seconds": time.perf_counter() - end_to_end_start,
+            "parameter_validation_seconds": params_seconds,
+            "normalization_seconds": normalization_seconds,
+            "planner_seconds": planner_seconds,
+        }
     finally:
         core._use_mip_starts = original
 
@@ -261,46 +394,26 @@ def _result_quality(payload, result):
 
 
 def _measure(payload, repeats, *, force_full=True, disable_mip_starts=False):
-    samples = []
+    timings = []
     projected_costs = []
     qualities = []
-    solver_calls = []
+    solver_reports = []
     result = None
-    original_solve = core._solve_lp
 
-    def measured_solve(*args, **kwargs):
-        start = time.perf_counter()
-        solved = original_solve(*args, **kwargs)
-        solver_calls.append(
-            {
-                "total": time.perf_counter() - start,
-                "solver": solved.solver_runtime,
-                "nodes": solved.mip_node_count,
-                "start": solved.mip_start_status,
-                "variables": solved.num_variables,
-                "integer_variables": solved.num_integer_variables,
-                "rows": solved.num_rows,
-                "nonzeros": solved.num_nonzeros,
-            }
-        )
-        return solved
-
-    core._solve_lp = measured_solve
-    try:
-        for _ in range(repeats):
-            result, elapsed = _run(
+    for _ in range(repeats):
+        with _SolverRecorder() as recorder:
+            result, run_timing = _run(
                 payload,
                 force_full=force_full,
                 disable_mip_starts=disable_mip_starts,
             )
-            samples.append(elapsed)
-            projected_costs.append(result["projections"]["projected_cost"])
-            qualities.append(_result_quality(payload, result))
-    finally:
-        core._solve_lp = original_solve
+        timings.append(run_timing)
+        solver_reports.append(recorder.summary())
+        projected_costs.append(result["projections"]["projected_cost"])
+        qualities.append(_result_quality(payload, result))
 
-    primary_solves = result["successful_solves"] * repeats
-    started = [row for row in solver_calls if row["start"] is not None]
+    samples = [row["end_to_end_seconds"] for row in timings]
+    solver = _aggregate_solver_reports(solver_reports)
     report = {
         "median_seconds": statistics.median(samples),
         "samples_seconds": samples,
@@ -309,30 +422,49 @@ def _measure(payload, repeats, *, force_full=True, disable_mip_starts=False):
         "projected_costs": projected_costs,
         "quality_valid": all(quality["valid"] for quality in qualities),
         "quality": qualities,
-        "solver": {
-            "total_calls": len(solver_calls),
-            "probe_calls": len(solver_calls) - primary_solves,
-            "submitted_starts": len(started),
-            "successful_start_submissions": sum(
-                row["start"] == highspy.HighsStatus.kOk for row in started
-            ),
-            "total_wrapper_seconds": sum(row["total"] for row in solver_calls),
-            "total_highs_seconds": sum(row["solver"] for row in solver_calls),
-            "total_nodes": sum(row["nodes"] for row in solver_calls),
-            "max_model": {
-                key: max(row[key] for row in solver_calls)
-                for key in ("variables", "integer_variables", "rows", "nonzeros")
-            },
-        },
+        "timing": _timing_summary(timings, solver_reports),
+        "runs": [
+            {"timing": timing, "solver": solver_report}
+            for timing, solver_report in zip(timings, solver_reports)
+        ],
+        "solver": solver,
     }
     return report
+
+
+def _timing_summary(timings, solver_reports):
+    keys = (
+        "end_to_end_seconds",
+        "parameter_validation_seconds",
+        "normalization_seconds",
+        "planner_seconds",
+    )
+    summary = {}
+    for key in keys:
+        values = [row[key] for row in timings if row[key] is not None]
+        summary[key] = _sample_summary(values)
+    non_solver = []
+    for timing, solver in zip(timings, solver_reports):
+        non_solver.append(
+            max(timing["planner_seconds"] - solver["total_step_seconds"], 0.0)
+        )
+    summary["planner_outside_solver_steps_seconds"] = _sample_summary(non_solver)
+    return summary
+
+
+def _aggregate_solver_reports(reports):
+    native_calls = [call for report in reports for call in report["calls"]]
+    step_calls = [step for report in reports for step in report["steps"]]
+    return _solver_summary(native_calls, step_calls)
 
 
 def _aggregate_measurements(reports):
     samples = [sample for report in reports for sample in report["samples_seconds"]]
     costs = [cost for report in reports for cost in report["projected_costs"]]
     qualities = [quality for report in reports for quality in report["quality"]]
-    solver_rows = [report["solver"] for report in reports]
+    runs = [run for report in reports for run in report["runs"]]
+    timings = [run["timing"] for run in runs]
+    solver_rows = [run["solver"] for run in runs]
     return {
         "median_seconds": statistics.median(samples),
         "samples_seconds": samples,
@@ -341,24 +473,9 @@ def _aggregate_measurements(reports):
         "projected_costs": costs,
         "quality_valid": all(quality["valid"] for quality in qualities),
         "quality": qualities,
-        "solver": {
-            key: sum(row[key] for row in solver_rows)
-            for key in (
-                "total_calls",
-                "probe_calls",
-                "submitted_starts",
-                "successful_start_submissions",
-                "total_wrapper_seconds",
-                "total_highs_seconds",
-                "total_nodes",
-            )
-        }
-        | {
-            "max_model": {
-                key: max(row["max_model"][key] for row in solver_rows)
-                for key in ("variables", "integer_variables", "rows", "nonzeros")
-            }
-        },
+        "timing": _timing_summary(timings, solver_rows),
+        "runs": runs,
+        "solver": _aggregate_solver_reports(solver_rows),
     }
 
 
@@ -449,16 +566,20 @@ def _serial_trajectory(payload, *, disable_mip_starts=False):
         current = copy.deepcopy(payload) if tick == 0 else _shifted(
             payload, tick, state, previous
         )
-        result, elapsed = _run(
-            current,
-            force_full=False,
-            disable_mip_starts=disable_mip_starts,
-        )
+        with _SolverRecorder() as recorder:
+            result, timing = _run(
+                current,
+                force_full=False,
+                disable_mip_starts=disable_mip_starts,
+            )
+        solver = recorder.summary()
         rows.append(
             {
                 "tick": tick,
                 "cadence": result["cadence"]["mode"],
-                "seconds": elapsed,
+                "seconds": timing["end_to_end_seconds"],
+                "timing": timing,
+                "solver": solver,
                 "primary_solves": result["successful_solves"],
                 "projected_cost": result["projections"]["projected_cost"],
                 "quality": _result_quality(current, result),
@@ -480,18 +601,28 @@ def _serial_summary(trajectories):
     full_samples = []
     prefix_samples = []
     cadence_counts = {}
+    full_rows = []
+    prefix_rows = []
     for trajectory in trajectories:
         for row in trajectory:
             cadence = row["cadence"]
             cadence_counts[cadence] = cadence_counts.get(cadence, 0) + 1
             if cadence == "repair":
                 prefix_samples.append(row["seconds"])
+                prefix_rows.append(row)
             else:
                 full_samples.append(row["seconds"])
+                full_rows.append(row)
     return {
         "trajectories": trajectories,
         "full": _sample_summary(full_samples),
         "prefix": _sample_summary(prefix_samples),
+        "full_solver": _aggregate_solver_reports(
+            [row["solver"] for row in full_rows if "solver" in row]
+        ),
+        "prefix_solver": _aggregate_solver_reports(
+            [row["solver"] for row in prefix_rows if "solver" in row]
+        ),
         "cadence_counts": cadence_counts,
         "quality_valid": all(
             row["quality"]["valid"]
@@ -508,6 +639,17 @@ def _measure_serial(payload, repeats, *, disable_mip_starts=False):
             for _ in range(repeats)
         ]
     )
+
+
+def _strip_solver_details(value):
+    if isinstance(value, dict):
+        value.pop("calls", None)
+        value.pop("steps", None)
+        for child in value.values():
+            _strip_solver_details(child)
+    elif isinstance(value, list):
+        for child in value:
+            _strip_solver_details(child)
 
 
 def _paired_serial(payload, repeats):
@@ -540,10 +682,17 @@ def _paired_serial(payload, repeats):
 
 def main():
     parser = argparse.ArgumentParser()
+    scenario_choices = (
+        *sorted(CASE_METADATA),
+        "live-export",
+        "low-pv",
+        "preserve-probe",
+        "stress",
+    )
     parser.add_argument(
         "--scenario",
-        choices=("live-export", "low-pv", "preserve-probe", "stress"),
-        default="low-pv",
+        choices=scenario_choices,
+        default="no-assets-no-pv",
     )
     parser.add_argument("--slots", type=int, default=144)
     parser.add_argument("--lookahead", type=int, default=48)
@@ -551,23 +700,57 @@ def main():
     parser.add_argument("--serial", action="store_true")
     parser.add_argument("--disable-mip-starts", action="store_true")
     parser.add_argument("--compare-mip-starts", action="store_true")
+    parser.add_argument("--include-call-details", action="store_true")
     args = parser.parse_args()
     if args.compare_mip_starts and args.disable_mip_starts:
         parser.error("--compare-mip-starts cannot be combined with --disable-mip-starts")
 
     payload = _scenario(args.scenario, args.slots, args.lookahead)
     revision, dirty = _git_state()
+    if args.scenario in CASE_METADATA:
+        scenario_details = CASE_METADATA[args.scenario]
+    else:
+        scenario_details = {
+            "provenance": (
+                "recovered"
+                if args.scenario in {"live-export", "low-pv"}
+                else "synthetic"
+            ),
+            "description": {
+                "live-export": "Captured Home Assistant forecast with live export pricing.",
+                "low-pv": "Captured Home Assistant export adjusted to low PV and low state of charge.",
+                "preserve-probe": "Synthetic counterfactual preserve-probe workload.",
+                "stress": "Synthetic heterogeneous multi-battery stress workload.",
+            }[args.scenario],
+        }
     report = {
         "environment": {
+            "recorded_at": datetime.now(UTC).isoformat(),
             "platform": platform.platform(),
+            "machine": platform.machine(),
+            "processor": platform.processor(),
+            "cpu_count": os.cpu_count(),
             "python": platform.python_version(),
+            "python_executable": sys.executable,
             "highspy": highspy.Highs().version(),
+            "numpy": np.__version__,
             "git_revision": revision,
             "git_dirty": dirty,
+            "command": [sys.executable, *sys.argv],
         },
         "scenario": args.scenario,
+        "scenario_details": scenario_details,
         "slots": args.slots,
         "lookahead": args.lookahead,
+        "settings": {
+            "repeats": args.repeats,
+            "serial": args.serial,
+            "disable_mip_starts": args.disable_mip_starts,
+            "compare_mip_starts": args.compare_mip_starts,
+            "include_call_details": args.include_call_details,
+            "timing_clock": "time.perf_counter",
+            "execution": "single_process_serial",
+        },
     }
     if args.compare_mip_starts:
         full_comparison = _paired_full(payload, args.repeats)
@@ -591,6 +774,8 @@ def main():
                 args.repeats,
                 disable_mip_starts=args.disable_mip_starts,
             )
+    if not args.include_call_details:
+        _strip_solver_details(report)
     print(json.dumps(report, indent=2))
 
 
