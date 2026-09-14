@@ -146,11 +146,6 @@ def build_case(name: str, slots: int = 96, lookahead: int = 48) -> dict:
                 "charge_efficiency": 0.94,
                 "discharge_efficiency": 1.0,
                 "can_charge_from": 1,
-                "target": {
-                    "timeslot": max(slots - 8, 0),
-                    "soc_kwh": min(24.0, 8.0 + 2.8 * max(slots - 8, 0)),
-                    "mode": "at_least",
-                },
             }
         ]
     elif name == "mixed-batteries-pv":
