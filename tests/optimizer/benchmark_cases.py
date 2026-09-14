@@ -24,6 +24,12 @@ CASE_METADATA = {
         "provenance": "synthetic",
         "description": "Bidirectional battery with an explicitly zero PV series.",
     },
+    "battery-zero-pv-signed-target": {
+        "provenance": "synthetic",
+        "description": (
+            "Zero-PV battery with signed tariffs, deadband, and a fixed SOC target."
+        ),
+    },
     "charge-only-battery": {
         "provenance": "synthetic",
         "description": "Grid-charge-only vehicle battery with no discharge capability.",
@@ -125,7 +131,12 @@ def build_case(name: str, slots: int = 96, lookahead: int = 48) -> dict:
         raise KeyError(name)
     payload = _base_payload(slots, lookahead)
 
-    if name in {"no-assets-no-pv", "no-battery-comfort-no-pv", "battery-zero-pv"}:
+    if name in {
+        "no-assets-no-pv",
+        "no-battery-comfort-no-pv",
+        "battery-zero-pv",
+        "battery-zero-pv-signed-target",
+    }:
         payload["solar_input_kwh"] = [0.0] * slots
     if name in {"no-battery-comfort-no-pv", "no-battery-comfort-pv", "comfort-flexible"}:
         payload["comfort_entities"] = [_flexible_comfort()]
@@ -134,6 +145,24 @@ def build_case(name: str, slots: int = 96, lookahead: int = 48) -> dict:
     elif name == "battery-zero-pv":
         payload["action_deadband_kwh"] = 0.04
         payload["battery_entities"] = [_house_battery()]
+    elif name == "battery-zero-pv-signed-target":
+        payload["grid_import_price_per_kwh"] = [
+            price - (0.55 if slot % 24 < 5 else 0.0)
+            for slot, price in enumerate(payload["grid_import_price_per_kwh"])
+        ]
+        payload["grid_export_price_per_kwh"] = [
+            (-0.20 if slot % 3 == 0 else 0.35)
+            for slot in range(slots)
+        ]
+        payload["action_deadband_kwh"] = 0.04
+        battery = _house_battery()
+        battery["target"] = {
+            "timeslot": max(slots - 12, 0),
+            "soc_kwh": 6.0,
+            "mode": "at_least",
+            "tolerance_kwh": 0.05,
+        }
+        payload["battery_entities"] = [battery]
     elif name == "charge-only-battery":
         payload["battery_entities"] = [
             {

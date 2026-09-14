@@ -157,6 +157,7 @@ def test_session_one_cases_cover_required_asset_shapes():
         "no-battery-comfort-no-pv",
         "no-battery-comfort-pv",
         "battery-zero-pv",
+        "battery-zero-pv-signed-target",
         "charge-only-battery",
         "mixed-batteries-pv",
         "comfort-flexible",
@@ -171,6 +172,16 @@ def test_session_one_cases_cover_required_asset_shapes():
     zero_pv = build_case("battery-zero-pv", slots=12, lookahead=8)
     assert len(zero_pv["battery_entities"]) == 1
     assert zero_pv["solar_input_kwh"] == [0.0] * 12
+
+    signed_target = build_case(
+        "battery-zero-pv-signed-target", slots=48, lookahead=8
+    )
+    assert signed_target["solar_input_kwh"] == [0.0] * 48
+    assert min(signed_target["grid_import_price_per_kwh"]) < 0.0
+    assert min(signed_target["grid_export_price_per_kwh"]) < 0.0
+    assert max(signed_target["grid_export_price_per_kwh"]) > 0.0
+    assert signed_target["action_deadband_kwh"] > 0.0
+    assert signed_target["battery_entities"][0]["target"]["mode"] == "at_least"
 
     charge_only = build_case("charge-only-battery", slots=12, lookahead=8)
     assert charge_only["battery_entities"][0]["discharge_curve_kwh"] == [0.0]

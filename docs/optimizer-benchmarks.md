@@ -38,9 +38,62 @@ quality checks passed. These small mixed movements, including one 5.6147s mixed
 case outlier, are ordinary solver/run noise; the new condition is unreachable
 for nonempty battery lists.
 
-The remaining next fast path is exact-zero-PV specialization for battery plans.
-That work should remove provably unused PV variables and constraints without
-broad capability pruning or changing battery policy behavior.
+Session 3 subsequently evaluated exact-zero-PV specialization for battery plans
+and rejected it after the signed-target control fixture showed a repeatable
+production-policy regression.
+
+## Session 3 Zero-PV Stop Decision
+
+Session 3 tested a per-solve exact-zero-PV specialization that omitted export,
+PV-charge, site-direction, and PV-surplus variables and their associated rows.
+The experiment preserved battery charge/discharge/SOC, targets, deadbands,
+signed import tariffs, preserve counterfactuals, and the existing nonzero-PV
+model. MIP starts were made topology-aware for rolling zero-to-nonzero and
+nonzero-to-zero transitions.
+
+The production change was rejected and removed. Model-size reduction did not
+translate into a repeatable end-to-end improvement across the required cases,
+and the reduced topology changed arbitrary choices among equal-cost receding
+horizon schedules. All compared plans remained feasible and passed target and
+battery-bound checks, but tariff-only full-plan projections could differ when
+the complete local objectives were tied.
+
+Measurements used the same September 14, 2026 WSL2 environment documented
+below, with 96 slots, a 48-slot lookahead, and alternating specialized/general
+execution order. The specialized code and comparison switch were exploratory
+and are not retained.
+
+| Workload | Variant | Median | Samples (seconds) | Projected cost | Max model (vars / integers / rows / nonzeros) |
+| --- | --- | ---: | --- | ---: | --- |
+| Existing zero-PV battery | Specialized warm | 0.9565s | 0.9847, 0.9565, 0.9705, 0.9239, 0.9499, 0.9926, 0.9542 | 9.1886 | 387 / 144 / 529 / 1,153 |
+| Existing zero-PV battery | General warm | 1.0416s | 1.0655, 0.9959, 1.0832, 1.0008, 1.0416, 0.9896, 1.0525 | 8.9283 | 579 / 240 / 721 / 1,825 |
+| Signed tariffs, target, deadband | Specialized warm | 2.2063s | 2.2048, 2.1935, 2.2085, 2.1891, 2.2063, 2.2639, 2.2076 | -0.9388 | 387 / 144 / 530 / 1,155 |
+| Signed tariffs, target, deadband | General warm | 2.0564s | 2.0503, 2.0146, 2.1271, 2.0564, 2.1540, 2.0404, 2.0949 | -1.1404 | 579 / 240 / 722 / 1,827 |
+| Signed tariffs, target, deadband | Specialized cold | 2.2397s | 2.2516, 2.2397, 2.2830, 2.1862, 2.2378 | -1.3684 | 387 / 144 / 530 / 1,155 |
+| Signed tariffs, target, deadband | General cold | 2.3631s | 2.3163, 2.3631, 2.6024, 2.2886, 2.4902 | -1.3350 | 579 / 240 / 722 / 1,827 |
+
+The signed-target specialization was slower in all seven production-policy
+pairs. Disabling MIP starts favored the reduced model in all five cold pairs,
+but its 2.2397s median was still slower than the retained general model's
+2.0564s warm median. This confirms that zero-PV topology and MIP-start policy
+cannot be evaluated independently.
+
+The useful retained artifact is the deterministic
+`battery-zero-pv-signed-target` benchmark fixture. It combines exact-zero PV,
+positive and negative import/export tariffs, a command deadband, and an SOC
+target so future planner work is not accepted on the easy plateau case alone.
+
+Reproduce the retained control workload with:
+
+```bash
+python scripts/benchmark_optimizer.py --scenario battery-zero-pv-signed-target --slots 96 --lookahead 48 --repeats 5
+```
+
+Recommended next step: profile or specialize charge-only battery structure,
+which remains mathematically simpler and avoids the zero-PV topology's adverse
+interaction with warm starts. Do not retry zero-PV pruning without a stable
+secondary objective or another way to preserve receding-horizon behavior and a
+paired end-to-end win on the signed-target fixture.
 
 ## Session 1 Planner Baseline
 

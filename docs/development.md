@@ -69,6 +69,7 @@ behavior evolves:
 - `no-battery-comfort-no-pv`
 - `no-battery-comfort-pv`
 - `battery-zero-pv`
+- `battery-zero-pv-signed-target`
 - `charge-only-battery`
 - `mixed-batteries-pv`
 - `comfort-flexible`
