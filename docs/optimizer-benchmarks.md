@@ -185,37 +185,64 @@ Recommended order:
 The first item is the safest next fast path because it can target zero native
 calls with simple equivalence tests and no battery policy behavior to preserve.
 
-## Session 6 Bounded Comfort Placement
+## Session 7 Production Comfort Placement Acceptance
 
-Production comfort placement was measured against baseline revision `73398ef`
-on September 14, 2026 using Python 3.14.3, NumPy 2.3.2, and highspy 1.15.1 in
-the same WSL2 environment. The focused 12-slot cases below are single paired
-runs, so runtime differences are indicative rather than distributions. Preserve
-inference was disabled in the battery pair to isolate primary planning passes.
+The production integration was accepted against revision `89aae42` after nine
+alternating, serialized revision pairs per scenario on September 14, 2026. The
+production implementation is represented by `abab154`; the paired benchmark
+harness is `6e29243`, and the direct comfort fixture used in the second run was
+committed unchanged as `7cead9e`. Each run used 96 slots, a 48-slot lookahead,
+Python 3.14.3, NumPy 2.3.2, and highspy 1.15.1 in the same WSL2 environment.
 
-| Case | Baseline full / prefix | Placement full / prefix | Final tariff cost full / prefix | Work |
-| --- | --- | --- | --- | --- |
-| No comfort, no battery | 0.00479s / 0.00077s | 0.00478s / 0.00054s | unchanged 4.2 / 4.2 | zero solver and placement calls |
-| No comfort, one battery | 0.07310s / 0.03967s | 0.05981s / 0.03989s | unchanged -2.6 / -0.6 | unchanged 12 / 8 primary solves |
-| Comfort, no battery | 0.00676s / 0.00093s | 0.00480s / 0.00142s | 13.2 -> 11.0 / 13.2 -> 11.0 | 15 considered, 1 evaluated, 2 direct cost calls, zero solver calls |
-| Comfort, one battery | 0.07851s / 0.03728s | 0.10460s / 0.03771s | -1.8 -> -2.4 / unchanged 0.2 | full used one additional 12-solve pass; prefix used no additional pass; 2 replay calls each |
+The table reports standalone medians and the median of each candidate-minus-
+baseline pair. Paired deltas are the acceptance comparison because independent
+medians can obscure run-order noise.
 
-The no-comfort controls retained identical costs and primary solve counts and
-did not enter placement. The improving battery full plan paid the intended cost
-of exactly one additional planning pass; its prefix refresh found no better move
-and stayed at eight primary solves. Both final plans had no constraint reasons.
-The accepted tariff improvements above are the rebuilt plan's actual projected
-costs, not fixed-policy replay estimates.
+| Case | Baseline median | Candidate median | Paired delta median / MAD | Candidate wins | Final tariff cost |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| No assets, no comfort/PV | 0.00161s | 0.00154s | -0.00011s / 0.00042s | 6/9 | unchanged 4.2 |
+| Battery, no comfort/PV | 1.05174s | 1.05549s | -0.00325s / 0.01517s | 5/9 | unchanged 8.92834 |
+| Flexible comfort, no accepted move | 0.00279s | 0.00307s | +0.00028s / 0.00050s | 2/9 | unchanged 4.18387 |
+| Direct comfort, signed tariffs/PV | 0.00447s | 0.00751s | +0.00254s / 0.00016s | 0/9 | 1.25158 -> 0.83908 |
+| Comfort plus battery, signed tariffs/PV | 0.22190s | 0.42171s | +0.21270s / 0.02233s | 0/9 | 1.25158 -> 0.83908 |
 
-The existing 96-slot `comfort-flexible` no-battery fixture also remained at zero
-native calls and unchanged tariff cost because its sampled relocations were not
-better than the feasible baseline. Three-run medians moved from 0.00435s to
-0.00456s for standalone full calls and from 0.00367s to 0.00487s for serial
-prefix calls. This is the bounded Python search overhead when no move is
-accepted, not a solver regression.
+All standalone and trajectory quality checks passed. The no-comfort controls
+retained identical projected costs and solver work; placement remained
+unreachable. The unchanged flexible-comfort case stayed at zero native calls,
+showing about 0.28ms paired median bounded-search overhead when no relocation is
+accepted.
 
-These measurements were captured on September 14, 2026. They are local WSL2
-x86-64 results, not release guarantees.
+The accepted direct relocation evaluated all 16 generated candidates with 17
+cost calls, reduced projected cost by 0.4125, and used no native solver calls.
+The accepted battery relocation used the same bounded candidate work and one
+additional 96-solve planning pass to validate and publish the rebuilt plan. Its
+0.21270s paired median overhead is therefore expected solver work purchased only
+when the final production objective does not worsen. Subsequent repair ticks
+kept the accepted placement and did not spend another planning pass.
+
+Production limits placement to 16 candidates per comfort entity, 48 candidates
+per request, and one additional comfort replan across prefix fallback. The 0.1s
+search limit is cooperative: it is checked between entities and candidate
+evaluations. It bounds continued Python search but is not a hard wall-time
+guarantee for an evaluation already in progress or for a native HiGHS call.
+Invalid candidate costs and invalid or more expensive rebuilt plans fall back to
+the baseline plan, with the reason retained in diagnostics.
+
+Reproduce the paired controls and acceptance cases with:
+
+```bash
+python scripts/benchmark_revision_pair.py \
+  --baseline-root <89aae42-worktree> \
+  --candidate-root <candidate-worktree> \
+  --scenario no-assets-no-pv \
+  --scenario battery-zero-pv \
+  --scenario comfort-flexible \
+  --scenario comfort-direct-signed-pv \
+  --scenario comfort-battery-signed-pv \
+  --slots 96 --lookahead 48 --repeats 9
+```
+
+These are local WSL2 x86-64 results, not release guarantees.
 
 ## Environment
 
