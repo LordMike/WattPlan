@@ -1,7 +1,7 @@
 {
   "domain": "wattplan",
   "name": "WattPlan",
-  "version": "0.6.0-charlie",
+  "version": "0.6.0-beta.1",
   "integration_type": "service",
   "codeowners": [
     "@lordmike"
