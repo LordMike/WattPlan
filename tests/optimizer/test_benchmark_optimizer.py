@@ -163,6 +163,7 @@ def test_session_one_cases_cover_required_asset_shapes():
         "comfort-flexible",
         "comfort-tight",
         "comfort-battery-signed-pv",
+        "comfort-direct-signed-pv",
     }
 
     no_assets = build_case("no-assets-no-pv", slots=12, lookahead=8)
@@ -199,6 +200,12 @@ def test_session_one_cases_cover_required_asset_shapes():
     assert any(comfort_battery["solar_input_kwh"])
     assert min(comfort_battery["grid_import_price_per_kwh"]) < 0.0
     assert min(comfort_battery["grid_export_price_per_kwh"]) < 0.0
+    comfort_direct = build_case(
+        "comfort-direct-signed-pv", slots=48, lookahead=8
+    )
+    assert comfort_direct["battery_entities"] == []
+    assert comfort_direct["comfort_entities"]
+    assert any(comfort_direct["solar_input_kwh"])
     assert CASE_METADATA["comfort-tight"]["provenance"] == (
         "synthetic-historical-substitute"
     )

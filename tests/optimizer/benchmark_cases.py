@@ -56,6 +56,12 @@ CASE_METADATA = {
             "and nonzero PV."
         ),
     },
+    "comfort-direct-signed-pv": {
+        "provenance": "synthetic",
+        "description": (
+            "Flexible direct comfort placement with signed tariffs and nonzero PV."
+        ),
+    },
 }
 
 
@@ -215,7 +221,7 @@ def build_case(name: str, slots: int = 96, lookahead: int = 48) -> dict:
                 "can_charge_from": 1,
             },
         ]
-    elif name == "comfort-battery-signed-pv":
+    elif name in {"comfort-battery-signed-pv", "comfort-direct-signed-pv"}:
         payload["grid_import_price_per_kwh"] = [
             price - (0.75 if slot % 24 < 4 else 0.0)
             for slot, price in enumerate(payload["grid_import_price_per_kwh"])
@@ -224,24 +230,25 @@ def build_case(name: str, slots: int = 96, lookahead: int = 48) -> dict:
             -0.12 if slot % 9 == 0 else price
             for slot, price in enumerate(payload["grid_export_price_per_kwh"])
         ]
-        payload["action_deadband_kwh"] = 0.04
-        battery = {
-            "name": "acceptance-battery",
-            "initial_kwh": 1.0,
-            "minimum_kwh": 0.0,
-            "capacity_kwh": 1.0,
-            "charge_curve_kwh": [0.0],
-            "discharge_curve_kwh": [0.0],
-            "can_charge_from": 3,
-        }
-        battery["target"] = {
-            "timeslot": slots - 1,
-            "soc_kwh": 1.0,
-            "mode": "at_least",
-            "tolerance_kwh": 0.05,
-        }
-        payload["battery_entities"] = [battery]
         payload["rolling_window_slots"] = slots
         payload["comfort_entities"] = [_acceptance_comfort(slots)]
+        if name == "comfort-battery-signed-pv":
+            payload["action_deadband_kwh"] = 0.04
+            battery = {
+                "name": "acceptance-battery",
+                "initial_kwh": 1.0,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 1.0,
+                "charge_curve_kwh": [0.0],
+                "discharge_curve_kwh": [0.0],
+                "can_charge_from": 3,
+            }
+            battery["target"] = {
+                "timeslot": slots - 1,
+                "soc_kwh": 1.0,
+                "mode": "at_least",
+                "tolerance_kwh": 0.05,
+            }
+            payload["battery_entities"] = [battery]
 
     return copy.deepcopy(payload)
