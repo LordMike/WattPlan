@@ -1,5 +1,95 @@
 # Optimizer Benchmark Findings
 
+## Session 1 Planner Baseline
+
+These clean-revision measurements were captured on September 14, 2026. They
+establish the cases and instrumentation for the planner performance effort; this
+session deliberately did not edit production optimizer, model, cadence, or the
+separately owned comfort-placement module.
+
+Environment and settings:
+
+- Revision: `a438e50138c7f714c401a9f04fe8fe17c1e32949`, clean worktree
+- Platform: Windows 11 `10.0.26200`, AMD64, 16 logical CPUs
+- Python: 3.14.4
+- highspy: 1.15.1
+- NumPy: 2.3.2
+- Shape: 96 slots, 48-slot lookahead
+- Sampling: three standalone full plans plus three serialized five-tick
+  trajectories per case
+- Execution: one benchmark process at a time
+
+Command template:
+
+```bash
+python scripts/benchmark_optimizer.py --scenario <case> --slots 96 --lookahead 48 --repeats 3 --serial
+```
+
+All full and trajectory quality checks passed. Full-plan solver counts below are
+per run: every case made 96 primary native calls and zero probes. Each repair
+tick made eight primary calls. The report itself aggregates counts across
+repeats, while retaining per-run timing records.
+
+| Case | Full median | Full samples (seconds) | Wrapper median | Native median | Build/result median | Outside steps median | Trajectory full / repair |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| No assets, zero PV | 0.0984s | 0.1165, 0.0874, 0.0984 | 0.0747s | 0.0316s | 0.0194s | 0.0038s | 0.0968s / 0.0107s |
+| Comfort, no battery/PV | 0.0988s | 0.1116, 0.0894, 0.0988 | 0.0737s | 0.0311s | 0.0175s | 0.0058s | 0.0943s / 0.0136s |
+| Comfort and PV, no battery | 0.1463s | 0.1463, 0.1526, 0.1119 | 0.1137s | 0.0435s | 0.0218s | 0.0077s | 0.1094s / 0.0170s |
+| Bidirectional battery, zero PV | 1.9992s | 1.9992, 1.9769, 2.1332 | 1.8897s | 1.7529s | 0.0810s | 0.0187s | 1.9618s / 0.2106s |
+| Charge-only battery | 0.2525s | 0.2525, 0.2214, 0.2549 | 0.1957s | 0.0959s | 0.0417s | 0.0121s | 0.2279s / 0.0314s |
+| Mixed batteries and PV | 4.2334s | 4.2334, 4.1394, 4.2866 | 4.0606s | 3.8919s | 0.1291s | 0.0219s | 4.1465s / 0.2277s |
+| Flexible comfort only | 0.1052s | 0.1292, 0.0973, 0.1052 | 0.0803s | 0.0367s | 0.0181s | 0.0063s | 0.1037s / 0.0143s |
+| Tight comfort substitute | 0.1019s | 0.1250, 0.1019, 0.1003 | 0.0771s | 0.0361s | 0.0183s | 0.0060s | 0.1039s / 0.0142s |
+
+Maximum full-plan model dimensions:
+
+| Case group | Variables | Integer variables | Rows | Nonzeros |
+| --- | ---: | ---: | ---: | ---: |
+| No battery, zero PV | 192 | 96 | 336 | 432 |
+| No battery, comfort plus PV | 192 | 96 | 336 | 528 |
+| Bidirectional battery, zero PV | 579 | 240 | 721 | 1,825 |
+| Charge-only battery | 483 | 144 | 529 | 1,393 |
+| Mixed batteries and PV | 966 | 384 | 1,106 | 3,218 |
+
+The recovered `low-pv` scenario, extended to the same 96 x 48 shape, had a
+2.3409s full median from 2.3409s, 2.2391s, and 2.6979s samples. The repository
+contains no named historical slow-comfort fixture. `comfort-tight` is therefore
+a clearly labeled synthetic substitute, not reconstructed production data.
+
+The dedicated 24 x 8 `preserve-probe` check had a 0.0656s full median and
+recorded 72 primary plus six probe calls across three runs. This confirms that
+the new role instrumentation distinguishes probes without inferring them from a
+successful-solve counter. No current production path in these fixtures made
+zero native calls, but the report schema and tests support that future fast
+path.
+
+### Bottlenecks and next path
+
+The highest-confidence avoidable work is the empty-battery path. A 96-slot plan
+with no controllable assets still builds and solves 96 integer grid-direction
+models. Comfort-only cases cost approximately the same, showing that recurring
+native solves, not deterministic comfort scheduling, dominate this shape.
+
+Native HiGHS time was about 88% of the bidirectional zero-PV full median and 92%
+of the mixed-battery/PV median. By contrast, the charge-only case was much
+cheaper despite the same 96-call cadence. This makes topology-specific model
+reduction more promising than general Python micro-optimization.
+
+Recommended order:
+
+1. Bypass HiGHS entirely when there are no batteries or other solver-controlled
+   assets; calculate grid flow, cost, comfort schedule, and response directly.
+2. Specialize exact-zero-PV requests so PV variables, modes, and constraints are
+   not constructed.
+3. Reduce charge-only battery models by omitting impossible discharge variables
+   and bidirectional mode machinery.
+4. Keep bounded cost-aware comfort placement outside recurring battery MILPs:
+   place comfort once for a full planning decision, fold fixed demand into usage,
+   and reuse that placement through the prefix battery solves.
+
+The first item is the safest next fast path because it can target zero native
+calls with simple equivalence tests and no battery policy behavior to preserve.
+
 These measurements were captured on September 14, 2026. They are local WSL2
 x86-64 results, not release guarantees.
 

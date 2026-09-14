@@ -62,13 +62,59 @@ Run only integration tests:
 
 ## Optimizer benchmarks
 
-Run the captured low-PV scenario at the production 144-slot, 48-slot-lookahead
-shape. `--compare-mip-starts` runs warm and cold full plans, while `--serial`
-adds repeated five-step timestamp-aligned trajectories that cross a scheduled
-full refresh:
+Session 1 fixtures cover the asset shapes that should remain cheap as planner
+behavior evolves:
+
+- `no-assets-no-pv`
+- `no-battery-comfort-no-pv`
+- `no-battery-comfort-pv`
+- `battery-zero-pv`
+- `charge-only-battery`
+- `mixed-batteries-pv`
+- `comfort-flexible`
+- `comfort-tight`
+
+The fixtures live in `tests/optimizer/benchmark_cases.py`. They are synthetic,
+and `comfort-tight` is explicitly labeled as a synthetic historical substitute
+because repository history contains no recoverable named slow-comfort input.
+The existing `low-pv` and `live-export` scenarios remain the recovered captured
+Home Assistant inputs.
+
+Measure one full-plan distribution and repeated five-tick prefix trajectories:
 
 ```bash
-python scripts/benchmark_optimizer.py --scenario low-pv --slots 144 --lookahead 48 --repeats 3 --serial --compare-mip-starts
+python scripts/benchmark_optimizer.py --scenario mixed-batteries-pv --slots 96 --lookahead 48 --repeats 3 --serial
+```
+
+Run the Session 1 matrix sequentially. Do not parallelize these processes; CPU
+and thermal contention invalidates comparisons:
+
+```bash
+for scenario in no-assets-no-pv no-battery-comfort-no-pv no-battery-comfort-pv battery-zero-pv charge-only-battery mixed-batteries-pv comfort-flexible comfort-tight; do
+  python scripts/benchmark_optimizer.py --scenario "$scenario" --slots 96 --lookahead 48 --repeats 3 --serial
+done
+```
+
+The JSON report records revision/dirty state, platform, Python, NumPy, HiGHS,
+command settings, provenance, quality checks, and these timing layers:
+
+- End-to-end input validation through serialized planner response.
+- Input validation and explicit full-plan normalization.
+- Planner time.
+- `_solve_mpc_step` time, native `_solve_lp` wrapper time, and HiGHS native time.
+- Model construction plus solve-result extraction, measured as step time outside
+  `_solve_lp`; production code is not changed solely to split those two pieces.
+- Planner time outside solver steps.
+- Explicit primary/probe native call counts and maximum model dimensions.
+
+Reports safely represent zero native calls with zero counts and zero model
+dimensions. Use `--include-call-details` only when per-call horizons, roles, and
+sizes are needed; aggregate output is the default to keep reports manageable.
+
+Use `preserve-probe` when the measurement must exercise counterfactual solves:
+
+```bash
+python scripts/benchmark_optimizer.py --scenario preserve-probe --slots 24 --lookahead 8 --repeats 15
 ```
 
 The `live-export` scenario uses another captured Home Assistant forecast. The
@@ -78,13 +124,6 @@ explicitly when solver timing is too short to distinguish:
 
 ```bash
 python scripts/benchmark_optimizer.py --scenario stress --slots 288 --lookahead 96 --repeats 1
-```
-
-Use `preserve-probe` when the measurement must exercise counterfactual preserve
-solves. The JSON `probe_calls` field confirms that the path ran:
-
-```bash
-python scripts/benchmark_optimizer.py --scenario preserve-probe --slots 24 --lookahead 8 --repeats 15
 ```
 
 Use the same Python environment and machine for paired comparisons. Report the
