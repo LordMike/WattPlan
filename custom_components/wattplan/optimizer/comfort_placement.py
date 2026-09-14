@@ -106,7 +106,11 @@ def _schedule_violations(
     off_streak = 0 if comfort.is_on_now else comfort.off_streak_slots_now
     max_off_reported = False
     for slot, enabled in enumerate(proposed):
-        off_streak = 0 if enabled else off_streak + 1
+        if enabled:
+            off_streak = 0
+            max_off_reported = False
+        else:
+            off_streak += 1
         if off_streak > comfort.max_consecutive_off_slots and not max_off_reported:
             violations.append(ComfortViolation("max_off", slot))
             max_off_reported = True

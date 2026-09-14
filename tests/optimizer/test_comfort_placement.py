@@ -172,6 +172,22 @@ def test_infeasible_baseline_is_preserved_without_costing():
     assert result.candidates_considered == result.candidates_evaluated == 0
 
 
+def test_checker_reports_each_independent_max_off_violation():
+    comfort = _comfort(
+        [False, False, True, False, False],
+        history=[True, True, True, True],
+        window=5,
+        max_off=1,
+        current=True,
+    )
+
+    violations = check_comfort_schedule(comfort)
+
+    assert [
+        violation.slot for violation in violations if violation.code == "max_off"
+    ] == [1, 4]
+
+
 def test_no_comfort_and_no_flexibility_skip_cost_callback():
     calls = 0
 
