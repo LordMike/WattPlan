@@ -49,6 +49,13 @@ CASE_METADATA = {
             "recoverable named slow-comfort fixture."
         ),
     },
+    "comfort-battery-signed-pv": {
+        "provenance": "synthetic",
+        "description": (
+            "Flexible comfort plus a targeted battery, signed tariffs, deadband, "
+            "and nonzero PV."
+        ),
+    },
 }
 
 
@@ -108,6 +115,21 @@ def _tight_comfort() -> dict:
         "on_slots_last_rolling_window": 12,
         "on_history": [True] * 12 + [False] * 11,
         "off_streak_slots_now": 11,
+    }
+
+
+def _acceptance_comfort(slots: int) -> dict:
+    return {
+        "name": "acceptance-heat-pump",
+        "target_on_slots_per_rolling_window": 1,
+        "min_consecutive_on_slots": 1,
+        "min_consecutive_off_slots": 1,
+        "max_consecutive_off_slots": slots,
+        "power_usage_kwh": 0.55,
+        "is_on_now": True,
+        "on_slots_last_rolling_window": 1,
+        "on_history": [False] * (slots - 2) + [True],
+        "off_streak_slots_now": 0,
     }
 
 
@@ -193,5 +215,33 @@ def build_case(name: str, slots: int = 96, lookahead: int = 48) -> dict:
                 "can_charge_from": 1,
             },
         ]
+    elif name == "comfort-battery-signed-pv":
+        payload["grid_import_price_per_kwh"] = [
+            price - (0.75 if slot % 24 < 4 else 0.0)
+            for slot, price in enumerate(payload["grid_import_price_per_kwh"])
+        ]
+        payload["grid_export_price_per_kwh"] = [
+            -0.12 if slot % 9 == 0 else price
+            for slot, price in enumerate(payload["grid_export_price_per_kwh"])
+        ]
+        payload["action_deadband_kwh"] = 0.04
+        battery = {
+            "name": "acceptance-battery",
+            "initial_kwh": 1.0,
+            "minimum_kwh": 0.0,
+            "capacity_kwh": 1.0,
+            "charge_curve_kwh": [0.0],
+            "discharge_curve_kwh": [0.0],
+            "can_charge_from": 3,
+        }
+        battery["target"] = {
+            "timeslot": slots - 1,
+            "soc_kwh": 1.0,
+            "mode": "at_least",
+            "tolerance_kwh": 0.05,
+        }
+        payload["battery_entities"] = [battery]
+        payload["rolling_window_slots"] = slots
+        payload["comfort_entities"] = [_acceptance_comfort(slots)]
 
     return copy.deepcopy(payload)

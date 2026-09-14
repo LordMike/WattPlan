@@ -162,6 +162,7 @@ def test_session_one_cases_cover_required_asset_shapes():
         "mixed-batteries-pv",
         "comfort-flexible",
         "comfort-tight",
+        "comfort-battery-signed-pv",
     }
 
     no_assets = build_case("no-assets-no-pv", slots=12, lookahead=8)
@@ -190,6 +191,14 @@ def test_session_one_cases_cover_required_asset_shapes():
     mixed = build_case("mixed-batteries-pv", slots=48, lookahead=8)
     assert len(mixed["battery_entities"]) == 2
     assert any(mixed["solar_input_kwh"])
+    comfort_battery = build_case(
+        "comfort-battery-signed-pv", slots=48, lookahead=8
+    )
+    assert comfort_battery["battery_entities"][0]["target"]["mode"] == "at_least"
+    assert comfort_battery["comfort_entities"]
+    assert any(comfort_battery["solar_input_kwh"])
+    assert min(comfort_battery["grid_import_price_per_kwh"]) < 0.0
+    assert min(comfort_battery["grid_export_price_per_kwh"]) < 0.0
     assert CASE_METADATA["comfort-tight"]["provenance"] == (
         "synthetic-historical-substitute"
     )
@@ -210,6 +219,20 @@ def test_serial_trajectory_records_solver_breakdown_per_tick():
     )
     assert all(row["solver"]["total_calls"] == 0 for row in trajectory)
     assert all(row["solver"]["probe_calls"] == 0 for row in trajectory)
+
+
+def test_serial_trajectory_advances_observed_comfort_history():
+    trajectory = benchmark._serial_trajectory(
+        build_case("comfort-battery-signed-pv", slots=12, lookahead=8)
+    )
+
+    assert [row["cadence"] for row in trajectory[:4]] == [
+        "full",
+        "repair",
+        "repair",
+        "repair",
+    ], [(row["cadence"], row["cadence_reason"]) for row in trajectory]
+    assert all(row["quality"]["valid"] for row in trajectory)
 
 
 def test_real_no_battery_measurement_reports_zero_solver_calls():

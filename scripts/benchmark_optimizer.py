@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import importlib.util
 import json
 import math
 import os
@@ -19,13 +20,25 @@ from pathlib import Path
 import highspy
 import numpy as np
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+HARNESS_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(
+    os.environ.get("WATTPLAN_BENCHMARK_PRODUCTION_ROOT", HARNESS_ROOT)
+).resolve()
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from custom_components.wattplan.optimizer import OptimizationParams, optimize
 from custom_components.wattplan.optimizer import mpc_power_optimizer as core
-from tests.optimizer.benchmark_cases import CASE_METADATA, build_case
+_cases_spec = importlib.util.spec_from_file_location(
+    "wattplan_benchmark_cases",
+    HARNESS_ROOT / "tests" / "optimizer" / "benchmark_cases.py",
+)
+if _cases_spec is None or _cases_spec.loader is None:
+    raise RuntimeError("unable to load benchmark cases")
+_cases = importlib.util.module_from_spec(_cases_spec)
+_cases_spec.loader.exec_module(_cases)
+CASE_METADATA = _cases.CASE_METADATA
+build_case = _cases.build_case
 from tests.optimizer.test_optimizer_scenarios import (
     _live_exported_deye_low_pv_low_soc_payload,
     _live_grid_export_benchmark_payload,
@@ -384,13 +397,28 @@ def _result_quality(payload, result):
             targets_valid = targets_valid and level <= value + tolerance + core.EPSILON
     cost_valid = math.isfinite(float(result["projections"]["projected_cost"]))
     reasons = list(result["suboptimal_reasons"])
+    target_levels = {}
+    for battery in payload.get("battery_entities", []):
+        target = battery.get("target")
+        if target is not None:
+            target_levels[battery["name"]] = float(
+                schedules[battery["name"]][int(target["timeslot"])]["level"]
+            )
     return {
         "valid": cost_valid and bounds_valid and targets_valid and not reasons,
         "finite_projected_cost": cost_valid,
         "battery_bounds_valid": bounds_valid,
         "targets_valid": targets_valid,
+        "target_levels_kwh": target_levels,
         "suboptimal_reasons": reasons,
     }
+
+
+def _placement_report(result):
+    placement = result.get("comfort_placement")
+    if placement is None:
+        return None
+    return copy.deepcopy(placement)
 
 
 def _measure(payload, repeats, *, force_full=True, disable_mip_starts=False):
@@ -398,6 +426,7 @@ def _measure(payload, repeats, *, force_full=True, disable_mip_starts=False):
     projected_costs = []
     qualities = []
     solver_reports = []
+    placement_reports = []
     result = None
 
     for _ in range(repeats):
@@ -411,6 +440,7 @@ def _measure(payload, repeats, *, force_full=True, disable_mip_starts=False):
         solver_reports.append(recorder.summary())
         projected_costs.append(result["projections"]["projected_cost"])
         qualities.append(_result_quality(payload, result))
+        placement_reports.append(_placement_report(result))
 
     samples = [row["end_to_end_seconds"] for row in timings]
     solver = _aggregate_solver_reports(solver_reports)
@@ -422,10 +452,17 @@ def _measure(payload, repeats, *, force_full=True, disable_mip_starts=False):
         "projected_costs": projected_costs,
         "quality_valid": all(quality["valid"] for quality in qualities),
         "quality": qualities,
+        "comfort_placement": placement_reports,
         "timing": _timing_summary(timings, solver_reports),
         "runs": [
-            {"timing": timing, "solver": solver_report}
-            for timing, solver_report in zip(timings, solver_reports)
+            {
+                "timing": timing,
+                "solver": solver_report,
+                "comfort_placement": placement,
+            }
+            for timing, solver_report, placement in zip(
+                timings, solver_reports, placement_reports
+            )
         ],
         "solver": solver,
     }
@@ -462,6 +499,11 @@ def _aggregate_measurements(reports):
     samples = [sample for report in reports for sample in report["samples_seconds"]]
     costs = [cost for report in reports for cost in report["projected_costs"]]
     qualities = [quality for report in reports for quality in report["quality"]]
+    placements = [
+        placement
+        for report in reports
+        for placement in report.get("comfort_placement", [])
+    ]
     runs = [run for report in reports for run in report["runs"]]
     timings = [run["timing"] for run in runs]
     solver_rows = [run["solver"] for run in runs]
@@ -473,6 +515,7 @@ def _aggregate_measurements(reports):
         "projected_costs": costs,
         "quality_valid": all(quality["valid"] for quality in qualities),
         "quality": qualities,
+        "comfort_placement": placements,
         "timing": _timing_summary(timings, solver_rows),
         "runs": runs,
         "solver": _aggregate_solver_reports(solver_rows),
@@ -562,10 +605,24 @@ def _serial_trajectory(payload, *, disable_mip_starts=False):
     rows = []
     state = None
     previous = None
+    comfort_observations = {
+        entity["name"]: {
+            "history": list(entity.get("on_history") or []),
+            "is_on_now": bool(entity["is_on_now"]),
+            "off_streak_slots_now": int(entity["off_streak_slots_now"]),
+        }
+        for entity in payload.get("comfort_entities", [])
+    }
     for tick in range(5):
         current = copy.deepcopy(payload) if tick == 0 else _shifted(
             payload, tick, state, previous
         )
+        if tick:
+            for entity in current.get("comfort_entities", []):
+                observed = comfort_observations[entity["name"]]
+                entity["on_history"] = list(observed["history"])
+                entity["is_on_now"] = observed["is_on_now"]
+                entity["off_streak_slots_now"] = observed["off_streak_slots_now"]
         with _SolverRecorder() as recorder:
             result, timing = _run(
                 current,
@@ -577,22 +634,51 @@ def _serial_trajectory(payload, *, disable_mip_starts=False):
             {
                 "tick": tick,
                 "cadence": result["cadence"]["mode"],
+                "cadence_reason": result["cadence"]["reason"],
                 "seconds": timing["end_to_end_seconds"],
                 "timing": timing,
                 "solver": solver,
                 "primary_solves": result["successful_solves"],
                 "projected_cost": result["projections"]["projected_cost"],
                 "quality": _result_quality(current, result),
+                "comfort_placement": _placement_report(result),
             }
         )
         state = result["state"]
         previous = result
+        comfort_results = {
+            entity["name"]: bool(entity["schedule"][0]["enabled"])
+            for entity in result["entities"]
+            if entity["type"] == "comfort"
+        }
+        for name, enabled in comfort_results.items():
+            observed = comfort_observations[name]
+            if observed["history"]:
+                observed["history"] = observed["history"][1:] + [enabled]
+            observed["off_streak_slots_now"] = (
+                0
+                if enabled
+                else (
+                    observed["off_streak_slots_now"] + 1
+                    if not observed["is_on_now"]
+                    else 1
+                )
+            )
+            observed["is_on_now"] = enabled
     return rows
 
 
 def _sample_summary(samples):
+    median = statistics.median(samples) if samples else None
     return {
-        "median_seconds": statistics.median(samples) if samples else None,
+        "median_seconds": median,
+        "mad_seconds": (
+            statistics.median(abs(sample - median) for sample in samples)
+            if samples
+            else None
+        ),
+        "min_seconds": min(samples) if samples else None,
+        "max_seconds": max(samples) if samples else None,
         "samples_seconds": samples,
     }
 
