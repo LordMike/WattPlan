@@ -210,17 +210,54 @@ def _fresh_prefix_reuse(result, normalized, locks):
     return reuse, policies
 
 
+def _merge_discarded_comfort_work(result, prefix):
+    prior = prefix.get("comfort_placement")
+    if prior is None:
+        return
+    current = result.get("comfort_placement")
+    if current is None:
+        return
+    count_fields = (
+        "candidate_cost_calls",
+        "candidates_generated",
+        "candidates_considered",
+        "candidates_evaluated",
+        "candidates_rejected",
+        "candidates_not_improving",
+        "candidates_unvisited",
+        "accepted_moves",
+        "additional_planning_passes",
+        "additional_successful_solves",
+    )
+    for field in count_fields:
+        current[field] = int(current.get(field, 0)) + int(prior.get(field, 0))
+    current["discarded_prefix_work"] = prior
+
+
 def _full(params, normalized, locks, signature, reason, *, fallback=False, prefix=None):
+    comfort_replan_budget = 1
+    if prefix is not None:
+        comfort_replan_budget -= int(
+            prefix.get("comfort_placement", {}).get(
+                "additional_planning_passes", 0
+            )
+        )
     if prefix is None:
-        result = core.optimize_internal(normalized, reuse_plan_override=locks)
+        result = core.optimize_internal(
+            normalized,
+            reuse_plan_override=locks,
+            comfort_replan_budget=comfort_replan_budget,
+        )
     else:
         reuse, policies = _fresh_prefix_reuse(prefix, normalized, locks)
         result = core.optimize_internal(
             normalized, reuse_plan_override=reuse, battery_policy_override=policies,
+            comfort_replan_budget=comfort_replan_budget,
         )
         result["execution_time"] += prefix["execution_time"]
         result["successful_solves"] += prefix["successful_solves"]
         result["reused_steps"] = 0  # All decisions were optimized in this call.
+        _merge_discarded_comfort_work(result, prefix)
     return _finish(result, params, signature, params.plan_start,
                    "fallback_full" if fallback else "full", reason,
                    normalized.total_steps)

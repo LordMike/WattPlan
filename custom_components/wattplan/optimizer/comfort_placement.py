@@ -52,9 +52,12 @@ class ComfortPlacementResult:
     violations: tuple[tuple[ComfortViolation, ...], ...]
     baseline_cost: float | None = None
     final_cost: float | None = None
+    candidates_generated: int = 0
     candidates_considered: int = 0
     candidates_evaluated: int = 0
     candidates_rejected: int = 0
+    candidates_not_improving: int = 0
+    candidates_unvisited: int = 0
     accepted_moves: int = 0
     optimality: str = "heuristic"
 
@@ -170,6 +173,7 @@ def place_comfort_schedules(
     considered = 0
     evaluated = 0
     rejected = 0
+    generated = 0
     accepted_moves = 0
     generated_any = False
     feasible_move_found = False
@@ -188,6 +192,7 @@ def place_comfort_schedules(
             lock_remaining=comfort.lock_remaining,
             limit=entity_limit,
         )
+        generated += len(candidates)
         best_schedule = accepted[comfort_index]
         best_cost = current_cost
         for candidate in candidates:
@@ -236,9 +241,12 @@ def place_comfort_schedules(
         ),
         baseline_cost=baseline_cost,
         final_cost=current_cost,
+        candidates_generated=generated,
         candidates_considered=considered,
         candidates_evaluated=evaluated,
         candidates_rejected=rejected,
+        candidates_not_improving=evaluated - accepted_moves,
+        candidates_unvisited=generated - considered,
         accepted_moves=accepted_moves,
     )
 

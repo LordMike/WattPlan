@@ -356,6 +356,22 @@ def test_actual_plan_cost_regression_retains_baseline(monkeypatch):
     )
 
 
+def test_invalid_placement_cost_falls_back_to_baseline(monkeypatch):
+    payload = _production_payload()
+
+    def invalid(*_args, **_kwargs):
+        raise ValueError("non-finite candidate cost")
+
+    monkeypatch.setattr(core, "place_comfort_schedules", invalid)
+    result = optimize(OptimizationParams(**payload))
+
+    assert result["comfort_placement"]["status"] == "invalid_cost"
+    assert result["comfort_placement"]["fallback_reason"] == (
+        "invalid_cost_evaluation"
+    )
+    assert result["comfort_placement"]["additional_planning_passes"] == 0
+
+
 def test_prefix_state_and_receipt_use_the_final_comfort_schedule():
     payload = _production_payload(timed=True)
     for key in (
@@ -400,8 +416,51 @@ def test_benchmark_comfort_plan_reports_bounded_work_and_actual_quality():
 
     assert placement["candidates_considered"] <= 48
     assert placement["candidate_cost_calls"] <= 49
+    assert placement["candidates_generated"] >= placement["candidates_considered"]
+    assert placement["candidates_unvisited"] == (
+        placement["candidates_generated"] - placement["candidates_considered"]
+    )
+    assert placement["candidates_not_improving"] == (
+        placement["candidates_evaluated"] - placement["accepted_moves"]
+    )
     assert placement["additional_planning_passes"] <= 1
     assert (
         placement["final_projected_cost"]
         <= placement["baseline_projected_cost"] + 1e-6
     )
+
+
+def test_prefix_fallback_shares_one_comfort_replan_budget(monkeypatch):
+    payload = _production_payload(timed=True, battery=True)
+    for key in (
+        "grid_import_price_per_kwh",
+        "grid_export_price_per_kwh",
+        "solar_input_kwh",
+        "usage_kwh",
+    ):
+        payload[key] *= 3
+    payload["lookahead_slots"] = 12
+    first = optimize(OptimizationParams(**payload))
+
+    payload["state"] = first["state"]
+    payload["plan_start"] += timedelta(minutes=15)
+    monkeypatch.setattr(
+        "custom_components.wattplan.optimizer.prefix_planner._tail_violation",
+        lambda *_args: "forced_test_fallback",
+    )
+    calls = 0
+    original = core._run_mpc
+
+    def counted(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(core, "_run_mpc", counted)
+    result = optimize(OptimizationParams(**payload))
+    placement = result["comfort_placement"]
+
+    assert result["cadence"]["mode"] == "fallback_full"
+    assert placement["additional_planning_passes"] <= 1
+    assert calls <= 3
+    assert "discarded_prefix_work" in placement

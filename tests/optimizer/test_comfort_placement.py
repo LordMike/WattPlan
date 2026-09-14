@@ -322,7 +322,10 @@ def test_candidate_and_callback_work_are_deterministically_bounded():
     )
 
     assert result.status == "unchanged"
+    assert result.candidates_generated == 5
     assert result.candidates_considered == result.candidates_evaluated == 5
+    assert result.candidates_not_improving == 5
+    assert result.candidates_unvisited == 0
     assert calls == 6
 
 
@@ -344,6 +347,9 @@ def test_cancellation_stops_between_candidates_and_keeps_valid_state():
     result = place_comfort_schedules([comfort], cost, should_cancel=cancel)
 
     assert result.status == "cancelled"
+    assert result.candidates_generated == 3
     assert result.candidates_considered == result.candidates_evaluated == 1
+    assert result.candidates_not_improving == 1
+    assert result.candidates_unvisited == 2
     assert calls == 2
     assert not result.violations[0]

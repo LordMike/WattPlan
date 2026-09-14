@@ -2,7 +2,11 @@ import time
 
 import numpy as np
 
-from .comfort_placement import ComfortPlacementInput, place_comfort_schedules
+from .comfort_placement import (
+    ComfortPlacementInput,
+    ComfortPlacementResult,
+    place_comfort_schedules,
+)
 from .models import (
     BatteryEntity,
     CalculationInput,
@@ -2269,6 +2273,7 @@ def optimize_internal(
     policy_tail_start=None,
     battery_policy_override=None,
     cadence_diagnostics=None,
+    comfort_replan_budget=1,
 ):
     total_steps = normalized.total_steps
     grid_import_prices = normalized.grid_import_prices
@@ -2280,6 +2285,8 @@ def optimize_internal(
     optional_entities = normalized.optional_entities
     fingerprint = normalized.fingerprint
     previous_state = normalized.state
+    if comfort_replan_budget not in (0, 1):
+        raise ValueError("comfort_replan_budget must be 0 or 1")
     if reuse_plan_override is _AUTO_REUSE:
         reuse_plan = _build_reuse_plan(
             previous_state=previous_state,
@@ -2343,7 +2350,29 @@ def optimize_internal(
     total_successful_solves = int(baseline_result["successful_solves"])
     placement_diagnostics = None
 
-    if comfort_entities:
+    if comfort_entities and comfort_replan_budget == 0:
+        placement_diagnostics = {
+            "status": "skipped_replan_budget",
+            "accepted": False,
+            "cost_mode": None,
+            "candidate_cost_calls": 0,
+            "candidates_generated": 0,
+            "candidates_considered": 0,
+            "candidates_evaluated": 0,
+            "candidates_rejected": 0,
+            "candidates_not_improving": 0,
+            "candidates_unvisited": 0,
+            "accepted_moves": 0,
+            "demand_changed": False,
+            "additional_planning_passes": 0,
+            "additional_successful_solves": 0,
+            "baseline_projected_cost": float(baseline_score[3]),
+            "final_projected_cost": float(baseline_score[3]),
+            "fallback_reason": "request_replan_budget_exhausted",
+            "optimality": "heuristic",
+            "violations": [],
+        }
+    elif comfort_entities:
         placement_inputs = _comfort_placement_inputs(
             comfort_entities,
             normalized.rolling_window_slots,
@@ -2388,24 +2417,36 @@ def optimize_internal(
                 )
             cost_mode = "direct_net_site"
 
-        placement = place_comfort_schedules(
-            placement_inputs,
-            evaluate_comfort_cost,
-            max_candidates_per_comfort=(
-                COMFORT_PLACEMENT_MAX_CANDIDATES_PER_ENTITY
-            ),
-            max_total_candidates=COMFORT_PLACEMENT_MAX_TOTAL_CANDIDATES,
-            minimum_improvement=EPSILON,
-            should_cancel=lambda: (
-                time.monotonic() - placement_started
-                >= COMFORT_PLACEMENT_SEARCH_SECONDS
-            ),
-        )
+        placement_error = None
+        try:
+            placement = place_comfort_schedules(
+                placement_inputs,
+                evaluate_comfort_cost,
+                max_candidates_per_comfort=(
+                    COMFORT_PLACEMENT_MAX_CANDIDATES_PER_ENTITY
+                ),
+                max_total_candidates=COMFORT_PLACEMENT_MAX_TOTAL_CANDIDATES,
+                minimum_improvement=EPSILON,
+                should_cancel=lambda: (
+                    time.monotonic() - placement_started
+                    >= COMFORT_PLACEMENT_SEARCH_SECONDS
+                ),
+            )
+        except (FloatingPointError, ValueError):
+            placement_error = "invalid_cost_evaluation"
+            placement = ComfortPlacementResult(
+                schedules=tuple(
+                    tuple(bool(value) for value in row)
+                    for row in baseline_result["comfort_enabled"]
+                ),
+                status="invalid_cost",
+                violations=tuple(() for _ in comfort_entities),
+            )
         accepted = np.asarray(placement.schedules, dtype=np.float64)
         changed = not np.array_equal(
             accepted, baseline_result["comfort_enabled"]
         )
-        fallback_reason = None
+        fallback_reason = placement_error
         additional_successful_solves = 0
         if changed:
             candidate_result = _run_mpc(
@@ -2457,9 +2498,14 @@ def optimize_internal(
             "accepted": bool(changed and fallback_reason is None),
             "cost_mode": cost_mode,
             "candidate_cost_calls": int(cost_calls),
+            "candidates_generated": int(placement.candidates_generated),
             "candidates_considered": int(placement.candidates_considered),
             "candidates_evaluated": int(placement.candidates_evaluated),
             "candidates_rejected": int(placement.candidates_rejected),
+            "candidates_not_improving": int(
+                placement.candidates_not_improving
+            ),
+            "candidates_unvisited": int(placement.candidates_unvisited),
             "accepted_moves": int(placement.accepted_moves),
             "demand_changed": bool(changed),
             "additional_planning_passes": int(changed),
