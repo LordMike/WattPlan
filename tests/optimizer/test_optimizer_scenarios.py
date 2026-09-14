@@ -515,6 +515,17 @@ def test_fixed_comfort_demand_matches_emitted_schedule_when_max_off_breaks_lock(
         max_consecutive_off_slots=3,
         off_streak_slots_now=3,
     )
+    payload["battery_entities"] = [
+        {
+            "name": "idle-battery",
+            "initial_kwh": 0.0,
+            "minimum_kwh": 0.0,
+            "capacity_kwh": 1.0,
+            "charge_curve_kwh": [0.0],
+            "discharge_curve_kwh": [0.0],
+            "can_charge_from": 0,
+        }
+    ]
     normalized = optimizer.normalize_calculation_input(
         optimizer.OptimizationParams(**payload)
     )

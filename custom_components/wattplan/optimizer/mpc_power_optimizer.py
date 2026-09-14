@@ -1565,6 +1565,14 @@ def _run_mpc(
                 comfort_lock_remaining = reuse_plan["comfort_lock_remaining"][
                     :, t
                 ].astype(np.int32)
+        elif num_battery == 0:
+            controls = {
+                "charge": np.zeros(0, dtype=np.float64),
+                "charge_grid": np.zeros(0, dtype=np.float64),
+                "charge_pv": np.zeros(0, dtype=np.float64),
+                "discharge": np.zeros(0, dtype=np.float64),
+                "comfort_on": fixed_comfort_on[:, t].copy(),
+            }
         else:
             usage_h = usage[t : t + horizon].astype(np.float64, copy=True)
             if num_comfort:

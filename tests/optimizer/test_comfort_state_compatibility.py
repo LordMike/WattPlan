@@ -57,7 +57,7 @@ def test_legacy_comfort_solver_state_does_not_reuse_old_battery_controls():
     state["entity_fingerprint"] = legacy
     request["state"] = models.encode_state_blob(state)
     result = optimize(OptimizationParams(**request))
-    assert result["successful_solves"] == 16
+    assert result["successful_solves"] == 0
     assert result["reused_steps"] == 0
 
 
@@ -79,7 +79,7 @@ def test_comfort_scheduler_upgrade_forces_full_but_preserves_active_lock():
     result = optimize(OptimizationParams(**request))
     assert result["cadence"]["mode"] == "fallback_full"
     assert result["cadence"]["reason"] == "configuration_changed"
-    assert result["successful_solves"] == 16
+    assert result["successful_solves"] == 0
     assert all(p["enabled"] for p in result["entities"][0]["schedule"][:2])
 
 
@@ -92,7 +92,7 @@ def test_changed_terminal_comfort_demand_invalidates_legacy_control_reuse():
     assert old_on != new_on
     request["state"] = first["state"]
     result = optimize(OptimizationParams(**request))
-    assert result["successful_solves"] == 13
+    assert result["successful_solves"] == 0
     assert result["reused_steps"] == 0
     assert result["entities"] == fresh["entities"]
     assert result["projections"] == fresh["projections"]
@@ -109,7 +109,7 @@ def test_unavoidable_comfort_deficit_is_reported_without_repeated_full_solves():
     comfort.update(is_on_now=True, off_streak_slots_now=0, on_slots_last_rolling_window=2)
     result = optimize(OptimizationParams(**request))
     assert result["cadence"]["mode"] == "repair"
-    assert result["successful_solves"] == 8
+    assert result["successful_solves"] == 0
     assert result["suboptimal"]
     assert "comfort_target_unmet" in result["suboptimal_reasons"]
     assert "comfort_history_unavailable" in result["suboptimal_reasons"]

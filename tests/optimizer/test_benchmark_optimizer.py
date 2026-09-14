@@ -197,7 +197,21 @@ def test_serial_trajectory_records_solver_breakdown_per_tick():
         row["solver"]["primary_calls"] == row["primary_solves"]
         for row in trajectory
     )
+    assert all(row["solver"]["total_calls"] == 0 for row in trajectory)
     assert all(row["solver"]["probe_calls"] == 0 for row in trajectory)
+
+
+def test_real_no_battery_measurement_reports_zero_solver_calls():
+    report = benchmark._measure(
+        build_case("no-battery-comfort-pv", slots=12, lookahead=8), repeats=1
+    )
+
+    assert report["primary_solves"] == 0
+    assert report["solver"]["total_calls"] == 0
+    assert report["solver"]["primary_calls"] == 0
+    assert report["solver"]["probe_calls"] == 0
+    assert report["solver"]["max_model"]["variables"] == 0
+    assert report["quality_valid"]
 
 
 def test_git_state_is_best_effort(monkeypatch):

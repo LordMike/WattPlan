@@ -160,7 +160,7 @@ def test_clock_normalization_and_input_do_not_mutate(stub_core):
     assert "state" not in planner._decode(first["state"])
 
 
-def test_public_api_runs_eight_steps_and_retains_full_forecast(monkeypatch):
+def test_no_battery_public_api_retains_cadence_without_solver_calls(monkeypatch):
     request = payload(horizon=196)
     first = optimize(OptimizationParams(**request))
     request = payload(1, first["state"], horizon=196)
@@ -174,14 +174,14 @@ def test_public_api_runs_eight_steps_and_retains_full_forecast(monkeypatch):
     monkeypatch.setattr(planner.core, "_solve_mpc_step", count)
     result = optimize(OptimizationParams(**request))
     assert result["cadence"]["mode"] == "repair"
-    assert result["successful_solves"] == 8
-    assert horizons == [48] * 8
+    assert result["successful_solves"] == 0
+    assert horizons == []
     assert len(result["projections"]["per_slot"]) == 196
     assert result["cadence"]["new_tail_steps"] == 1
-    for tick, expected_solves in ((2, 8), (3, 8), (4, 196)):
+    for tick in (2, 3, 4):
         horizons.clear()
         result = optimize(OptimizationParams(**payload(tick, result["state"], horizon=196)))
-        assert len(horizons) == result["successful_solves"] == expected_solves
+        assert len(horizons) == result["successful_solves"] == 0
         assert result["cadence"]["mode"] == ("full" if tick == 4 else "repair")
         assert result["cadence"]["phase"] == (0 if tick == 4 else tick)
 
@@ -361,7 +361,7 @@ def test_prefix_refresh_keeps_deterministic_comfort_feasible_without_fallback(mo
     monkeypatch.setattr(planner.core, "_solve_mpc_step", count)
     result = optimize(OptimizationParams(**request))
     assert result["cadence"]["mode"] == "repair"
-    assert calls == result["successful_solves"] == 8
+    assert calls == result["successful_solves"] == 0
     assert not result["suboptimal"]
     schedule = [p["enabled"] for p in result["entities"][0]["schedule"]]
     combined = request["comfort_entities"][0]["on_history"] + schedule
