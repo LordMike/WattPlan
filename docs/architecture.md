@@ -68,6 +68,13 @@ Source health is tracked alongside the values. A source can be healthy, unavaila
 
 Battery assets are resolved independently before optimizer input is built. If a battery has an availability source and that binary sensor is `off`, the battery is omitted from the current optimizer request without degrading overall status. If availability cannot be trusted, or if an expected SoC value is missing or non-numeric, only that battery is omitted and the plan is marked degraded. The optimizer still receives the remaining batteries, comfort loads, optional loads, and can run with an empty battery list.
 
+When that list is empty, the optimizer does not construct battery/grid MILPs or
+invoke HiGHS. It keeps the shared deterministic comfort schedule and per-slot
+physical accounting, then scores imports, exports, optional-load choices, state,
+and cadence through the normal result path. `successful_solves` is therefore
+zero for both full and prefix no-battery plans; cadence diagnostics still report
+whether the request was a full plan or repair.
+
 ## Planning Flow
 The high-level planning flow looks like this:
 

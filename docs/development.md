@@ -110,6 +110,9 @@ command settings, provenance, quality checks, and these timing layers:
 Reports safely represent zero native calls with zero counts and zero model
 dimensions. Use `--include-call-details` only when per-call horizons, roles, and
 sizes are needed; aggregate output is the default to keep reports manageable.
+The three no-battery fixture groups should report `total_calls: 0` after the
+direct-flow bypass. Treat a nonzero count there as a regression even when the
+wall-clock result remains small.
 
 Use `preserve-probe` when the measurement must exercise counterfactual solves:
 

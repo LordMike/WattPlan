@@ -1,5 +1,47 @@
 # Optimizer Benchmark Findings
 
+## Session 2 No-Battery Bypass
+
+Revision `f8638c035335671bb6268a6ba3c437d2a43c8e0e` bypasses HiGHS when
+`battery_entities` is empty. It retains the deterministic comfort scheduler,
+per-slot physical application, scoring, optional-load replay, state encoding,
+and prefix cadence. It does not integrate or change comfort placement.
+
+The comparison used the Session 1 Windows environment and exact 96-slot,
+48-slot-lookahead, three-repeat serialized commands. Each after case passed full
+and trajectory quality checks and reported zero primary, probe, and total native
+solver calls.
+
+| Case | Before full median | After full median | Reduction | Before repair median | After repair median |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| No assets, zero PV | 0.0984s | 0.0015s | 98.4% | 0.0107s | 0.0023s |
+| Comfort, no battery/PV | 0.0988s | 0.0027s | 97.3% | 0.0136s | 0.0042s |
+| Comfort and PV, no battery | 0.1463s | 0.0033s | 97.8% | 0.0170s | 0.0046s |
+| Flexible comfort only | 0.1052s | 0.0031s | 97.0% | 0.0143s | 0.0065s |
+| Tight comfort substitute | 0.1019s | 0.0027s | 97.3% | 0.0142s | 0.0049s |
+
+After full-plan samples:
+
+| Case | Samples (seconds) |
+| --- | --- |
+| No assets, zero PV | 0.0020, 0.0015, 0.0015 |
+| Comfort, no battery/PV | 0.0030, 0.0027, 0.0027 |
+| Comfort and PV, no battery | 0.0040, 0.0033, 0.0032 |
+| Flexible comfort only | 0.0051, 0.0031, 0.0029 |
+| Tight comfort substitute | 0.0034, 0.0027, 0.0027 |
+
+Representative battery cases remained on the solver path with 96 primary calls
+per full run and eight per repair tick. Their before/after medians were 1.9992s
+to 1.9095s for a bidirectional battery with zero PV, 0.2525s to 0.2942s for a
+charge-only battery, and 4.2334s to 4.3660s for mixed batteries with PV. All
+quality checks passed. These small mixed movements, including one 5.6147s mixed
+case outlier, are ordinary solver/run noise; the new condition is unreachable
+for nonempty battery lists.
+
+The remaining next fast path is exact-zero-PV specialization for battery plans.
+That work should remove provably unused PV variables and constraints without
+broad capability pruning or changing battery policy behavior.
+
 ## Session 1 Planner Baseline
 
 These clean-revision measurements were captured on September 14, 2026. They

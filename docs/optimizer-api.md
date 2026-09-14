@@ -235,7 +235,7 @@ Prefix refresh changes how often future battery decisions are optimized, not the
 | `optional_entity_options` | `list[dict]` | Advisory start options per optional entity. |
 | `state` | `str` | Opaque base64 state for next call. |
 | `cadence` | `dict`, timed requests only | Full/repair/fallback mode, reason, phase, optimized/replayed battery-slot counts, and provisional tail count. |
-| `successful_solves` | `int` | Primary MPC solves in this call; preserve probes are additional. A feasible prefix refresh uses eight. A tail rebuild retains the already-fresh prefix rather than solving it twice. |
+| `successful_solves` | `int` | Primary MPC solves in this call; preserve probes are additional. No-battery plans use direct flow accounting and report zero. A feasible battery prefix refresh normally uses eight. A tail rebuild retains the already-fresh prefix rather than solving it twice. |
 | `reused_steps` | `int` | Old battery schedule positions considered for reuse. Comfort is generated independently. |
 
 ### Battery Policy States
