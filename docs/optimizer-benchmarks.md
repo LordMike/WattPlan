@@ -185,6 +185,35 @@ Recommended order:
 The first item is the safest next fast path because it can target zero native
 calls with simple equivalence tests and no battery policy behavior to preserve.
 
+## Session 6 Bounded Comfort Placement
+
+Production comfort placement was measured against baseline revision `73398ef`
+on September 14, 2026 using Python 3.14.3, NumPy 2.3.2, and highspy 1.15.1 in
+the same WSL2 environment. The focused 12-slot cases below are single paired
+runs, so runtime differences are indicative rather than distributions. Preserve
+inference was disabled in the battery pair to isolate primary planning passes.
+
+| Case | Baseline full / prefix | Placement full / prefix | Final tariff cost full / prefix | Work |
+| --- | --- | --- | --- | --- |
+| No comfort, no battery | 0.00479s / 0.00077s | 0.00478s / 0.00054s | unchanged 4.2 / 4.2 | zero solver and placement calls |
+| No comfort, one battery | 0.07310s / 0.03967s | 0.05981s / 0.03989s | unchanged -2.6 / -0.6 | unchanged 12 / 8 primary solves |
+| Comfort, no battery | 0.00676s / 0.00093s | 0.00480s / 0.00142s | 13.2 -> 11.0 / 13.2 -> 11.0 | 15 considered, 1 evaluated, 2 direct cost calls, zero solver calls |
+| Comfort, one battery | 0.07851s / 0.03728s | 0.10460s / 0.03771s | -1.8 -> -2.4 / unchanged 0.2 | full used one additional 12-solve pass; prefix used no additional pass; 2 replay calls each |
+
+The no-comfort controls retained identical costs and primary solve counts and
+did not enter placement. The improving battery full plan paid the intended cost
+of exactly one additional planning pass; its prefix refresh found no better move
+and stayed at eight primary solves. Both final plans had no constraint reasons.
+The accepted tariff improvements above are the rebuilt plan's actual projected
+costs, not fixed-policy replay estimates.
+
+The existing 96-slot `comfort-flexible` no-battery fixture also remained at zero
+native calls and unchanged tariff cost because its sampled relocations were not
+better than the feasible baseline. Three-run medians moved from 0.00435s to
+0.00456s for standalone full calls and from 0.00367s to 0.00487s for serial
+prefix calls. This is the bounded Python search overhead when no move is
+accepted, not a solver regression.
+
 These measurements were captured on September 14, 2026. They are local WSL2
 x86-64 results, not release guarantees.
 

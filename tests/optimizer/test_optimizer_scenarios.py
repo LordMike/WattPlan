@@ -1658,11 +1658,16 @@ def test_signed_negative_import_charges_at_the_more_negative_slot(
     assert result["projections"]["projected_cost"] == pytest.approx(-0.5)
 
 
-@pytest.mark.parametrize("prices", [
-    [-1.0, 0.2, 0.3, 0.4],
-    [0.2, -1.0, 0.3, 0.4],
-])
-def test_comfort_schedule_is_constraint_driven_not_tariff_driven(prices):
+@pytest.mark.parametrize(
+    ("prices", "expected_slot"),
+    [
+        ([-1.0, 0.2, 0.3, 0.4], 0),
+        ([0.2, -1.0, 0.3, 0.4], 1),
+    ],
+)
+def test_comfort_schedule_places_feasible_run_at_best_tariff(
+    prices, expected_slot
+):
     payload = {
         "grid_import_price_per_kwh": prices,
         "grid_export_price_per_kwh": [0.0, 0.0, 0.0, 0.0],
@@ -1687,13 +1692,13 @@ def test_comfort_schedule_is_constraint_driven_not_tariff_driven(prices):
     }
 
     result = _run_optimizer(payload)
-    reference = _run_optimizer({
-        **payload,
-        "grid_import_price_per_kwh": [0.2, 0.2, 0.2, 0.2],
-    })
     schedule = _entity_schedule(result, "heatpump")
 
-    assert schedule == _entity_schedule(reference, "heatpump")
+    assert [point["enabled"] for point in schedule] == [
+        slot == expected_slot for slot in range(4)
+    ]
+    assert result["comfort_placement"]["status"] == "improved"
+    assert result["comfort_placement"]["cost_mode"] == "direct_net_site"
     _assert_rolling_windows([False, False, True], schedule, window=4, target=1)
     expected_cost = sum(
         prices[slot] for slot, point in enumerate(schedule) if point["enabled"]

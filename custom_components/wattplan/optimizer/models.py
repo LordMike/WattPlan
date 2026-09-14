@@ -11,8 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 DEFAULT_LOOKAHEAD_SLOTS = 22
-# Saved controls from the former tariff-optimized comfort model are not reusable.
-COMFORT_SCHEDULER_VERSION = 1
+# Saved controls from earlier comfort scheduling strategies are not reusable.
+COMFORT_SCHEDULER_VERSION = 2
 
 
 class ChargeSource(IntFlag):

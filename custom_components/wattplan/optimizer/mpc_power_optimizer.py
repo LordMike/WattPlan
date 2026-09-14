@@ -2,6 +2,7 @@ import time
 
 import numpy as np
 
+from .comfort_placement import ComfortPlacementInput, place_comfort_schedules
 from .models import (
     BatteryEntity,
     CalculationInput,
@@ -22,6 +23,9 @@ AVG_PRICE_SENTINEL = 1000.0
 PRESERVE_PROBE_MIN_KWH = 0.01
 PRESERVE_OBJECTIVE_TOLERANCE = 1e-7
 MIP_START_MIN_LOOKAHEAD_SLOTS = 40
+COMFORT_PLACEMENT_MAX_CANDIDATES_PER_ENTITY = 16
+COMFORT_PLACEMENT_MAX_TOTAL_CANDIDATES = 48
+COMFORT_PLACEMENT_SEARCH_SECONDS = 0.1
 _AUTO_REUSE = object()
 
 
@@ -1419,6 +1423,7 @@ def _run_mpc(
     infer_battery_preserve_policy,
     policy_tail_start=None,
     battery_policy_override=None,
+    fixed_comfort_override=None,
 ):
     num_battery = len(battery_entities)
     num_comfort = len(comfort_entities)
@@ -1497,13 +1502,22 @@ def _run_mpc(
                     0,
                 )
 
-    fixed_comfort_on = _fixed_comfort_schedule(
-        comfort_entities,
-        rolling_window_slots,
-        total_steps,
-        comfort_lock_mode,
-        comfort_lock_remaining,
-    )
+    if fixed_comfort_override is None:
+        fixed_comfort_on = _fixed_comfort_schedule(
+            comfort_entities,
+            rolling_window_slots,
+            total_steps,
+            comfort_lock_mode,
+            comfort_lock_remaining,
+        )
+    else:
+        fixed_comfort_on = np.asarray(
+            fixed_comfort_override, dtype=np.float64
+        ).copy()
+        if fixed_comfort_on.shape != (num_comfort, total_steps):
+            raise ValueError("fixed comfort schedule shape mismatch")
+        if not np.all((fixed_comfort_on == 0.0) | (fixed_comfort_on == 1.0)):
+            raise ValueError("fixed comfort schedules must contain only 0/1 values")
     if reused_steps and num_comfort and not np.array_equal(
         fixed_comfort_on[:, :reused_steps],
         reuse_plan["comfort_on"][:, :reused_steps],
@@ -2030,6 +2044,140 @@ def _replay_policy_cost(
     return float(total_cost)
 
 
+def _direct_comfort_cost(
+    grid_import_prices,
+    grid_export_prices,
+    usage,
+    solar_input,
+    comfort_entities,
+    comfort_schedules,
+):
+    comfort_usage = np.zeros(len(usage), dtype=np.float64)
+    for entity, schedule in zip(
+        comfort_entities, comfort_schedules, strict=True
+    ):
+        comfort_usage += float(entity.power_usage_kwh) * np.asarray(
+            schedule, dtype=np.float64
+        )
+    net = usage + comfort_usage - solar_input
+    return float(
+        np.sum(
+            grid_import_prices * np.maximum(net, 0.0)
+            - grid_export_prices * np.maximum(-net, 0.0)
+        )
+    )
+
+
+def _effective_battery_policy_states(
+    result,
+    battery_entities,
+    total_steps,
+    battery_policy_override,
+):
+    states = []
+    for i, entity in enumerate(battery_entities):
+        row = []
+        for t in range(total_steps):
+            if (
+                battery_policy_override is not None
+                and battery_policy_override[i][t] is not None
+            ):
+                row.append(str(battery_policy_override[i][t]))
+            else:
+                row.append(_battery_schedule_state(result, entity, i, t))
+        states.append(row)
+    return states
+
+
+def _score_result(
+    result,
+    *,
+    grid_import_prices,
+    grid_export_prices,
+    solar_input,
+    usage,
+    battery_entities,
+    comfort_entities,
+    rolling_window_slots,
+):
+    return _score_schedule(
+        prices=grid_import_prices,
+        grid_export_prices=grid_export_prices,
+        solar_input=solar_input,
+        usage=usage,
+        battery_entities=battery_entities,
+        comfort_entities=comfort_entities,
+        battery_levels=result["battery_levels"],
+        comfort_levels=result["comfort_levels"],
+        battery_charge=result["battery_charge"],
+        battery_discharge=result["battery_discharge"],
+        battery_states=result["battery_states"],
+        comfort_enabled=result["comfort_enabled"],
+        initial_comfort_lock_mode=result["initial_comfort_lock_mode"],
+        initial_comfort_lock_remaining=result["initial_comfort_lock_remaining"],
+        rolling_window_slots=rolling_window_slots,
+    )
+
+
+def _comfort_placement_inputs(
+    comfort_entities,
+    rolling_window_slots,
+    result,
+):
+    return tuple(
+        ComfortPlacementInput(
+            name=entity.name,
+            schedule=tuple(bool(value) for value in result["comfort_enabled"][i]),
+            on_history=tuple(
+                bool(value)
+                for value in _initial_comfort_history(entity, rolling_window_slots)
+            ),
+            rolling_window_slots=int(rolling_window_slots),
+            target_on_slots_per_rolling_window=int(
+                entity.target_on_slots_per_rolling_window
+            ),
+            min_consecutive_on_slots=int(entity.min_consecutive_on_slots),
+            min_consecutive_off_slots=int(entity.min_consecutive_off_slots),
+            max_consecutive_off_slots=int(entity.max_consecutive_off_slots),
+            is_on_now=bool(entity.is_on_now),
+            off_streak_slots_now=(
+                0 if entity.is_on_now else int(entity.off_streak_slots_now)
+            ),
+            lock_remaining=int(result["initial_comfort_lock_remaining"][i]),
+            lock_mode=bool(result["initial_comfort_lock_mode"][i]),
+        )
+        for i, entity in enumerate(comfort_entities)
+    )
+
+
+def _comfort_replan_reuse(reuse_plan):
+    if reuse_plan is None:
+        return None
+    clean = {
+        "overlap_steps": 0,
+        "initial_comfort_lock_mode": reuse_plan.get(
+            "initial_comfort_lock_mode"
+        ),
+        "initial_comfort_lock_remaining": reuse_plan.get(
+            "initial_comfort_lock_remaining"
+        ),
+    }
+    if "policy_reused_tail_steps" in reuse_plan:
+        clean["policy_reused_tail_steps"] = reuse_plan["policy_reused_tail_steps"]
+    return clean
+
+
+def _invalid_final_reasons(reasons):
+    hard = {
+        "battery_min_unmet",
+        "battery_target_unmet",
+        "comfort_min_run_unmet",
+        "comfort_target_unmet",
+        "comfort_max_off_unmet",
+    }
+    return sorted(hard.intersection(reasons))
+
+
 def _baseline_cost_per_slot(grid_import_prices, grid_export_prices, usage, solar_input):
     net_import = np.maximum(usage - solar_input, 0.0)
     net_export = np.maximum(solar_input - usage, 0.0)
@@ -2166,7 +2314,7 @@ def optimize_internal(
                 raise ValueError("battery policy override contains an invalid tail policy")
 
     start_time = time.time()
-    result = _run_mpc(
+    baseline_result = _run_mpc(
         grid_import_prices,
         grid_export_prices,
         solar_input,
@@ -2180,29 +2328,157 @@ def optimize_internal(
         policy_tail_start,
         battery_policy_override,
     )
-    execution_time = time.time() - start_time
-
-    fitness, avg_price, reasons, projected_cost, projected_cost_per_slot = (
-        _score_schedule(
-            prices=grid_import_prices,
-            grid_export_prices=grid_export_prices,
-            solar_input=solar_input,
-            usage=usage,
-            battery_entities=battery_entities,
-            comfort_entities=comfort_entities,
-            battery_levels=result["battery_levels"],
-            comfort_levels=result["comfort_levels"],
-            battery_charge=result["battery_charge"],
-            battery_discharge=result["battery_discharge"],
-            battery_states=result["battery_states"],
-            comfort_enabled=result["comfort_enabled"],
-            initial_comfort_lock_mode=result["initial_comfort_lock_mode"],
-            initial_comfort_lock_remaining=result[
-                "initial_comfort_lock_remaining"
-            ],
-            rolling_window_slots=normalized.rolling_window_slots,
-        )
+    baseline_score = _score_result(
+        baseline_result,
+        grid_import_prices=grid_import_prices,
+        grid_export_prices=grid_export_prices,
+        solar_input=solar_input,
+        usage=usage,
+        battery_entities=battery_entities,
+        comfort_entities=comfort_entities,
+        rolling_window_slots=normalized.rolling_window_slots,
     )
+    result = baseline_result
+    score = baseline_score
+    total_successful_solves = int(baseline_result["successful_solves"])
+    placement_diagnostics = None
+
+    if comfort_entities:
+        placement_inputs = _comfort_placement_inputs(
+            comfort_entities,
+            normalized.rolling_window_slots,
+            baseline_result,
+        )
+        baseline_policies = _effective_battery_policy_states(
+            baseline_result,
+            battery_entities,
+            total_steps,
+            battery_policy_override,
+        )
+        cost_calls = 0
+        placement_started = time.monotonic()
+
+        if battery_entities:
+            def evaluate_comfort_cost(schedules):
+                nonlocal cost_calls
+                cost_calls += 1
+                return _replay_policy_cost(
+                    grid_import_prices=grid_import_prices,
+                    grid_export_prices=grid_export_prices,
+                    usage=usage,
+                    solar_input=solar_input,
+                    battery_entities=battery_entities,
+                    battery_modes=baseline_policies,
+                    comfort_enabled=np.asarray(schedules, dtype=np.int32),
+                    comfort_entities=comfort_entities,
+                    optional_usage=np.zeros(total_steps, dtype=np.float64),
+                )
+            cost_mode = "fixed_policy_replay"
+        else:
+            def evaluate_comfort_cost(schedules):
+                nonlocal cost_calls
+                cost_calls += 1
+                return _direct_comfort_cost(
+                    grid_import_prices,
+                    grid_export_prices,
+                    usage,
+                    solar_input,
+                    comfort_entities,
+                    schedules,
+                )
+            cost_mode = "direct_net_site"
+
+        placement = place_comfort_schedules(
+            placement_inputs,
+            evaluate_comfort_cost,
+            max_candidates_per_comfort=(
+                COMFORT_PLACEMENT_MAX_CANDIDATES_PER_ENTITY
+            ),
+            max_total_candidates=COMFORT_PLACEMENT_MAX_TOTAL_CANDIDATES,
+            minimum_improvement=EPSILON,
+            should_cancel=lambda: (
+                time.monotonic() - placement_started
+                >= COMFORT_PLACEMENT_SEARCH_SECONDS
+            ),
+        )
+        accepted = np.asarray(placement.schedules, dtype=np.float64)
+        changed = not np.array_equal(
+            accepted, baseline_result["comfort_enabled"]
+        )
+        fallback_reason = None
+        additional_successful_solves = 0
+        if changed:
+            candidate_result = _run_mpc(
+                grid_import_prices,
+                grid_export_prices,
+                solar_input,
+                usage,
+                battery_entities,
+                comfort_entities,
+                normalized.rolling_window_slots,
+                _comfort_replan_reuse(reuse_plan),
+                normalized.lookahead_slots,
+                normalized.infer_battery_preserve_policy,
+                policy_tail_start,
+                battery_policy_override,
+                fixed_comfort_override=accepted,
+            )
+            additional_successful_solves = int(
+                candidate_result["successful_solves"]
+            )
+            total_successful_solves += additional_successful_solves
+            candidate_score = _score_result(
+                candidate_result,
+                grid_import_prices=grid_import_prices,
+                grid_export_prices=grid_export_prices,
+                solar_input=solar_input,
+                usage=usage,
+                battery_entities=battery_entities,
+                comfort_entities=comfort_entities,
+                rolling_window_slots=normalized.rolling_window_slots,
+            )
+            invalid_reasons = _invalid_final_reasons(candidate_score[2])
+            cost_tolerance = max(
+                EPSILON,
+                abs(float(baseline_score[3])) * 1e-9,
+            )
+            if not np.array_equal(candidate_result["comfort_enabled"], accepted):
+                fallback_reason = "comfort_schedule_rebuilt_differently"
+            elif invalid_reasons:
+                fallback_reason = ",".join(invalid_reasons)
+            elif float(candidate_score[3]) > float(baseline_score[3]) + cost_tolerance:
+                fallback_reason = "final_cost_worsened"
+            else:
+                result = candidate_result
+                score = candidate_score
+
+        placement_diagnostics = {
+            "status": placement.status,
+            "accepted": bool(changed and fallback_reason is None),
+            "cost_mode": cost_mode,
+            "candidate_cost_calls": int(cost_calls),
+            "candidates_considered": int(placement.candidates_considered),
+            "candidates_evaluated": int(placement.candidates_evaluated),
+            "candidates_rejected": int(placement.candidates_rejected),
+            "accepted_moves": int(placement.accepted_moves),
+            "demand_changed": bool(changed),
+            "additional_planning_passes": int(changed),
+            "additional_successful_solves": additional_successful_solves,
+            "baseline_projected_cost": float(baseline_score[3]),
+            "final_projected_cost": float(score[3]),
+            "fallback_reason": fallback_reason,
+            "optimality": placement.optimality,
+            "violations": [
+                [
+                    {"code": violation.code, "slot": int(violation.slot)}
+                    for violation in violations
+                ]
+                for violations in placement.violations
+            ],
+        }
+
+    execution_time = time.time() - start_time
+    fitness, avg_price, reasons, projected_cost, projected_cost_per_slot = score
     baseline_cost_array = _baseline_cost_per_slot(
         grid_import_prices=grid_import_prices,
         grid_export_prices=grid_export_prices,
@@ -2237,18 +2513,12 @@ def optimize_internal(
         else 0.0
     )
 
-    battery_policy_states = []
-    for i, entity in enumerate(battery_entities):
-        policy_states = []
-        for t in range(total_steps):
-            if (
-                battery_policy_override is not None
-                and battery_policy_override[i][t] is not None
-            ):
-                policy_states.append(str(battery_policy_override[i][t]))
-            else:
-                policy_states.append(_battery_schedule_state(result, entity, i, t))
-        battery_policy_states.append(policy_states)
+    battery_policy_states = _effective_battery_policy_states(
+        result,
+        battery_entities,
+        total_steps,
+        battery_policy_override,
+    )
 
     entities = []
     for i, entity in enumerate(battery_entities):
@@ -2363,13 +2633,15 @@ def optimize_internal(
         "suboptimal_reasons": reasons,
         "problems": reasons,
         "reused_steps": int(result["reused_steps"]),
-        "successful_solves": int(result["successful_solves"]),
+        "successful_solves": total_successful_solves,
         "entities": entities,
         "optional_entity_options": optional_entity_options,
         "state": encode_state_blob(state_obj),
     }
     if cadence_diagnostics is not None:
         response["cadence"] = cadence_diagnostics
+    if placement_diagnostics is not None:
+        response["comfort_placement"] = placement_diagnostics
     return response
 
 

@@ -8,7 +8,7 @@ This document describes the direct Python API for the optimizer packaged inside 
 
 The optimizer is model-predictive-control (MPC) based.
 
-Import and export tariffs retain their supplied signed values in the battery solve. Negative import prices can therefore make feasible grid charging economically beneficial. Comfort timing is constraint-driven rather than tariff-optimized; its deterministic schedule is folded into household usage before each battery solve. Direction constraints prevent a slot from importing and exporting simultaneously, prevent a battery from charging and discharging simultaneously, limit grid-sourced charging to actual grid import, and reserve PV charging/export for physical PV surplus after household and scheduled comfort demand.
+Import and export tariffs retain their supplied signed values in the battery solve. Negative import prices can therefore make feasible grid charging economically beneficial. Comfort timing starts from a constraint-driven schedule and may be improved by bounded whole-schedule placement outside the battery MILP. Direction constraints prevent a slot from importing and exporting simultaneously, prevent a battery from charging and discharging simultaneously, limit grid-sourced charging to actual grid import, and reserve PV charging/export for physical PV surplus after household and scheduled comfort demand.
 
 The model does not export battery energy, add an export-first battery mode, curtail forecast PV, or assign a terminal value to energy remaining beyond the supplied horizon. A `grid_charge` schedule state is a policy instruction to charge as much as the configured rate, capacity, efficiency, and ingress permissions allow; WattPlan does not publish a precise throttled power setpoint.
 
@@ -26,7 +26,7 @@ All time-indexed fields use **timeslots**.
 ## Conceptual Model
 The solve combines three kinds of entities:
 - **Battery Entities:** Controllable storage with modeled charge/discharge flows and serialized policy states for inverter control.
-- **Comfort Entities:** Required comfort loads, such as heating or hot water, scheduled deterministically from runtime constraints rather than energy prices.
+- **Comfort Entities:** Required comfort loads, such as heating or hot water. A deterministic feasible baseline is followed by bounded cost-aware relocation of existing ON runs.
 - **Optional Entities:** User suggestions for "might run" appliances, such as dishwashers or dryers. They are advisory only and do **not** affect the main optimized schedule. The output is a list of best candidate start timeslots.
 
 ## Core Usage
@@ -51,7 +51,7 @@ result = optimize(params)
 | `mode_switch_cost` | `float` | No | `0.0` | Finite, `>= 0` | Heuristic objective weight that discourages changing modeled battery behavior. It is not a monetary switching or wear estimate. |
 | `infer_battery_preserve_policy` | `bool` | No | `true` | - | Enables the model-backed counterfactual used to emit `preserve` battery policy states. When disabled, all `battery_preserve` booleans are `false` and non-grid-charging battery slots fall back to `self_consume`. |
 | `battery_entities` | `list[BatteryEntityParams]` | Yes | - | May be empty | Main controllable storage entities. |
-| `comfort_entities` | `list[ComfortEntityParams]` | Yes | - | May be empty | Required comfort entities with deterministic timing. |
+| `comfort_entities` | `list[ComfortEntityParams]` | Yes | - | May be empty | Required comfort entities with bounded cost-aware placement. |
 | `optional_entities` | `list[OptionalEntityParams]` | No | `[]` | Fully validated for feasibility | Advisory start-time options only. |
 | `state` | `str \| None` | No | `None` | Valid base64 JSON object, version `v=1` | Opaque carry-over state from previous call. |
 | `plan_start` | timezone-aware `datetime` or ISO datetime string | No | `None` | Must include a timezone; normalized to UTC | Start of forecast slot zero. Enables clock-aligned prefix refresh. The integration supplies its aligned source-window start. |
@@ -130,14 +130,14 @@ Optional entities provide advisory start-time suggestions and do not change the 
 - You should store and pass it back as-is.
 - Do not parse or mutate it in client code.
 - With `plan_start`, the optimizer normally computes a full plan, then refreshes the first eight battery actions on each of the next three consecutive slot advances. The fourth advance computes a new full plan. At 15-minute resolution this is full at 00:00, prefix refresh at 00:15/00:30/00:45, and full at 01:00. The configured economic lookahead is unchanged for every fresh decision; an eight-slot refresh does not mean an eight-slot lookahead.
-- Every response still covers the complete forecast. The reused battery tail is applied to current forecast load/PV and newly calculated SOC. Comfort is regenerated cheaply from current rolling history and minimum-on/off commitments, then included as fixed demand. Battery policies are retained even when physical limits produce zero flow.
+- Every response still covers the complete forecast. The reused battery tail is applied to current forecast load/PV and newly calculated SOC. Comfort is regenerated from current rolling history and minimum-on/off commitments, then bounded placement may improve its timing before it is fixed as demand. Battery policies are retained even when physical limits produce zero flow.
 - A same-slot refresh uses a zero shift and does not advance the cadence clock. Skipped, reversed, unaligned, or differently sized windows, changed resolution/configuration, and incompatible state cause a full plan. Optional recommendation changes do not invalidate the battery/comfort cadence. Target compatibility uses the absolute end-of-slot deadline.
 - First-slot comfort commitments use expiry times on the planning timeline, checked against observed modes and compatible durations. Ordered observed history can also establish an ongoing commitment, including after a skipped refresh. Predicted future transitions are not assumed to have been actuated.
-- The deterministic comfort scheduler recalculates the entire comfort schedule on every call. Its rolling and minimum-run checks report impossible or insufficient-history cases as suboptimal. A full battery replan cannot repair a comfort-only history deficit, so that warning does not itself force repeated full solves. Reused battery decisions are checked separately and an infeasible battery tail triggers a full replan.
-- Saved state from the former tariff-optimized comfort implementation is invalidated for control reuse. The first request after this scheduler change fully replans, while retaining compatible observed/first-slot comfort commitments.
+- The deterministic comfort scheduler recalculates the entire baseline comfort schedule on every call. Bounded placement preserves runtime, rolling windows, minimum runs, maximum OFF time, and current locks. Invalid baselines are reported explicitly and are neither priced nor moved. If placement changes demand, battery control arrays are not reused; at most one additional battery planning pass is allowed. A rebuilt plan is accepted only when actual tariff cost does not worsen and hard constraints remain valid.
+- Saved state from earlier comfort scheduling implementations is invalidated for control reuse. The first request after the bounded-placement scheduler change fully replans, while retaining compatible observed/first-slot comfort commitments.
 - Short horizons (nine slots or fewer) are fully planned. Requests without `plan_start` retain the legacy full-calculation/reuse path; the optimizer does not infer a new tick from call count. A timed state handed to an untimed request is fully replanned. Older opaque state remains accepted but cannot enable clock-based partial refresh.
 
-Prefix refresh changes how often future battery decisions are optimized, not the forecast resolution. Comfort schedules are deterministic on full and prefix calls and are not shifted toward cheap or negatively priced slots. Optional recommendations are recalculated against the resulting published policies; they are not a guarantee of equivalence to a newly optimized full policy horizon. Full calls and native solver outliers are still possible; the cadence is not a hard execution-time limit.
+Prefix refresh changes how often future battery decisions are optimized, not the forecast resolution. Comfort placement is bounded on full and prefix calls and may shift feasible existing runs toward lower whole-site tariff cost. Optional recommendations are recalculated against the final accepted comfort schedule and published battery policies; they are not a guarantee of equivalence to a newly optimized full policy horizon. Full calls and native solver outliers are still possible; the cadence is not a hard execution-time limit.
 
 ## Full Request Example (Small)
 ```jsonc
@@ -235,7 +235,8 @@ Prefix refresh changes how often future battery decisions are optimized, not the
 | `optional_entity_options` | `list[dict]` | Advisory start options per optional entity. |
 | `state` | `str` | Opaque base64 state for next call. |
 | `cadence` | `dict`, timed requests only | Full/repair/fallback mode, reason, phase, optimized/replayed battery-slot counts, and provisional tail count. |
-| `successful_solves` | `int` | Primary MPC solves in this call; preserve probes are additional. No-battery plans use direct flow accounting and report zero. A feasible battery prefix refresh normally uses eight. A tail rebuild retains the already-fresh prefix rather than solving it twice. |
+| `comfort_placement` | `dict`, comfort requests only | Bounded search status, cost mode, work counts, explicit violations, demand-change/replan accounting, actual baseline/final projected cost, and fallback reason. |
+| `successful_solves` | `int` | Primary MPC solves performed in this call, including a baseline and at most one changed-demand rebuild; preserve probes are additional. No-battery plans use direct flow accounting and report zero. |
 | `reused_steps` | `int` | Old battery schedule positions considered for reuse. Comfort is generated independently. |
 
 ### Battery Policy States
