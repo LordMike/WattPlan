@@ -4,16 +4,24 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock
 
+import pytest
 import voluptuous_serialize
+from homeassistant import config_entries
+from homeassistant.const import CONF_NAME
+from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 
 from custom_components.wattplan.const import (
-    CONF_CONFIG_ENTRY_ID,
     CONF_ACTION_EMISSION_ENABLED,
     CONF_AVAILABILITY_SOURCE,
     CONF_CAN_CHARGE_FROM_GRID,
     CONF_CAN_CHARGE_FROM_PV,
     CONF_CAPACITY_KWH,
     CONF_CHARGE_EFFICIENCY,
+    CONF_CONFIG_ENTRY_ID,
     CONF_DISCHARGE_EFFICIENCY,
     CONF_DURATION_MINUTES,
     CONF_ENERGY_KWH,
@@ -36,6 +44,7 @@ from custom_components.wattplan.const import (
     CONF_OPTIMIZER_LOOKAHEAD_HOURS,
     CONF_OPTIMIZER_LOOKAHEAD_SLOTS,
     CONF_OPTIONS_COUNT,
+    CONF_OUTLOOK_LANGUAGES,
     CONF_PLANNING_ENABLED,
     CONF_ROLLING_WINDOW_HOURS,
     CONF_RUN_WITHIN_HOURS,
@@ -49,8 +58,8 @@ from custom_components.wattplan.const import (
     CONF_TEMPLATE,
     DOMAIN,
     SOURCE_MODE_BUILT_IN,
-    SOURCE_MODE_ENTITY_ADAPTER,
     SOURCE_MODE_ENERGY_PROVIDER,
+    SOURCE_MODE_ENTITY_ADAPTER,
     SOURCE_MODE_NOT_USED,
     SOURCE_MODE_TEMPLATE,
     SUBENTRY_TYPE_BATTERY,
@@ -58,14 +67,6 @@ from custom_components.wattplan.const import (
     SUBENTRY_TYPE_OPTIONAL,
 )
 from custom_components.wattplan.source_providers import CONF_WATTPLAN_ENTITY_ID
-import pytest
-
-from homeassistant import config_entries
-from homeassistant.const import CONF_NAME
-from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResultType
-from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers import device_registry as dr, entity_registry as er
 from tests.common import MockConfigEntry
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
@@ -266,6 +267,10 @@ async def test_form(hass: HomeAssistant, mock_setup_entry: AsyncMock) -> None:
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "planner_setup"
     assert _schema_default(result, CONF_OPTIMIZER_LOOKAHEAD_HOURS) == 12.0
+    assert all(
+        getattr(field, "schema", None) != CONF_OUTLOOK_LANGUAGES
+        for field in result["data_schema"].schema
+    )
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
@@ -508,6 +513,7 @@ async def test_options_flow_add_core_and_one_of_each_asset(
     assert result["type"] is FlowResultType.MENU
     assert "source_export_price" in result["menu_options"]
     assert "historical_costs" in result["menu_options"]
+    assert "outlook_languages" in result["menu_options"]
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {"next_step_id": "planner_timers"}
@@ -887,6 +893,47 @@ async def test_options_planner_timers_both_enabled_saves_without_warning(
     assert updated is not None
     assert updated.options[CONF_PLANNING_ENABLED] is True
     assert updated.options[CONF_ACTION_EMISSION_ENABLED] is True
+
+
+async def test_options_outlook_languages_are_advanced_and_optional(
+    hass: HomeAssistant, mock_setup_entry: AsyncMock
+) -> None:
+    """Additional outlook languages should only appear in the options flow."""
+    entry = await _create_basic_entry(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] is FlowResultType.MENU
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "outlook_languages"}
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "outlook_languages"
+    assert _schema_default(result, CONF_OUTLOOK_LANGUAGES) == []
+    field = _serialized_schema_field(result, CONF_OUTLOOK_LANGUAGES)
+    assert field["selector"]["select"]["multiple"] is True
+    assert field["selector"]["select"]["mode"] == "list"
+    assert field["selector"]["select"]["options"] == [
+        {"label": "English", "value": "en"}
+    ]
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_OUTLOOK_LANGUAGES: ["en"]}
+    )
+    assert result["type"] is FlowResultType.MENU
+    updated = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated is not None
+    assert updated.options[CONF_OUTLOOK_LANGUAGES] == ["en"]
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "outlook_languages"}
+    )
+    assert _schema_default(result, CONF_OUTLOOK_LANGUAGES) == ["en"]
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_OUTLOOK_LANGUAGES: []}
+    )
+    assert result["type"] is FlowResultType.MENU
+    assert updated.options[CONF_OUTLOOK_LANGUAGES] == []
 
 
 async def test_options_planner_core_defaults_existing_entry_and_saves_lookahead(

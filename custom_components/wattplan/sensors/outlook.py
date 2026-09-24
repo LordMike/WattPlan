@@ -27,6 +27,7 @@ class PlanOutlookSensor(WattPlanCoordinatorSensor):
         outlook = self._outlook()
         keys = {
             "report_id",
+            "semantic_id",
             "headline",
             "line_1",
             "line_2",

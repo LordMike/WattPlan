@@ -9,13 +9,20 @@ sentences. `plan_outlook_renderer.py` renders the selected model in English and
 owns all phrase variants. This boundary allows extraction/selection and wording
 to be tested independently and provides the insertion point for later languages.
 
+Entry setup resolves the Home Assistant system language plus any additional
+advanced-option selections against the currently implemented renderers. The
+resolved list is stored in entry runtime data and always contains at least
+English. Only the English renderer is implemented at present.
+
 Neither layer reads Home Assistant entities, uses diagnostic sensor arrays, or
 runs another optimizer solve. The projection layer stores the bounded semantic
 model in the coordinator snapshot. `sensor.<setup_slug>_plan_outlook` exposes a
-semantic report identifier as state and the headline, complete prose, and
-selection metadata as attributes. The state combines the main fact kind,
-information value, and a deterministic digest of the selected semantic facts and
-wording variants. It therefore changes when the visible report changes without
+rendered report identifier as state and the headline, complete prose, and
+selection metadata as attributes. A separate `semantic_id` fingerprints the
+language-neutral meaning. When that identifier matches the preceding outlook,
+the renderer reuses its persisted phrase variants. The state combines the main
+fact kind, information value, and a deterministic digest of the selected facts
+and rendered wording, so visible report changes remain trigger-friendly without
 being subject to Home Assistant's state-length limit.
 
 The outlook describes forecasts and planned recommendations only. Restored plans

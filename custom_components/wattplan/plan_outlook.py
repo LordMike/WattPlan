@@ -897,7 +897,11 @@ def render_stored_plan_outlook(
         plan_created_at=model.plan_created_at,
         previous=model,
     )
-    rendered = render_plan_outlook(current_model, now=now)
+    rendered = render_plan_outlook(
+        current_model,
+        now=now,
+        previous_outlook=outlook,
+    )
     rendered["_model"] = model_to_dict(current_model)
     return rendered
 
@@ -1028,6 +1032,10 @@ def build_plan_outlook(
         render_at = render_at.replace(tzinfo=model.start.tzinfo or UTC)
     elif model.start.tzinfo is not None:
         render_at = render_at.astimezone(model.start.tzinfo)
-    rendered = render_plan_outlook(model, now=render_at)
+    rendered = render_plan_outlook(
+        model,
+        now=render_at,
+        previous_outlook=previous_outlook,
+    )
     rendered["_model"] = model_to_dict(model)
     return rendered

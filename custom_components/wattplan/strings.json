@@ -720,6 +720,7 @@
           "source_usage": "Usage source",
           "source_pv": "Solar source",
           "historical_costs": "Historical costs",
+          "outlook_languages": "Plan Outlook languages (advanced)",
           "battery_entities": "Battery entities",
           "comfort_entities": "Comfort entities",
           "optional_entities": "Optional entities",
@@ -740,6 +741,16 @@
           "optimizer_lookahead_hours": "The displayed value is the current economic lookahead duration. Existing setups retain the historical 22-slot behavior: 5.5 hours at 15-minute resolution, 11 hours at 30-minute resolution, or 22 hours at 60-minute resolution. The plan still covers the full planning horizon, and lookahead is capped by that available coverage. WattPlan converts this duration to whole slots using the selected resolution. Longer lookahead can improve timing but increases computation time. Comfort minimum-on and minimum-off durations must each be shorter than the effective lookahead.",
           "slot_minutes": "This is the plan resolution. A lower value means more detailed plans and more required forecast values.",
           "hours_to_plan": "WattPlan needs forecasts that cover the full selected period."
+        }
+      },
+      "outlook_languages": {
+        "title": "Plan Outlook languages",
+        "description": "Select additional languages for Plan Outlook reports. Your Home Assistant system language is always included. Leave this empty to use only the system language. If none of the requested languages are supported, WattPlan uses English. Plan Outlook currently supports English only.",
+        "data": {
+          "outlook_languages": "Additional languages"
+        },
+        "data_description": {
+          "outlook_languages": "These languages are added to the Home Assistant system language. The setting takes effect after the WattPlan setup reloads."
         }
       },
       "source_price": {

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from functools import partial
-import logging
 from typing import Any
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
@@ -13,12 +13,14 @@ from homeassistant.core import Event, HomeAssistant, callback
 from .const import (
     CONF_ACTION_EMISSION_ENABLED,
     CONF_HISTORICAL_COST_TRACKING_ENABLED,
+    CONF_OUTLOOK_LANGUAGES,
     CONF_PLANNING_ENABLED,
     CONF_SLOT_MINUTES,
     DOMAIN,
 )
 from .coordinator import CycleTrigger, WattPlanCoordinator
 from .historical_cost.tracker import HistoricalCostTracker
+from .outlook_languages import resolve_outlook_languages
 from .runtime import WattPlanConfigEntry, WattPlanRuntimeData, mark_runtime_updated
 from .services import SERVICE_SPECS
 
@@ -71,6 +73,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) -> 
     entry.runtime_data = WattPlanRuntimeData(
         coordinator=coordinator,
         last_run_at=datetime.now(tz=UTC),
+        outlook_languages=resolve_outlook_languages(
+            entry.options.get(CONF_OUTLOOK_LANGUAGES, []),
+            hass.config.language,
+        ),
     )
     if bool(entry.options.get(CONF_HISTORICAL_COST_TRACKING_ENABLED, False)):
         tracker = HistoricalCostTracker(

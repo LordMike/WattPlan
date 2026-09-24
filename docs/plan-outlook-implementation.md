@@ -127,9 +127,11 @@ Age out observed starting readings rather than repeating them as current.
 
 Rare trivial facts must never displace material consequences. Do not randomize
 warnings away, assert contradictions, or repeat the same information twice.
-Do not reroll every 15-minute refresh. Use stable site identity plus local date
-and reporting period (morning/afternoon/evening) and bounded recent-selection
-history. Never use process-random Python hash as the persistence seed.
+Compute a semantic identifier before rendering. If it matches the preceding
+outlook, retain that outlook's phrase variants rather than rerolling on the next
+15-minute refresh. New semantic reports use stable site identity, local date,
+reporting period (morning/afternoon/evening), and the semantic identifier as the
+wording seed. Never use process-random Python hash as the persistence seed.
 Within a period retain selection when still valid; update values/times, and
 reselect when materially more important facts appear or selected facts expire.
 Record history on actual report selection changes, not every planner callback.
@@ -154,17 +156,24 @@ apply an availability gate that prevents the failure message being displayed.
 
 ## Entity contract
 
-One entry-level Plan Outlook sensor is sufficient initially. Use a semantic
+One entry-level Plan Outlook sensor is sufficient initially. Use a rendered
 report identifier as state, with complete prose in attributes. The identifier is
 `<main-kind>_<information-value>_<digest>` and changes whenever the selected
-semantic report or its chosen wording variant changes. Do not put the prose in
-state or switch state shape according to prose length.
+semantic report or its chosen wording variant changes. Expose the independent
+`semantic_id` attribute used to retain wording across equivalent reports. Do not
+put the prose in state or switch state shape according to prose length.
 
-- report_id, headline, line_1, line_2, text, language (second line may be empty)
+- report_id, semantic_id, headline, line_1, line_2, text, language (second line may be empty)
 - information_value: low | medium | high
 - topic: routine | opportunity | battery | target | energy_balance | reliability
 - selected fact identifiers / basis and covered interval for diagnosis
 - plan_created_at / valid_until where appropriate
+
+Resolve Plan Outlook languages when the config entry loads. Start with the Home
+Assistant system language, add any selections from the advanced options flow,
+discard languages without an implemented renderer, and fall back to English if
+none remain. The initial setup flow must not ask for language preferences. Only
+the English renderer is implemented currently.
 
 Reliability and information value must remain distinct. Keep attributes compact;
 do not duplicate full input arrays. No companion entity is required initially.

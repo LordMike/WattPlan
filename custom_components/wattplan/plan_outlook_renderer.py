@@ -61,6 +61,7 @@ def _phrase_variant(
     model: OutlookModel,
     now: datetime,
     option_count: int,
+    variation_seed: str,
 ) -> int:
     """Choose wording only after the semantic report model is complete."""
     local_hour = (
@@ -70,7 +71,10 @@ def _phrase_variant(
         "morning" if local_hour < 12 else "afternoon" if local_hour < 18 else "evening"
     )
     period_offset = {"morning": 0, "afternoon": 1, "evening": 2}[period]
-    seed = f"{model.seed_prefix}:{now.date().isoformat()}:{fact.fact_id}:english"
+    seed = (
+        f"{model.seed_prefix}:{now.date().isoformat()}:{fact.fact_id}:"
+        f"{variation_seed}:english"
+    )
     return (_stable_number(seed) + period_offset) % option_count
 
 
@@ -79,6 +83,8 @@ def render_fact_english(
     *,
     model: OutlookModel,
     now: datetime,
+    variation_seed: str,
+    forced_variant: int | None = None,
 ) -> tuple[str, int]:
     """Render one fact and return its deterministic wording variant."""
     values = _values(fact)
@@ -104,8 +110,16 @@ def render_fact_english(
             "Only limited grid use is expected across the covered period.",
         )
     if variants is not None:
-        variant = _phrase_variant(
-            fact, model=model, now=now, option_count=len(variants)
+        variant = (
+            forced_variant % len(variants)
+            if forced_variant is not None
+            else _phrase_variant(
+                fact,
+                model=model,
+                now=now,
+                option_count=len(variants),
+                variation_seed=variation_seed,
+            )
         )
         return variants[variant], variant
 
@@ -298,24 +312,93 @@ def render_fact_english(
     return kind.replace("_", " ").capitalize() + ".", 0
 
 
-def render_plan_outlook(model: OutlookModel, *, now: datetime) -> dict[str, Any]:
+def _semantic_fact_payload(fact: OutlookFact) -> dict[str, Any]:
+    """Return only values that define the meaning of the rendered statement."""
+    payload: dict[str, Any] = {
+        "id": fact.fact_id,
+        "kind": fact.kind,
+        "topic": fact.topic,
+        "information_value": fact.information_value,
+        "subject": fact.subject,
+        "values": dict(fact.values),
+    }
+    interval_kinds = {
+        "negative_grid_price",
+        "cheaper_grid_prices",
+        "solar_surplus",
+        "grid_charge",
+        "battery_preserve",
+        "comfort_timing",
+        "grid_export",
+    }
+    point_kinds = {
+        "solar_fading",
+        "battery_full",
+        "target_shortfall",
+        "target_reached",
+        "optional_start",
+    }
+    if fact.kind in interval_kinds:
+        payload["start"] = fact.start.isoformat()
+        payload["end"] = fact.end.isoformat()
+    elif fact.kind in point_kinds:
+        payload["start"] = fact.start.isoformat()
+    return payload
+
+
+def _semantic_id(
+    selected: tuple[OutlookFact, ...], *, information_value: str
+) -> str:
+    payload = [_semantic_fact_payload(fact) for fact in selected]
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:10]
+    return f"{selected[0].kind}_{information_value}_{digest}"
+
+
+def render_plan_outlook(
+    model: OutlookModel,
+    *,
+    now: datetime,
+    previous_outlook: dict[str, Any] | None = None,
+    variation_seed: str | None = None,
+) -> dict[str, Any]:
     """Render one selected model without changing its semantic content."""
     selected = model.selected_facts
     if not selected:
         return {}
 
+    information_value = max(
+        (fact.information_value for fact in selected), key=VALUE_RANK.__getitem__
+    )
+    semantic_id = _semantic_id(selected, information_value=information_value)
+    previous_variants: dict[str, Any] = {}
+    if (
+        isinstance(previous_outlook, dict)
+        and previous_outlook.get("semantic_id") == semantic_id
+        and isinstance(previous_outlook.get("_render_variants"), dict)
+    ):
+        previous_variants = previous_outlook["_render_variants"]
+
     rendered: list[str] = []
     variants: dict[str, int] = {}
+    effective_seed = variation_seed or semantic_id
     for fact in selected:
-        text, variant = render_fact_english(fact, model=model, now=now)
+        previous_variant = previous_variants.get(fact.fact_id)
+        text, variant = render_fact_english(
+            fact,
+            model=model,
+            now=now,
+            variation_seed=effective_seed,
+            forced_variant=(
+                previous_variant if isinstance(previous_variant, int) else None
+            ),
+        )
         rendered.append(text)
         variants[fact.fact_id] = variant
 
     line_1 = rendered[0]
     line_2 = " ".join(rendered[1:])
-    information_value = max(
-        (fact.information_value for fact in selected), key=VALUE_RANK.__getitem__
-    )
     topic_fact = next(
         (fact for fact in selected if fact.topic == "reliability"),
         max(selected, key=lambda fact: VALUE_RANK[fact.information_value]),
@@ -343,6 +426,7 @@ def render_plan_outlook(model: OutlookModel, *, now: datetime) -> dict[str, Any]
     report_id = f"{selected[0].kind}_{information_value}_{digest}"
     return {
         "report_id": report_id,
+        "semantic_id": semantic_id,
         "headline": line_1,
         "line_1": line_1,
         "line_2": line_2,
@@ -371,4 +455,5 @@ def render_plan_outlook(model: OutlookModel, *, now: datetime) -> dict[str, Any]
             if model.plan_created_at is not None
             else None
         ),
+        "_render_variants": variants,
     }

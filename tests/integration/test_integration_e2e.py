@@ -6,6 +6,20 @@ from datetime import timedelta
 from typing import Any
 from unittest.mock import patch
 
+import pytest
+from homeassistant import config_entries
+from homeassistant.const import (
+    CONF_NAME,
+    STATE_OFF,
+    STATE_ON,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+)
+from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.exceptions import ServiceValidationError
+from homeassistant.util import dt as dt_util
+
 from custom_components.wattplan.const import (
     CONF_ACTION_EMISSION_ENABLED,
     CONF_AVAILABILITY_SOURCE,
@@ -34,8 +48,8 @@ from custom_components.wattplan.const import (
     CONF_RUN_WITHIN_HOURS,
     CONF_SLOT_MINUTES,
     CONF_SOC_SOURCE,
-    CONF_SOURCE_MODE,
     CONF_SOURCE_IMPORT_PRICE,
+    CONF_SOURCE_MODE,
     CONF_SOURCE_PV,
     CONF_SOURCE_USAGE,
     CONF_SOURCES,
@@ -51,21 +65,6 @@ from custom_components.wattplan.const import (
 )
 from custom_components.wattplan.coordinator import PlanningStageError
 from custom_components.wattplan.test_plan_invariants import assert_plan_invariants
-import pytest
-
-from homeassistant import config_entries
-from homeassistant.const import (
-    CONF_NAME,
-    STATE_OFF,
-    STATE_ON,
-    STATE_UNAVAILABLE,
-    STATE_UNKNOWN,
-)
-from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResultType
-from homeassistant.exceptions import ServiceValidationError
-from homeassistant.util import dt as dt_util
-
 from tests.common import MockConfigEntry, async_fire_time_changed
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
@@ -289,6 +288,18 @@ async def _setup_entry(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     hass.states.async_set("binary_sensor.comfort_on_off", STATE_OFF)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
+
+
+async def test_setup_resolves_outlook_languages_for_existing_entry(
+    hass: HomeAssistant,
+) -> None:
+    """Entries without language options should fall back from an unsupported default."""
+    hass.config.language = "fr-FR"
+    entry = _entry(title="Language Home", subentries_data=[])
+
+    await _setup_entry(hass, entry)
+
+    assert entry.runtime_data.outlook_languages == ("en",)
 
 
 async def _run_optimize(

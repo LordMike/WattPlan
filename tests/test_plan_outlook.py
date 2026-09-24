@@ -84,6 +84,7 @@ def test_model_is_language_neutral_and_renderer_is_independent() -> None:
     assert rendered["text"]
     assert rendered["language"] == "en"
     assert rendered["report_id"].startswith("grid_price_rise_high_")
+    assert rendered["semantic_id"].startswith("grid_price_rise_high_")
     assert model == build_plan_outlook_model(request=request, result=_result())
 
 
@@ -114,6 +115,7 @@ def test_report_id_changes_with_displayed_semantic_values() -> None:
     )
 
     assert first["report_id"] != second["report_id"]
+    assert first["semantic_id"] != second["semantic_id"]
     assert first["report_id"].startswith("target_shortfall_high_")
     assert second["report_id"].startswith("target_shortfall_high_")
 
@@ -127,6 +129,7 @@ def test_status_report_id_is_stable_while_status_is_unchanged() -> None:
     )
 
     assert first["report_id"] == second["report_id"]
+    assert first["semantic_id"] == second["semantic_id"]
 
 
 def test_negative_price_and_grid_charge_form_a_coherent_story() -> None:
@@ -317,21 +320,48 @@ def test_wording_varies_predictably_across_reporting_periods() -> None:
         pv_configured=False,
     )
     start = request["window"].start_at
+    model = build_plan_outlook_model(request=request, result=_result(), now=start)
+
+    assert model is not None
     reports = [
-        build_plan_outlook(
-            request=request,
-            result=_result(),
+        render_plan_outlook(
+            model,
             now=start + timedelta(hours=hour),
+            variation_seed="fixed-test-seed",
         )
         for hour in (8, 14, 20)
     ]
 
     assert len({report["line_1"] for report in reports}) == 3
     assert len({report["report_id"] for report in reports}) == 3
+    assert len({report["semantic_id"] for report in reports}) == 1
     assert all(
         any(fact.startswith("grid_price_rise:") for fact in report["selected_facts"])
         for report in reports
     )
+
+
+def test_unchanged_semantic_report_reuses_its_existing_wording() -> None:
+    request = _request(prices=[0.1] * 48 + [0.8] * 48)
+    model = build_plan_outlook_model(request=request, result=_result())
+
+    assert model is not None
+    morning = render_plan_outlook(
+        model,
+        now=request["window"].start_at + timedelta(hours=8),
+        variation_seed="fixed-test-seed",
+    )
+    afternoon = render_plan_outlook(
+        model,
+        now=request["window"].start_at + timedelta(hours=14),
+        previous_outlook=morning,
+        variation_seed="different-test-seed",
+    )
+
+    assert afternoon["semantic_id"] == morning["semantic_id"]
+    assert afternoon["_render_variants"] == morning["_render_variants"]
+    assert afternoon["line_1"] == morning["line_1"]
+    assert afternoon["report_id"] == morning["report_id"]
 
 
 def test_midnight_and_dst_coverage_remain_timezone_aware() -> None:
