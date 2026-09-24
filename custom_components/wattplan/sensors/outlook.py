@@ -15,6 +15,11 @@ class PlanOutlookSensor(WattPlanCoordinatorSensor):
     _require_usable_plan = False
     _require_snapshot = False
 
+    def __init__(self, *args: Any, language: str, **kwargs: Any) -> None:
+        """Initialize one language-specific Plan Outlook sensor."""
+        super().__init__(*args, **kwargs)
+        self._language = language
+
     @property
     def native_value(self) -> str:
         """Return a semantic report identifier that changes with report content."""
@@ -49,24 +54,35 @@ class PlanOutlookSensor(WattPlanCoordinatorSensor):
         now = datetime.now(tz=UTC).replace(second=0, microsecond=0)
         if self.coordinator.overall_status.get("has_usable_plan") is False:
             if self.snapshot is None:
-                return build_status_plan_outlook("plan_unavailable", now=now)
+                return build_status_plan_outlook(
+                    "plan_unavailable", now=now, language=self._language
+                )
             expired = "plan_stale" in self.coordinator.overall_status.get(
                 "reason_codes", []
             )
             return build_status_plan_outlook(
-                "plan_expired" if expired else "plan_unusable", now=now
+                "plan_expired" if expired else "plan_unusable",
+                now=now,
+                language=self._language,
             )
         if not self.coordinator.action_recommendations_validated:
-            return build_status_plan_outlook("restored_unvalidated", now=now)
+            return build_status_plan_outlook(
+                "restored_unvalidated", now=now, language=self._language
+            )
         if self.snapshot is None:
-            return build_status_plan_outlook("plan_unavailable", now=now)
+            return build_status_plan_outlook(
+                "plan_unavailable", now=now, language=self._language
+            )
         diagnostics = self.snapshot.diagnostics or {}
         outlook = diagnostics.get("outlook")
         if not isinstance(outlook, dict):
-            return build_status_plan_outlook("plan_unavailable", now=now)
+            return build_status_plan_outlook(
+                "plan_unavailable", now=now, language=self._language
+            )
         return render_stored_plan_outlook(
             outlook,
             now=now,
             source_health=self.coordinator.outlook_source_health,
             plan_failure_status=self.coordinator.outlook_failure_status,
+            language=self._language,
         )

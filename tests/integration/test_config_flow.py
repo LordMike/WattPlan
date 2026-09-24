@@ -914,21 +914,22 @@ async def test_options_outlook_languages_are_advanced_and_optional(
     assert field["selector"]["select"]["multiple"] is True
     assert field["selector"]["select"]["mode"] == "list"
     assert field["selector"]["select"]["options"] == [
+        {"label": "Dansk", "value": "da"},
         {"label": "English", "value": "en"}
     ]
 
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_OUTLOOK_LANGUAGES: ["en"]}
+        result["flow_id"], {CONF_OUTLOOK_LANGUAGES: ["da", "en"]}
     )
     assert result["type"] is FlowResultType.MENU
     updated = hass.config_entries.async_get_entry(entry.entry_id)
     assert updated is not None
-    assert updated.options[CONF_OUTLOOK_LANGUAGES] == ["en"]
+    assert updated.options[CONF_OUTLOOK_LANGUAGES] == ["da", "en"]
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {"next_step_id": "outlook_languages"}
     )
-    assert _schema_default(result, CONF_OUTLOOK_LANGUAGES) == ["en"]
+    assert _schema_default(result, CONF_OUTLOOK_LANGUAGES) == ["da", "en"]
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {CONF_OUTLOOK_LANGUAGES: []}
     )

@@ -302,6 +302,18 @@ async def test_setup_resolves_outlook_languages_for_existing_entry(
     assert entry.runtime_data.outlook_languages == ("en",)
 
 
+async def test_setup_includes_the_normalized_danish_system_language(
+    hass: HomeAssistant,
+) -> None:
+    """The system language is always active, even without language options."""
+    hass.config.language = "da-DK"
+    entry = _entry(title="Language Home", subentries_data=[])
+
+    await _setup_entry(hass, entry)
+
+    assert entry.runtime_data.outlook_languages == ("da",)
+
+
 async def _run_optimize(
     hass: HomeAssistant,
     *,

@@ -101,7 +101,7 @@ def _historical_costs_schema(defaults: dict[str, Any]) -> vol.Schema:
 
 def _outlook_languages_schema(defaults: dict[str, Any]) -> vol.Schema:
     """Build the advanced Plan Outlook language schema."""
-    labels = {"en": "English"}
+    labels = {"da": "Dansk", "en": "English"}
     return vol.Schema(
         {
             vol.Required(

@@ -1,4 +1,4 @@
-"""English rendering for language-neutral Plan Outlook models."""
+"""Localized rendering for language-neutral Plan Outlook models."""
 
 from __future__ import annotations
 
@@ -10,6 +10,15 @@ from typing import Any
 from .plan_outlook_types import OutlookFact, OutlookModel
 
 VALUE_RANK = {"low": 0, "medium": 1, "high": 2}
+DANISH_WEEKDAYS = (
+    "mandag",
+    "tirsdag",
+    "onsdag",
+    "torsdag",
+    "fredag",
+    "lørdag",
+    "søndag",
+)
 
 
 def _time(value: datetime) -> str:
@@ -26,6 +35,14 @@ def _period_label(value: datetime, *, now: datetime) -> str:
     if value.date() == (now + timedelta(days=1)).date():
         return "tomorrow"
     return value.strftime("%A")
+
+
+def _period_label_danish(value: datetime, *, now: datetime) -> str:
+    if value.date() == now.date():
+        return "i dag"
+    if value.date() == (now + timedelta(days=1)).date():
+        return "i morgen"
+    return DANISH_WEEKDAYS[value.weekday()]
 
 
 def _stable_number(seed: str) -> int:
@@ -55,6 +72,17 @@ def _duration_text(minutes: int) -> str:
     return f"{max(1, minutes)} minutes"
 
 
+def _duration_text_danish(minutes: int) -> str:
+    minutes = max(1, minutes)
+    if minutes >= 120:
+        return f"{minutes // 60} timer"
+    if minutes >= 60:
+        return "en time"
+    if minutes == 1:
+        return "1 minut"
+    return f"{minutes} minutter"
+
+
 def _phrase_variant(
     fact: OutlookFact,
     *,
@@ -62,6 +90,7 @@ def _phrase_variant(
     now: datetime,
     option_count: int,
     variation_seed: str,
+    language: str,
 ) -> int:
     """Choose wording only after the semantic report model is complete."""
     local_hour = (
@@ -73,7 +102,7 @@ def _phrase_variant(
     period_offset = {"morning": 0, "afternoon": 1, "evening": 2}[period]
     seed = (
         f"{model.seed_prefix}:{now.date().isoformat()}:{fact.fact_id}:"
-        f"{variation_seed}:english"
+        f"{variation_seed}:{language}"
     )
     return (_stable_number(seed) + period_offset) % option_count
 
@@ -119,6 +148,7 @@ def render_fact_english(
                 now=now,
                 option_count=len(variants),
                 variation_seed=variation_seed,
+                language="en",
             )
         )
         return variants[variant], variant
@@ -312,6 +342,248 @@ def render_fact_english(
     return kind.replace("_", " ").capitalize() + ".", 0
 
 
+def render_fact_danish(
+    fact: OutlookFact,
+    *,
+    model: OutlookModel,
+    now: datetime,
+    variation_seed: str,
+    forced_variant: int | None = None,
+) -> tuple[str, int]:
+    """Render one fact in Danish and return its deterministic wording variant."""
+    values = _values(fact)
+    kind = fact.kind
+
+    variants: tuple[str, ...] | None = None
+    if kind == "grid_price_rise":
+        variants = (
+            "Elpriserne stiger senere i perioden.",
+            "Elpriserne tager til senere i perioden.",
+            "Højere elpriser kommer senere i perioden.",
+        )
+    elif kind == "grid_price_fall":
+        variants = (
+            "Elpriserne falder senere i perioden.",
+            "Elpriserne aftager senere i perioden.",
+            "Lavere elpriser kommer senere i perioden.",
+        )
+    elif kind == "limited_grid_use":
+        variants = (
+            "Der forventes kun lidt netforbrug i perioden.",
+            "Netforbruget forventes at forblive begrænset i perioden.",
+            "Kun begrænset netforbrug forventes i perioden.",
+        )
+    if variants is not None:
+        variant = (
+            forced_variant % len(variants)
+            if forced_variant is not None
+            else _phrase_variant(
+                fact,
+                model=model,
+                now=now,
+                option_count=len(variants),
+                variation_seed=variation_seed,
+                language="da",
+            )
+        )
+        return variants[variant], variant
+
+    if kind == "flat_grid_prices":
+        covered_from = max(fact.start, now)
+        if covered_from.date() == now.date() and fact.start < now:
+            label = "resten af dagen"
+        else:
+            label = _period_label_danish(covered_from, now=now)
+        return f"Elpriserne holder sig nogenlunde stabile {label}.", 0
+    if kind == "negative_grid_price":
+        return f"Elpriserne falder under nul kl. {_range_text(fact.start, fact.end)}.", 0
+    if kind == "cheaper_grid_prices":
+        return (
+            (
+                f"En periode med lavere elpriser forventes kl. "
+                f"{_range_text(fact.start, fact.end)}."
+            ),
+            0,
+        )
+    if kind == "grid_price_swing":
+        turn_at = _value_time(values, "turn_at", fact.start)
+        if values.get("direction") == "ease_then_rise":
+            return f"Elpriserne falder omkring kl. {_time(turn_at)} og stiger senere.", 0
+        return f"Elpriserne stiger omkring kl. {_time(turn_at)} og falder senere.", 0
+    if kind == "solar_surplus":
+        peak_at = _value_time(values, "peak_at", fact.start)
+        return (
+            (
+                f"Solproduktionen stiger mod {_time(peak_at)}, med overskud forventet "
+                f"{_range_text(fact.start, fact.end)}."
+            ),
+            0,
+        )
+    if kind == "solar_modest":
+        peak_at = _value_time(values, "peak_at", fact.start)
+        return (
+            (
+                f"Solproduktionen stiger svagt mod {_time(peak_at)} og forbliver under "
+                "det forventede forbrug."
+            ),
+            0,
+        )
+    if kind == "solar_fading":
+        return f"Solproduktionen aftager fra omkring {_time(fact.start)}.", 0
+    if kind == "low_reserve":
+        return f"Reserven i {fact.subject} er tæt på minimum.", 0
+    if kind == "grid_charge":
+        return (
+            (
+                f"Opladning fra elnettet er planlagt kl. "
+                f"{_range_text(fact.start, fact.end)}."
+            ),
+            0,
+        )
+    if kind == "battery_preserve":
+        return (
+            (
+                f"Energien i {fact.subject} bevares efter planen kl. "
+                f"{_range_text(fact.start, fact.end)}."
+            ),
+            0,
+        )
+    if kind == "battery_self_consume":
+        return f"{fact.subject} bruges til eget forbrug det meste af perioden.", 0
+    if kind == "battery_full":
+        return f"{fact.subject} forventes fuldt opladet kl. {_time(fact.start)}.", 0
+    if kind == "target_shortfall":
+        expected = values.get("expected_percent")
+        requested = values.get("requested_percent")
+        if isinstance(expected, int | float) and isinstance(requested, int | float):
+            return (
+                (
+                    f"{fact.subject} forventes at være på {expected:.0f}% kl. "
+                    f"{_time(fact.start)}, under de ønskede {requested:.0f}%."
+                ),
+                0,
+            )
+        return f"{fact.subject} når ikke målet kl. {_time(fact.start)}.", 0
+    if kind == "target_reached":
+        requested = values.get("requested_percent")
+        if isinstance(requested, int | float):
+            return (
+                (
+                    f"Reserven i {fact.subject} forventes at nå {requested:.0f}% kl. "
+                    f"{_time(fact.start)}."
+                ),
+                0,
+            )
+        return f"{fact.subject} forventes at nå sit mål kl. {_time(fact.start)}.", 0
+    if kind == "comfort_timing":
+        return (
+            (
+                f"{fact.subject} er planlagt {_range_text(fact.start, fact.end)} og "
+                "overlapper den forventede solproduktion."
+            ),
+            0,
+        )
+    if kind == "optional_start":
+        alternative = values.get("alternative_at")
+        if isinstance(alternative, str):
+            try:
+                alternative_at = datetime.fromisoformat(alternative)
+            except ValueError:
+                alternative_at = None
+            if alternative_at is not None:
+                return (
+                    (
+                        f"Det foretrukne starttidspunkt for {fact.subject} er "
+                        f"{_time(fact.start)}; et alternativ er {_time(alternative_at)}."
+                    ),
+                    0,
+                )
+        return (
+            (
+                f"Et fordelagtigt starttidspunkt for {fact.subject} er "
+                f"{_time(fact.start)}."
+            ),
+            0,
+        )
+    if kind == "grid_export":
+        return (
+            (
+                f"Overskud forventes sendt til nettet "
+                f"{_range_text(fact.start, fact.end)}."
+            ),
+            0,
+        )
+    if kind == "heavy_grid_use":
+        return "Der forventes stort netforbrug i perioden.", 0
+    if kind == "charging_dominates_imports":
+        return "Det meste netforbrug forventes under batteriopladning.", 0
+    if kind == "grid_use_increase":
+        return "Netforbruget forventes at stige senere i perioden.", 0
+    if kind == "grid_use_decrease":
+        return "Netforbruget forventes at falde senere i perioden.", 0
+    if kind == "source_problem":
+        elapsed = _duration_text_danish(int(values.get("elapsed_minutes", 1) or 1))
+        if fact.subject.endswith("pv"):
+            if values.get("stale") is True:
+                return (
+                    (
+                        f"Solopdateringer er fortsat forsinket i {elapsed}; perioden "
+                        "bruger den tidligere prognose."
+                    ),
+                    0,
+                )
+            return (
+                (
+                    f"Solprognoser har manglet i {elapsed}, så planen regner foreløbig "
+                    "ikke med solbidrag."
+                ),
+                0,
+            )
+        source_labels = {
+            "source_import_price": "importprisen",
+            "source_export_price": "eksportprisen",
+            "source_usage": "forbrugsprognosen",
+        }
+        label = source_labels.get(
+            fact.subject,
+            fact.subject.removeprefix("source_").replace("_", " "),
+        )
+        return f"Opdateringer til {label} har været utilgængelige i {elapsed}.", 0
+    if kind == "plan_refresh_failure":
+        elapsed = _duration_text_danish(int(values.get("elapsed_minutes", 1) or 1))
+        return (
+            (
+                f"Ingen ny plan i {elapsed}; den seneste gyldige tidsplan dækker stadig "
+                "den aktuelle periode."
+            ),
+            0,
+        )
+    if kind == "plan_unavailable":
+        return (
+            "Planlægning er ikke tilgængelig i øjeblikket; ingen plan er godkendt.",
+            0,
+        )
+    if kind == "plan_unusable":
+        return "Planlægningen er afbrudt; den gemte tidsplan kan ikke bruges nu.", 0
+    if kind == "plan_expired":
+        return "Planlægningen er fortsat afbrudt; den tidligere tidsplan er udløbet.", 0
+    if kind == "restored_unvalidated":
+        return "En ny plan afventes stadig efter genstart.", 0
+    if kind == "recommendations_unavailable":
+        return "Der er ingen aktuelle anbefalinger til opladning eller apparater.", 0
+    if kind == "stored_recommendations_unvalidated":
+        return (
+            (
+                "Gemte forslag til opladning og apparater er endnu ikke tilgængelige "
+                "som aktuelle anbefalinger."
+            ),
+            0,
+        )
+    if kind == "quiet":
+        return "Ingen væsentlig planændring forventes i den resterende periode.", 0
+    return kind.replace("_", " ").capitalize() + ".", 0
+
+
 def _semantic_fact_payload(fact: OutlookFact) -> dict[str, Any]:
     """Return only values that define the meaning of the rendered statement."""
     payload: dict[str, Any] = {
@@ -346,9 +618,7 @@ def _semantic_fact_payload(fact: OutlookFact) -> dict[str, Any]:
     return payload
 
 
-def _semantic_id(
-    selected: tuple[OutlookFact, ...], *, information_value: str
-) -> str:
+def _semantic_id(selected: tuple[OutlookFact, ...], *, information_value: str) -> str:
     payload = [_semantic_fact_payload(fact) for fact in selected]
     digest = hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -360,6 +630,7 @@ def render_plan_outlook(
     model: OutlookModel,
     *,
     now: datetime,
+    language: str = "en",
     previous_outlook: dict[str, Any] | None = None,
     variation_seed: str | None = None,
 ) -> dict[str, Any]:
@@ -368,6 +639,7 @@ def render_plan_outlook(
     if not selected:
         return {}
 
+    language = language if language in {"en", "da"} else "en"
     information_value = max(
         (fact.information_value for fact in selected), key=VALUE_RANK.__getitem__
     )
@@ -376,6 +648,7 @@ def render_plan_outlook(
     if (
         isinstance(previous_outlook, dict)
         and previous_outlook.get("semantic_id") == semantic_id
+        and previous_outlook.get("language") == language
         and isinstance(previous_outlook.get("_render_variants"), dict)
     ):
         previous_variants = previous_outlook["_render_variants"]
@@ -383,9 +656,10 @@ def render_plan_outlook(
     rendered: list[str] = []
     variants: dict[str, int] = {}
     effective_seed = variation_seed or semantic_id
+    render_fact = render_fact_danish if language == "da" else render_fact_english
     for fact in selected:
         previous_variant = previous_variants.get(fact.fact_id)
-        text, variant = render_fact_english(
+        text, variant = render_fact(
             fact,
             model=model,
             now=now,
@@ -404,6 +678,7 @@ def render_plan_outlook(
         max(selected, key=lambda fact: VALUE_RANK[fact.information_value]),
     )
     report_payload = {
+        "language": language,
         "facts": [
             {
                 "id": fact.fact_id,
@@ -431,7 +706,7 @@ def render_plan_outlook(
         "line_1": line_1,
         "line_2": line_2,
         "text": " ".join(rendered),
-        "language": "en",
+        "language": language,
         "information_value": information_value,
         "topic": topic_fact.topic,
         "selected_facts": [fact.fact_id for fact in selected],

@@ -40,8 +40,9 @@ Keep all outlook modeling, selection, and prose outside optimizer/. Current layo
   bounded persistence serialization.
 - plan_outlook.py: extraction, grouping, significance, selection, status-model
   construction, and retained-model refresh. It must not contain rendered prose.
-- plan_outlook_renderer.py: English wording, time formatting, deterministic
-  phrase variants, and semantic report identifiers.
+- plan_outlook_renderer.py and its language modules: English and Danish wording,
+  language-specific time and duration text, deterministic phrase variants, and
+  semantic/report identifiers.
 - coordinator_logic/projection.py: capture input/result-derived facts while both
   are available. Supply source configuration/health provenance explicitly.
 - coordinator/snapshot lifecycle: retain bounded, versioned outlook data and
@@ -156,12 +157,15 @@ apply an availability gate that prevents the failure message being displayed.
 
 ## Entity contract
 
-One entry-level Plan Outlook sensor is sufficient initially. Use a rendered
+Create one entry-level Plan Outlook sensor per resolved language. Entity IDs are
+always suffixed, for example `sensor.home_plan_outlook_da` and
+`sensor.home_plan_outlook_en`; no unsuffixed entity is created. Use a rendered
 report identifier as state, with complete prose in attributes. The identifier is
 `<main-kind>_<information-value>_<digest>` and changes whenever the selected
-semantic report or its chosen wording variant changes. Expose the independent
-`semantic_id` attribute used to retain wording across equivalent reports. Do not
-put the prose in state or switch state shape according to prose length.
+semantic report or that language's chosen wording variant changes. Expose the
+independent `semantic_id` attribute used to retain wording across equivalent
+reports. Do not put prose in state or switch state shape according to prose
+length.
 
 - report_id, semantic_id, headline, line_1, line_2, text, language (second line may be empty)
 - information_value: low | medium | high
@@ -172,13 +176,13 @@ put the prose in state or switch state shape according to prose length.
 Resolve Plan Outlook languages when the config entry loads. Start with the Home
 Assistant system language, add any selections from the advanced options flow,
 discard languages without an implemented renderer, and fall back to English if
-none remain. The initial setup flow must not ask for language preferences. Only
-the English renderer is implemented currently.
+none remain. The initial setup flow must not ask for language preferences.
+English and Danish renderers are supported.
 
 Reliability and information value must remain distinct. Keep attributes compact;
-do not duplicate full input arrays. No companion entity is required initially.
-Use existing HA translation conventions where practical; isolate phrase keys and
-placeholders so wording is not tangled with predicates. English first is acceptable.
+do not duplicate full input arrays. Keep phrase keys and placeholders isolated so
+wording is not tangled with predicates. Full Danish translation of the integration
+configuration UI is outside the Plan Outlook renderer scope.
 
 ## Implementation sequence
 

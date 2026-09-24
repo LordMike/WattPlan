@@ -34,6 +34,7 @@ from custom_components.wattplan.const import (
     CONF_MIN_OPTION_GAP_MINUTES,
     CONF_MINIMUM_KWH,
     CONF_ON_OFF_SOURCE,
+    CONF_OUTLOOK_LANGUAGES,
     CONF_OPTIONS_COUNT,
     CONF_PLANNING_ENABLED,
     CONF_PROVIDERS,
@@ -487,6 +488,7 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
     price_template = "{{ [0.2, 0.25, 0.3, 0.35] }}"
     usage_template = "{{ [1.0, 1.1, 1.0, 0.9] }}"
     pv_template = "{{ [0.0, 0.2, 0.3, 0.1] }}"
+    hass.config.language = "da-DK"
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Home",
@@ -512,6 +514,7 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
         options={
             CONF_PLANNING_ENABLED: False,
             CONF_ACTION_EMISSION_ENABLED: False,
+            CONF_OUTLOOK_LANGUAGES: ["en"],
         },
         subentries_data=[
             config_entries.ConfigSubentryData(
@@ -588,18 +591,20 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
     assert last_run_after_refresh.state == last_run_after_plan.state
 
     _assert_valid_state(hass, "sensor.home_status")
-    _assert_valid_state(hass, "sensor.home_plan_outlook")
+    _assert_valid_state(hass, "sensor.home_plan_outlook_da")
+    _assert_valid_state(hass, "sensor.home_plan_outlook_en")
     _assert_valid_state(hass, "sensor.home_last_run")
     _assert_valid_state(hass, "sensor.home_battery_action")
     _assert_valid_state(hass, "sensor.home_comfort_action")
     _assert_valid_state(hass, "sensor.home_optional_next_start_option")
     _assert_valid_state(hass, "sensor.home_optional_option_1_start")
-    outlook = hass.states.get("sensor.home_plan_outlook")
+    outlook = hass.states.get("sensor.home_plan_outlook_en")
     assert outlook is not None
     assert len(outlook.state) <= 255
     assert outlook.state == outlook.attributes["report_id"]
     assert outlook.state.count("_") >= 3
     assert outlook.attributes["text"]
+    assert outlook.attributes["language"] == "en"
     assert outlook.attributes["information_value"] in {"low", "medium", "high"}
     assert outlook.attributes["topic"] in {
         "routine",
@@ -609,8 +614,18 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
         "energy_balance",
         "reliability",
     }
-
+    danish_outlook = hass.states.get("sensor.home_plan_outlook_da")
+    assert danish_outlook is not None
+    assert danish_outlook.attributes["language"] == "da"
     entity_registry = er.async_get(hass)
+    assert entity_registry.async_get("sensor.home_plan_outlook") is None
+    danish_entry = entity_registry.async_get("sensor.home_plan_outlook_da")
+    english_entry = entity_registry.async_get("sensor.home_plan_outlook_en")
+    assert danish_entry is not None
+    assert english_entry is not None
+    assert danish_entry.unique_id.endswith(":plan_outlook:da")
+    assert english_entry.unique_id.endswith(":plan_outlook:en")
+
     for entity_id in (
         "sensor.home_projected_cost_savings",
         "sensor.home_projected_savings_percentage",
@@ -2372,7 +2387,7 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
     assert status.attributes["scheduler_stale"] is False
     assert status.attributes["action_recommendations_validated"] is False
     assert status.attributes["has_usable_plan"] is True
-    restored_outlook = hass.states.get("sensor.home_plan_outlook")
+    restored_outlook = hass.states.get("sensor.home_plan_outlook_en")
     assert restored_outlook is not None
     assert restored_outlook.state.startswith("restored_unvalidated_medium_")
     assert "restored_unvalidated:plan" in restored_outlook.attributes[
@@ -2425,7 +2440,7 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
         assert status.attributes["reason_codes"] == ["plan_stale"]
         assert status.attributes["scheduler_stale"] is False
         assert status.attributes["has_usable_plan"] is False
-        expired_outlook = hass.states.get("sensor.home_plan_outlook")
+        expired_outlook = hass.states.get("sensor.home_plan_outlook_en")
         assert expired_outlook is not None
         assert expired_outlook.state.startswith("plan_expired_high_")
         assert "plan_expired:plan" in expired_outlook.attributes["selected_facts"]
@@ -2803,7 +2818,7 @@ async def test_retained_plan_expires_and_plan_entities_become_unavailable(
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
 
-    unusable_outlook = hass.states.get("sensor.home_plan_outlook")
+    unusable_outlook = hass.states.get("sensor.home_plan_outlook_en")
     assert unusable_outlook is not None
     assert unusable_outlook.state.startswith("plan_unusable_high_")
     assert "plan_unusable:plan" in unusable_outlook.attributes["selected_facts"]

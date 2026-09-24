@@ -25,7 +25,6 @@ class SensorSpec:
 ENTRY_SENSOR_SPECS: tuple[SensorSpec, ...] = (
     SensorSpec("status", object),
     SensorSpec("status_message", object),
-    SensorSpec("plan_outlook", object),
     SensorSpec("import_price_status", object, {"source_key": CONF_SOURCE_IMPORT_PRICE}),
     SensorSpec("last_run", object),
     SensorSpec("next_run", object),

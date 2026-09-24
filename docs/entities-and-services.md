@@ -17,7 +17,7 @@ These exist once per WattPlan setup:
 | --- | --- |
 | `sensor.<setup_slug>_status` | Current integration health: `ok`, `degraded`, or `failed`. Includes attributes such as `reason_codes`, `affected_sources`, `is_stale`, `scheduler_stale`, `has_usable_plan`, and `action_recommendations_validated`. |
 | `sensor.<setup_slug>_status_message` | Human-readable summary of the current integration health. |
-| `sensor.<setup_slug>_plan_outlook` | A concise local forecast from accepted planner inputs and the accepted schedule. Its state is a report identifier such as `battery_high_7c91e2a4`; it changes when the visible report content changes and remains safely below Home Assistant's state-length limit. `semantic_id` identifies the language-neutral report meaning so unchanged reports retain their existing phrase choices. `headline`, `line_1`, `line_2`, and `text` contain the English prose, while `report_id`, `language`, `information_value`, `topic`, selected facts, basis, and coverage timestamps explain its significance. It describes planned recommendations, not confirmed device execution. Reliability is separate from information value: a useful energy story can remain alongside a qualified source warning. Restored recommendations are withheld until a fresh plan validates them. |
+| `sensor.<setup_slug>_plan_outlook_<language>` | One concise local forecast per configured language, currently `_da` and `_en`. Its state is a language-specific report identifier such as `battery_high_7c91e2a4`; it changes when that visible report changes and remains safely below Home Assistant's state-length limit. `semantic_id` identifies the shared language-neutral meaning so unchanged reports retain their existing phrase choices independently in each language. `headline`, `line_1`, `line_2`, and `text` contain the prose, while `report_id`, `language`, `information_value`, `topic`, selected facts, basis, and coverage timestamps explain its significance. It describes planned recommendations, not confirmed device execution. Reliability is separate from information value: a useful energy story can remain alongside a qualified source warning. Restored recommendations are withheld until a fresh plan validates them. |
 | `sensor.<setup_slug>_import_price_status` | Import price source health: `ok`, `degraded`, or `failed`. |
 | `sensor.<setup_slug>_usage_status` | Present when usage is configured. Usage source health: `ok`, `degraded`, or `failed`. |
 | `sensor.<setup_slug>_export_price_status` | Present when export price is configured. Export price source health: `ok`, `degraded`, or `failed`. |
@@ -31,8 +31,9 @@ These exist once per WattPlan setup:
 
 Plan Outlook uses the Home Assistant system language by default. Additional
 languages can be selected from the integration's advanced options; the system
-language is always included. Unsupported selections fall back to English. The
-current renderer produces English reports only.
+language is always included. Unsupported selections fall back to English. Every
+enabled language is exposed as its own always-suffixed entity; there is no
+unsuffixed Plan Outlook entity.
 
 When `sensor.<setup_slug>_status` is `failed`, plan-dependent entities such as action sensors, plan details, and usage forecast become unavailable rather than continuing to expose stale plan data.
 

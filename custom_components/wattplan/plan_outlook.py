@@ -828,12 +828,42 @@ def build_status_plan_outlook(
     *,
     now: datetime,
     horizon_end: datetime | None = None,
+    language: str = "en",
 ) -> dict[str, Any]:
     """Build and render a plan availability report."""
     model = _status_model(kind, now=now, horizon_end=horizon_end)
-    rendered = render_plan_outlook(model, now=now)
+    rendered = _render_outlook(model, now=now, language=language)
     rendered["_model"] = model_to_dict(model)
     return rendered
+
+
+def _render_outlook(
+    model: OutlookModel,
+    *,
+    now: datetime,
+    language: str,
+    previous_outlook: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Render one selected model in the requested language."""
+    rendered = render_plan_outlook(
+        model,
+        now=now,
+        language=language,
+        previous_outlook=previous_outlook,
+    )
+    return rendered
+
+
+def _previous_rendering(
+    outlook: dict[str, Any], language: str
+) -> dict[str, Any] | None:
+    """Return the retained rendering for one language, including old English data."""
+    renderings = outlook.get("_renderings")
+    if isinstance(renderings, dict) and isinstance(renderings.get(language), dict):
+        return renderings[language]
+    if language == "en":
+        return outlook
+    return None
 
 
 def render_stored_plan_outlook(
@@ -842,11 +872,12 @@ def render_stored_plan_outlook(
     now: datetime,
     source_health: dict[str, dict[str, Any]] | None = None,
     plan_failure_status: dict[str, Any] | None = None,
+    language: str = "en",
 ) -> dict[str, Any]:
     """Re-select and render a retained semantic model against current status."""
     raw_model = outlook.get("_model")
     if not isinstance(raw_model, dict) or (model := model_from_dict(raw_model)) is None:
-        return build_status_plan_outlook("plan_unavailable", now=now)
+        return build_status_plan_outlook("plan_unavailable", now=now, language=language)
     start = model.start
     horizon_end = model.horizon_end
     if now.tzinfo is None:
@@ -897,10 +928,11 @@ def render_stored_plan_outlook(
         plan_created_at=model.plan_created_at,
         previous=model,
     )
-    rendered = render_plan_outlook(
+    rendered = _render_outlook(
         current_model,
         now=now,
-        previous_outlook=outlook,
+        language=language,
+        previous_outlook=_previous_rendering(outlook, language),
     )
     rendered["_model"] = model_to_dict(current_model)
     return rendered
@@ -1015,8 +1047,9 @@ def build_plan_outlook(
     plan_validated: bool = True,
     now: datetime | None = None,
     previous_outlook: dict[str, Any] | None = None,
+    languages: tuple[str, ...] = ("en",),
 ) -> dict[str, Any]:
-    """Build and render the current English Plan Outlook."""
+    """Build one semantic model and render it in each active language."""
     model = build_plan_outlook_model(
         request=request,
         result=result,
@@ -1032,10 +1065,21 @@ def build_plan_outlook(
         render_at = render_at.replace(tzinfo=model.start.tzinfo or UTC)
     elif model.start.tzinfo is not None:
         render_at = render_at.astimezone(model.start.tzinfo)
-    rendered = render_plan_outlook(
-        model,
-        now=render_at,
-        previous_outlook=previous_outlook,
-    )
+    renderings: dict[str, dict[str, Any]] = {}
+    for language in languages:
+        renderings[language] = _render_outlook(
+            model,
+            now=render_at,
+            language=language,
+            previous_outlook=(
+                _previous_rendering(previous_outlook, language)
+                if isinstance(previous_outlook, dict)
+                else None
+            ),
+        )
+    if not renderings:
+        return {}
+    rendered = dict(next(iter(renderings.values())))
     rendered["_model"] = model_to_dict(model)
+    rendered["_renderings"] = renderings
     return rendered

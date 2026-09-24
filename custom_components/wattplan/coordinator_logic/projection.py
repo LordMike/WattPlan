@@ -32,9 +32,16 @@ def _duration_ms(started_at: float) -> int:
 class PlannerProjectionBuilder:
     """Project optimizer output into coordinator-facing diagnostics and snapshots."""
 
-    def __init__(self, hass: HomeAssistant, *, entry_id: str) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        *,
+        entry_id: str,
+        outlook_languages: tuple[str, ...] = ("en",),
+    ) -> None:
         self._hass = hass
         self._entry_id = entry_id
+        self._outlook_languages = outlook_languages
 
     def planner_output_from_result(
         self,
@@ -172,6 +179,7 @@ class PlannerProjectionBuilder:
                 result=result,
                 source_health=source_health,
                 previous_outlook=previous_outlook,
+                languages=self._outlook_languages,
                 now=datetime.now(tz=UTC),
             )
         except Exception:  # Outlook must never invalidate a usable accepted plan.

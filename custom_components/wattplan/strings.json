@@ -745,7 +745,7 @@
       },
       "outlook_languages": {
         "title": "Plan Outlook languages",
-        "description": "Select additional languages for Plan Outlook reports. Your Home Assistant system language is always included. Leave this empty to use only the system language. If none of the requested languages are supported, WattPlan uses English. Plan Outlook currently supports English only.",
+        "description": "Select additional languages for Plan Outlook reports. Your Home Assistant system language is always included. Leave this empty to use only the system language. If none of the requested languages are supported, WattPlan uses English. Plan Outlook supports Danish and English.",
         "data": {
           "outlook_languages": "Additional languages"
         },

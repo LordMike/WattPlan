@@ -81,6 +81,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         update_interval: timedelta,
         planning_enabled: bool,
         action_emission_enabled: bool,
+        outlook_languages: tuple[str, ...] = ("en",),
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
@@ -128,7 +129,9 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             schema_id=self._snapshot_schema_id,
             logger=_LOGGER,
         )
-        self._projection = PlannerProjectionBuilder(hass, entry_id=entry_id)
+        self._projection = PlannerProjectionBuilder(
+            hass, entry_id=entry_id, outlook_languages=outlook_languages
+        )
         self._planning = PlanningRequestBuilder(
             hass,
             source_providers=self._source_providers,

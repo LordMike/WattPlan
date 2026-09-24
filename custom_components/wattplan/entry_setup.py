@@ -63,20 +63,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) -> 
         domain_data[DATA_SERVICE_REGISTERED] = True
     domain_data[DATA_ENTRY_COUNT] = int(domain_data.get(DATA_ENTRY_COUNT, 0)) + 1
 
+    outlook_languages = resolve_outlook_languages(
+        entry.options.get(CONF_OUTLOOK_LANGUAGES, []),
+        hass.config.language,
+    )
     coordinator = WattPlanCoordinator(
         hass,
         entry_id=entry.entry_id,
         update_interval=timedelta(minutes=int(entry.data[CONF_SLOT_MINUTES])),
         planning_enabled=bool(entry.options.get(CONF_PLANNING_ENABLED, True)),
         action_emission_enabled=bool(entry.options.get(CONF_ACTION_EMISSION_ENABLED, True)),
+        outlook_languages=outlook_languages,
     )
     entry.runtime_data = WattPlanRuntimeData(
         coordinator=coordinator,
         last_run_at=datetime.now(tz=UTC),
-        outlook_languages=resolve_outlook_languages(
-            entry.options.get(CONF_OUTLOOK_LANGUAGES, []),
-            hass.config.language,
-        ),
+        outlook_languages=outlook_languages,
     )
     if bool(entry.options.get(CONF_HISTORICAL_COST_TRACKING_ENABLED, False)):
         tracker = HistoricalCostTracker(
