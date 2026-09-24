@@ -17,6 +17,7 @@ These exist once per WattPlan setup:
 | --- | --- |
 | `sensor.<setup_slug>_status` | Current integration health: `ok`, `degraded`, or `failed`. Includes attributes such as `reason_codes`, `affected_sources`, `is_stale`, `scheduler_stale`, `has_usable_plan`, and `action_recommendations_validated`. |
 | `sensor.<setup_slug>_status_message` | Human-readable summary of the current integration health. |
+| `sensor.<setup_slug>_plan_outlook` | A concise local forecast from accepted planner inputs and the accepted schedule. Its state is a semantic report identifier such as `battery_high_7c91e2a4`; it changes when the visible report content changes and remains safely below Home Assistant's state-length limit. `headline`, `line_1`, `line_2`, and `text` contain the English prose, while `report_id`, `language`, `information_value`, `topic`, selected facts, basis, and coverage timestamps explain its significance. It describes planned recommendations, not confirmed device execution. Reliability is separate from information value: a useful energy story can remain alongside a qualified source warning. Restored recommendations are withheld until a fresh plan validates them. |
 | `sensor.<setup_slug>_import_price_status` | Import price source health: `ok`, `degraded`, or `failed`. |
 | `sensor.<setup_slug>_usage_status` | Present when usage is configured. Usage source health: `ok`, `degraded`, or `failed`. |
 | `sensor.<setup_slug>_export_price_status` | Present when export price is configured. Export price source health: `ok`, `degraded`, or `failed`. |

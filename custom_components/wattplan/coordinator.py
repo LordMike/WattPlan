@@ -101,6 +101,8 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         self._last_run_timings: list[TimingEntry] | None = None
         self._next_refresh_at: datetime | None = None
         self._action_recommendations_validated = False
+        self._plan_failure_slots: list[str] = []
+        self._plan_failure_started_at: datetime | None = None
 
         self._plan_error = StageErrorState()
         self._emit_error = StageErrorState()
@@ -176,6 +178,20 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
     def source_status(self, source_key: str) -> dict[str, Any] | None:
         """Return current source health payload for one source."""
         return self._source_status.source_status(source_key)
+
+    @property
+    def outlook_source_health(self) -> dict[str, dict[str, Any]]:
+        """Return current source health for time-sensitive outlook rendering."""
+        return self._source_status.source_health_diagnostics()
+
+    @property
+    def outlook_failure_status(self) -> dict[str, Any]:
+        """Return bounded distinct-slot planning failure state for outlook prose."""
+        return {
+            "slot_count": len(self._plan_failure_slots),
+            "started_at": self._plan_failure_started_at,
+            "has_retained_plan": self._snapshot is not None and self.has_usable_plan,
+        }
 
     @property
     def last_attempt_at(self) -> datetime | None:
@@ -660,10 +676,17 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         timings: list[TimingEntry],
     ) -> dict[str, Any]:
         """Map poweroptim output to coordinator planner output shape."""
+        previous_outlook = None
+        if self._snapshot is not None and isinstance(self._snapshot.diagnostics, dict):
+            candidate = self._snapshot.diagnostics.get("outlook")
+            if isinstance(candidate, dict):
+                previous_outlook = candidate
         return self._projection.planner_output_from_result(
             request,
             result,
             timings=timings,
+            source_health=self._source_status.source_health_diagnostics(),
+            previous_outlook=previous_outlook,
         )
 
     def _project_snapshot(self, planner_output: dict[str, Any]) -> CoordinatorSnapshot:
@@ -703,6 +726,16 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         state.at = datetime.now(tz=UTC)
         state.details = details
         state.consecutive_failures += 1
+        if stage is Stage.PLAN:
+            now = datetime.now(tz=UTC)
+            interval_seconds = max(60, int(self._base_update_interval.total_seconds()))
+            slot_timestamp = int(now.timestamp()) // interval_seconds * interval_seconds
+            slot = datetime.fromtimestamp(slot_timestamp, tz=UTC).isoformat()
+            if slot not in self._plan_failure_slots:
+                self._plan_failure_slots.append(slot)
+                del self._plan_failure_slots[:-16]
+            if self._plan_failure_started_at is None:
+                self._plan_failure_started_at = now
 
     def _clear_stage_error(self, stage: Stage) -> None:
         """Clear stage error details after a successful run."""
@@ -713,6 +746,9 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         state.at = None
         state.details = None
         state.consecutive_failures = 0
+        if stage is Stage.PLAN:
+            self._plan_failure_slots = []
+            self._plan_failure_started_at = None
 
     def _stage_state(self, stage: Stage) -> StageErrorState:
         """Return mutable stage state for a coordinator stage."""

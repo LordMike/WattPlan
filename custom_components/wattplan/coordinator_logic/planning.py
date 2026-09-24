@@ -152,11 +152,12 @@ class PlanningRequestBuilder:
 
         timings: list[TimingEntry] = []
 
+        import_price_source = sources.get(CONF_SOURCE_IMPORT_PRICE, {})
         started_at = time.monotonic()
         price_values = await self._async_resolve_source(
             entry=entry,
             source_key=CONF_SOURCE_IMPORT_PRICE,
-            source_config=sources.get(CONF_SOURCE_IMPORT_PRICE, {}),
+            source_config=import_price_source,
             window=window,
         )
         timings.append(("Import price source fetch", _duration_ms(started_at)))
@@ -382,6 +383,27 @@ class PlanningRequestBuilder:
                 "slot_minutes": slot_minutes,
                 "hours_to_plan": hours_to_plan,
                 "window": window,
+                "local_timezone": self._hass.config.time_zone,
+                "source_provenance": {
+                    "import_price": {
+                        "configured": import_price_source.get(CONF_SOURCE_MODE)
+                        != SOURCE_MODE_NOT_USED,
+                    },
+                    "export_price": {
+                        "configured": export_price_source is not None
+                        and export_price_source.get(CONF_SOURCE_MODE)
+                        != SOURCE_MODE_NOT_USED,
+                    },
+                    "usage": {
+                        "configured": usage_source is not None
+                        and usage_source.get(CONF_SOURCE_MODE)
+                        != SOURCE_MODE_NOT_USED,
+                    },
+                    "pv": {
+                        "configured": pv_source is not None
+                        and pv_source.get(CONF_SOURCE_MODE) != SOURCE_MODE_NOT_USED,
+                    },
+                },
                 "optimizer_params": {
                     "plan_start": window.start_at.isoformat(),
                     "slot_minutes": slot_minutes,
@@ -464,6 +486,7 @@ class PlanningRequestBuilder:
                 source_key=source_key,
                 source_config=source_config,
                 provider=provider,
+                slot_minutes=window.slot_minutes,
             )
         except SourceProviderError as err:
             self._record_source_issue(
@@ -471,6 +494,7 @@ class PlanningRequestBuilder:
                 source_key=source_key,
                 source_config=source_config,
                 provider=self._source_provider(source_key, source_config),
+                slot_minutes=window.slot_minutes,
             )
             raise PlanningStageError(
                 self._source_kind_from_error_code(err.code),

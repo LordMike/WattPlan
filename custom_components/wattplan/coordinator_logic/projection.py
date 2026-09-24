@@ -12,6 +12,7 @@ from homeassistant.util import slugify
 
 from ..const import DOMAIN
 from ..coordinator_parts import CoordinatorSnapshot, TimingEntry
+from ..plan_outlook import build_plan_outlook
 from .planning import (
     BATTERY_SKIP_AVAILABILITY_UNAVAILABLE,
     BATTERY_SKIP_SOC_UNAVAILABLE,
@@ -41,6 +42,8 @@ class PlannerProjectionBuilder:
         result: dict[str, Any],
         *,
         timings: list[TimingEntry],
+        source_health: dict[str, dict[str, Any]] | None = None,
+        previous_outlook: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Map optimizer output to the coordinator planner-output shape."""
         start_at = request["window"].start_at
@@ -141,35 +144,43 @@ class PlannerProjectionBuilder:
             message = "Plan solved with one or more batteries skipped"
         else:
             message = "Plan solved"
+        diagnostics = {
+            "batteries": batteries,
+            "skipped_batteries": skipped_batteries,
+            "comforts": comforts,
+            "optionals": optionals,
+            "sources": {"usage_forecast": request.get("usage_forecast_points")},
+            "optimizer": {
+                "execution_time_s": result.get("execution_time"),
+                "fitness": result.get("fitness"),
+                "avg_price": result.get("avg_price"),
+                "projections": result.get("projections"),
+                "energy_flows": result.get("energy_flows"),
+                "suboptimal": is_suboptimal,
+                "suboptimal_reasons": reasons,
+                "problems": result.get("problems", []),
+                "successful_solves": result.get("successful_solves"),
+                "reused_steps": result.get("reused_steps"),
+                "span_start": start_at.isoformat(),
+                "span_end": (start_at + timedelta(minutes=horizon_slots * slot_minutes)).isoformat(),
+            },
+            **self._build_enabled_plan_details(request, result, timings=timings),
+        }
+        try:
+            diagnostics["outlook"] = build_plan_outlook(
+                request=request,
+                result=result,
+                source_health=source_health,
+                previous_outlook=previous_outlook,
+                now=datetime.now(tz=UTC),
+            )
+        except Exception:  # Outlook must never invalidate a usable accepted plan.
+            diagnostics["outlook"] = None
         return {
             "status": status,
             "message": message,
             "action_schedules": action_schedules,
-            "diagnostics": {
-                "batteries": batteries,
-                "skipped_batteries": skipped_batteries,
-                "comforts": comforts,
-                "optionals": optionals,
-                "sources": {
-                    "usage_forecast": request.get("usage_forecast_points"),
-                },
-                "optimizer": {
-                    "execution_time_s": result.get("execution_time"),
-                    "fitness": result.get("fitness"),
-                    "avg_price": result.get("avg_price"),
-                    "projections": result.get("projections"),
-                    "suboptimal": is_suboptimal,
-                    "suboptimal_reasons": reasons,
-                    "problems": result.get("problems", []),
-                    "successful_solves": result.get("successful_solves"),
-                    "reused_steps": result.get("reused_steps"),
-                    "span_start": start_at.isoformat(),
-                    "span_end": (
-                        start_at + timedelta(minutes=horizon_slots * slot_minutes)
-                    ).isoformat(),
-                },
-                **self._build_enabled_plan_details(request, result, timings=timings),
-            },
+            "diagnostics": diagnostics,
         }
 
     def project_snapshot(self, planner_output: dict[str, Any]) -> CoordinatorSnapshot:

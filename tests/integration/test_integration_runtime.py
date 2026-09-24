@@ -69,6 +69,7 @@ from custom_components.wattplan.coordinator import (
     CycleTrigger,
     _snapshot_schema_id,
 )
+from custom_components.wattplan.coordinator_logic.source_status import SourceStatusManager
 from custom_components.wattplan.coordinator_parts import PlanningStageError, StageErrorKind
 from custom_components.wattplan.historical_cost.models import (
     FLAG_GAP,
@@ -83,6 +84,7 @@ from custom_components.wattplan.historical_cost.models import (
 )
 from custom_components.wattplan.historical_cost.store import HistoricalCostStore
 from custom_components.wattplan.historical_cost.tracker import HistoricalCostTracker
+from custom_components.wattplan.source_fixup import SourceHealthKind, SourceHealthState
 from custom_components.wattplan.test_plan_invariants import assert_plan_invariants
 import pytest
 
@@ -104,6 +106,118 @@ from homeassistant.util import dt as dt_util
 from tests.common import MockConfigEntry, async_fire_time_changed
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
+
+
+@pytest.mark.parametrize("slot_minutes", [15, 30, 60])
+def test_source_failure_debounce_counts_distinct_slots_and_recovers(
+    hass: HomeAssistant,
+    slot_minutes: int,
+) -> None:
+    """Manual retries do not advance streaks; recovery and restart clear them."""
+    manager = SourceStatusManager(hass)
+    health = SourceHealthState(
+        kind=SourceHealthKind.UNAVAILABLE,
+        available_count=0,
+        required_count=4,
+        using_stale=False,
+        expires_at=None,
+    )
+    source_config = {CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE}
+    base = datetime(2026, 9, 23, 12, tzinfo=UTC)
+
+    for slot_index in range(4):
+        current = base + timedelta(minutes=slot_minutes * slot_index)
+
+        class SlotDateTime(datetime):
+            value = current
+
+            @classmethod
+            def now(cls, tz: tzinfo | None = None) -> datetime:
+                return cls.value if tz is not None else cls.value.replace(tzinfo=None)
+
+        with patch(
+            "custom_components.wattplan.coordinator_logic.source_status.datetime",
+            SlotDateTime,
+        ):
+            payload = manager._build_source_status(
+                source_key=CONF_SOURCE_PV,
+                source_config=source_config,
+                health=health,
+                slot_minutes=slot_minutes,
+            )
+            retry = manager._build_source_status(
+                source_key=CONF_SOURCE_PV,
+                source_config=source_config,
+                health=health,
+                slot_minutes=slot_minutes,
+            )
+        assert retry["failure_slot_count"] == slot_index + 1
+
+    assert payload["failure_slot_count"] == 4
+    recovered = manager._build_source_status(
+        source_key=CONF_SOURCE_PV,
+        source_config=source_config,
+        health=SourceHealthState(
+            kind=SourceHealthKind.OK,
+            available_count=4,
+            required_count=4,
+            using_stale=False,
+            expires_at=None,
+        ),
+        slot_minutes=slot_minutes,
+    )
+    assert recovered["failure_slot_count"] == 0
+
+    restarted = SourceStatusManager(hass)._build_source_status(
+        source_key=CONF_SOURCE_PV,
+        source_config=source_config,
+        health=health,
+        slot_minutes=slot_minutes,
+    )
+    assert restarted["failure_slot_count"] == 1
+
+
+def test_source_failure_debounce_resets_after_slot_gap(hass: HomeAssistant) -> None:
+    """A missing affected slot starts a new consecutive failure streak."""
+    manager = SourceStatusManager(hass)
+    health = SourceHealthState(
+        kind=SourceHealthKind.UNAVAILABLE,
+        available_count=0,
+        required_count=4,
+        using_stale=False,
+        expires_at=None,
+    )
+    source_config = {CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE}
+    base = datetime(2026, 9, 23, 12, tzinfo=UTC)
+
+    class SlotDateTime(datetime):
+        value = base
+
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> datetime:
+            return cls.value if tz is not None else cls.value.replace(tzinfo=None)
+
+    with patch(
+        "custom_components.wattplan.coordinator_logic.source_status.datetime",
+        SlotDateTime,
+    ):
+        first = manager._build_source_status(
+            source_key=CONF_SOURCE_PV,
+            source_config=source_config,
+            health=health,
+            slot_minutes=30,
+        )
+        SlotDateTime.value = base + timedelta(minutes=60)
+        after_gap = manager._build_source_status(
+            source_key=CONF_SOURCE_PV,
+            source_config=source_config,
+            health=health,
+            slot_minutes=30,
+        )
+
+    assert first["failure_slot_count"] == 1
+    assert after_gap["failure_slot_count"] == 1
+    assert after_gap["failure_started_at"] == SlotDateTime.value.isoformat()
 
 
 def _fake_optimize(_params: object) -> dict[str, object]:
@@ -474,11 +588,27 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
     assert last_run_after_refresh.state == last_run_after_plan.state
 
     _assert_valid_state(hass, "sensor.home_status")
+    _assert_valid_state(hass, "sensor.home_plan_outlook")
     _assert_valid_state(hass, "sensor.home_last_run")
     _assert_valid_state(hass, "sensor.home_battery_action")
     _assert_valid_state(hass, "sensor.home_comfort_action")
     _assert_valid_state(hass, "sensor.home_optional_next_start_option")
     _assert_valid_state(hass, "sensor.home_optional_option_1_start")
+    outlook = hass.states.get("sensor.home_plan_outlook")
+    assert outlook is not None
+    assert len(outlook.state) <= 255
+    assert outlook.state == outlook.attributes["report_id"]
+    assert outlook.state.count("_") >= 3
+    assert outlook.attributes["text"]
+    assert outlook.attributes["information_value"] in {"low", "medium", "high"}
+    assert outlook.attributes["topic"] in {
+        "routine",
+        "opportunity",
+        "battery",
+        "target",
+        "energy_balance",
+        "reliability",
+    }
 
     entity_registry = er.async_get(hass)
     for entity_id in (
@@ -2242,6 +2372,12 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
     assert status.attributes["scheduler_stale"] is False
     assert status.attributes["action_recommendations_validated"] is False
     assert status.attributes["has_usable_plan"] is True
+    restored_outlook = hass.states.get("sensor.home_plan_outlook")
+    assert restored_outlook is not None
+    assert restored_outlook.state.startswith("restored_unvalidated_medium_")
+    assert "restored_unvalidated:plan" in restored_outlook.attributes[
+        "selected_facts"
+    ]
     assert hass.states.get("sensor.home_battery_action").state == STATE_UNAVAILABLE
     assert hass.states.get("sensor.home_comfort_action").state == STATE_UNAVAILABLE
     assert (
@@ -2289,6 +2425,10 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
         assert status.attributes["reason_codes"] == ["plan_stale"]
         assert status.attributes["scheduler_stale"] is False
         assert status.attributes["has_usable_plan"] is False
+        expired_outlook = hass.states.get("sensor.home_plan_outlook")
+        assert expired_outlook is not None
+        assert expired_outlook.state.startswith("plan_expired_high_")
+        assert "plan_expired:plan" in expired_outlook.attributes["selected_facts"]
         _assert_valid_state(hass, "sensor.home_last_run_duration")
 
     coordinator.async_update_listeners()
@@ -2650,6 +2790,29 @@ async def test_retained_plan_expires_and_plan_entities_become_unavailable(
     assert status.state == "ok"
     expires_at = dt_util.parse_datetime(status.attributes["expires_at"])
     assert expires_at is not None
+
+    healthy_status = dict(coordinator._source_status._overall_status)
+    coordinator._source_status._overall_status.update(
+        {
+            "status": "failed",
+            "reason_codes": ["source_import_price_failed_critical"],
+            "reason_summary": "No usable plan is available",
+            "has_usable_plan": False,
+        }
+    )
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+
+    unusable_outlook = hass.states.get("sensor.home_plan_outlook")
+    assert unusable_outlook is not None
+    assert unusable_outlook.state.startswith("plan_unusable_high_")
+    assert "plan_unusable:plan" in unusable_outlook.attributes["selected_facts"]
+    assert "expired" not in unusable_outlook.attributes["text"]
+    assert "not currently usable" in unusable_outlook.attributes["text"]
+
+    coordinator._source_status._overall_status = healthy_status
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
 
     class FrozenDateTime(datetime):
         @classmethod

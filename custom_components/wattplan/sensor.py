@@ -38,6 +38,7 @@ from .sensors import (
     NextRunSensor,
     OptionalTimestampSensor,
     PlanDetailsSensor,
+    PlanOutlookSensor,
     SourceStatusSensor,
     StatusMessageSensor,
     StatusSensor,
@@ -49,6 +50,7 @@ from .sensor_specs import ENTRY_SENSOR_SPECS, OPTIONAL_SOURCE_STATUS_SPECS
 ENTRY_FRIENDLY_NAMES: dict[str, str] = {
     "status": "Status",
     "status_message": "Status Message",
+    "plan_outlook": "Plan Outlook",
     "import_price_status": "Import Price Status",
     "export_price_status": "Export Price Status",
     "usage_status": "Usage Status",
@@ -173,6 +175,7 @@ def _entry_sensors(
     spec_classes = {
         "status": StatusSensor,
         "status_message": StatusMessageSensor,
+        "plan_outlook": PlanOutlookSensor,
         "import_price_status": SourceStatusSensor,
         "last_run": LastRunSensor,
         "next_run": NextRunSensor,

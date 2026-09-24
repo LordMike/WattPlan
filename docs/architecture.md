@@ -1,5 +1,37 @@
 # Architecture
 
+## Plan Outlook
+
+`plan_outlook.py` builds a language-neutral model from captured planner inputs
+and the accepted optimizer result. Facts contain semantic kinds, subjects,
+timestamps, numeric display values, evidence, and relationships, but no rendered
+sentences. `plan_outlook_renderer.py` renders the selected model in English and
+owns all phrase variants. This boundary allows extraction/selection and wording
+to be tested independently and provides the insertion point for later languages.
+
+Neither layer reads Home Assistant entities, uses diagnostic sensor arrays, or
+runs another optimizer solve. The projection layer stores the bounded semantic
+model in the coordinator snapshot. `sensor.<setup_slug>_plan_outlook` exposes a
+semantic report identifier as state and the headline, complete prose, and
+selection metadata as attributes. The state combines the main fact kind,
+information value, and a deterministic digest of the selected semantic facts and
+wording variants. It therefore changes when the visible report changes without
+being subject to Home Assistant's state-length limit.
+
+The outlook describes forecasts and planned recommendations only. Restored plans
+remain visible as a validation-status message rather than current action advice.
+Balance claims require configured, healthy usage and PV sources; fallback zeroes
+are not treated as evidence. Source and planning failures are reported after four
+distinct affected planning slots (manual retries in one slot count once), while
+loss or expiry of all usable recommendations is reported immediately. Recovery
+clears the streak, and restart begins a new streak rather than inventing history.
+
+Selection uses relative tariff movement (18% of the observed absolute scale with
+a 0.005 numerical floor), sustained multi-slot solar/export intervals, and both
+absolute and relative energy floors. These internal thresholds deliberately avoid
+assuming a currency. Selection history is bounded to 12 changes and only advances
+when the selected story changes.
+
 WattPlan is a single repository with two tightly related concerns:
 - The Home Assistant custom integration in `custom_components/wattplan/`
 - The optimizer implementation in `custom_components/wattplan/optimizer/`

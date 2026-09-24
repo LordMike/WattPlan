@@ -48,6 +48,7 @@ Use [Historical Cost Tracking](docs/historical-cost-tracking.md) to compare meas
 - Planned actions are exposed as entities, so you can easily use the results to do automations
 - Optional historical cost tracking for comparing actual cost against simple reference scenarios
 - Battery targets can be set and cleared through WattPlan services
+- A local Plan Outlook sensor summarizes accepted forecasts and planned recommendations without operating devices
 - Managed CI for validation, tagged releases, and prereleases
 
 ## Documentation

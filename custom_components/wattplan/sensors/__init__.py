@@ -10,6 +10,7 @@ from .diagnostics import (
 )
 from .runtime import LastRunDurationSensor, LastRunSensor, NextRunSensor
 from .status import SourceStatusSensor, StatusMessageSensor, StatusSensor
+from .outlook import PlanOutlookSensor
 
 __all__ = [
     "ActionSensor",
@@ -19,6 +20,7 @@ __all__ = [
     "NextActionSensor",
     "NextRunSensor",
     "OptionalTimestampSensor",
+    "PlanOutlookSensor",
     "PlanDetailsSensor",
     "ProjectionSensor",
     "ProjectionValueTransform",
