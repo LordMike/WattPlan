@@ -2823,7 +2823,8 @@ async def test_retained_plan_expires_and_plan_entities_become_unavailable(
     assert unusable_outlook.state.startswith("plan_unusable_high_")
     assert "plan_unusable:plan" in unusable_outlook.attributes["selected_facts"]
     assert "expired" not in unusable_outlook.attributes["text"]
-    assert "not currently usable" in unusable_outlook.attributes["text"]
+    assert "saved plan" in unusable_outlook.attributes["text"].lower()
+    assert "used" in unusable_outlook.attributes["text"].lower()
 
     coordinator._source_status._overall_status = healthy_status
     coordinator.async_update_listeners()

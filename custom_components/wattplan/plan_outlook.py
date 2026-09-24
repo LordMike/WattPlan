@@ -18,6 +18,35 @@ from .plan_outlook_types import (
 
 VALUE_RANK = {"low": 0, "medium": 1, "high": 2}
 MAX_HISTORY = 12
+FACT_GROUPS = {
+    "flat_grid_prices": "price",
+    "negative_grid_price": "price",
+    "cheaper_grid_prices": "price",
+    "grid_price_rise": "price",
+    "grid_price_fall": "price",
+    "grid_price_swing": "price",
+    "solar_surplus": "solar",
+    "solar_modest": "solar",
+    "solar_fading": "solar",
+    "grid_charge": "battery_action",
+    "battery_preserve": "battery_action",
+    "battery_self_consume": "battery_action",
+    "low_reserve": "battery_state",
+    "battery_full": "battery_state",
+    "target_shortfall": "target",
+    "target_reached": "target",
+    "comfort_timing": "load_timing",
+    "optional_start": "load_timing",
+    "grid_export": "grid_balance",
+    "limited_grid_use": "grid_balance",
+    "heavy_grid_use": "grid_balance",
+    "charging_dominates_imports": "grid_balance",
+    "grid_use_increase": "grid_balance",
+    "grid_use_decrease": "grid_balance",
+}
+INCOMPATIBLE_FACT_PAIRS = {
+    frozenset(("solar_surplus", "grid_export")),
+}
 
 
 def _display_duration_minutes(minutes: int) -> int:
@@ -474,7 +503,7 @@ def _comfort_facts(
             index < len(solar) and solar[index] >= 0.05 for index in range(*run)
         )
         if overlap:
-            name = str(entity.get("name", "Comfort load")).replace("_", " ")
+            name = str(entity.get("name", "Comfort load"))
             facts.append(
                 _fact(
                     "comfort_timing",
@@ -503,7 +532,7 @@ def _optional_facts(
                 valid.append((slot, when))
         if not valid:
             continue
-        name = str(optional.get("name", "appliance")).replace("_", " ")
+        name = str(optional.get("name", "appliance"))
         preferred = valid[0][1]
         values: tuple[tuple[str, OutlookValue], ...] = ()
         if len(valid) > 1:
@@ -586,6 +615,7 @@ def _balance_facts(
             )
         )
     if total_import >= 0.5 and sum(grid_charge) >= total_import * 0.6:
+        facts = [fact for fact in facts if fact.kind != "heavy_grid_use"]
         facts.append(
             _fact(
                 "charging_dominates_imports",
@@ -690,6 +720,32 @@ def _select_facts(
     recent = list(previous.selection_history[-MAX_HISTORY:]) if previous else []
     previous_ids = previous.selected_fact_ids if previous else ()
     by_id = {fact.fact_id: fact for fact in facts}
+
+    reliability_facts = [fact for fact in facts if fact.topic == "reliability"]
+    if reliability_facts:
+        reliability_priority = {
+            "plan_unavailable": 5,
+            "plan_unusable": 5,
+            "plan_expired": 5,
+            "restored_unvalidated": 5,
+            "plan_refresh_failure": 4,
+            "recommendations_unavailable": 3,
+            "stored_recommendations_unvalidated": 3,
+            "source_problem": 2,
+        }
+
+        def reliability_score(fact: OutlookFact) -> tuple[int, int, int, int, str]:
+            elapsed = dict(fact.values).get("elapsed_minutes", 0)
+            return (
+                VALUE_RANK[fact.information_value],
+                reliability_priority.get(fact.kind, 1),
+                1 if fact.fact_id in previous_ids else 0,
+                int(elapsed) if isinstance(elapsed, int | float) else 0,
+                fact.fact_id,
+            )
+
+        return [max(reliability_facts, key=reliability_score)]
+
     max_rank = max(VALUE_RANK[fact.information_value] for fact in facts)
     retained = [by_id[fact_id] for fact_id in previous_ids if fact_id in by_id]
     if retained and VALUE_RANK[retained[0].information_value] >= max_rank:
@@ -698,17 +754,9 @@ def _select_facts(
 
         def score(fact: OutlookFact) -> tuple[int, int, int, int, str]:
             novelty = 1 if fact.kind not in recent[-6:] else 0
-            reliability_priority = {
-                "plan_unavailable": 3,
-                "plan_unusable": 3,
-                "plan_expired": 3,
-                "restored_unvalidated": 3,
-                "plan_refresh_failure": 2,
-                "source_problem": 1,
-            }.get(fact.kind, 0)
             return (
                 VALUE_RANK[fact.information_value],
-                reliability_priority,
+                0,
                 novelty,
                 fact.significance,
                 fact.fact_id,
@@ -732,16 +780,23 @@ def _select_facts(
             break
         if fact.kind == main.kind:
             continue
+        if not all(_facts_are_compatible(fact, other) for other in selected):
+            continue
         selected.append(fact)
-    reliability = next((fact for fact in selected if fact.topic == "reliability"), None)
-    if (
-        reliability is not None
-        and selected[0] is reliability
-        and len(selected) > 1
-        and selected[1].topic != "reliability"
-    ):
-        selected = [selected[1], reliability, *selected[2:]]
     return selected
+
+
+def _facts_are_compatible(left: OutlookFact, right: OutlookFact) -> bool:
+    """Return whether two facts can form one concise, non-redundant report."""
+    left_group = FACT_GROUPS.get(left.kind)
+    right_group = FACT_GROUPS.get(right.kind)
+    if left_group is not None and left_group == right_group:
+        return False
+    if frozenset((left.kind, right.kind)) in INCOMPATIBLE_FACT_PAIRS:
+        return False
+    if "negative_grid_price" in {left.kind, right.kind}:
+        return {left.kind, right.kind} == {"negative_grid_price", "grid_charge"}
+    return True
 
 
 def _select_model(

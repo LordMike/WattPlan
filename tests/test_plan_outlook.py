@@ -5,12 +5,14 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from custom_components.wattplan.plan_outlook import (
+    _select_facts,
     build_plan_outlook,
     build_plan_outlook_model,
     build_status_plan_outlook,
     render_stored_plan_outlook,
 )
 from custom_components.wattplan.plan_outlook_renderer import render_plan_outlook
+from custom_components.wattplan.plan_outlook_types import OutlookFact
 
 
 def _request(
@@ -141,8 +143,12 @@ def test_negative_price_and_grid_charge_form_a_coherent_story() -> None:
     outlook = build_plan_outlook(request=request, result=_result(entities=[battery]))
 
     assert outlook["information_value"] == "high"
-    assert "below zero" in outlook["text"]
-    assert "Grid charging is planned 00:30-01:00" in outlook["text"]
+    assert any(
+        fact.startswith("negative_grid_price:") for fact in outlook["selected_facts"]
+    )
+    assert any(fact.startswith("grid_charge:") for fact in outlook["selected_facts"])
+    assert "House battery" in outlook["text"]
+    assert "from 00:30 to 01:00" in outlook["text"]
     assert len(outlook["text"].split()) <= 70
 
 
@@ -157,8 +163,8 @@ def test_nonconsecutive_charge_slots_are_not_reported_as_one_interval() -> None:
     )
     outlook = build_plan_outlook(request=request, result=_result(entities=[battery]))
 
-    assert "00:00-01:00" not in outlook["text"]
-    assert "00:00-00:15" in outlook["text"] or "00:45-01:00" in outlook["text"]
+    assert "from 00:00 to 01:00" not in outlook["text"]
+    assert "from 00:00 to 00:15" in outlook["text"] or "from 00:45 to 01:00" in outlook["text"]
 
 
 def test_target_shortfall_uses_end_of_slot_level_and_timestamp() -> None:
@@ -198,8 +204,13 @@ def test_energy_balance_counts_grid_charging_as_import() -> None:
     request = _request(prices=[0.2] * 8, solar=[0.1] * 8)
     outlook = build_plan_outlook(request=request, result=_result(flows=flows))
 
-    assert "Most grid use is expected during battery charging" in outlook["text"]
-    assert "Little grid use" not in outlook["text"]
+    assert any(
+        fact.startswith("charging_dominates_imports:")
+        for fact in outlook["selected_facts"]
+    )
+    assert not any(
+        fact.startswith("limited_grid_use:") for fact in outlook["selected_facts"]
+    )
 
 
 def test_untrusted_or_unconfigured_sources_suppress_balance_and_solar_claims() -> None:
@@ -247,7 +258,7 @@ def test_expired_optional_suggestion_is_removed() -> None:
     assert "01:30" in outlook["text"]
 
 
-def test_persistent_source_problem_is_debounced_and_keeps_energy_content() -> None:
+def test_persistent_source_problem_is_debounced_and_suppresses_precise_advice() -> None:
     request = _request(prices=[0.2, 0.2, 0.6, 0.8], solar=[0.0] * 4)
     transient = build_plan_outlook(
         request=request,
@@ -275,11 +286,9 @@ def test_persistent_source_problem_is_debounced_and_keeps_energy_content() -> No
             }
         },
     )
-    assert any(
-        fact.startswith(("grid_price_", "cheaper_grid_prices:"))
-        for fact in persistent["selected_facts"]
-    )
-    assert "Solar updates remain delayed for an hour" in persistent["text"]
+    assert persistent["selected_facts"] == ["source_problem:source_pv"]
+    assert "solar" in persistent["text"].lower()
+    assert "an hour" in persistent["text"]
     assert persistent["topic"] == "reliability"
 
 
@@ -294,8 +303,8 @@ def test_restored_plan_never_publishes_action_advice() -> None:
     )
 
     assert outlook["topic"] == "reliability"
-    assert "awaited after restart" in outlook["text"]
-    assert "Grid charging is planned" not in outlook["text"]
+    assert "restart" in outlook["text"]
+    assert "charge from the grid" not in outlook["text"]
 
 
 def test_selection_is_stable_and_history_changes_only_on_selection_change() -> None:
@@ -402,8 +411,10 @@ def test_retained_outlook_ages_out_observations_and_action_advice() -> None:
         now=request["window"].start_at + timedelta(hours=2),
     )
 
-    assert "near minimum" not in retained["text"]
-    assert "Grid charging is planned" not in retained["text"]
+    assert not any(
+        fact.startswith(("low_reserve:", "grid_charge:"))
+        for fact in retained["selected_facts"]
+    )
     assert "dishwasher" not in retained["text"]
     assert (
         retained["covered_start"]
@@ -449,7 +460,8 @@ def test_retained_outlook_adds_current_source_health() -> None:
         },
     )
 
-    assert "Solar updates remain delayed for 2 hours" in retained["text"]
+    assert "solar" in retained["text"].lower()
+    assert "2 hours" in retained["text"]
     assert retained["topic"] == "reliability"
 
 
@@ -464,7 +476,135 @@ def test_retained_outlook_models_plan_refresh_failure_before_rendering() -> None
         plan_failure_status={"slot_count": 4, "started_at": started_at},
     )
 
-    assert "No fresh plan for an hour" in retained["text"]
+    assert "an hour" in retained["text"]
+    assert "plan" in retained["text"].lower()
     assert "plan_refresh_failure:plan" in retained["selected_facts"]
     assert retained["topic"] == "reliability"
     assert retained["information_value"] == "high"
+
+
+def test_multiple_source_problems_produce_one_prioritized_warning() -> None:
+    request = _request(prices=[0.2, 0.2, 0.6, 0.8])
+    outlook = build_plan_outlook(
+        request=request,
+        result=_result(),
+        source_health={
+            "source_import_price": {
+                "status": "unavailable",
+                "failure_slot_count": 4,
+                "failure_elapsed_minutes": 60,
+                "configured": True,
+            },
+            "source_usage": {
+                "status": "unavailable",
+                "failure_slot_count": 4,
+                "failure_elapsed_minutes": 120,
+                "configured": True,
+            },
+        },
+    )
+
+    assert outlook["selected_facts"] == ["source_problem:source_usage"]
+    assert outlook["topic"] == "reliability"
+
+
+def test_negative_price_only_combines_with_matching_grid_charge() -> None:
+    start = datetime(2026, 9, 24, 0, tzinfo=UTC)
+
+    def fact(
+        kind: str,
+        *,
+        value: str = "medium",
+        related: tuple[str, ...] = (),
+        significance: int = 1,
+    ) -> OutlookFact:
+        return OutlookFact(
+            fact_id=f"{kind}:test",
+            kind=kind,
+            topic="opportunity",
+            information_value=value,
+            basis="forecast",
+            start=start,
+            end=start + timedelta(hours=1),
+            related=related,
+            significance=significance,
+        )
+
+    selected = _select_facts(
+        [
+            fact(
+                "negative_grid_price",
+                value="high",
+                related=("grid_charge",),
+                significance=3,
+            ),
+            fact("grid_price_rise", value="high", significance=2),
+            fact("grid_charge", related=("negative_grid_price",)),
+            fact("optional_start"),
+        ],
+        previous=None,
+    )
+
+    assert [item.kind for item in selected] == ["negative_grid_price", "grid_charge"]
+
+
+def test_selection_avoids_redundant_fact_groups() -> None:
+    start = datetime(2026, 9, 24, 0, tzinfo=UTC)
+
+    def fact(kind: str, topic: str, value: str, significance: int) -> OutlookFact:
+        return OutlookFact(
+            fact_id=f"{kind}:test",
+            kind=kind,
+            topic=topic,
+            information_value=value,
+            basis="forecast",
+            start=start,
+            end=start + timedelta(hours=1),
+            significance=significance,
+        )
+
+    selected = _select_facts(
+        [
+            fact("heavy_grid_use", "energy_balance", "high", 3),
+            fact("grid_use_decrease", "energy_balance", "high", 2),
+            fact("solar_surplus", "energy_balance", "medium", 2),
+            fact("grid_export", "energy_balance", "medium", 1),
+            fact("optional_start", "opportunity", "medium", 1),
+        ],
+        previous=None,
+    )
+    kinds = {item.kind for item in selected}
+
+    assert len(kinds & {"heavy_grid_use", "grid_use_decrease", "grid_export"}) == 1
+    assert not {"solar_surplus", "grid_export"} <= kinds
+
+
+def test_comfort_and_optional_names_are_preserved_exactly() -> None:
+    request = _request(
+        prices=[0.2] * 4,
+        usage=[0.1] * 4,
+        solar=[0.5] * 4,
+    )
+    model = build_plan_outlook_model(
+        request=request,
+        result=_result(
+            entities=[
+                {
+                    "name": "eBike_Pump",
+                    "type": "comfort",
+                    "schedule": [{"enabled": True}] * 4,
+                }
+            ],
+            optionals=[
+                {
+                    "name": "Dishwasher_A",
+                    "options": [{"start_timeslot": 1}],
+                }
+            ],
+        ),
+    )
+
+    assert model is not None
+    subjects = {fact.kind: fact.subject for fact in model.facts}
+    assert subjects["comfort_timing"] == "eBike_Pump"
+    assert subjects["optional_start"] == "Dishwasher_A"

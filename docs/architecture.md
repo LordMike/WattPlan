@@ -26,6 +26,8 @@ each renderer reuses its own persisted phrase variants. The state combines the
 main fact kind, information value, language, and a deterministic digest of the
 selected facts and rendered wording, so visible report changes remain
 trigger-friendly without being subject to Home Assistant's state-length limit.
+Automations that care about meaning rather than phrase rotation should use the
+`semantic_id` or `selected_facts` attributes instead of the sensor state.
 
 The outlook describes forecasts and planned recommendations only. Restored plans
 remain visible as a validation-status message rather than current action advice.
@@ -34,12 +36,21 @@ are not treated as evidence. Source and planning failures are reported after fou
 distinct affected planning slots (manual retries in one slot count once), while
 loss or expiry of all usable recommendations is reported immediately. Recovery
 clears the streak, and restart begins a new streak rather than inventing history.
+When a sustained reliability fact is present, selection emits one prioritized
+warning and suppresses precise energy advice. Compatibility groups also prevent
+opposing or redundant price, solar, battery-policy, load-timing, and grid-balance
+facts from appearing in the same report.
 
 Selection uses relative tariff movement (18% of the observed absolute scale with
 a 0.005 numerical floor), sustained multi-slot solar/export intervals, and both
 absolute and relative energy floors. These internal thresholds deliberately avoid
 assuming a currency. Selection history is bounded to 12 changes and only advances
 when the selected story changes.
+
+Every supported English and Danish fragment has at least three equivalent wording
+variants. Common price, grid-use, charging, stale-data, refresh-failure, and quiet
+reports have four. Variant selection is deterministic and remains fixed while the
+semantic report is unchanged.
 
 WattPlan is a single repository with two tightly related concerns:
 - The Home Assistant custom integration in `custom_components/wattplan/`

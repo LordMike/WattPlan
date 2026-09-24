@@ -120,11 +120,16 @@ Age out observed starting readings rather than repeating them as current.
 
 1. Filter unsupported or insignificant claims.
 2. Prioritize substantive approaching consequences and sustained reliability
-   problems. Preserve useful energy content alongside qualified source issues.
-3. Choose a main fact and related supporting facts within the text budget.
+   problems. When a sustained reliability problem is selected, show one concise
+   warning and suppress precise energy advice that could appear more trustworthy
+   than its inputs.
+3. Choose a main fact and only compatible supporting facts within the text budget.
+   Do not combine opposing or redundant facts from the same price, solar,
+   battery-policy, load-timing, target, or grid-balance group.
 4. Among similarly useful valid alternatives, give a SMALL bounded preference to
    fact types used less recently, then use deterministic seeded tie-breaking.
-5. Select among a few semantically equivalent wording variants.
+5. Select among at least three semantically equivalent wording variants for every
+   supported fragment, with four or more for common recurring reports.
 
 Rare trivial facts must never displace material consequences. Do not randomize
 warnings away, assert contradictions, or repeat the same information twice.
@@ -166,6 +171,10 @@ semantic report or that language's chosen wording variant changes. Expose the
 independent `semantic_id` attribute used to retain wording across equivalent
 reports. Do not put prose in state or switch state shape according to prose
 length.
+
+The language-specific state also changes when deterministic wording rotation
+selects a different visible phrase. Automations that should react only to meaning
+must use `semantic_id` or `selected_facts`, not the state/report identifier.
 
 - report_id, semantic_id, headline, line_1, line_2, text, language (second line may be empty)
 - information_value: low | medium | high
@@ -214,6 +223,10 @@ configuration UI is outside the Plan Outlook renderer scope.
 - N-slot debounce with same-slot manual retries, recovery and restart.
 - Stable output under tiny input changes, seeded repeatability, variation across
   reporting periods, rare-fact eligibility and no starvation of important facts.
+- At least three distinct forced variants for every supported English and Danish
+  renderer branch, with exact subject preservation and explicit localized ranges.
+- Reliability-only selection during sustained source/planning problems, one
+  prioritized source warning, and pairwise coverage for incompatible fact groups.
 - Entity state length, attributes, persistence compatibility, no dependence on
   optional diagnostic entities, no optimizer Home Assistant imports.
 
