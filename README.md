@@ -49,6 +49,7 @@ Use [Historical Cost Tracking](docs/historical-cost-tracking.md) to compare meas
 - Optional historical cost tracking for comparing actual cost against simple reference scenarios
 - Battery targets can be set and cleared through WattPlan services
 - Local Danish and English Plan Outlook sensors summarize accepted forecasts and planned recommendations without operating devices
+- Plan Outlook wording is rendered locally from checked-in Project Fluent catalogs; unsupported language preferences explicitly fall back to English
 - Managed CI for validation, tagged releases, and prereleases
 
 ## Documentation

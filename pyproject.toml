@@ -10,6 +10,7 @@ dependencies = [
   "numpy",
   "pydantic>=2",
   "highspy",
+  "fluent.runtime==0.4.0",
 ]
 
 [project.optional-dependencies]
@@ -33,4 +34,4 @@ include = ["custom_components*"]
 namespaces = true
 
 [tool.setuptools.package-data]
-"custom_components.wattplan" = ["*.json", "*.yaml", "*.png", "translations/*.json"]
+"custom_components.wattplan" = ["*.json", "*.yaml", "*.png", "translations/*.json", "locales/**/*.ftl"]

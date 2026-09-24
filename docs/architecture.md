@@ -5,15 +5,18 @@
 `plan_outlook.py` builds a language-neutral model from captured planner inputs
 and the accepted optimizer result. Facts contain semantic kinds, subjects,
 timestamps, numeric display values, evidence, and relationships, but no rendered
-sentences. `plan_outlook_renderer.py` dispatches the selected model to the
-English or Danish renderer and owns shared report identity and phrase selection.
-This boundary allows extraction/selection and each language's wording to be
-tested independently.
+sentences. `plan_outlook_renderer.py` supplies selected facts, display arguments,
+and deterministic variant indexes to checked-in Project Fluent catalogues in
+`locales/en/plan_outlook.ftl` and `locales/da/plan_outlook.ftl`; the catalogues
+own complete messages, grammar, plurals, punctuation, and localized wording.
+The renderer validates the catalogues before loading and uses the lower-level
+Fluent bundle API so formatting failures remain explicit and non-fatal.
 
 Entry setup resolves the Home Assistant system language plus any additional
 advanced-option selections against the currently implemented renderers. The
 resolved list is stored in entry runtime data and always contains at least one of
-English or Danish. Unsupported language sets fall back to English.
+English or Danish. Locale tags intentionally resolve to their base language
+(`da-DK` becomes `da`); unsupported language sets fall back to English.
 
 Neither layer reads Home Assistant entities, uses diagnostic sensor arrays, or
 runs another optimizer solve. The projection layer stores the bounded semantic

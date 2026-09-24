@@ -60,6 +60,25 @@ Run only integration tests:
 ./scripts/run_tests.sh tests/integration
 ```
 
+## Plan Outlook translations
+
+Plan Outlook prose is stored in the checked-in Project Fluent catalogues at
+`custom_components/wattplan/locales/en/plan_outlook.ftl` and
+`custom_components/wattplan/locales/da/plan_outlook.ftl`. Runtime code owns
+fact selection, typed arguments, and deterministic variant selection; each
+catalogue owns complete localized grammar, punctuation, duration plurals, and
+source-specific wording. Keep the two catalogues in semantic parity when adding
+or changing a branch, including each declared variant count.
+
+`fluent.runtime==0.4.0` is a runtime integration dependency and must remain in
+the manifest, project dependency list, and test requirements. Run the Outlook
+tests after catalog edits; they reject Fluent `Junk`, missing semantic messages,
+formatting failures, and uncached per-render catalog reads:
+
+```bash
+./scripts/run_tests.sh tests/test_plan_outlook.py tests/test_plan_outlook_danish.py
+```
+
 ## Optimizer benchmarks
 
 Session 1 fixtures cover the asset shapes that should remain cheap as planner
