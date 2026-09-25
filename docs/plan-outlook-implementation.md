@@ -17,6 +17,10 @@ sentences are acceptable. Prefer a coherent progression over disconnected facts.
 ## Editorial contract
 
 - Say **grid prices**, not just prices; use **expected use** or **load**, not demand.
+- State grid tariffs as known facts, never likelihoods; reserve hedging for
+  genuinely uncertain solar and projection claims.
+- Name concrete days via the localized day reference, never the bare clinical
+  word "period" in horizon-wide claims.
 - Prefer solar, battery reserves, grid charging, grid use, building, easing,
   remaining, rising, and expected.
 - Observed state is timestamped; forecast slot zero is not live telemetry.

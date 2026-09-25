@@ -1,50 +1,50 @@
 outlook-grid-price-rise =
     { $variant ->
-       [0] Importpriserne forventes at stige senere i perioden.
-       [1] Importpriserne bliver sandsynligvis højere senere i perioden.
-       [2] Der forventes højere importpriser hen mod slutningen af perioden.
+       [0] Importpriserne stiger { $period_text }.
+       [1] Importpriserne ligger højere { $period_text }.
+       [2] Der gælder højere importpriser { $period_text }.
       *[other] Prognosen viser stigende importpriser senere i perioden.
     }
 outlook-grid-price-fall =
     { $variant ->
-       [0] Importpriserne forventes at falde senere i perioden.
-       [1] Importpriserne bliver sandsynligvis lavere senere i perioden.
-       [2] Der forventes lavere importpriser hen mod slutningen af perioden.
+       [0] Importpriserne falder { $period_text }.
+       [1] Importpriserne ligger lavere { $period_text }.
+       [2] Der gælder lavere importpriser { $period_text }.
       *[other] Prognosen viser faldende importpriser senere i perioden.
     }
 outlook-limited-grid-use =
     { $variant ->
-       [0] Der forventes kun et lille elforbrug fra elnettet i perioden.
-       [1] Elforbruget fra elnettet forventes at være lavt i perioden.
+       [0] Der forventes kun et lille elforbrug fra elnettet { $period_text }.
+       [1] Elforbruget fra elnettet forventes at være lavt { $period_text }.
        [2] Kun en lille mængde strøm fra elnettet er forventet.
       *[other] Planen forventer lavt elforbrug fra elnettet.
     }
 outlook-flat-grid-prices =
     { $variant ->
-       [0] Elpriserne forventes at holde sig stabile { $period_text }.
+       [0] Elpriserne holder sig stabile { $period_text }.
        [1] Prognosen viser kun små udsving i elpriserne { $period_text }.
-       [2] Der forventes kun små ændringer i elpriserne { $period_text }.
+       [2] Der er kun små ændringer i elpriserne { $period_text }.
       *[3] Elpriserne forbliver forholdsvis stabile { $period_text }.
     }
 outlook-negative-grid-price =
     { $variant ->
        [0] Elpriserne er under nul fra kl. { $start } til kl. { $end }.
-       [1] Der forventes negative elpriser fra kl. { $start } til kl. { $end }.
-       [2] Elpriserne forventes at falde under nul fra kl. { $start } til kl. { $end }.
+       [1] Der er negative elpriser fra kl. { $start } til kl. { $end }.
+       [2] Elpriserne falder under nul fra kl. { $start } til kl. { $end }.
       *[other] Prognosen viser negative elpriser fra kl. { $start } til kl. { $end }.
     }
 outlook-cheaper-grid-prices =
     { $variant ->
-       [0] Der forventes lavere elpriser fra kl. { $start } til kl. { $end }.
-       [1] En periode med lavere elpriser forventes fra kl. { $start } til kl. { $end }.
-       [2] Elpriserne bliver sandsynligvis lavere fra kl. { $start } til kl. { $end }.
+       [0] Der er lavere elpriser fra kl. { $start } til kl. { $end }.
+       [1] Elpriserne dykker fra kl. { $start } til kl. { $end }.
+       [2] Elpriserne ligger lavere fra kl. { $start } til kl. { $end }.
       *[other] Prognosen viser billigere elpriser fra kl. { $start } til kl. { $end }.
     }
 outlook-grid-price-swing =
     { $variant ->
        [0] Elpriserne skifter retning omkring kl. { $turn_at }.
        [1] Prognosen for elpriserne vender omkring kl. { $turn_at }.
-       [2] Et skift i elpriserne forventes omkring kl. { $turn_at }.
+       [2] Et skift i elpriserne sker omkring kl. { $turn_at }.
       *[other] Elpriserne bevæger sig den modsatte vej efter kl. { $turn_at }.
     }
 outlook-solar-surplus =
@@ -91,10 +91,10 @@ outlook-battery-preserve =
     }
 outlook-battery-self-consume =
     { $variant ->
-       [0] { $subject } har ingen planlagte perioder med opladning fra elnettet eller bevaret opladning.
-       [1] Planen har ingen perioder med netopladning eller bevaret opladning for { $subject }.
-       [2] { $subject } forbliver i normal egenforbrugstilstand gennem perioden.
-      *[other] { $subject } er planlagt til normalt eget forbrug gennem perioden.
+       [0] { $subject } har ingen planlagt opladning fra elnettet eller bevaret opladning.
+       [1] Planen har ingen netopladning eller bevaret opladning for { $subject }.
+       [2] { $subject } forbliver i normal egenforbrugstilstand.
+      *[other] { $subject } er planlagt til normalt eget forbrug.
     }
 outlook-battery-full =
     { $variant ->
@@ -140,8 +140,8 @@ outlook-grid-export =
     }
 outlook-heavy-grid-use =
     { $variant ->
-       [0] Der forventes stort elforbrug fra nettet i perioden.
-       [1] Forbruget af strøm fra elnettet forventes at være højt i perioden.
+       [0] Der forventes stort elforbrug fra nettet { $period_text }.
+       [1] Forbruget af strøm fra elnettet forventes at være højt { $period_text }.
        [2] Planen forventer, at en stor del af strømmen kommer fra elnettet.
       *[other] Boligen forventes at hente meget strøm fra elnettet.
     }
@@ -156,14 +156,14 @@ outlook-grid-use-increase =
     { $variant ->
        [0] Elforbruget fra nettet forventes at stige senere.
        [1] Boligen forventes at hente mere strøm fra elnettet senere.
-       [2] Forbruget fra elnettet bør være højere senere i perioden.
+       [2] Forbruget fra elnettet bør være højere { $period_text }.
       *[other] Der forventes mere elforbrug fra nettet senere.
     }
 outlook-grid-use-decrease =
     { $variant ->
        [0] Elforbruget fra nettet forventes at falde senere.
        [1] Boligen forventes at hente mindre strøm fra elnettet senere.
-       [2] Forbruget fra elnettet bør være lavere senere i perioden.
+       [2] Forbruget fra elnettet bør være lavere { $period_text }.
       *[other] Der forventes mindre elforbrug fra nettet senere.
     }
 outlook-source-problem =
@@ -231,8 +231,8 @@ outlook-stored-recommendations-unvalidated =
     }
 outlook-quiet =
     { $variant ->
-       [0] Der forventes ingen vigtige ændringer i planen resten af perioden.
-       [1] Planen forventes at være stort set uændret i resten af perioden.
+       [0] Der forventes ingen vigtige ændringer i planen { $period_text }.
+       [1] Planen forventes at være stort set uændret { $period_text }.
        [2] Der forventes ikke større ændringer i resten af planen.
       *[other] Den resterende plan forventes at være stabil.
     }

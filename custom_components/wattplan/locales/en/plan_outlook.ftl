@@ -1,45 +1,45 @@
 outlook-grid-price-rise = { $variant ->
-    [0] Grid prices are expected to rise later in the period.
-    [1] Grid prices are likely to be higher later in the period.
-    [2] Higher grid prices are expected toward the end of the period.
+    [0] Grid prices rise later { $period_text }.
+    [1] Grid prices run higher later { $period_text }.
+    [2] Higher grid prices apply later { $period_text }.
    *[other] The forecast shows grid prices increasing later.
 }
 outlook-grid-price-fall = { $variant ->
-    [0] Grid prices are expected to fall later in the period.
-    [1] Grid prices are likely to be lower later in the period.
-    [2] Lower grid prices are expected toward the end of the period.
+    [0] Grid prices fall later { $period_text }.
+    [1] Grid prices run lower later { $period_text }.
+    [2] Lower grid prices apply later { $period_text }.
    *[other] The forecast shows grid prices easing later.
 }
 outlook-limited-grid-use = { $variant ->
-    [0] Little grid use is expected in this period.
-    [1] Grid use should stay low in this period.
+    [0] Little grid use is expected { $period_text }.
+    [1] Grid use should stay low { $period_text }.
     [2] Only a small amount of grid electricity is expected.
    *[other] The plan expects low grid use.
 }
 outlook-flat-grid-prices =
     { $variant ->
-       [0] Grid prices are expected to stay broadly steady { $period_text }.
+       [0] Grid prices stay broadly steady { $period_text }.
        [1] The grid-price forecast shows little movement { $period_text }.
-       [2] Only small grid-price changes are expected { $period_text }.
+       [2] Grid-price changes stay small { $period_text }.
       *[3] Grid prices remain fairly level { $period_text }.
     }
 outlook-negative-grid-price = { $variant ->
     [0] Grid prices are below zero from { $start } to { $end }.
-    [1] Negative grid prices are expected from { $start } to { $end }.
-    [2] Grid prices are forecast to fall below zero from { $start } to { $end }.
+    [1] Grid prices are negative from { $start } to { $end }.
+    [2] Grid prices fall below zero from { $start } to { $end }.
    *[other] The grid-price forecast is negative from { $start } to { $end }.
 }
 outlook-cheaper-grid-prices = { $variant ->
-    [0] Lower grid prices are expected from { $start } to { $end }.
-    [1] A cheaper grid-price period is forecast from { $start } to { $end }.
-    [2] Grid prices should be lower from { $start } to { $end }.
+    [0] Grid prices are lower from { $start } to { $end }.
+    [1] Grid prices dip from { $start } to { $end }.
+    [2] Grid prices sit lower from { $start } to { $end }.
    *[other] The forecast shows cheaper grid prices from { $start } to { $end }.
 }
 outlook-grid-price-swing =
     { $variant ->
        [0] Grid prices change direction around { $turn_at }.
        [1] The grid-price forecast turns around { $turn_at }.
-       [2] A grid-price shift is expected near { $turn_at }.
+       [2] A grid-price shift occurs near { $turn_at }.
       *[other] Grid prices move the other way after { $turn_at }.
     }
 outlook-solar-surplus = { $variant ->
@@ -85,10 +85,10 @@ outlook-battery-preserve =
     }
 outlook-battery-self-consume =
     { $variant ->
-       [0] { $subject } has no scheduled grid-charging or charge-holding periods.
-       [1] The plan has no grid charging or charge-holding periods for { $subject }.
-       [2] { $subject } remains in its normal self-use mode throughout the period.
-      *[other] { $subject } is planned for normal self-consumption throughout the period.
+       [0] { $subject } has no scheduled grid-charging or charge-holding.
+       [1] The plan has no grid charging or charge-holding for { $subject }.
+       [2] { $subject } remains in its normal self-use mode.
+      *[other] { $subject } is planned for normal self-consumption.
     }
 outlook-battery-full =
     { $variant ->
@@ -134,8 +134,8 @@ outlook-grid-export =
     }
 outlook-heavy-grid-use =
     { $variant ->
-       [0] Heavy grid use is expected in this period.
-       [1] Electricity use from the grid is forecast to be high in this period.
+       [0] Heavy grid use is expected { $period_text }.
+       [1] Electricity use from the grid is forecast to be high { $period_text }.
        [2] The plan expects a high amount of electricity to come from the grid.
       *[other] The home is expected to draw heavily from the grid.
     }
@@ -150,14 +150,14 @@ outlook-grid-use-increase =
     { $variant ->
        [0] Grid use is expected to increase later.
        [1] The home is forecast to draw more electricity from the grid later.
-       [2] Grid electricity use should be higher later in the period.
+       [2] Grid electricity use should be higher later { $period_text }.
       *[other] More grid use is expected later.
     }
 outlook-grid-use-decrease =
     { $variant ->
        [0] Grid use is expected to decrease later.
        [1] The home is forecast to draw less electricity from the grid later.
-       [2] Grid electricity use should be lower later in the period.
+       [2] Grid electricity use should be lower later { $period_text }.
       *[other] Less grid use is expected later.
     }
 outlook-source-problem =
@@ -225,8 +225,8 @@ outlook-stored-recommendations-unvalidated =
     }
 outlook-quiet =
     { $variant ->
-       [0] No important plan changes are expected for the rest of the period.
-       [1] The plan is expected to stay much the same for the remaining period.
+       [0] No important plan changes are expected { $period_text }.
+       [1] The plan is expected to stay much the same { $period_text }.
        [2] Nothing significant is expected to change in the rest of the plan.
       *[other] The remaining plan is expected to stay stable.
     }
@@ -261,12 +261,12 @@ outlook-period = { $period ->
 outlook-grid-price-swing-ease-then-rise = { $variant ->
     [0] Grid prices ease before rising again around { $turn_at }.
     [1] The grid-price forecast falls, then turns upward near { $turn_at }.
-   *[2] Lower grid prices are expected before a rise around { $turn_at }.
+   *[2] Lower grid prices come before a rise around { $turn_at }.
 }
 outlook-grid-price-swing-rise-then-ease = { $variant ->
     [0] Grid prices rise before easing around { $turn_at }.
     [1] The grid-price forecast climbs, then turns downward near { $turn_at }.
-   *[2] Higher grid prices are expected before a fall around { $turn_at }.
+   *[2] Higher grid prices come before a fall around { $turn_at }.
 }
 outlook-optional-start-single = { $variant ->
     [0] The best time to start { $subject } is { $start }.
