@@ -36,10 +36,15 @@ sentences are acceptable. Prefer a coherent progression over disconnected facts.
 
 Keep all outlook modeling, selection, and prose outside optimizer/. Current layout:
 
-- plan_outlook_types.py: language-neutral fact and selected-report models plus
-  bounded persistence serialization.
-- plan_outlook.py: extraction, grouping, significance, selection, status-model
-  construction, and retained-model refresh. It must not contain rendered prose.
+- plan_outlook_types.py: language-neutral fact, candidate, statement, and
+  selected-report models (schema v2, v1 backward-compatible loader) plus
+  bounded persistence serialization and `kind.magnitude.period` semantic keys.
+- plan_outlook_selection.py: eligibility, salience scoring, mean-based 1–3 set
+  enumeration reusing FACT_GROUPS, and statement aggregation. Pure Python, no
+  Home Assistant imports.
+- plan_outlook.py: extraction, significance/confidence/deviation assignment,
+  status-model construction, and retained-model refresh via the selection
+  engine. It must not contain rendered prose.
 - plan_outlook_renderer.py and its language modules: English and Danish wording,
   language-specific time and duration text, deterministic phrase variants, and
   semantic/report identifiers.
@@ -118,29 +123,47 @@ Age out observed starting readings rather than repeating them as current.
 
 ## Selection and controlled variety
 
-1. Filter unsupported or insignificant claims.
+1. Filter unsupported, expired, insignificant, or low-confidence claims
+   (confidence below 0.5 keeps a fact out of scoring entirely).
 2. Prioritize substantive approaching consequences and sustained reliability
    problems. When a sustained reliability problem is selected, show one concise
    warning and suppress precise energy advice that could appear more trustworthy
    than its inputs.
-3. Choose a main fact and only compatible supporting facts within the text budget.
+3. Score eligible facts for salience: significance and deviation evidence plus
+   novelty against recent history and timeliness toward the event, minus a
+   repetition penalty. Enumerate valid 1–3 fact sets on the mean member
+   salience (never pad a strong pair with mediocre filler) with small bonuses
+   for topic/group coverage and related-graph coherence; price×action and
+   causal pairs weigh double. Choose a main fact and only compatible supporting
+   facts within the text budget.
    Do not combine opposing or redundant facts from the same price, solar,
    battery-policy, load-timing, target, or grid-balance group.
-4. Among similarly useful valid alternatives, give a SMALL bounded preference to
-   fact types used less recently, then use deterministic seeded tie-breaking.
-5. Select among at least three semantically equivalent wording variants for every
+4. Among similarly useful valid alternatives, novelty decay demotes recently
+   told stories (a thrice-repeated noon story loses to equally fresh news)
+   while extreme significance/deviation still resurfaces through the penalty;
+   remaining ties break deterministically by fact identifier.
+5. Aggregate the winning set into statements over the related graph
+   (single/cause/sequence/contrast/opportunity-action) and render each
+   statement's facts through the existing per-fact Fluent messages. Select
+   among at least three semantically equivalent wording variants for every
    supported fragment, with four or more for common recurring reports.
 
 Rare trivial facts must never displace material consequences. Do not randomize
 warnings away, assert contradictions, or repeat the same information twice.
-Compute a semantic identifier before rendering. If it matches the preceding
+Compute a semantic identifier before rendering from the selected facts plus
+their statement grouping (salience/novelty/timeliness drift with wall-clock
+time and stay out of the hash). If it matches the preceding
 outlook, retain that outlook's phrase variants rather than rerolling on the next
 15-minute refresh. New semantic reports use stable site identity, local date,
 reporting period (morning/afternoon/evening), and the semantic identifier as the
 wording seed. Never use process-random Python hash as the persistence seed.
-Within a period retain selection when still valid; update values/times, and
-reselect when materially more important facts appear or selected facts expire.
-Record history on actual report selection changes, not every planner callback.
+ Within a period retain selection when still valid; update values/times, and
+ reselect when materially more important facts appear or selected facts expire.
++A bounded hysteresis (STICKINESS_EPSILON = 0.05 set-score points) keeps the
++previous eligible selection across tiny input perturbations; only a materially
++better set displaces it.
+Record `kind.magnitude.period` semantic keys on actual report selection changes
+(magnitude tertiles are `high`/`med`/`low`), not every planner callback.
 Support predictable seeded tests. Variety does not increase information_value.
 
 ## Persistent problems

@@ -78,6 +78,16 @@ class OutlookFact:
     # v1 compat loading only; never used in selection.
     information_value: str | None = None
 
+    def semantic_key(self) -> str:
+        """Return the ``kind.magnitude.period`` history key for this fact."""
+        return semantic_key(
+            self.kind,
+            self.significance,
+            self.deviation,
+            self.start,
+            self.start.tzinfo,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class FactCandidate:

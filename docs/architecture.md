@@ -47,8 +47,24 @@ facts from appearing in the same report.
 Selection uses relative tariff movement (18% of the observed absolute scale with
 a 0.005 numerical floor), sustained multi-slot solar/export intervals, and both
 absolute and relative energy floors. These internal thresholds deliberately avoid
-assuming a currency. Selection history is bounded to 12 changes and only advances
-when the selected story changes.
+assuming a currency. Eligible facts (unexpired, confidence at or above 0.5) are
+scored for salience from significance, deviation, novelty against recent
+history, timeliness toward the event start, minus a repetition penalty, then
+the best valid 1–3 fact set is enumerated: the set base is the mean member
+salience (quality over quantity, so mediocre filler cannot pad a strong pair),
+with small bonuses for topic/group coverage and related-graph coherence
+(price×action and causal pairs weigh double). A sustained reliability fact
+short-circuits to one prioritized warning as before. Selection history is
+bounded to 12 `kind.magnitude.period` semantic keys (magnitude tertiles are
+`high`/`med`/`low`) and only advances when the selected story changes. The
+selected set is aggregated into statements over the related graph
+(single/cause/sequence/contrast/opportunity-action); the renderer voices each
+statement's facts through the existing per-fact Fluent messages, derives the
+report-level information value from the max significance band, and fingerprints
+meaning (facts plus statement grouping, never wording or wall-clock salience)
+in `semantic_id`. Persisted models are schema v2 with a v1 backward-compatible
+loader (legacy int significance and `information_value` map onto the float
+dims).
 
 Every supported English and Danish fragment has at least three equivalent wording
 variants. Common price, grid-use, charging, stale-data, refresh-failure, and quiet

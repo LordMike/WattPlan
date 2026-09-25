@@ -516,18 +516,20 @@ def test_negative_price_only_combines_with_matching_grid_charge() -> None:
         *,
         value: str = "medium",
         related: tuple[str, ...] = (),
-        significance: int = 1,
+        significance: float | None = None,
     ) -> OutlookFact:
+        band = {"low": 0.2, "medium": 0.5, "high": 0.9}
         return OutlookFact(
             fact_id=f"{kind}:test",
             kind=kind,
             topic="opportunity",
-            information_value=value,
             basis="forecast",
             start=start,
             end=start + timedelta(hours=1),
             related=related,
-            significance=significance,
+            significance=band[value] if significance is None else significance,
+            confidence=0.8,
+            deviation=0.4,
         )
 
     selected = _select_facts(
@@ -536,9 +538,9 @@ def test_negative_price_only_combines_with_matching_grid_charge() -> None:
                 "negative_grid_price",
                 value="high",
                 related=("grid_charge",),
-                significance=3,
+                significance=0.9,
             ),
-            fact("grid_price_rise", value="high", significance=2),
+            fact("grid_price_rise", value="high", significance=0.8),
             fact("grid_charge", related=("negative_grid_price",)),
             fact("optional_start"),
         ],
@@ -551,25 +553,26 @@ def test_negative_price_only_combines_with_matching_grid_charge() -> None:
 def test_selection_avoids_redundant_fact_groups() -> None:
     start = datetime(2026, 9, 24, 0, tzinfo=UTC)
 
-    def fact(kind: str, topic: str, value: str, significance: int) -> OutlookFact:
+    def fact(kind: str, topic: str, value: str, significance: float) -> OutlookFact:
         return OutlookFact(
             fact_id=f"{kind}:test",
             kind=kind,
             topic=topic,
-            information_value=value,
             basis="forecast",
             start=start,
             end=start + timedelta(hours=1),
             significance=significance,
+            confidence=0.8,
+            deviation=0.4,
         )
 
     selected = _select_facts(
         [
-            fact("heavy_grid_use", "energy_balance", "high", 3),
-            fact("grid_use_decrease", "energy_balance", "high", 2),
-            fact("solar_surplus", "energy_balance", "medium", 2),
-            fact("grid_export", "energy_balance", "medium", 1),
-            fact("optional_start", "opportunity", "medium", 1),
+            fact("heavy_grid_use", "energy_balance", "high", 0.9),
+            fact("grid_use_decrease", "energy_balance", "high", 0.8),
+            fact("solar_surplus", "energy_balance", "medium", 0.5),
+            fact("grid_export", "energy_balance", "medium", 0.4),
+            fact("optional_start", "opportunity", "medium", 0.5),
         ],
         previous=None,
     )

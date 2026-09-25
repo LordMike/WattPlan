@@ -8,7 +8,13 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .plan_outlook_renderer import render_plan_outlook
-from .plan_outlook_selection import build_statements, select_best_set
+from .plan_outlook_selection import (
+    build_statements,
+    filter_eligible,
+    score_candidates,
+    select_best_set,
+    set_score,
+)
 from .plan_outlook_types import (
     OutlookFact,
     OutlookModel,
@@ -790,6 +796,33 @@ def _facts_are_compatible(left: OutlookFact, right: OutlookFact) -> bool:
     return True
 
 
+#: Maximum set-score shortfall for keeping the previous selection.
+#: Reselect only on materially better stories, not input noise.
+STICKINESS_EPSILON = 0.05
+
+
+def _retain_previous_when_still_near_best(
+    facts: list[OutlookFact],
+    now: datetime,
+    history: list[str],
+    selected: list[OutlookFact],
+    previous_ids: tuple[str, ...],
+) -> list[OutlookFact] | None:
+    """Return the previous selection when it is still eligible and near-best."""
+    eligible, _ = filter_eligible(facts, now)
+    eligible_ids = {fact.fact_id for fact in eligible}
+    if any(fact_id not in eligible_ids for fact_id in previous_ids):
+        return None
+    by_id = {fact.fact_id: fact for fact in facts}
+    previous_facts = [by_id[fact_id] for fact_id in previous_ids]
+    scored = {item.fact.fact_id: item.score for item in score_candidates(facts, now, history)}
+    best_total, _ = set_score(tuple(selected), scored)
+    previous_total, _ = set_score(tuple(previous_facts), scored)
+    if best_total - previous_total <= STICKINESS_EPSILON:
+        return previous_facts
+    return None
+
+
 def _select_model(
     facts: list[OutlookFact],
     *,
@@ -804,6 +837,17 @@ def _select_model(
     facts = [fact for fact in facts if fact.end >= now]
     history = list(previous.selection_history[-MAX_HISTORY:]) if previous else []
     selected = select_best_set(facts, now, history)
+    previous_ids = previous.selected_fact_ids if previous else ()
+    if (
+        previous_ids
+        and selected
+        and tuple(fact.fact_id for fact in selected) != previous_ids
+    ):
+        retained = _retain_previous_when_still_near_best(
+            facts, now, history, selected, previous_ids
+        )
+        if retained is not None:
+            selected = retained
     if not selected:
         quiet = _fact(
             "quiet",
@@ -818,7 +862,6 @@ def _select_model(
 
     statements = build_statements(selected)
     selected_ids = tuple(fact.fact_id for fact in selected)
-    previous_ids = previous.selected_fact_ids if previous else ()
     if selected_ids != previous_ids:
         try:
             display_tz = start.tzinfo

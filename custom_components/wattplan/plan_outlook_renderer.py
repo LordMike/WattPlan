@@ -19,6 +19,63 @@ from .plan_outlook_types import OutlookFact, OutlookModel
 VALUE_RANK = {"low": 0, "medium": 1, "high": 2}
 
 
+def _statement_payload(statement: Any) -> dict[str, Any]:
+    """Return a JSON-serializable fingerprint of one outlook statement."""
+    fact_ids = getattr(statement, "fact_ids", ()) or ()
+    return {
+        "statement_id": str(getattr(statement, "statement_id", "")),
+        "fact_ids": [str(value) for value in fact_ids],
+        "relation": str(getattr(statement, "relation", "single")),
+        "headline_fact_id": str(getattr(statement, "headline_fact_id", "")),
+    }
+
+
+def _ordered_by_statements(
+    selected: tuple[OutlookFact, ...],
+    statements: tuple[Any, ...],
+) -> list[OutlookFact]:
+    """Group selected facts statement-by-statement for coherent rendering.
+
+    Linked facts read as one progression, so each statement's facts stay
+    adjacent; facts within a statement keep selection (salience) order.
+    Facts missing from every statement keep selection order at the end.
+    """
+    if not statements:
+        return list(selected)
+    by_id = {fact.fact_id: fact for fact in selected}
+    ordered: list[OutlookFact] = []
+    seen: set[str] = set()
+    for statement in statements:
+        for fact_id in getattr(statement, "fact_ids", ()) or ():
+            key = str(fact_id)
+            if key in by_id and key not in seen:
+                ordered.append(by_id[key])
+                seen.add(key)
+    for fact in selected:
+        if fact.fact_id not in seen:
+            ordered.append(fact)
+            seen.add(fact.fact_id)
+    return ordered
+
+
+def _salience_scores(
+    model: OutlookModel, now: datetime
+) -> dict[str, float]:
+    """Best-effort per-fact salience for display tie-breaks (never fatal)."""
+    try:
+        from .plan_outlook_selection import salience_of
+    except Exception:
+        return {}
+    scores: dict[str, float] = {}
+    for fact in model.selected_facts:
+        try:
+            score, _ = salience_of(fact, now, model.selection_history)
+        except Exception:
+            continue
+        scores[fact.fact_id] = score
+    return scores
+
+
 def _info_value_of(fact: OutlookFact) -> str:
     """Derive report-level information value without a magic fact field."""
     info = getattr(fact, "information_value", None)
@@ -288,10 +345,24 @@ def _semantic_fact_payload(fact: OutlookFact) -> dict[str, Any]:
     return payload
 
 
-def _semantic_id(selected: tuple[OutlookFact, ...], *, information_value: str) -> str:
+def _semantic_id(
+    selected: tuple[OutlookFact, ...],
+    *,
+    information_value: str,
+    statements: tuple[Any, ...] = (),
+) -> str:
+    """Fingerprint shared meaning: fact payloads plus statement grouping.
+
+    Salience/novelty/timeliness drift with wall-clock time, so they stay out
+    of this hash: while the selected facts and their grouping are unchanged,
+    each language renderer reuses its persisted phrase variants.
+    """
     digest = hashlib.sha256(
         json.dumps(
-            [_semantic_fact_payload(fact) for fact in selected],
+            {
+                "facts": [_semantic_fact_payload(fact) for fact in selected],
+                "statements": [_statement_payload(item) for item in statements],
+            },
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
@@ -307,15 +378,26 @@ def render_plan_outlook(
     previous_outlook: dict[str, Any] | None = None,
     variation_seed: str | None = None,
 ) -> dict[str, Any]:
-    """Assemble a rendered report; facts and selection remain language-neutral."""
+    """Assemble a rendered report; facts and selection remain language-neutral.
+
+    Each statement's facts render through the existing per-fact Fluent
+    messages (no statement-level prose exists in the catalogues); statements
+    only control grouping order and the semantic fingerprint. The
+    report-level information value is the max significance band across the
+    selected facts; per-fact salience already determined selection order
+    upstream and only breaks topic ties here.
+    """
     selected = model.selected_facts
     if not selected:
         return {}
     language = language if language in {"en", "da"} else "en"
+    statements = tuple(getattr(model, "statements", ()) or ())
     information_value = max(
         (_info_value_of(fact) for fact in selected), key=VALUE_RANK.__getitem__
     )
-    semantic_id = _semantic_id(selected, information_value=information_value)
+    semantic_id = _semantic_id(
+        selected, information_value=information_value, statements=statements
+    )
     previous_variants = (
         previous_outlook.get("_render_variants", {})
         if isinstance(previous_outlook, dict)
@@ -326,7 +408,7 @@ def render_plan_outlook(
     )
     rendered: list[str] = []
     variants: dict[str, int] = {}
-    for fact in selected:
+    for fact in _ordered_by_statements(selected, statements):
         previous_variant = previous_variants.get(fact.fact_id)
         text, variant = _render_fact(
             fact,
@@ -339,9 +421,17 @@ def render_plan_outlook(
         rendered.append(text)
         variants[fact.fact_id] = variant
     line_1, line_2 = rendered[0], " ".join(rendered[1:])
+    salience = _salience_scores(model, now)
     topic_fact = next(
         (fact for fact in selected if fact.topic == "reliability"),
-        max(selected, key=lambda fact: VALUE_RANK[_info_value_of(fact)]),
+        max(
+            selected,
+            key=lambda fact: (
+                VALUE_RANK[_info_value_of(fact)],
+                float(getattr(fact, "significance", 0.0) or 0.0),
+                salience.get(fact.fact_id, 0.0),
+            ),
+        ),
     )
     digest = hashlib.sha256(
         json.dumps(
@@ -366,6 +456,7 @@ def render_plan_outlook(
         "information_value": information_value,
         "topic": topic_fact.topic,
         "selected_facts": [fact.fact_id for fact in selected],
+        "statements": [_statement_payload(item) for item in statements],
         "fact_details": [
             {
                 "id": fact.fact_id,
@@ -374,6 +465,10 @@ def render_plan_outlook(
                 "end": fact.end.isoformat(),
                 "required_inputs": list(fact.required_inputs),
                 "values": dict(fact.values),
+                "significance": float(getattr(fact, "significance", 0.0) or 0.0),
+                "confidence": float(getattr(fact, "confidence", 0.5) or 0.0),
+                "deviation": float(getattr(fact, "deviation", 0.0) or 0.0),
+                "salience": salience.get(fact.fact_id),
             }
             for fact in selected
         ],

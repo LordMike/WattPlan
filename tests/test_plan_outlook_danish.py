@@ -26,17 +26,22 @@ def _fact(
     *,
     subject: str = "Husbatteri",
     values: tuple[tuple[str, str | int | float | bool | None], ...] = (),
+    significance: float = 0.9,
+    confidence: float = 0.8,
+    deviation: float = 0.4,
 ) -> OutlookFact:
     return OutlookFact(
         fact_id=f"{kind}:test",
         kind=kind,
         topic="energy",
-        information_value="high",
         basis="forecast",
         start=NOW + timedelta(hours=1),
         end=NOW + timedelta(hours=2),
         subject=subject,
         values=values,
+        significance=significance,
+        confidence=confidence,
+        deviation=deviation,
     )
 
 
