@@ -155,28 +155,40 @@ def test_every_supported_fragment_formats_every_declared_variant(
     language: str, renderer, kind: str, subject: str, values
 ) -> None:
     fact = _fact(kind, subject=subject, values=values)
-    variant_count = _variant_counts(language)[_message_id(fact)]
+    # Solo (single-battery) and duo models resolve different message IDs
+    # for battery facts; every resolved branch needs full variant coverage.
+    decoy = _fact("grid_charge", subject="Andet Batteri")
+    if decoy.fact_id == fact.fact_id:
+        decoy = _fact("battery_preserve", subject="Andet Batteri")
+    duo = _model(fact, decoy)
+    seen_ids: set[str] = set()
+    for model in (_model(fact), duo):
+        message_id = _message_id(fact, model)
+        if message_id in seen_ids:
+            continue
+        seen_ids.add(message_id)
+        variant_count = _variant_counts(language)[message_id]
 
-    variants = {
-        renderer(
-            fact,
-            model=_model(fact),
-            now=NOW,
-            variation_seed="test",
-            forced_variant=variant,
-        )[0]
-        for variant in range(variant_count)
-    }
+        variants = {
+            renderer(
+                fact,
+                model=model,
+                now=NOW,
+                variation_seed="test",
+                forced_variant=variant,
+            )[0]
+            for variant in range(variant_count)
+        }
 
-    assert variant_count >= 3
-    assert len(variants) == variant_count
+        assert variant_count >= 3
+        assert len(variants) == variant_count
 
 
 @pytest.mark.parametrize(
     ("kind", "expected"),
     (
-        ("grid_price_rise", "importpriser"),
-        ("grid_price_fall", "importpriser"),
+        ("grid_price_rise", "elpris"),
+        ("grid_price_fall", "elpris"),
         ("limited_grid_use", "elnettet"),
     ),
 )
@@ -224,9 +236,10 @@ def test_danish_preserves_subject_and_uses_danish_duration_forms() -> None:
         subject="Min Egen Batteripakke",
         values=(("requested_percent", 80),),
     )
+    duo = _model(target, _fact("grid_charge", subject="Andet Batteri"))
     target_text, _ = render_fact_danish(
         target,
-        model=_model(target),
+        model=duo,
         now=NOW,
         variation_seed="test",
     )
@@ -249,7 +262,7 @@ def test_danish_translates_internal_source_names() -> None:
         forced_variant=0,
     )
 
-    assert "importpriser" in text
+    assert "elpris" in text
     assert "source_import_price" not in text
 
 
@@ -375,16 +388,69 @@ def test_danish_percentages_use_danish_spacing() -> None:
 def test_rendering_preserves_user_defined_subject_exactly(renderer) -> None:
     subject = "Min_Egen Batteripakke 2"
     fact = _fact("grid_charge", subject=subject)
+    duo = _model(fact, _fact("grid_charge", subject="Andet Batteri"))
 
     text, _ = renderer(
         fact,
-        model=_model(fact),
+        model=duo,
         now=NOW,
         variation_seed="subject",
         forced_variant=0,
     )
 
     assert subject in text
+
+
+@pytest.mark.parametrize("renderer", (render_fact_english, render_fact_danish))
+def test_solo_battery_omits_the_name(renderer) -> None:
+    subject = "Min_Egen Batteripakke 2"
+    fact = _fact("grid_charge", subject=subject)
+
+    texts = {
+        renderer(
+            fact,
+            model=_model(fact),
+            now=NOW,
+            variation_seed="solo",
+            forced_variant=variant,
+        )[0]
+        for variant in range(4)
+    }
+
+    assert len(texts) == 4
+    assert all(subject not in text for text in texts)
+
+
+@pytest.mark.parametrize("renderer", (render_fact_english, render_fact_danish))
+def test_prose_has_no_narrating_plan_voice(renderer) -> None:
+    status_kinds = {
+        "plan_refresh_failure",
+        "plan_unavailable",
+        "plan_unusable",
+        "plan_expired",
+        "restored_unvalidated",
+        "recommendations_unavailable",
+        "stored_recommendations_unvalidated",
+        "quiet",
+    }
+    for kind, subject, values in FACT_VARIANT_CASES:
+        fact = _fact(kind, subject=subject, values=values)
+        for model in (
+            _model(fact),
+            _model(fact, _fact("grid_charge", subject="Andet Batteri")),
+        ):
+            for variant in range(4):
+                text, _ = renderer(
+                    fact,
+                    model=model,
+                    now=NOW,
+                    variation_seed="voice",
+                    forced_variant=variant,
+                )
+                if kind in status_kinds:
+                    continue
+                assert "Planen " not in text
+                assert "The plan " not in text
 
 
 @pytest.mark.parametrize("language", ("en", "da"))
@@ -406,6 +472,9 @@ def test_catalogues_have_no_junk_and_cover_every_semantic_branch() -> None:
             _message_id(_fact("optional_start", values=(("alternative_at", NOW.isoformat()),))),
         }
     )
+    # Solo (single-battery) branches resolve only with model context.
+    for solo_fact in facts:
+        message_ids.add(_message_id(solo_fact, _model(solo_fact)))
     root = Path(__file__).parents[1] / "custom_components" / "wattplan" / "locales"
     for language in ("en", "da"):
         parsed = FluentParser().parse((root / language / "plan_outlook.ftl").read_text())

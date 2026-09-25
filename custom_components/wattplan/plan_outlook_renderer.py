@@ -18,6 +18,42 @@ from .plan_outlook_types import OutlookFact, OutlookModel
 
 VALUE_RANK = {"low": 0, "medium": 1, "high": 2}
 
+_BATTERY_KINDS = {
+    "low_reserve",
+    "grid_charge",
+    "battery_preserve",
+    "battery_self_consume",
+    "battery_full",
+    "target_shortfall",
+    "target_reached",
+}
+
+_SOLO_CAPABLE_IDS = {
+    "outlook-low-reserve",
+    "outlook-grid-charge",
+    "outlook-battery-preserve",
+    "outlook-battery-self-consume",
+    "outlook-battery-full",
+    "outlook-target-shortfall-known",
+    "outlook-target-shortfall-missing",
+    "outlook-target-reached-known",
+    "outlook-target-reached-missing",
+}
+
+
+def _solo_battery_subject(model: OutlookModel | None) -> str | None:
+    """Return the single battery subject, or None when naming is needed."""
+    if model is None:
+        return None
+    subjects = {
+        fact.subject
+        for fact in model.facts
+        if fact.kind in _BATTERY_KINDS and fact.subject != "site"
+    }
+    if len(subjects) == 1:
+        return next(iter(subjects))
+    return None
+
 
 def _statement_payload(statement: Any) -> dict[str, Any]:
     """Return a JSON-serializable fingerprint of one outlook statement."""
@@ -177,7 +213,7 @@ def _format(language: str, message_id: str, arguments: dict[str, Any]) -> str:
     return _fallback(message_id, arguments)
 
 
-def _message_id(fact: OutlookFact) -> str:
+def _message_id(fact: OutlookFact, model: OutlookModel | None = None) -> str:
     values = dict(fact.values)
     if fact.kind == "source_problem":
         source = fact.subject.removeprefix("source_").replace("_", "-")
@@ -202,12 +238,18 @@ def _message_id(fact: OutlookFact) -> str:
             else "outlook-target-shortfall-missing"
         )
     if fact.kind == "target_reached":
-        return (
+        base_id = (
             "outlook-target-reached-known"
             if values.get("requested_percent") is not None
             else "outlook-target-reached-missing"
         )
-    return f"outlook-{fact.kind.replace('_', '-')}"
+    else:
+        base_id = f"outlook-{fact.kind.replace('_', '-')}"
+    if base_id in _SOLO_CAPABLE_IDS and model is not None:
+        solo = _solo_battery_subject(model)
+        if solo is not None and fact.subject == solo:
+            return f"{base_id}-solo"
+    return base_id
 
 
 def _variant(
@@ -219,7 +261,7 @@ def _variant(
     language: str,
     forced_variant: int | None,
 ) -> int:
-    message_id = _message_id(fact)
+    message_id = _message_id(fact, model)
     try:
         variant_count = _variant_counts(language).get(message_id, 1)
     except Exception:
@@ -299,7 +341,7 @@ def _render_fact(
     )
     arguments = _arguments(fact, now, language)
     arguments["variant"] = variant
-    return _format(language, _message_id(fact), arguments), variant
+    return _format(language, _message_id(fact, model), arguments), variant
 
 
 def render_fact_english(fact: OutlookFact, **kwargs: Any) -> tuple[str, int]:

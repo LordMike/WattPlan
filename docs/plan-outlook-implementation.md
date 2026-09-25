@@ -21,6 +21,9 @@ sentences are acceptable. Prefer a coherent progression over disconnected facts.
   genuinely uncertain solar and projection claims.
 - Name concrete days via the localized day reference, never the bare clinical
   word "period" in horizon-wide claims.
+- Address readers in their terms: Danish says *elprisen*, never *importpriser*;
+  a single battery goes nameless through dedicated solo wordings; the plan
+  never narrates itself — recommendations are stated, not announced by it.
 - Prefer solar, battery reserves, grid charging, grid use, building, easing,
   remaining, rising, and expected.
 - Observed state is timestamped; forecast slot zero is not live telemetry.

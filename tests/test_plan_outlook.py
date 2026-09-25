@@ -147,7 +147,8 @@ def test_negative_price_and_grid_charge_form_a_coherent_story() -> None:
         fact.startswith("negative_grid_price:") for fact in outlook["selected_facts"]
     )
     assert any(fact.startswith("grid_charge:") for fact in outlook["selected_facts"])
-    assert "House battery" in outlook["text"]
+    # Single battery goes nameless; the coherent story is told without it.
+    assert "House battery" not in outlook["text"]
     assert "from 00:30 to 01:00" in outlook["text"]
     assert len(outlook["text"].split()) <= 70
 
