@@ -17,6 +17,24 @@ from fluent.syntax.ast import Junk
 from .plan_outlook_types import OutlookFact, OutlookModel
 
 VALUE_RANK = {"low": 0, "medium": 1, "high": 2}
+
+
+def _info_value_of(fact: OutlookFact) -> str:
+    """Derive report-level information value without a magic fact field."""
+    info = getattr(fact, "information_value", None)
+    if isinstance(info, str) and info in VALUE_RANK:
+        return info
+    try:
+        sig = float(getattr(fact, "significance", 0.5))
+    except (TypeError, ValueError):
+        return "medium"
+    if sig > 1.0:  # legacy int rank 0..3
+        return "high" if sig >= 2 else "medium" if sig >= 1 else "low"
+    if sig >= 2.0 / 3.0:
+        return "high"
+    if sig >= 1.0 / 3.0:
+        return "medium"
+    return "low"
 _CATALOG_ROOT = Path(__file__).with_name("locales")
 
 
@@ -242,9 +260,12 @@ def _semantic_fact_payload(fact: OutlookFact) -> dict[str, Any]:
         "id": fact.fact_id,
         "kind": fact.kind,
         "topic": fact.topic,
-        "information_value": fact.information_value,
+        "information_value": _info_value_of(fact),
         "subject": fact.subject,
         "values": dict(fact.values),
+        "significance": float(getattr(fact, "significance", 0.5) or 0.0),
+        "confidence": float(getattr(fact, "confidence", 0.8) or 0.0),
+        "deviation": float(getattr(fact, "deviation", 0.0) or 0.0),
     }
     if fact.kind in {
         "negative_grid_price",
@@ -292,7 +313,7 @@ def render_plan_outlook(
         return {}
     language = language if language in {"en", "da"} else "en"
     information_value = max(
-        (fact.information_value for fact in selected), key=VALUE_RANK.__getitem__
+        (_info_value_of(fact) for fact in selected), key=VALUE_RANK.__getitem__
     )
     semantic_id = _semantic_id(selected, information_value=information_value)
     previous_variants = (
@@ -320,7 +341,7 @@ def render_plan_outlook(
     line_1, line_2 = rendered[0], " ".join(rendered[1:])
     topic_fact = next(
         (fact for fact in selected if fact.topic == "reliability"),
-        max(selected, key=lambda fact: VALUE_RANK[fact.information_value]),
+        max(selected, key=lambda fact: VALUE_RANK[_info_value_of(fact)]),
     )
     digest = hashlib.sha256(
         json.dumps(

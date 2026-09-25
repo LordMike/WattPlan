@@ -8,15 +8,48 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .plan_outlook_renderer import render_plan_outlook
+from .plan_outlook_selection import build_statements, select_best_set
 from .plan_outlook_types import (
     OutlookFact,
     OutlookModel,
     OutlookValue,
     model_from_dict,
     model_to_dict,
+    semantic_key,
 )
 
 VALUE_RANK = {"low": 0, "medium": 1, "high": 2}
+INFO_TO_SIGNIFICANCE = {"low": 0.2, "medium": 0.5, "high": 0.9}
+BASIS_CONFIDENCE = {"observed": 0.9, "planned": 0.85, "forecast": 0.8}
+KIND_DEVIATION = {
+    "negative_grid_price": 0.9,
+    "target_shortfall": 0.8,
+    "heavy_grid_use": 0.7,
+    "low_reserve": 0.7,
+    "source_problem": 0.7,
+    "plan_refresh_failure": 0.8,
+    "grid_price_rise": 0.6,
+    "grid_price_fall": 0.6,
+    "grid_price_swing": 0.6,
+    "solar_surplus": 0.5,
+    "grid_export": 0.5,
+    "grid_use_increase": 0.5,
+    "grid_use_decrease": 0.5,
+    "charging_dominates_imports": 0.5,
+    "battery_full": 0.5,
+    "cheaper_grid_prices": 0.4,
+    "target_reached": 0.4,
+    "comfort_timing": 0.4,
+    "optional_start": 0.4,
+    "limited_grid_use": 0.4,
+    "grid_charge": 0.3,
+    "battery_preserve": 0.2,
+    "solar_fading": 0.2,
+    "solar_modest": 0.15,
+    "flat_grid_prices": 0.1,
+    "battery_self_consume": 0.1,
+    "quiet": 0.05,
+}
 MAX_HISTORY = 12
 FACT_GROUPS = {
     "flat_grid_prices": "price",
@@ -118,6 +151,8 @@ def _fact(
     related: tuple[str, ...] = (),
     required_inputs: tuple[str, ...] = (),
     values: tuple[tuple[str, OutlookValue], ...] = (),
+    deviation: float | None = None,
+    confidence: float | None = None,
 ) -> OutlookFact:
     if not required_inputs:
         if kind.startswith("grid_price") or kind in {
@@ -149,7 +184,6 @@ def _fact(
         fact_id=f"{kind}:{subject}",
         kind=kind,
         topic=topic,
-        information_value=value,
         basis=basis,
         start=start,
         end=end,
@@ -157,7 +191,15 @@ def _fact(
         related=related,
         required_inputs=required_inputs,
         values=values,
-        significance=VALUE_RANK[value],
+        significance=INFO_TO_SIGNIFICANCE.get(value, 0.5),
+        confidence=(
+            confidence
+            if confidence is not None
+            else BASIS_CONFIDENCE.get(basis, 0.8)
+        ),
+        deviation=(
+            deviation if deviation is not None else KIND_DEVIATION.get(kind, 0.4)
+        ),
     )
 
 
@@ -239,16 +281,18 @@ def _price_facts(
             direction = "rise_then_ease"
         kind = "grid_price_swing"
         values = (("turn_at", turn_at.isoformat()), ("direction", direction))
+    strong = spread >= scale * 0.45
     facts.append(
         _fact(
             kind,
             "opportunity",
-            "high" if spread >= scale * 0.45 else "medium",
+            "high" if strong else "medium",
             "forecast",
             start,
             end,
             related=("grid_charge", "battery_preserve", "optional_start"),
             values=values,
+            deviation=0.8 if strong else 0.4,
         )
     )
     return facts
@@ -342,6 +386,7 @@ def _battery_facts(
         capacity = float(settings.get("capacity_kwh", 0) or 0)
         initial = float(settings.get("initial_kwh", 0) or 0)
         minimum = float(settings.get("minimum_kwh", 0) or 0)
+        initial_known = settings.get("initial_kwh", None) is not None
         if capacity > 0 and initial <= minimum + max(capacity * 0.05, 0.1):
             facts.append(
                 _fact(
@@ -353,6 +398,9 @@ def _battery_facts(
                     _at(start, 1, slot_minutes),
                     subject=name,
                     related=("grid_charge", "target_shortfall"),
+                    # Unknown starting SoC is weak evidence: keep the fact
+                    # but let eligibility filtering suppress it.
+                    confidence=0.9 if initial_known else 0.3,
                 )
             )
 
@@ -712,78 +760,21 @@ def _reliability_facts(
 
 
 def _select_facts(
-    facts: list[OutlookFact], *, previous: OutlookModel | None
+    facts: list[OutlookFact],
+    *,
+    previous: OutlookModel | None,
+    now: datetime | None = None,
 ) -> list[OutlookFact]:
-    """Select semantic facts without considering any rendered wording."""
+    """Select semantic facts via salience-scored candidate sets."""
     if not facts:
         return []
-    recent = list(previous.selection_history[-MAX_HISTORY:]) if previous else []
-    previous_ids = previous.selected_fact_ids if previous else ()
-    by_id = {fact.fact_id: fact for fact in facts}
-
-    reliability_facts = [fact for fact in facts if fact.topic == "reliability"]
-    if reliability_facts:
-        reliability_priority = {
-            "plan_unavailable": 5,
-            "plan_unusable": 5,
-            "plan_expired": 5,
-            "restored_unvalidated": 5,
-            "plan_refresh_failure": 4,
-            "recommendations_unavailable": 3,
-            "stored_recommendations_unvalidated": 3,
-            "source_problem": 2,
-        }
-
-        def reliability_score(fact: OutlookFact) -> tuple[int, int, int, int, str]:
-            elapsed = dict(fact.values).get("elapsed_minutes", 0)
-            return (
-                VALUE_RANK[fact.information_value],
-                reliability_priority.get(fact.kind, 1),
-                1 if fact.fact_id in previous_ids else 0,
-                int(elapsed) if isinstance(elapsed, int | float) else 0,
-                fact.fact_id,
-            )
-
-        return [max(reliability_facts, key=reliability_score)]
-
-    max_rank = max(VALUE_RANK[fact.information_value] for fact in facts)
-    retained = [by_id[fact_id] for fact_id in previous_ids if fact_id in by_id]
-    if retained and VALUE_RANK[retained[0].information_value] >= max_rank:
-        main = retained[0]
-    else:
-
-        def score(fact: OutlookFact) -> tuple[int, int, int, int, str]:
-            novelty = 1 if fact.kind not in recent[-6:] else 0
-            return (
-                VALUE_RANK[fact.information_value],
-                0,
-                novelty,
-                fact.significance,
-                fact.fact_id,
-            )
-
-        main = max(facts, key=score)
-
-    selected = [main]
-    candidates = [fact for fact in facts if fact.fact_id != main.fact_id]
-    candidates.sort(
-        key=lambda fact: (
-            fact.kind in main.related or main.kind in fact.related,
-            VALUE_RANK[fact.information_value],
-            fact.topic == "reliability",
-            fact.fact_id,
-        ),
-        reverse=True,
-    )
-    for fact in candidates:
-        if len(selected) >= 3:
-            break
-        if fact.kind == main.kind:
-            continue
-        if not all(_facts_are_compatible(fact, other) for other in selected):
-            continue
-        selected.append(fact)
-    return selected
+    history = list(previous.selection_history[-MAX_HISTORY:]) if previous else []
+    if now is None:
+        try:
+            now = min(fact.start for fact in facts)
+        except ValueError:
+            return []
+    return select_best_set(facts, now, history)
 
 
 def _facts_are_compatible(left: OutlookFact, right: OutlookFact) -> bool:
@@ -811,7 +802,8 @@ def _select_model(
 ) -> OutlookModel:
     """Return the language-neutral report model for currently valid facts."""
     facts = [fact for fact in facts if fact.end >= now]
-    selected = _select_facts(facts, previous=previous)
+    history = list(previous.selection_history[-MAX_HISTORY:]) if previous else []
+    selected = select_best_set(facts, now, history)
     if not selected:
         quiet = _fact(
             "quiet",
@@ -824,11 +816,23 @@ def _select_model(
         facts.append(quiet)
         selected = [quiet]
 
-    history = list(previous.selection_history[-MAX_HISTORY:]) if previous else []
+    statements = build_statements(selected)
     selected_ids = tuple(fact.fact_id for fact in selected)
     previous_ids = previous.selected_fact_ids if previous else ()
     if selected_ids != previous_ids:
-        history.append(selected[0].kind)
+        try:
+            display_tz = start.tzinfo
+            history.append(
+                semantic_key(
+                    selected[0].kind,
+                    selected[0].significance,
+                    selected[0].deviation,
+                    selected[0].start,
+                    display_tz,
+                )
+            )
+        except Exception:
+            history.append(selected[0].kind)
     return OutlookModel(
         facts=tuple(facts),
         selected_fact_ids=selected_ids,
@@ -837,6 +841,7 @@ def _select_model(
         horizon_end=horizon_end,
         plan_created_at=plan_created_at,
         seed_prefix=seed_prefix,
+        statements=tuple(statements),
     )
 
 
