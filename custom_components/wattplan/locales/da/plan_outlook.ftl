@@ -3,14 +3,14 @@ outlook-grid-price-rise =
        [0] Elprisen stiger { $period_text }.
        [1] Elprisen ligger højere { $period_text }.
        [2] Der gælder en højere elpris { $period_text }.
-      *[other] Prognosen viser, at elprisen stiger.
+      *[other] Elprisen vil stige.
     }
 outlook-grid-price-fall =
     { $variant ->
        [0] Elprisen falder { $period_text }.
        [1] Elprisen ligger lavere { $period_text }.
        [2] Der gælder en lavere elpris { $period_text }.
-      *[other] Prognosen viser, at elprisen falder.
+      *[other] Elprisen vil falde.
     }
 outlook-limited-grid-use =
     { $variant ->
@@ -22,7 +22,7 @@ outlook-limited-grid-use =
 outlook-flat-grid-prices =
     { $variant ->
        [0] Elprisen holder sig stabil { $period_text }.
-       [1] Prognosen viser kun små udsving i elprisen { $period_text }.
+       [1] Elprisen viser kun små udsving { $period_text }.
        [2] Der er kun små ændringer i elprisen { $period_text }.
       *[3] Elprisen forbliver forholdsvis stabil { $period_text }.
     }
@@ -31,14 +31,14 @@ outlook-negative-grid-price =
        [0] Elprisen er under nul fra kl. { $start } til kl. { $end }.
        [1] Der er en negativ elpris fra kl. { $start } til kl. { $end }.
        [2] Elprisen falder under nul fra kl. { $start } til kl. { $end }.
-      *[other] Prognosen viser en negativ elpris fra kl. { $start } til kl. { $end }.
+      *[other] Elprisen holder sig under nul fra kl. { $start } til kl. { $end }.
     }
 outlook-cheaper-grid-prices =
     { $variant ->
        [0] Der er en lavere elpris fra kl. { $start } til kl. { $end }.
        [1] Elprisen dykker fra kl. { $start } til kl. { $end }.
        [2] Elprisen ligger lavere fra kl. { $start } til kl. { $end }.
-      *[other] Prognosen viser en billigere elpris fra kl. { $start } til kl. { $end }.
+      *[other] En billigere elpris gælder fra kl. { $start } til kl. { $end }.
     }
 outlook-grid-price-swing =
     { $variant ->
@@ -329,12 +329,12 @@ outlook-period = { $period ->
 
 outlook-grid-price-swing-ease-then-rise = { $variant ->
     [0] Elpriserne falder, før de stiger igen omkring kl. { $turn_at }.
-    [1] Prognosen falder og vender derefter opad omkring kl. { $turn_at }.
+    [1] Elprisen falder og vender derefter opad omkring kl. { $turn_at }.
    *[2] En lavere elpris forventes før en stigning omkring kl. { $turn_at }.
 }
 outlook-grid-price-swing-rise-then-ease = { $variant ->
     [0] Elpriserne stiger, før de falder omkring kl. { $turn_at }.
-    [1] Prognosen stiger og vender derefter nedad omkring kl. { $turn_at }.
+    [1] Elprisen stiger og vender derefter nedad omkring kl. { $turn_at }.
    *[2] En højere elpris forventes før et fald omkring kl. { $turn_at }.
 }
 outlook-optional-start-single = { $variant ->

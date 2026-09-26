@@ -2,13 +2,13 @@ outlook-grid-price-rise = { $variant ->
     [0] Grid prices rise later { $period_text }.
     [1] Grid prices run higher later { $period_text }.
     [2] Higher grid prices apply later { $period_text }.
-   *[other] The forecast shows grid prices increasing later.
+   *[other] Grid prices will increase later.
 }
 outlook-grid-price-fall = { $variant ->
     [0] Grid prices fall later { $period_text }.
     [1] Grid prices run lower later { $period_text }.
     [2] Lower grid prices apply later { $period_text }.
-   *[other] The forecast shows grid prices easing later.
+   *[other] Grid prices will fall later.
 }
 outlook-limited-grid-use = { $variant ->
     [0] Little grid use is expected { $period_text }.
@@ -19,7 +19,7 @@ outlook-limited-grid-use = { $variant ->
 outlook-flat-grid-prices =
     { $variant ->
        [0] Grid prices stay broadly steady { $period_text }.
-       [1] The grid-price forecast shows little movement { $period_text }.
+       [1] Grid prices show little movement { $period_text }.
        [2] Grid-price changes stay small { $period_text }.
       *[3] Grid prices remain fairly level { $period_text }.
     }
@@ -27,13 +27,13 @@ outlook-negative-grid-price = { $variant ->
     [0] Grid prices are below zero from { $start } to { $end }.
     [1] Grid prices are negative from { $start } to { $end }.
     [2] Grid prices fall below zero from { $start } to { $end }.
-   *[other] The grid-price forecast is negative from { $start } to { $end }.
+   *[other] Grid prices stay below zero from { $start } to { $end }.
 }
 outlook-cheaper-grid-prices = { $variant ->
     [0] Grid prices are lower from { $start } to { $end }.
     [1] Grid prices dip from { $start } to { $end }.
     [2] Grid prices sit lower from { $start } to { $end }.
-   *[other] The forecast shows cheaper grid prices from { $start } to { $end }.
+   *[other] Cheaper grid prices run from { $start } to { $end }.
 }
 outlook-grid-price-swing =
     { $variant ->
@@ -323,12 +323,12 @@ outlook-period = { $period ->
 
 outlook-grid-price-swing-ease-then-rise = { $variant ->
     [0] Grid prices ease before rising again around { $turn_at }.
-    [1] The grid-price forecast falls, then turns upward near { $turn_at }.
+    [1] Grid prices fall, then turn upward near { $turn_at }.
    *[2] Lower grid prices come before a rise around { $turn_at }.
 }
 outlook-grid-price-swing-rise-then-ease = { $variant ->
     [0] Grid prices rise before easing around { $turn_at }.
-    [1] The grid-price forecast climbs, then turns downward near { $turn_at }.
+    [1] Grid prices climb, then turn downward near { $turn_at }.
    *[2] Higher grid prices come before a fall around { $turn_at }.
 }
 outlook-optional-start-single = { $variant ->
