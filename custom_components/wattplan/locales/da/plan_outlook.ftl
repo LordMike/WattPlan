@@ -114,14 +114,14 @@ outlook-battery-self-consume =
     { $variant ->
        [0] { $subject } har ingen planlagt opladning fra elnettet eller bevaret opladning.
        [1] Ingen netopladning eller bevaret opladning for { $subject }.
-       [2] { $subject } forbliver i normal egenforbrugstilstand.
+       [2] { $subject } bliver brugt som normalt.
       *[other] { $subject } er planlagt til normalt eget forbrug.
     }
 outlook-battery-self-consume-solo =
     { $variant ->
        [0] Ingen opladning fra elnettet eller bevaret opladning er planlagt.
        [1] Normalt eget forbrug fortsætter.
-       [2] Batteriet forbliver i egenforbrugstilstand.
+       [2] Batteriet bliver brugt.
       *[other] Eget forbrug er planlagt.
     }
 outlook-battery-full =

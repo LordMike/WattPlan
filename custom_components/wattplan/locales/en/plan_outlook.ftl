@@ -108,14 +108,14 @@ outlook-battery-self-consume =
     { $variant ->
        [0] { $subject } has no scheduled grid-charging or charge-holding.
        [1] No grid charging or charge-holding for { $subject }.
-       [2] { $subject } remains in its normal self-use mode.
+       [2] { $subject } is in normal use.
       *[other] { $subject } is planned for normal self-consumption.
     }
 outlook-battery-self-consume-solo =
     { $variant ->
        [0] No grid charging or charge-holding is scheduled.
        [1] Normal self-consumption continues.
-       [2] The battery stays in self-use mode.
+       [2] The battery stays in use.
       *[other] Self-consumption is planned.
     }
 outlook-battery-full =
