@@ -347,3 +347,34 @@ def test_renderer_groups_statements_and_tracks_grouping_in_semantic_id() -> None
     assert details[first.fact_id]["confidence"] == 0.8
     assert details[first.fact_id]["deviation"] == 0.6
     assert details[first.fact_id]["salience"] is not None
+
+
+def test_optional_advice_closes_never_opens() -> None:
+    """Optional recommendations sort last even at top salience."""
+    optional = _fact(
+        "optional_start",
+        subject="dishwasher",
+        significance=0.9,
+        deviation=0.8,
+        start=NOW + timedelta(hours=1),
+        related=(),
+    )
+    main = _fact("solar_surplus", significance=0.9, deviation=0.8, related=())
+
+    selected = select_best_set([optional, main], NOW, [])
+
+    assert [fact.kind for fact in selected][-1] == "optional_start"
+
+    model = OutlookModel(
+        facts=(main, optional),
+        selected_fact_ids=tuple(fact.fact_id for fact in selected),
+        selection_history=(),
+        start=NOW,
+        horizon_end=NOW + timedelta(hours=2),
+        plan_created_at=NOW,
+        seed_prefix="optional-last",
+    )
+    rendered = render_plan_outlook(model, now=NOW, language="en")
+
+    assert "dishwasher" not in rendered["line_1"]
+    assert "dishwasher" in rendered["text"]

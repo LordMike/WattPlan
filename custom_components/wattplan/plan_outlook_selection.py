@@ -537,8 +537,15 @@ def select_best_set(
     if not best:
         # No valid multi-set (should be rare): fall back to top single.
         return [scored[0].fact]
-    # Stable output order: salience desc, then fact_id.
-    best.sort(key=lambda fact: (-by_id[str(fact.fact_id)], str(fact.fact_id)))
+    # Stable output order: salience desc, then fact_id — except that
+    # optional advice always closes: it is acted on, never the headline.
+    best.sort(
+        key=lambda fact: (
+            str(getattr(fact, "kind", "")) == "optional_start",
+            -by_id[str(fact.fact_id)],
+            str(fact.fact_id),
+        )
+    )
     return best
 
 
@@ -635,7 +642,8 @@ def build_statements(selected: list[Any]) -> list[Any]:
     in another member's ``related``) form one multi-fact statement whose
     relation is inferred (cause/sequence/contrast/opportunity-action);
     unlinked facts become ``single`` statements. Deterministic output ordered
-    by the sorted fact_ids of each statement.
+    by the sorted fact_ids of each statement, except that optional-only
+    statements always close: advice is acted on, never the headline.
     """
     if not selected:
         return []
@@ -675,10 +683,19 @@ def build_statements(selected: list[Any]) -> list[Any]:
         members.sort(key=lambda fact: order.get(str(fact.fact_id), 0))
 
     statements: list[Any] = []
-    for root in sorted(
-        components,
-        key=lambda key: tuple(sorted(str(f.fact_id) for f in components[key])),
-    ):
+
+    def _component_key(root: str) -> tuple[bool, tuple[str, ...]]:
+        members = components[root]
+        optional_only = bool(members) and all(
+            str(getattr(fact, "kind", "")) == "optional_start"
+            for fact in members
+        )
+        return (
+            optional_only,
+            tuple(sorted(str(fact.fact_id) for fact in members)),
+        )
+
+    for root in sorted(components, key=_component_key):
         members = components[root]
         fact_ids = tuple(str(fact.fact_id) for fact in members)
         relation = _infer_relation(members)
