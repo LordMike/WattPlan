@@ -19,9 +19,12 @@ def resolve_outlook_languages(
     supported_languages: tuple[str, ...] = SUPPORTED_OUTLOOK_LANGUAGES,
 ) -> tuple[str, ...]:
     """Return supported system and additional languages in stable order."""
-    requested = {_base_language(system_language)}
-    requested.update(_base_language(language) for language in additional_languages or ())
-    resolved = tuple(
-        language for language in supported_languages if language in requested
-    )
-    return resolved or ("en",)
+    supported = set(supported_languages)
+    resolved: list[str] = []
+    for language in (
+        _base_language(system_language),
+        *(_base_language(language) for language in additional_languages or ()),
+    ):
+        if language in supported and language not in resolved:
+            resolved.append(language)
+    return tuple(resolved) or ("en",)

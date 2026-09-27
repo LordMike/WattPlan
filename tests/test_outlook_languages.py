@@ -11,12 +11,16 @@ def test_unsupported_system_language_falls_back_to_english() -> None:
     assert resolve_outlook_languages([], "fr") == ("en",)
 
 
-def test_language_resolution_normalizes_deduplicates_and_intersects() -> None:
+def test_unsupported_system_language_uses_supported_additional_language() -> None:
+    assert resolve_outlook_languages(["da"], "fr") == ("da",)
+
+
+def test_language_resolution_prioritizes_system_language_then_deduplicates() -> None:
     assert resolve_outlook_languages(
-        ["EN", "fr", "da-DK"],
+        ["da-DK", "EN", "da"],
         "en-US",
         supported_languages=("da", "en"),
-    ) == ("da", "en")
+    ) == ("en", "da")
 
 
 def test_future_supported_system_language_is_always_included() -> None:

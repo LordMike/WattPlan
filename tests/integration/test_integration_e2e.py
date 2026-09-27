@@ -43,6 +43,7 @@ from custom_components.wattplan.const import (
     CONF_OPTIMIZER_LOOKAHEAD_HOURS,
     CONF_OPTIMIZER_LOOKAHEAD_SLOTS,
     CONF_OPTIONS_COUNT,
+    CONF_OUTLOOK_LANGUAGES,
     CONF_PLANNING_ENABLED,
     CONF_ROLLING_WINDOW_HOURS,
     CONF_RUN_WITHIN_HOURS,
@@ -312,6 +313,28 @@ async def test_setup_includes_the_normalized_danish_system_language(
     await _setup_entry(hass, entry)
 
     assert entry.runtime_data.outlook_languages == ("da",)
+
+
+async def test_options_reload_replaces_outlook_language_sensors(
+    hass: HomeAssistant,
+) -> None:
+    """Changing configured languages reloads the corresponding outlook sensors."""
+    hass.config.language = "fr-FR"
+    entry = _entry(title="Language Home", subentries_data=[])
+
+    await _setup_entry(hass, entry)
+    assert entry.runtime_data.outlook_languages == ("en",)
+    assert hass.states.get("sensor.language_home_plan_outlook_en") is not None
+
+    hass.config_entries.async_update_entry(
+        entry,
+        options={**entry.options, CONF_OUTLOOK_LANGUAGES: ["da"]},
+    )
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert entry.runtime_data.outlook_languages == ("da",)
+    assert hass.states.get("sensor.language_home_plan_outlook_en") is None
+    assert hass.states.get("sensor.language_home_plan_outlook_da") is not None
 
 
 async def _run_optimize(

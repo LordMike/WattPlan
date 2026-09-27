@@ -543,7 +543,7 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
     price_template = "{{ [0.2, 0.25, 0.3, 0.35] }}"
     usage_template = "{{ [1.0, 1.1, 1.0, 0.9] }}"
     pv_template = "{{ [0.0, 0.2, 0.3, 0.1] }}"
-    hass.config.language = "da-DK"
+    hass.config.language = "en-US"
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Home",
@@ -569,7 +569,7 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
         options={
             CONF_PLANNING_ENABLED: False,
             CONF_ACTION_EMISSION_ENABLED: False,
-            CONF_OUTLOOK_LANGUAGES: ["en"],
+            CONF_OUTLOOK_LANGUAGES: ["da", "en", "da"],
         },
         subentries_data=[
             config_entries.ConfigSubentryData(
@@ -653,6 +653,7 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
     _assert_valid_state(hass, "sensor.home_comfort_action")
     _assert_valid_state(hass, "sensor.home_optional_next_start_option")
     _assert_valid_state(hass, "sensor.home_optional_option_1_start")
+    assert entry.runtime_data.outlook_languages == ("en", "da")
     outlook = hass.states.get("sensor.home_plan_outlook_en")
     assert outlook is not None
     assert len(outlook.state) <= 255
