@@ -448,6 +448,7 @@ async def test_legacy_lookahead_migrates_and_can_be_edited_in_hours(
             },
         )
         assert result["type"] is FlowResultType.MENU
+        await hass.async_block_till_done(wait_background_tasks=True)
         await _run_optimize(hass, entry_id=entry.entry_id)
         await hass.async_block_till_done()
 
