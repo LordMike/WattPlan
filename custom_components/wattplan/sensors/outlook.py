@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import logging
 from typing import Any
 
 from ..plan_outlook import build_status_plan_outlook, render_stored_plan_outlook
 from .base import WattPlanCoordinatorSensor
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class PlanOutlookSensor(WattPlanCoordinatorSensor):
@@ -24,12 +27,16 @@ class PlanOutlookSensor(WattPlanCoordinatorSensor):
     def native_value(self) -> str:
         """Return a semantic report identifier that changes with report content."""
         outlook = self._outlook()
+        if outlook is None:
+            return "plan_outlook_unavailable"
         return str(outlook.get("report_id", "plan_unavailable_high_unknown"))[:255]
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return complete but bounded prose and diagnostic selection metadata."""
         outlook = self._outlook()
+        if outlook is None:
+            return {}
         keys = {
             "report_id",
             "semantic_id",
@@ -50,7 +57,19 @@ class PlanOutlookSensor(WattPlanCoordinatorSensor):
         }
         return {key: outlook[key] for key in keys if key in outlook}
 
-    def _outlook(self) -> dict[str, Any]:
+    @property
+    def available(self) -> bool:
+        """Return whether a report can be generated for the current plan."""
+        if not super().available:
+            return False
+        if self.snapshot is None or not self.coordinator.has_usable_plan:
+            return True
+        diagnostics = self.snapshot.diagnostics or {}
+        if not isinstance(diagnostics.get("outlook"), dict):
+            return False
+        return self._outlook() is not None
+
+    def _outlook(self) -> dict[str, Any] | None:
         now = datetime.now(tz=UTC).replace(second=0, microsecond=0)
         if self.coordinator.overall_status.get("has_usable_plan") is False:
             if self.snapshot is None:
@@ -79,10 +98,24 @@ class PlanOutlookSensor(WattPlanCoordinatorSensor):
             return build_status_plan_outlook(
                 "plan_unavailable", now=now, language=self._language
             )
-        return render_stored_plan_outlook(
-            outlook,
-            now=now,
-            source_health=self.coordinator.outlook_source_health,
-            plan_failure_status=self.coordinator.outlook_failure_status,
-            language=self._language,
-        )
+        try:
+            return render_stored_plan_outlook(
+                outlook,
+                now=now,
+                source_health=self.coordinator.outlook_source_health,
+                plan_failure_status=self.coordinator.outlook_failure_status,
+                language=self._language,
+            )
+        except Exception:  # A report failure must not make an accepted plan unavailable.
+            _LOGGER.exception(
+                "Plan Outlook rendering failed (entry_id=%s, language=%s, "
+                "plan_created_at=%s)",
+                (
+                    self.coordinator.config_entry.entry_id
+                    if self.coordinator.config_entry is not None
+                    else "unknown"
+                ),
+                self._language,
+                outlook.get("plan_created_at"),
+            )
+            return None

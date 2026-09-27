@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import logging
 import time
 from typing import Any
 
@@ -22,6 +23,8 @@ BATTERY_DEGRADED_SKIP_REASONS = {
     BATTERY_SKIP_AVAILABILITY_UNAVAILABLE,
     BATTERY_SKIP_SOC_UNAVAILABLE,
 }
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _duration_ms(started_at: float) -> int:
@@ -183,6 +186,13 @@ class PlannerProjectionBuilder:
                 now=datetime.now(tz=UTC),
             )
         except Exception:  # Outlook must never invalidate a usable accepted plan.
+            _LOGGER.exception(
+                "Plan Outlook generation failed (entry_id=%s, languages=%s, "
+                "plan_start=%s)",
+                self._entry_id,
+                self._outlook_languages,
+                start_at.isoformat(),
+            )
             diagnostics["outlook"] = None
         return {
             "status": status,
