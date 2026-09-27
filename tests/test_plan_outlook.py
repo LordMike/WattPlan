@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from custom_components.wattplan.plan_outlook import (
+    _comfort_facts,
     _select_facts,
     build_plan_outlook,
     build_plan_outlook_model,
@@ -612,3 +613,50 @@ def test_comfort_and_optional_names_are_preserved_exactly() -> None:
     subjects = {fact.kind: fact.subject for fact in model.facts}
     assert subjects["comfort_timing"] == "eBike_Pump"
     assert subjects["optional_start"] == "Dishwasher_A"
+
+
+def test_comfort_timing_uses_later_run_with_meaningful_solar() -> None:
+    start = datetime(2026, 9, 24, 0, tzinfo=UTC)
+    facts = _comfort_facts(
+        [
+            {
+                "name": "Water heater",
+                "schedule": [
+                    {"enabled": True},
+                    {"enabled": False},
+                    {"enabled": True},
+                    {"enabled": True},
+                ],
+            }
+        ],
+        start,
+        15,
+        [0.0, 0.0, 0.2, 0.3],
+    )
+
+    assert len(facts) == 1
+    assert facts[0].start == start + timedelta(minutes=30)
+    assert facts[0].end == start + timedelta(hours=1)
+
+
+def test_comfort_timing_breaks_equal_solar_overlap_ties_earliest() -> None:
+    start = datetime(2026, 9, 24, 0, tzinfo=UTC)
+    facts = _comfort_facts(
+        [
+            {
+                "name": "Water heater",
+                "schedule": [
+                    {"enabled": True},
+                    {"enabled": False},
+                    {"enabled": True},
+                ],
+            }
+        ],
+        start,
+        15,
+        [0.2, 0.0, 0.2],
+    )
+
+    assert len(facts) == 1
+    assert facts[0].start == start
+    assert facts[0].end == start + timedelta(minutes=15)

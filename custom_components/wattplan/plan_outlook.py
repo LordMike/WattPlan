@@ -551,25 +551,38 @@ def _comfort_facts(
         ]
         if not enabled:
             continue
-        run = _runs(enabled)[0]
-        run_start, run_end = _interval(run, start, slot_minutes)
-        overlap = any(
-            index < len(solar) and solar[index] >= 0.05 for index in range(*run)
-        )
-        if overlap:
-            name = str(entity.get("name", "Comfort load"))
-            facts.append(
-                _fact(
-                    "comfort_timing",
-                    "opportunity",
-                    "medium",
-                    "planned",
-                    run_start,
-                    run_end,
-                    subject=name,
-                    related=("solar_surplus",),
-                )
+        solar_runs = [
+            (
+                run,
+                [
+                    solar[index]
+                    for index in range(*run)
+                    if index < len(solar) and solar[index] >= 0.05
+                ],
             )
+            for run in _runs(enabled)
+        ]
+        solar_runs = [item for item in solar_runs if item[1]]
+        if not solar_runs:
+            continue
+        run = max(
+            solar_runs,
+            key=lambda item: (sum(item[1]), len(item[1]), -item[0][0]),
+        )[0]
+        run_start, run_end = _interval(run, start, slot_minutes)
+        name = str(entity.get("name", "Comfort load"))
+        facts.append(
+            _fact(
+                "comfort_timing",
+                "opportunity",
+                "medium",
+                "planned",
+                run_start,
+                run_end,
+                subject=name,
+                related=("solar_surplus",),
+            )
+        )
     return facts
 
 
