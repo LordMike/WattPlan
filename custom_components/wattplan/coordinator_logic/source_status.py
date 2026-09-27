@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -43,6 +43,7 @@ class SourceStatusManager:
         self._hass = hass
         self._active_source_issues: dict[str, Any] = {}
         self._source_statuses: dict[str, dict[str, Any]] = {}
+        self._failure_streaks: dict[str, dict[str, Any]] = {}
         self._overall_status: dict[str, Any] = self._default_overall_status()
 
     def reset(self) -> None:
@@ -103,6 +104,7 @@ class SourceStatusManager:
         source_key: str,
         source_config: dict[str, Any],
         provider: SourceProvider,
+        slot_minutes: int,
     ) -> None:
         """Translate shared source health into one repair issue per source."""
         if not isinstance(provider, SourceFixupProvider):
@@ -111,6 +113,7 @@ class SourceStatusManager:
                 source_key=source_key,
                 source_config=source_config,
                 health=None,
+                slot_minutes=slot_minutes,
             )
             return
 
@@ -119,6 +122,7 @@ class SourceStatusManager:
             source_key=source_key,
             source_config=source_config,
             health=health,
+            slot_minutes=slot_minutes,
         )
         if health.kind is SourceHealthKind.OK:
             self._active_source_issues.pop(source_key, None)
@@ -333,12 +337,13 @@ class SourceStatusManager:
         source_key: str,
         source_config: dict[str, Any],
         health: SourceHealthState | None,
+        slot_minutes: int = 15,
     ) -> dict[str, Any]:
         """Return stable public status payload for one configured source."""
         is_critical = self._source_is_critical(source_key, source_config)
         provider_kind = str(source_config.get(CONF_SOURCE_MODE, "unknown"))
         if health is None or health.kind is SourceHealthKind.OK:
-            return {
+            return self._with_failure_tracking(source_key, {
                 "status": "ok",
                 "reason_code": "fresh",
                 "reason_summary": "Source is healthy",
@@ -350,7 +355,8 @@ class SourceStatusManager:
                 if health is not None and health.expires_at
                 else None,
                 "provider_kind": provider_kind,
-            }
+                "configured": provider_kind != SOURCE_MODE_NOT_USED,
+            }, slot_minutes=slot_minutes)
 
         if health.using_stale:
             status = "degraded"
@@ -377,7 +383,7 @@ class SourceStatusManager:
             )
             reason_summary = "Source is unavailable, but planning can continue"
 
-        return {
+        return self._with_failure_tracking(source_key, {
             "status": status,
             "reason_code": reason_code,
             "reason_summary": reason_summary,
@@ -387,7 +393,58 @@ class SourceStatusManager:
             "required_count": health.required_count,
             "expires_at": health.expires_at.isoformat() if health.expires_at else None,
             "provider_kind": provider_kind,
-        }
+            "configured": provider_kind != SOURCE_MODE_NOT_USED,
+        }, slot_minutes=slot_minutes)
+
+    def _with_failure_tracking(
+        self, source_key: str, payload: dict[str, Any], *, slot_minutes: int
+    ) -> dict[str, Any]:
+        """Attach a distinct-slot failure streak without counting manual retries."""
+        if payload.get("status") == "ok":
+            self._failure_streaks.pop(source_key, None)
+            payload["failure_slot_count"] = 0
+            payload["failure_started_at"] = None
+            return payload
+
+        now = datetime.now(tz=UTC)
+        slot_seconds = max(1, slot_minutes) * 60
+        slot_timestamp = int(now.timestamp()) // slot_seconds * slot_seconds
+        slot = datetime.fromtimestamp(slot_timestamp, tz=UTC)
+        streak = self._failure_streaks.get(source_key)
+        slot_iso = slot.isoformat()
+        if streak is None:
+            streak = {"started_at": now, "slots": []}
+            self._failure_streaks[source_key] = streak
+        slots = streak["slots"]
+        if slots:
+            previous = datetime.fromisoformat(slots[-1])
+            if slot < previous:
+                slot_iso = previous.isoformat()
+            if slot > previous + timedelta(minutes=slot_minutes):
+                streak = {"started_at": now, "slots": []}
+                self._failure_streaks[source_key] = streak
+                slots = streak["slots"]
+        if slot_iso not in slots:
+            slots.append(slot_iso)
+            del slots[:-16]
+        started_at = streak["started_at"]
+        elapsed = max(now - started_at, timedelta(0))
+        minutes = max(1, int(elapsed.total_seconds() // 60))
+        if minutes >= 120:
+            elapsed_text = f"for {minutes // 60} hours"
+        elif minutes >= 60:
+            elapsed_text = "for an hour"
+        else:
+            elapsed_text = f"for {minutes} minutes"
+        payload.update(
+            {
+                "failure_slot_count": len(slots),
+                "failure_started_at": started_at.isoformat(),
+                "failure_elapsed_minutes": minutes,
+                "failure_elapsed": elapsed_text,
+            }
+        )
+        return payload
 
     def _source_consequence(
         self, source_key: str, health_kind: SourceHealthKind

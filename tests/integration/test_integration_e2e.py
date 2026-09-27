@@ -6,6 +6,20 @@ from datetime import timedelta
 from typing import Any
 from unittest.mock import patch
 
+import pytest
+from homeassistant import config_entries
+from homeassistant.const import (
+    CONF_NAME,
+    STATE_OFF,
+    STATE_ON,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+)
+from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.exceptions import ServiceValidationError
+from homeassistant.util import dt as dt_util
+
 from custom_components.wattplan.const import (
     CONF_ACTION_EMISSION_ENABLED,
     CONF_AVAILABILITY_SOURCE,
@@ -29,13 +43,14 @@ from custom_components.wattplan.const import (
     CONF_OPTIMIZER_LOOKAHEAD_HOURS,
     CONF_OPTIMIZER_LOOKAHEAD_SLOTS,
     CONF_OPTIONS_COUNT,
+    CONF_OUTLOOK_LANGUAGES,
     CONF_PLANNING_ENABLED,
     CONF_ROLLING_WINDOW_HOURS,
     CONF_RUN_WITHIN_HOURS,
     CONF_SLOT_MINUTES,
     CONF_SOC_SOURCE,
-    CONF_SOURCE_MODE,
     CONF_SOURCE_IMPORT_PRICE,
+    CONF_SOURCE_MODE,
     CONF_SOURCE_PV,
     CONF_SOURCE_USAGE,
     CONF_SOURCES,
@@ -51,21 +66,6 @@ from custom_components.wattplan.const import (
 )
 from custom_components.wattplan.coordinator import PlanningStageError
 from custom_components.wattplan.test_plan_invariants import assert_plan_invariants
-import pytest
-
-from homeassistant import config_entries
-from homeassistant.const import (
-    CONF_NAME,
-    STATE_OFF,
-    STATE_ON,
-    STATE_UNAVAILABLE,
-    STATE_UNKNOWN,
-)
-from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResultType
-from homeassistant.exceptions import ServiceValidationError
-from homeassistant.util import dt as dt_util
-
 from tests.common import MockConfigEntry, async_fire_time_changed
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
@@ -291,6 +291,55 @@ async def _setup_entry(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     await hass.async_block_till_done()
 
 
+async def test_setup_resolves_outlook_languages_for_existing_entry(
+    hass: HomeAssistant,
+) -> None:
+    """Entries without language options should fall back from an unsupported default."""
+    hass.config.language = "fr-FR"
+    entry = _entry(title="Language Home", subentries_data=[])
+
+    await _setup_entry(hass, entry)
+
+    assert entry.runtime_data.outlook_languages == ("en",)
+
+
+async def test_setup_includes_the_normalized_danish_system_language(
+    hass: HomeAssistant,
+) -> None:
+    """The system language is always active, even without language options."""
+    hass.config.language = "da-DK"
+    entry = _entry(title="Language Home", subentries_data=[])
+
+    await _setup_entry(hass, entry)
+
+    assert entry.runtime_data.outlook_languages == ("da",)
+
+
+async def test_options_reload_replaces_outlook_language_sensors(
+    hass: HomeAssistant,
+) -> None:
+    """Changing configured languages reloads the corresponding outlook sensors."""
+    hass.config.language = "fr-FR"
+    entry = _entry(title="Language Home", subentries_data=[])
+
+    await _setup_entry(hass, entry)
+    assert entry.runtime_data.outlook_languages == ("en",)
+    assert hass.states.get("sensor.language_home_plan_outlook_en") is not None
+
+    hass.config_entries.async_update_entry(
+        entry,
+        options={**entry.options, CONF_OUTLOOK_LANGUAGES: ["da"]},
+    )
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert entry.runtime_data.outlook_languages == ("da",)
+    english_outlook = hass.states.get("sensor.language_home_plan_outlook_en")
+    assert english_outlook is not None
+    assert english_outlook.state == STATE_UNAVAILABLE
+    assert english_outlook.attributes.get("restored") is True
+    assert hass.states.get("sensor.language_home_plan_outlook_da") is not None
+
+
 async def _run_optimize(
     hass: HomeAssistant,
     *,
@@ -399,6 +448,7 @@ async def test_legacy_lookahead_migrates_and_can_be_edited_in_hours(
             },
         )
         assert result["type"] is FlowResultType.MENU
+        await hass.async_block_till_done(wait_background_tasks=True)
         await _run_optimize(hass, entry_id=entry.entry_id)
         await hass.async_block_till_done()
 

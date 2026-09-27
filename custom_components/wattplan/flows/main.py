@@ -8,21 +8,19 @@ from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.const import UnitOfEnergy
 from homeassistant.helpers import entity_registry as er
 
+from ..const import CONF_OUTLOOK_LANGUAGES, SUPPORTED_OUTLOOK_LANGUAGES
+from ..historical_cost.tracker import validate_energy_sensor
+from ..source_providers import CONF_WATTPLAN_ENTITY_ID, source_mode, source_providers
 from .common import _normalize_name, _subentry_display_title, _subentry_name
 from .forms import (
-    _battery_form_defaults,
-    _normalize_battery_input,
-    _subentry_name_in_use,
-    _subentry_name_in_use_excluding,
     _validate_battery_data,
     _validate_comfort_data,
     _validate_core_lookahead_for_comforts,
     _validate_optional_data,
 )
-from .persistence import SourceFlowPersistence
-from .state import SourceFlowState
 from .source_shared import (
     CONF_ACTION_EMISSION_ENABLED,
+    CONF_CONFIG_ENTRY_ID,
     CONF_HISTORICAL_COST_TRACKING_ENABLED,
     CONF_HISTORICAL_GRID_EXPORT_SENSOR,
     CONF_HISTORICAL_GRID_IMPORT_SENSOR,
@@ -30,44 +28,43 @@ from .source_shared import (
     CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION,
     CONF_HISTORICAL_USAGE_SENSOR,
     CONF_HOURS_TO_PLAN,
-    CONF_CONFIG_ENTRY_ID,
     CONF_NAME,
     CONF_OPTIMIZER_LOOKAHEAD_HOURS,
     CONF_OPTIMIZER_LOOKAHEAD_SLOTS,
     CONF_OPTIMIZER_PROFILE,
     CONF_PLANNING_ENABLED,
     CONF_SLOT_MINUTES,
-    CONF_SOURCES,
     CONF_SOURCE_EXPORT_PRICE,
     CONF_SOURCE_IMPORT_PRICE,
     CONF_SOURCE_MODE,
     CONF_SOURCE_PV,
     CONF_SOURCE_USAGE,
+    CONF_SOURCES,
+    DEFAULT_OPTIMIZER_LOOKAHEAD_HOURS,
+    DOMAIN,
+    LEGACY_OPTIMIZER_LOOKAHEAD_SLOTS,
+    OPTIMIZER_PROFILE_BALANCED,
+    SOURCE_MODE_BUILT_IN,
+    SOURCE_MODE_ENERGY_PROVIDER,
+    SOURCE_MODE_ENTITY_ADAPTER,
+    SOURCE_MODE_NOT_USED,
+    SUBENTRY_TYPE_BATTERY,
+    SUBENTRY_TYPE_COMFORT,
+    SUBENTRY_TYPE_OPTIONAL,
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
     ConfigSubentryFlow,
-    DOMAIN,
-    DEFAULT_OPTIMIZER_LOOKAHEAD_HOURS,
-    LEGACY_OPTIMIZER_LOOKAHEAD_SLOTS,
-    OPTIMIZER_PROFILE_BALANCED,
     OptionsFlowWithReload,
-    SOURCE_MODE_NOT_USED,
-    SOURCE_MODE_BUILT_IN,
-    SOURCE_MODE_ENERGY_PROVIDER,
-    SOURCE_MODE_ENTITY_ADAPTER,
-    SUBENTRY_TYPE_BATTERY,
-    SUBENTRY_TYPE_COMFORT,
-    SUBENTRY_TYPE_OPTIONAL,
-    _SharedSourceFlow,
     _battery_schema,
     _comfort_schema,
     _core_schema,
     _final_setup_schema,
-    _normalize_core_input,
     _lookahead_hours_from_slots,
     _lookahead_slots_from_hours,
+    _normalize_core_input,
     _optional_schema,
+    _SharedSourceFlow,
     _source_mode_schema,
     _source_mode_summary,
     _validate_core_data,
@@ -76,9 +73,7 @@ from .source_shared import (
     selector,
     vol,
 )
-from ..historical_cost.tracker import validate_energy_sensor
-from ..source_providers import CONF_WATTPLAN_ENTITY_ID, source_mode, source_providers
-
+from .state import SourceFlowState
 
 ENERGY_STATE_CLASSES = {"total", "total_increasing"}
 
@@ -100,6 +95,31 @@ def _historical_costs_schema(defaults: dict[str, Any]) -> vol.Schema:
                     defaults.get(CONF_HISTORICAL_COST_TRACKING_ENABLED, False)
                 ),
             ): selector.BooleanSelector(),
+        }
+    )
+
+
+def _outlook_languages_schema(defaults: dict[str, Any]) -> vol.Schema:
+    """Build the advanced Plan Outlook language schema."""
+    labels = {"da": "Dansk", "en": "English"}
+    return vol.Schema(
+        {
+            vol.Required(
+                CONF_OUTLOOK_LANGUAGES,
+                default=list(defaults.get(CONF_OUTLOOK_LANGUAGES, [])),
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[
+                        selector.SelectOptionDict(
+                            value=language,
+                            label=labels.get(language, language),
+                        )
+                        for language in SUPPORTED_OUTLOOK_LANGUAGES
+                    ],
+                    multiple=True,
+                    mode=selector.SelectSelectorMode.LIST,
+                )
+            )
         }
     )
 
@@ -745,6 +765,7 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
             "source_pv",
             "source_export_price",
             "historical_costs",
+            "outlook_languages",
         ]
 
         return self.async_show_menu(
@@ -804,6 +825,25 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
                 user_input or {},
             ),
             errors=errors,
+        )
+
+    async def async_step_outlook_languages(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Configure additional Plan Outlook languages."""
+        if user_input is not None:
+            self._options[CONF_OUTLOOK_LANGUAGES] = list(
+                user_input[CONF_OUTLOOK_LANGUAGES]
+            )
+            self.hass.config_entries.async_update_entry(
+                self.config_entry,
+                options=self._options,
+            )
+            return await self.async_step_init()
+
+        return self.async_show_form(
+            step_id="outlook_languages",
+            data_schema=_outlook_languages_schema(self._options),
         )
 
     async def async_step_planner_timers(

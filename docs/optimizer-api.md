@@ -238,6 +238,16 @@ Prefix refresh changes how often future battery decisions are optimized, not the
 | `comfort_placement` | `dict`, comfort requests only | Bounded search status, cost mode, work counts, explicit violations, demand-change/replan accounting, actual baseline/final projected cost, and fallback reason. |
 | `successful_solves` | `int` | Primary MPC solves performed in this call, including a baseline and at most one changed-demand rebuild; preserve probes are additional. No-battery plans use direct flow accounting and report zero. |
 | `reused_steps` | `int` | Old battery schedule positions considered for reuse. Comfort is generated independently. |
+| `energy_flows` | `dict` | Accepted physical energy accounting, with one entry per input slot. |
+
+### `energy_flows` Fields
+- `per_slot` follows input order and uses kWh per slot from the final accepted
+  schedule, not a separate reconstruction or solve.
+- Each item contains `load_kwh` (base load, scheduled comfort load and accepted
+  battery charge/discharge), `base_load_kwh`, `comfort_load_kwh`,
+  `grid_import_kwh`, `grid_export_kwh`, and `grid_charge_kwh`.
+- Grid import/export are mutually exclusive in this accounting. Grid charging is
+  included in both `load_kwh` and grid import when it cannot be met by PV.
 
 ### Battery Policy States
 Battery schedule `state` values are inverter-control policies derived from the plan, not raw measured or forecast battery flows:

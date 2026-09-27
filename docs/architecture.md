@@ -1,5 +1,76 @@
 # Architecture
 
+## Plan Outlook
+
+`plan_outlook.py` builds a language-neutral model from captured planner inputs
+and the accepted optimizer result. Facts contain semantic kinds, subjects,
+timestamps, numeric display values, evidence, and relationships, but no rendered
+sentences. `plan_outlook_renderer.py` supplies selected facts, display arguments,
+and deterministic variant indexes to checked-in Project Fluent catalogues in
+`locales/en/plan_outlook.ftl` and `locales/da/plan_outlook.ftl`; the catalogues
+own complete messages, grammar, plurals, punctuation, and localized wording.
+The renderer validates the catalogues before loading and uses the lower-level
+Fluent bundle API so formatting failures remain explicit and non-fatal.
+
+Entry setup resolves the Home Assistant system language plus any additional
+advanced-option selections against the currently implemented renderers. The
+resolved list is stored in entry runtime data and always contains at least one of
+English or Danish. Locale tags intentionally resolve to their base language
+(`da-DK` becomes `da`); unsupported language sets fall back to English.
+
+Neither layer reads Home Assistant entities, uses diagnostic sensor arrays, or
+runs another optimizer solve. The projection layer stores the bounded semantic
+model and one rendering per configured language in the coordinator snapshot.
+Each `sensor.<setup_slug>_plan_outlook_<language>` exposes a language-specific
+report identifier as state and the headline, complete prose, and selection
+metadata as attributes. A separate `semantic_id` fingerprints the shared
+language-neutral meaning. When that identifier matches the preceding outlook,
+each renderer reuses its own persisted phrase variants. The state combines the
+main fact kind, information value, language, and a deterministic digest of the
+selected facts and rendered wording, so visible report changes remain
+trigger-friendly without being subject to Home Assistant's state-length limit.
+Automations that care about meaning rather than phrase rotation should use the
+`semantic_id` or `selected_facts` attributes instead of the sensor state.
+
+The outlook describes forecasts and planned recommendations only. Restored plans
+remain visible as a validation-status message rather than current action advice.
+Balance claims require configured, healthy usage and PV sources; fallback zeroes
+are not treated as evidence. Source and planning failures are reported after four
+distinct affected planning slots (manual retries in one slot count once), while
+loss or expiry of all usable recommendations is reported immediately. Recovery
+clears the streak, and restart begins a new streak rather than inventing history.
+When a sustained reliability fact is present, selection emits one prioritized
+warning and suppresses precise energy advice. Compatibility groups also prevent
+opposing or redundant price, solar, battery-policy, load-timing, and grid-balance
+facts from appearing in the same report.
+
+Selection uses relative tariff movement (18% of the observed absolute scale with
+a 0.005 numerical floor), sustained multi-slot solar/export intervals, and both
+absolute and relative energy floors. These internal thresholds deliberately avoid
+assuming a currency. Eligible facts (unexpired, confidence at or above 0.5) are
+scored for salience from significance, deviation, novelty against recent
+history, timeliness toward the event start, minus a repetition penalty, then
+the best valid 1–3 fact set is enumerated: the set base is the mean member
+salience (quality over quantity, so mediocre filler cannot pad a strong pair),
+with small bonuses for topic/group coverage and related-graph coherence
+(price×action and causal pairs weigh double). A sustained reliability fact
+short-circuits to one prioritized warning as before. Selection history is
+bounded to 12 `kind.magnitude.period` semantic keys (magnitude tertiles are
+`high`/`med`/`low`) and only advances when the selected story changes. The
+selected set is aggregated into statements over the related graph
+(single/cause/sequence/contrast/opportunity-action); the renderer voices each
+statement's facts through the existing per-fact Fluent messages, derives the
+report-level information value from the max significance band, and fingerprints
+meaning (facts plus statement grouping, never wording or wall-clock salience)
+in `semantic_id`. Persisted models are schema v2 with a v1 backward-compatible
+loader (legacy int significance and `information_value` map onto the float
+dims).
+
+Every supported English and Danish fragment has at least three equivalent wording
+variants. Common price, grid-use, charging, stale-data, refresh-failure, and quiet
+reports have four. Variant selection is deterministic and remains fixed while the
+semantic report is unchanged.
+
 WattPlan is a single repository with two tightly related concerns:
 - The Home Assistant custom integration in `custom_components/wattplan/`
 - The optimizer implementation in `custom_components/wattplan/optimizer/`

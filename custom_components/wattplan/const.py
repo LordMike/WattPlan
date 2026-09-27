@@ -50,6 +50,7 @@ CONF_ON_OFF_SOURCE = "on_off_source"
 CONF_ON_HOURS_LAST_WINDOW = "on_hours_last_window"
 CONF_OPTIMIZER_LOOKAHEAD_HOURS = "optimizer_lookahead_hours"
 CONF_OPTIMIZER_LOOKAHEAD_SLOTS = "optimizer_lookahead_slots"
+CONF_OUTLOOK_LANGUAGES = "outlook_languages"
 CONF_OPTIONALS = "optionals"
 CONF_OPTIONS_COUNT = "options"
 CONF_PLANNING_ENABLED = "planning_enabled"
@@ -124,6 +125,7 @@ SLOT_MINUTE_OPTIONS: tuple[int, ...] = (15, 30, 60)
 HOURS_TO_PLAN_OPTIONS: tuple[int, ...] = (12, 24, 36, 48, 72, 96, 120, 144, 168)
 DEFAULT_OPTIMIZER_LOOKAHEAD_HOURS = 12
 LEGACY_OPTIMIZER_LOOKAHEAD_SLOTS = 22
+SUPPORTED_OUTLOOK_LANGUAGES: tuple[str, ...] = ("da", "en")
 
 SUBENTRY_TYPE_BATTERY = "battery"
 SUBENTRY_TYPE_COMFORT = "comfort"

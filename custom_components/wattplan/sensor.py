@@ -38,6 +38,7 @@ from .sensors import (
     NextRunSensor,
     OptionalTimestampSensor,
     PlanDetailsSensor,
+    PlanOutlookSensor,
     SourceStatusSensor,
     StatusMessageSensor,
     StatusSensor,
@@ -191,6 +192,28 @@ def _entry_sensors(
     return sensors
 
 
+def _outlook_sensors(
+    config_entry: ConfigEntry,
+    coordinator: WattPlanCoordinator,
+    *,
+    entry_slug: str,
+    languages: tuple[str, ...],
+) -> list[SensorEntity]:
+    """Build one explicitly suffixed Plan Outlook sensor per active language."""
+    labels = {"da": "Dansk", "en": "English"}
+    return [
+        PlanOutlookSensor(
+            config_entry,
+            coordinator,
+            language=language,
+            friendly_name=f"Plan Outlook ({labels[language]})",
+            object_id=f"{entry_slug}_plan_outlook_{language}",
+            unique_id=f"{config_entry.entry_id}:entry:plan_outlook:{language}",
+        )
+        for language in languages
+    ]
+
+
 def _optional_subentry_sensors(
     config_entry: ConfigEntry,
     coordinator: WattPlanCoordinator,
@@ -321,6 +344,14 @@ async def async_setup_entry(
         entry_slug=entry_slug,
         slot_minutes=slot_minutes,
         hours_to_plan=hours_to_plan,
+    )
+    sensors.extend(
+        _outlook_sensors(
+            config_entry,
+            coordinator,
+            entry_slug=entry_slug,
+            languages=runtime_data.outlook_languages,
+        )
     )
 
     for source_key, sensor_key in OPTIONAL_SOURCE_STATUS_SPECS:

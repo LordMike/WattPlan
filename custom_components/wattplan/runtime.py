@@ -26,6 +26,7 @@ class WattPlanRuntimeData:
 
     coordinator: WattPlanCoordinator
     last_run_at: datetime
+    outlook_languages: tuple[str, ...]
     historical_tracker: HistoricalCostTracker | None = None
     optimizer_state: str | None = None
     runtime_update_listeners: set[Callable[[], None]] = field(default_factory=set)

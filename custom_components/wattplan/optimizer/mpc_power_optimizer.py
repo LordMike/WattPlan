@@ -2552,6 +2552,30 @@ def optimize_internal(
             }
         )
 
+    # These are physical per-slot values from the same accepted accounting used
+    # for projected cost.  They are intentionally additive, not a second replay.
+    energy_flows_per_slot = []
+    for t in range(total_steps):
+        comfort_load = sum(
+            float(entity.power_usage_kwh) * float(result["comfort_enabled"][i, t])
+            for i, entity in enumerate(comfort_entities)
+        )
+        battery_charge = float(np.sum(result["battery_charge"][:, t]))
+        battery_discharge = float(np.sum(result["battery_discharge"][:, t]))
+        load = float(usage[t]) + comfort_load + battery_charge - battery_discharge
+        grid_import = max(load - float(solar_input[t]), 0.0)
+        grid_export = max(float(solar_input[t]) - load, 0.0)
+        energy_flows_per_slot.append(
+            {
+                "load_kwh": float(load),
+                "base_load_kwh": float(usage[t]),
+                "comfort_load_kwh": float(comfort_load),
+                "grid_import_kwh": float(grid_import),
+                "grid_export_kwh": float(grid_export),
+                "grid_charge_kwh": float(np.sum(result["battery_charge_grid"][:, t])),
+            }
+        )
+
     projected_savings_cost = baseline_cost - projected_cost
     projected_savings_pct = (
         (projected_savings_cost / baseline_cost) * 100.0
@@ -2674,6 +2698,7 @@ def optimize_internal(
             "projected_savings_pct": float(projected_savings_pct),
             "per_slot": per_slot,
         },
+        "energy_flows": {"per_slot": energy_flows_per_slot},
         "overconstrained": len(reasons) > 0,
         "suboptimal": len(reasons) > 0,
         "suboptimal_reasons": reasons,

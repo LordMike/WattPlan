@@ -17,6 +17,7 @@ These exist once per WattPlan setup:
 | --- | --- |
 | `sensor.<setup_slug>_status` | Current integration health: `ok`, `degraded`, or `failed`. Includes attributes such as `reason_codes`, `affected_sources`, `is_stale`, `scheduler_stale`, `has_usable_plan`, and `action_recommendations_validated`. |
 | `sensor.<setup_slug>_status_message` | Human-readable summary of the current integration health. |
+| `sensor.<setup_slug>_plan_outlook_<language>` | One concise local forecast per configured language, currently `_da` and `_en`. Its state is a language-specific report identifier such as `battery_high_7c91e2a4`; it changes when the visible report or its selected wording changes and remains safely below Home Assistant's state-length limit. `semantic_id` identifies the shared language-neutral meaning so unchanged reports retain their existing phrase choices independently in each language. Use `semantic_id` or `selected_facts` rather than the sensor state for automations that should ignore wording changes. `headline`, `line_1`, `line_2`, and `text` contain the prose, while `report_id`, `language`, `information_value`, `topic`, selected facts, basis, and coverage timestamps explain its significance. It describes planned recommendations, not confirmed device execution. A sustained reliability problem is shown as one prioritized warning without precise energy advice beside it. Restored recommendations are withheld until a fresh plan validates them. |
 | `sensor.<setup_slug>_import_price_status` | Import price source health: `ok`, `degraded`, or `failed`. |
 | `sensor.<setup_slug>_usage_status` | Present when usage is configured. Usage source health: `ok`, `degraded`, or `failed`. |
 | `sensor.<setup_slug>_export_price_status` | Present when export price is configured. Export price source health: `ok`, `degraded`, or `failed`. |
@@ -27,6 +28,12 @@ These exist once per WattPlan setup:
 | `sensor.<setup_slug>_plan_details` | Disabled by default. Raw planner-detail payload at WattPlan's configured slot size. |
 | `sensor.<setup_slug>_plan_details_hourly` | Disabled by default. The same planner details, aggregated to hourly buckets. |
 | `sensor.<setup_slug>_usage_forecast` | Present when the built-in usage source is configured. Exposes the generated usage forecast. |
+
+Plan Outlook uses the Home Assistant system language by default. Additional
+languages can be selected from the integration's advanced options; the system
+language is always included. Unsupported selections fall back to English. Every
+enabled language is exposed as its own always-suffixed entity; there is no
+unsuffixed Plan Outlook entity.
 
 When `sensor.<setup_slug>_status` is `failed`, plan-dependent entities such as action sensors, plan details, and usage forecast become unavailable rather than continuing to expose stale plan data.
 

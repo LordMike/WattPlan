@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from functools import partial
-import logging
 from typing import Any
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
@@ -13,12 +13,15 @@ from homeassistant.core import Event, HomeAssistant, callback
 from .const import (
     CONF_ACTION_EMISSION_ENABLED,
     CONF_HISTORICAL_COST_TRACKING_ENABLED,
+    CONF_OUTLOOK_LANGUAGES,
     CONF_PLANNING_ENABLED,
     CONF_SLOT_MINUTES,
     DOMAIN,
 )
 from .coordinator import CycleTrigger, WattPlanCoordinator
 from .historical_cost.tracker import HistoricalCostTracker
+from .outlook_languages import resolve_outlook_languages
+from .plan_outlook_renderer import preload_plan_outlook_catalogs
 from .runtime import WattPlanConfigEntry, WattPlanRuntimeData, mark_runtime_updated
 from .services import SERVICE_SPECS
 
@@ -61,16 +64,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) -> 
         domain_data[DATA_SERVICE_REGISTERED] = True
     domain_data[DATA_ENTRY_COUNT] = int(domain_data.get(DATA_ENTRY_COUNT, 0)) + 1
 
+    outlook_languages = resolve_outlook_languages(
+        entry.options.get(CONF_OUTLOOK_LANGUAGES, []),
+        hass.config.language,
+    )
+    await hass.async_add_executor_job(
+        preload_plan_outlook_catalogs, outlook_languages
+    )
     coordinator = WattPlanCoordinator(
         hass,
         entry_id=entry.entry_id,
         update_interval=timedelta(minutes=int(entry.data[CONF_SLOT_MINUTES])),
         planning_enabled=bool(entry.options.get(CONF_PLANNING_ENABLED, True)),
         action_emission_enabled=bool(entry.options.get(CONF_ACTION_EMISSION_ENABLED, True)),
+        outlook_languages=outlook_languages,
     )
     entry.runtime_data = WattPlanRuntimeData(
         coordinator=coordinator,
         last_run_at=datetime.now(tz=UTC),
+        outlook_languages=outlook_languages,
     )
     if bool(entry.options.get(CONF_HISTORICAL_COST_TRACKING_ENABLED, False)):
         tracker = HistoricalCostTracker(
