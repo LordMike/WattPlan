@@ -21,6 +21,7 @@ from .const import (
 from .coordinator import CycleTrigger, WattPlanCoordinator
 from .historical_cost.tracker import HistoricalCostTracker
 from .outlook_languages import resolve_outlook_languages
+from .plan_outlook_renderer import preload_plan_outlook_catalogs
 from .runtime import WattPlanConfigEntry, WattPlanRuntimeData, mark_runtime_updated
 from .services import SERVICE_SPECS
 
@@ -66,6 +67,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) -> 
     outlook_languages = resolve_outlook_languages(
         entry.options.get(CONF_OUTLOOK_LANGUAGES, []),
         hass.config.language,
+    )
+    await hass.async_add_executor_job(
+        preload_plan_outlook_catalogs, outlook_languages
     )
     coordinator = WattPlanCoordinator(
         hass,

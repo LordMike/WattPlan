@@ -1,7 +1,9 @@
 """Danish localization tests for the pure Plan Outlook renderer."""
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 from fluent.syntax import FluentParser
@@ -12,6 +14,7 @@ from custom_components.wattplan.plan_outlook_renderer import (
     _format,
     _message_id,
     _variant_counts,
+    preload_plan_outlook_catalogs,
     render_fact_danish,
     render_fact_english,
     render_plan_outlook,
@@ -558,6 +561,30 @@ def test_flat_price_period_uses_localized_today_tomorrow_and_weekdays(
     assert danish in da_text
 
 
+def test_render_plan_outlook_uses_model_timezone_for_day_labels() -> None:
+    local_now = datetime(2026, 9, 25, 1, 30, tzinfo=ZoneInfo("Europe/Copenhagen"))
+    fact = replace(
+        _fact("flat_grid_prices"),
+        start=local_now.replace(hour=10, minute=0),
+        end=local_now.replace(hour=11, minute=0),
+    )
+    model = replace(
+        _model(fact),
+        start=local_now.replace(hour=0, minute=0),
+        horizon_end=local_now.replace(hour=23, minute=59),
+    )
+
+    rendered = render_plan_outlook(
+        model,
+        now=local_now.astimezone(UTC),
+        language="en",
+        variation_seed="timezone",
+    )
+
+    assert "today" in rendered["text"]
+    assert "tomorrow" not in rendered["text"]
+
+
 @pytest.mark.parametrize(
     ("source", "stale", "expected_en", "expected_da"),
     (
@@ -622,6 +649,22 @@ def test_variant_counts_follow_each_catalogue_message_and_cache_reads(monkeypatc
 
     assert _variant_counts("en")[_message_id(fact)] == 3
     assert calls == 2
+
+
+def test_preloaded_catalogues_render_without_filesystem_reads(monkeypatch) -> None:
+    _bundle.cache_clear()
+    _variant_counts.cache_clear()
+    preload_plan_outlook_catalogs(("da",))
+
+    def unexpected_read(*args, **kwargs):
+        raise AssertionError("catalogue read during rendering")
+
+    monkeypatch.setattr(Path, "read_text", unexpected_read)
+    fact = _fact("optional_start")
+    model = _model(fact)
+
+    render_fact_english(fact, model=model, now=NOW, variation_seed="preloaded")
+    render_fact_danish(fact, model=model, now=NOW, variation_seed="preloaded")
 
 
 def test_catalogue_loading_or_formatting_failure_uses_nonrecursive_fallback(monkeypatch) -> None:

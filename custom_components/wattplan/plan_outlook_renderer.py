@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -188,6 +188,13 @@ def _variant_counts(language: str) -> dict[str, int]:
         variants = re.findall(r"(?m)^\s*\*?\[([\w-]+)\]", message)
         counts[match.group(1)] = len(variants) or 1
     return counts
+
+
+def preload_plan_outlook_catalogs(languages: tuple[str, ...]) -> None:
+    """Load configured Fluent catalogues before rendering on the event loop."""
+    for language in {*languages, "en"}:
+        _bundle(language)
+        _variant_counts(language)
 
 
 def _fallback(message_id: str, arguments: dict[str, Any]) -> str:
@@ -429,6 +436,10 @@ def render_plan_outlook(
     selected facts; per-fact salience already determined selection order
     upstream and only breaks topic ties here.
     """
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=model.start.tzinfo or UTC)
+    elif model.start.tzinfo is not None:
+        now = now.astimezone(model.start.tzinfo)
     selected = model.selected_facts
     if not selected:
         return {}
