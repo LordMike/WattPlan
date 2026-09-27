@@ -333,7 +333,10 @@ async def test_options_reload_replaces_outlook_language_sensors(
     await hass.async_block_till_done(wait_background_tasks=True)
 
     assert entry.runtime_data.outlook_languages == ("da",)
-    assert hass.states.get("sensor.language_home_plan_outlook_en") is None
+    english_outlook = hass.states.get("sensor.language_home_plan_outlook_en")
+    assert english_outlook is not None
+    assert english_outlook.state == STATE_UNAVAILABLE
+    assert english_outlook.attributes.get("restored") is True
     assert hass.states.get("sensor.language_home_plan_outlook_da") is not None
 
 

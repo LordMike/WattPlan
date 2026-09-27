@@ -154,8 +154,12 @@ async def test_no_plan_outlook_remains_a_status_report(hass: HomeAssistant) -> N
     entry = _entry()
     entry.add_to_hass(hass)
 
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    with patch(
+        "custom_components.wattplan.coordinator.optimize",
+        side_effect=RuntimeError("optimizer failed"),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
 
     outlook = hass.states.get("sensor.home_plan_outlook_en")
     assert outlook is not None
