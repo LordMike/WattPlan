@@ -4,13 +4,13 @@ Pure python: no ``homeassistant`` imports. All functions are pure and
 timezone-aware (naive datetimes are interpreted as UTC).
 
 Duck-typed facts: works with both the v1 ``OutlookFact`` (int
-``significance``, no confidence/deviation) and the forthcoming v2 schema
+``significance``, no confidence/deviation) and the v2 schema
 (``significance``/``confidence``/``deviation`` floats in 0..1 plus
 ``semantic_key()``). Anything exposing ``fact_id``, ``kind``, ``start``,
 ``end``, ``related`` plus optional ``topic``/``subject``/``significance``/
 ``confidence``/``deviation``/``semantic_key`` is accepted.
 
-Public API (wired by the lead into ``plan_outlook.py`` later):
+Public API used by ``plan_outlook.py``:
 - ``score_candidates(facts, now, history)``
 - ``select_best_set(facts, now, history)``
 - ``build_statements(selected)``
