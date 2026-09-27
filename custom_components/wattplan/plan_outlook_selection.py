@@ -605,7 +605,10 @@ def _infer_relation(members: list[Any]) -> str:
 
 
 def _build_statement_object(
-    statement_id: str, fact_ids: tuple[str, ...], relation: str
+    statement_id: str,
+    fact_ids: tuple[str, ...],
+    relation: str,
+    headline_fact_id: str,
 ) -> Any:
     try:
         from .plan_outlook_types import OutlookStatement  # type: ignore
@@ -626,6 +629,8 @@ def _build_statement_object(
         kwargs["fact_ids"] = fact_ids
     if "relation" in available:
         kwargs["relation"] = relation
+    if "headline_fact_id" in available:
+        kwargs["headline_fact_id"] = headline_fact_id
     # Tolerate slightly different v2 shapes: fill facts only if required.
     try:
         return OutlookStatement(**kwargs)  # type: ignore[call-arg]
@@ -642,8 +647,8 @@ def build_statements(selected: list[Any]) -> list[Any]:
     in another member's ``related``) form one multi-fact statement whose
     relation is inferred (cause/sequence/contrast/opportunity-action);
     unlinked facts become ``single`` statements. Deterministic output ordered
-    by the sorted fact_ids of each statement, except that optional-only
-    statements always close: advice is acted on, never the headline.
+    by salience-selected fact order, except that optional-only statements
+    always close: advice is acted on, never the headline.
     """
     if not selected:
         return []
@@ -684,7 +689,7 @@ def build_statements(selected: list[Any]) -> list[Any]:
 
     statements: list[Any] = []
 
-    def _component_key(root: str) -> tuple[bool, tuple[str, ...]]:
+    def _component_key(root: str) -> tuple[bool, int]:
         members = components[root]
         optional_only = bool(members) and all(
             str(getattr(fact, "kind", "")) == "optional_start"
@@ -692,7 +697,7 @@ def build_statements(selected: list[Any]) -> list[Any]:
         )
         return (
             optional_only,
-            tuple(sorted(str(fact.fact_id) for fact in members)),
+            min(order[str(fact.fact_id)] for fact in members),
         )
 
     for root in sorted(components, key=_component_key):
@@ -700,5 +705,7 @@ def build_statements(selected: list[Any]) -> list[Any]:
         fact_ids = tuple(str(fact.fact_id) for fact in members)
         relation = _infer_relation(members)
         statement_id = "stmt:" + "+".join(sorted(fact_ids))
-        statements.append(_build_statement_object(statement_id, fact_ids, relation))
+        statements.append(
+            _build_statement_object(statement_id, fact_ids, relation, fact_ids[0])
+        )
     return statements

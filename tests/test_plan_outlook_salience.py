@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from custom_components.wattplan.plan_outlook import build_plan_outlook
 from custom_components.wattplan.plan_outlook_renderer import render_plan_outlook
 from custom_components.wattplan.plan_outlook_selection import (
+    build_statements,
     score_candidates,
     select_best_set,
     set_score,
@@ -378,3 +379,47 @@ def test_optional_advice_closes_never_opens() -> None:
 
     assert "dishwasher" not in rendered["line_1"]
     assert "dishwasher" in rendered["text"]
+
+
+def test_statements_preserve_selected_order_except_optional_advice() -> None:
+    """Unrelated statements retain salience order while advice still closes."""
+    main = _fact("solar_surplus", subject="z-main", significance=0.9)
+    secondary = _fact("grid_price_rise", subject="a-secondary", significance=0.8)
+    optional = _fact("optional_start", subject="dishwasher", significance=0.9)
+
+    statements = build_statements([main, optional, secondary])
+
+    assert [statement.fact_ids for statement in statements] == [
+        (main.fact_id,),
+        (secondary.fact_id,),
+        (optional.fact_id,),
+    ]
+    assert [statement.headline_fact_id for statement in statements] == [
+        main.fact_id,
+        secondary.fact_id,
+        optional.fact_id,
+    ]
+
+
+def test_rendered_headline_and_report_id_use_first_statement_headline() -> None:
+    """The report identifier describes the fact rendered in the headline."""
+    main = _fact("solar_surplus", subject="z-main", significance=0.9)
+    secondary = _fact("grid_price_rise", subject="a-secondary", significance=0.8)
+    optional = _fact("optional_start", subject="dishwasher", significance=0.9)
+    selected = (main, optional, secondary)
+    model = OutlookModel(
+        facts=selected,
+        selected_fact_ids=tuple(fact.fact_id for fact in selected),
+        selection_history=(),
+        start=NOW,
+        horizon_end=NOW + timedelta(hours=2),
+        plan_created_at=NOW,
+        seed_prefix="statement-order",
+        statements=tuple(build_statements(list(selected))),
+    )
+
+    rendered = render_plan_outlook(model, now=NOW, language="en")
+
+    assert "solar" in rendered["headline"].lower()
+    assert rendered["line_1"] == rendered["headline"]
+    assert rendered["report_id"].startswith("solar_surplus_high_")
