@@ -64,6 +64,8 @@ class PlanOutlookSensor(WattPlanCoordinatorSensor):
             return False
         if self.snapshot is None or not self.coordinator.has_usable_plan:
             return True
+        if not self.coordinator.action_recommendations_validated:
+            return True
         diagnostics = self.snapshot.diagnostics or {}
         if not isinstance(diagnostics.get("outlook"), dict):
             return False

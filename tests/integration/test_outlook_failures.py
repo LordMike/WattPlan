@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import logging
 from unittest.mock import patch
 
@@ -160,3 +161,31 @@ async def test_no_plan_outlook_remains_a_status_report(hass: HomeAssistant) -> N
     outlook = hass.states.get("sensor.home_plan_outlook_en")
     assert outlook is not None
     assert outlook.state.startswith("plan_unavailable_high_")
+
+
+async def test_restored_unvalidated_plan_without_outlook_remains_a_status_report(
+    hass: HomeAssistant,
+) -> None:
+    """Old restored snapshots without Outlook diagnostics retain their status report."""
+    entry = _entry()
+    entry.add_to_hass(hass)
+
+    with patch("custom_components.wattplan.coordinator.optimize", _optimizer_result):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        await hass.services.async_call(
+            DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True
+        )
+        await hass.async_block_till_done()
+
+    coordinator = entry.runtime_data.coordinator
+    assert coordinator.snapshot is not None
+    coordinator._snapshot = replace(coordinator.snapshot, diagnostics={})
+    coordinator.data = coordinator.snapshot
+    coordinator._action_recommendations_validated = False
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+
+    outlook = hass.states.get("sensor.home_plan_outlook_en")
+    assert outlook is not None
+    assert outlook.state.startswith("restored_unvalidated_medium_")
