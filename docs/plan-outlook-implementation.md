@@ -166,9 +166,9 @@ reporting period (morning/afternoon/evening), and the semantic identifier as the
 wording seed. Never use process-random Python hash as the persistence seed.
  Within a period retain selection when still valid; update values/times, and
  reselect when materially more important facts appear or selected facts expire.
-+A bounded hysteresis (STICKINESS_EPSILON = 0.05 set-score points) keeps the
-+previous eligible selection across tiny input perturbations; only a materially
-+better set displaces it.
+A bounded hysteresis (STICKINESS_EPSILON = 0.05 set-score points) keeps the
+previous eligible selection across tiny input perturbations; only a materially
+better set displaces it.
 Record `kind.magnitude.period` semantic keys on actual report selection changes
 (magnitude tertiles are `high`/`med`/`low`), not every planner callback.
 Support predictable seeded tests. Variety does not increase information_value.
