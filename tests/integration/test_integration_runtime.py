@@ -68,10 +68,15 @@ from custom_components.wattplan.const import (
 from custom_components.wattplan.coordinator import (
     STORAGE_VERSION,
     CycleTrigger,
+    WattPlanCoordinator,
     _snapshot_schema_id,
 )
 from custom_components.wattplan.coordinator_logic.source_status import SourceStatusManager
-from custom_components.wattplan.coordinator_parts import PlanningStageError, StageErrorKind
+from custom_components.wattplan.coordinator_parts import (
+    PlanningStageError,
+    Stage,
+    StageErrorKind,
+)
 from custom_components.wattplan.historical_cost.models import (
     FLAG_GAP,
     FLAG_METER_RESET,
@@ -219,6 +224,56 @@ def test_source_failure_debounce_resets_after_slot_gap(hass: HomeAssistant) -> N
     assert first["failure_slot_count"] == 1
     assert after_gap["failure_slot_count"] == 1
     assert after_gap["failure_started_at"] == SlotDateTime.value.isoformat()
+
+
+def test_planning_failure_debounce_counts_consecutive_slots_only(
+    hass: HomeAssistant,
+) -> None:
+    """Manual planning retries do not count, and a skipped slot resets the streak."""
+    coordinator = WattPlanCoordinator(
+        hass,
+        entry_id="planning_failure_debounce",
+        update_interval=timedelta(minutes=30),
+        planning_enabled=False,
+        action_emission_enabled=False,
+    )
+    base = datetime(2026, 9, 23, 12, tzinfo=UTC)
+
+    class SlotDateTime(datetime):
+        value = base
+
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> datetime:
+            return cls.value if tz is not None else cls.value.replace(tzinfo=None)
+
+    with patch("custom_components.wattplan.coordinator.datetime", SlotDateTime):
+        coordinator._set_stage_error(
+            Stage.PLAN, StageErrorKind.PLANNER_EXECUTION, "planner failed"
+        )
+        first = coordinator.outlook_failure_status
+        coordinator._set_stage_error(
+            Stage.PLAN, StageErrorKind.PLANNER_EXECUTION, "planner failed"
+        )
+        retry = coordinator.outlook_failure_status
+
+        SlotDateTime.value = base + timedelta(minutes=30)
+        coordinator._set_stage_error(
+            Stage.PLAN, StageErrorKind.PLANNER_EXECUTION, "planner failed"
+        )
+        adjacent = coordinator.outlook_failure_status
+
+        SlotDateTime.value = base + timedelta(minutes=90)
+        coordinator._set_stage_error(
+            Stage.PLAN, StageErrorKind.PLANNER_EXECUTION, "planner failed"
+        )
+        after_gap = coordinator.outlook_failure_status
+
+    assert first["slot_count"] == 1
+    assert retry["slot_count"] == 1
+    assert adjacent["slot_count"] == 2
+    assert adjacent["started_at"] == base
+    assert after_gap["slot_count"] == 1
+    assert after_gap["started_at"] == base + timedelta(minutes=90)
 
 
 def _fake_optimize(_params: object) -> dict[str, object]:

@@ -733,9 +733,17 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             now = datetime.now(tz=UTC)
             interval_seconds = max(60, int(self._base_update_interval.total_seconds()))
             slot_timestamp = int(now.timestamp()) // interval_seconds * interval_seconds
-            slot = datetime.fromtimestamp(slot_timestamp, tz=UTC).isoformat()
-            if slot not in self._plan_failure_slots:
-                self._plan_failure_slots.append(slot)
+            slot = datetime.fromtimestamp(slot_timestamp, tz=UTC)
+            slot_iso = slot.isoformat()
+            if self._plan_failure_slots:
+                previous = datetime.fromisoformat(self._plan_failure_slots[-1])
+                if slot < previous:
+                    slot_iso = previous.isoformat()
+                elif slot > previous + self._base_update_interval:
+                    self._plan_failure_slots = []
+                    self._plan_failure_started_at = now
+            if slot_iso not in self._plan_failure_slots:
+                self._plan_failure_slots.append(slot_iso)
                 del self._plan_failure_slots[:-16]
             if self._plan_failure_started_at is None:
                 self._plan_failure_started_at = now
