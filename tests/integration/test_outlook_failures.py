@@ -9,7 +9,6 @@ from unittest.mock import patch
 from custom_components.wattplan.const import (
     CONF_ACTION_EMISSION_ENABLED,
     CONF_HOURS_TO_PLAN,
-    CONF_NAME,
     CONF_PLANNING_ENABLED,
     CONF_SLOT_MINUTES,
     CONF_SOURCE_IMPORT_PRICE,
@@ -22,7 +21,7 @@ from custom_components.wattplan.const import (
 )
 import pytest
 
-from homeassistant.const import STATE_UNAVAILABLE
+from homeassistant.const import CONF_NAME, STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 
 from tests.common import MockConfigEntry
