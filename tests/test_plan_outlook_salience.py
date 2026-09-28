@@ -1,10 +1,15 @@
 """Salience-engine semantic tests: novelty, timeliness, set-optimality, v1 load."""
 
+import math
 from datetime import UTC, datetime, timedelta
+
+import pytest
 
 from custom_components.wattplan.plan_outlook import build_plan_outlook
 from custom_components.wattplan.plan_outlook_renderer import render_plan_outlook
 from custom_components.wattplan.plan_outlook_selection import (
+    COHERENCE_WEIGHT,
+    TIMELINESS_HOURS,
     build_statements,
     score_candidates,
     select_best_set,
@@ -423,3 +428,69 @@ def test_rendered_headline_and_report_id_use_first_statement_headline() -> None:
     assert "solar" in rendered["headline"].lower()
     assert rendered["line_1"] == rendered["headline"]
     assert rendered["report_id"].startswith("solar_surplus_high_")
+
+
+def test_far_routine_fact_cannot_pad_near_term_story() -> None:
+    """A routine battery action 22h out must not pad a near-term story.
+
+    This mirrors the observed price-swing + low-grid-use + next-day preserve
+    outlook. The far fact adds a topic, group, and price->action link, but
+    those set bonuses must not outweigh its low timeliness.
+    """
+    price = _fact(
+        "grid_price_swing",
+        significance=0.9,
+        deviation=0.8,
+        related=("battery_preserve",),
+    )
+    balance = _fact(
+        "limited_grid_use",
+        topic="energy_balance",
+        significance=0.5,
+        deviation=0.4,
+    )
+    far_routine = _fact(
+        "battery_preserve",
+        subject="Battery",
+        topic="battery",
+        significance=0.5,
+        deviation=0.2,
+        start=NOW + timedelta(hours=22),
+        related=("grid_price_swing",),
+    )
+    pool = [price, balance, far_routine]
+
+    selected = select_best_set(pool, NOW, [])
+    assert [fact.kind for fact in selected] == [
+        "grid_price_swing",
+        "limited_grid_use",
+    ]
+
+    scores = {item.fact.fact_id: item.score for item in score_candidates(pool, NOW, [])}
+    near_total, _ = set_score((balance, price), scores, now=NOW)
+    padded_total, breakdown = set_score(
+        (balance, price, far_routine), scores, now=NOW
+    )
+    assert near_total > padded_total
+    # The price-action link counts only at the far fact's timeliness.
+    assert breakdown["coherence"] == pytest.approx(
+        COHERENCE_WEIGHT * 2.0 * math.exp(-22 / TIMELINESS_HOURS) / 2
+    )
+
+
+def test_significant_next_day_event_survives_without_hard_cutoff() -> None:
+    """Timeliness decays smoothly: a significant event 22h out still wins."""
+    far_significant = _fact(
+        "negative_grid_price",
+        significance=0.9,
+        deviation=0.9,
+        start=NOW + timedelta(hours=22),
+        related=("grid_charge",),
+    )
+    routine_near = _fact(
+        "flat_grid_prices", significance=0.2, deviation=0.1, topic="routine"
+    )
+
+    selected = select_best_set([far_significant, routine_near], NOW, [])
+
+    assert [fact.kind for fact in selected] == ["negative_grid_price"]

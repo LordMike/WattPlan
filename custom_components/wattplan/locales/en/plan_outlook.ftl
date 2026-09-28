@@ -13,8 +13,8 @@ outlook-grid-price-fall = { $variant ->
 outlook-limited-grid-use = { $variant ->
     [0] Little grid use is expected { $period_text }.
     [1] Grid use should stay low { $period_text }.
-    [2] Only a small amount of grid electricity is expected.
-   *[other] Low grid use is expected.
+    [2] Only a small amount of grid electricity is expected { $period_text }.
+   *[other] Low grid use is expected { $period_text }.
 }
 outlook-flat-grid-prices =
     { $variant ->
@@ -24,16 +24,16 @@ outlook-flat-grid-prices =
       *[3] Grid prices remain fairly level { $period_text }.
     }
 outlook-negative-grid-price = { $variant ->
-    [0] Grid prices are below zero from { $start } to { $end }.
-    [1] Grid prices are negative from { $start } to { $end }.
-    [2] Grid prices fall below zero from { $start } to { $end }.
-   *[other] Grid prices stay below zero from { $start } to { $end }.
+    [0] Grid prices are below zero { $range }.
+    [1] Grid prices are negative { $range }.
+    [2] Grid prices fall below zero { $range }.
+   *[other] Grid prices stay below zero { $range }.
 }
 outlook-cheaper-grid-prices = { $variant ->
-    [0] Grid prices are lower from { $start } to { $end }.
-    [1] Grid prices dip from { $start } to { $end }.
-    [2] Grid prices sit lower from { $start } to { $end }.
-   *[other] Cheaper grid prices run from { $start } to { $end }.
+    [0] Grid prices are lower { $range }.
+    [1] Grid prices dip { $range }.
+    [2] Grid prices sit lower { $range }.
+   *[other] Cheaper grid prices run { $range }.
 }
 outlook-grid-price-swing =
     { $variant ->
@@ -43,10 +43,10 @@ outlook-grid-price-swing =
       *[other] Grid prices move the other way after { $turn_at }.
     }
 outlook-solar-surplus = { $variant ->
-    [0] Solar generation is forecast to exceed expected use from { $start } to { $end }, peaking around { $peak_at }.
-    [1] More solar power than expected use is forecast from { $start } to { $end }, with a peak near { $peak_at }.
-    [2] Solar output should be higher than expected use from { $start } to { $end } and peak around { $peak_at }.
-   *[other] Solar is expected to cover more than the load from { $start } to { $end }, peaking near { $peak_at }.
+    [0] Solar generation is forecast to exceed expected use { $range }, peaking around { $peak_at }.
+    [1] More solar power than expected use is forecast { $range }, with a peak near { $peak_at }.
+    [2] Solar output should be higher than expected use { $range } and peak around { $peak_at }.
+   *[other] Solar is expected to cover more than the load { $range }, peaking near { $peak_at }.
 }
 outlook-solar-modest =
     { $variant ->
@@ -78,31 +78,31 @@ outlook-low-reserve-solo =
     }
 outlook-grid-charge =
     { $variant ->
-       [0] { $subject } is scheduled to charge from the grid from { $start } to { $end }.
-       [1] { $subject } charges from the grid from { $start } to { $end }.
-       [2] Grid charging for { $subject } is planned from { $start } to { $end }.
-      *[other] { $subject } is expected to use grid power for charging from { $start } to { $end }.
+       [0] { $subject } is scheduled to charge from the grid { $range }.
+       [1] { $subject } charges from the grid { $range }.
+       [2] Grid charging for { $subject } is planned { $range }.
+      *[other] { $subject } is expected to use grid power for charging { $range }.
     }
 outlook-grid-charge-solo =
     { $variant ->
-       [0] Grid charging runs from { $start } to { $end }.
-       [1] Charging from the grid is scheduled from { $start } to { $end }.
-       [2] The battery charges from the grid from { $start } to { $end }.
-      *[other] Grid power is used for charging from { $start } to { $end }.
+       [0] Grid charging runs { $range }.
+       [1] Charging from the grid is scheduled { $range }.
+       [2] The battery charges from the grid { $range }.
+      *[other] Grid power is used for charging { $range }.
     }
 outlook-battery-preserve =
     { $variant ->
-       [0] { $subject } is scheduled to hold its charge from { $start } to { $end }.
-       [1] The stored energy in { $subject } is kept from { $start } to { $end }.
-       [2] { $subject } is planned not to discharge from { $start } to { $end }.
-      *[other] { $subject } is preserved from { $start } to { $end }.
+       [0] { $subject } is scheduled to hold its charge { $range }.
+       [1] The stored energy in { $subject } is kept { $range }.
+       [2] { $subject } is planned not to discharge { $range }.
+      *[other] { $subject } is preserved { $range }.
     }
 outlook-battery-preserve-solo =
     { $variant ->
-       [0] Stored energy is kept from { $start } to { $end }.
-       [1] Charge is held from { $start } to { $end }.
-       [2] Discharging is paused from { $start } to { $end }.
-      *[other] Stored charge is preserved from { $start } to { $end }.
+       [0] Stored energy is kept { $range }.
+       [1] Charge is held { $range }.
+       [2] Discharging is paused { $range }.
+      *[other] Stored charge is preserved { $range }.
     }
 outlook-battery-self-consume =
     { $variant ->
@@ -176,10 +176,10 @@ outlook-target-reached-missing-solo =
     }
 outlook-comfort-timing =
     { $variant ->
-       [0] { $subject } is scheduled from { $start } to { $end }, while solar power is expected.
-       [1] { $subject } runs from { $start } to { $end } during expected solar generation.
-       [2] { $subject } is planned from { $start } to { $end } to overlap with forecast solar power.
-      *[other] Expected solar generation overlaps { $subject } from { $start } to { $end }.
+       [0] { $subject } is scheduled { $range }, while solar power is expected.
+       [1] { $subject } runs { $range } during expected solar generation.
+       [2] { $subject } is planned { $range } to overlap with forecast solar power.
+      *[other] Expected solar generation overlaps { $subject } { $range }.
     }
 outlook-optional-start =
     { $variant ->
@@ -190,17 +190,17 @@ outlook-optional-start =
     }
 outlook-grid-export =
     { $variant ->
-       [0] Extra electricity is expected to be sent to the grid from { $start } to { $end }.
-       [1] The forecast shows electricity being exported to the grid from { $start } to { $end }.
-       [2] Surplus electricity is expected to flow to the grid from { $start } to { $end }.
-      *[other] Grid export is expected from { $start } to { $end }.
+       [0] Extra electricity is expected to be sent to the grid { $range }.
+       [1] The forecast shows electricity being exported to the grid { $range }.
+       [2] Surplus electricity is expected to flow to the grid { $range }.
+      *[other] Grid export is expected { $range }.
     }
 outlook-heavy-grid-use =
     { $variant ->
        [0] Heavy grid use is expected { $period_text }.
        [1] Electricity use from the grid is forecast to be high { $period_text }.
-       [2] A high amount of electricity is expected to come from the grid.
-      *[other] The home is expected to draw heavily from the grid.
+       [2] A high amount of electricity is expected to come from the grid { $period_text }.
+      *[other] The home is expected to draw heavily from the grid { $period_text }.
     }
 outlook-charging-dominates-imports =
     { $variant ->
@@ -311,6 +311,36 @@ outlook-period = { $period ->
     [today] today
     [tomorrow] tomorrow
    *[weekday] on { $weekday ->
+        [0] Monday
+        [1] Tuesday
+        [2] Wednesday
+        [3] Thursday
+        [4] Friday
+        [5] Saturday
+       *[6] Sunday
+    }
+}
+
+outlook-time = { $period ->
+    [today] { $time } today
+    [tomorrow] { $time } tomorrow
+   *[weekday] { $time } on { $weekday ->
+        [0] Monday
+        [1] Tuesday
+        [2] Wednesday
+        [3] Thursday
+        [4] Friday
+        [5] Saturday
+       *[6] Sunday
+    }
+}
+
+outlook-time-range = from { $start } to { $end }
+
+outlook-time-range-same-day = { $period ->
+    [today] from { $start } to { $end } today
+    [tomorrow] from { $start } to { $end } tomorrow
+   *[weekday] from { $start } to { $end } on { $weekday ->
         [0] Monday
         [1] Tuesday
         [2] Wednesday

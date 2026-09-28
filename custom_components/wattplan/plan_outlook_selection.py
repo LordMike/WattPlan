@@ -424,12 +424,19 @@ def _elapsed_minutes(fact: Any) -> float:
 def set_score(
     members: tuple[Any, ...],
     scores: dict[str, float],
+    *,
+    now: datetime | None = None,
 ) -> tuple[float, dict[str, float]]:
     """Return (total, breakdown) for one candidate set.
 
     Base is the MEAN member salience (quality over quantity: do not pad
-    reports to three facts), with small additive bonuses for topic/group
-    coverage and related-graph coherence.
+    reports to three facts). Set-level adjustments are averaged across the
+    members too, so adding a sentence must improve the story instead of
+    accumulating bonuses merely by making it longer. Existing two-fact stories
+    retain their full relationship value; adjustments diminish only when a
+    third fact is added. Each coherence link is
+    also scaled by the timeliness of its least timely end (when ``now`` is
+    given), so a distant fact cannot borrow full story value.
     """
     saliences = [scores.get(str(getattr(fact, "fact_id", "")), 0.0) for fact in members]
     base = sum(saliences) / len(saliences) if saliences else 0.0
@@ -439,8 +446,6 @@ def set_score(
         groups.get(str(getattr(fact, "kind", "")), str(getattr(fact, "kind", "")))
         for fact in members
     }
-    diversity = DIVERSITY_WEIGHT * len(topics)
-    coverage = COVERAGE_WEIGHT * len(group_ids)
     coherence_links = 0.0
     redundancy_hits = 0
     for left, right in combinations(members, 2):
@@ -449,10 +454,19 @@ def set_score(
         left_rel = _related_set(left)
         right_rel = _related_set(right)
         if left_kind in right_rel or right_kind in left_rel:
-            coherence_links += _link_weight(left_kind, right_kind)
+            link = _link_weight(left_kind, right_kind)
+            if now is not None:
+                link *= min(
+                    timeliness_score(left, now),
+                    timeliness_score(right, now),
+                )
+            coherence_links += link
         redundancy_hits += len(left_rel & right_rel)
-    coherence = COHERENCE_WEIGHT * coherence_links
-    redundancy = REDUNDANCY_WEIGHT * redundancy_hits
+    adjustment_scale = 1.0 / max(1, len(members) - 1) if members else 0.0
+    diversity = DIVERSITY_WEIGHT * len(topics) * adjustment_scale
+    coverage = COVERAGE_WEIGHT * len(group_ids) * adjustment_scale
+    coherence = COHERENCE_WEIGHT * coherence_links * adjustment_scale
+    redundancy = REDUNDANCY_WEIGHT * redundancy_hits * adjustment_scale
     total = base + diversity + coverage + coherence - redundancy
     return total, {
         "base": base,
@@ -527,7 +541,7 @@ def select_best_set(
         for combo in combinations(ordered, size):
             if not _set_is_valid(combo):
                 continue
-            total, _ = set_score(combo, by_id)
+            total, _ = set_score(combo, by_id, now=now)
             key_ids = tuple(sorted(str(f.fact_id) for f in combo))
             # Higher total wins; ties break by lexicographic fact_id tuple.
             key = (-total, key_ids)

@@ -296,18 +296,71 @@ def _period(fact: OutlookFact, now: datetime) -> tuple[str, int]:
     return "weekday", fact.start.weekday()
 
 
+def _day_reference(value: datetime, now: datetime) -> tuple[str, int]:
+    """Classify a clock time's day relative to now for day-aware wording.
+
+    A specific time earlier today is still ``today`` (unlike period wording,
+    which uses ``rest-of-today`` for a span that started in the past).
+    """
+    if value.date() == now.date():
+        return "today", value.weekday()
+    if value.date() == now.date() + timedelta(days=1):
+        return "tomorrow", value.weekday()
+    return "weekday", value.weekday()
+
+
+def _time_reference(value: datetime, now: datetime, language: str) -> str:
+    """Localized day-aware clock time, e.g. ``09:00 today`` / ``09:00 i dag``."""
+    period, weekday = _day_reference(value, now)
+    return _format(
+        language,
+        "outlook-time",
+        {"time": _time(value), "period": period, "weekday": weekday},
+    )
+
+
+def _time_range(start: datetime, end: datetime, now: datetime, language: str) -> str:
+    """Localized day-aware time range.
+
+    Same-day ranges mention the day once (``from 09:00 to 10:00 today``);
+    cross-day ranges label each endpoint (``from 09:00 today to 01:00 tomorrow``).
+    """
+    if start.date() == end.date():
+        period, weekday = _day_reference(start, now)
+        return _format(
+            language,
+            "outlook-time-range-same-day",
+            {
+                "start": _time(start),
+                "end": _time(end),
+                "period": period,
+                "weekday": weekday,
+            },
+        )
+    return _format(
+        language,
+        "outlook-time-range",
+        {
+            "start": _time_reference(start, now, language),
+            "end": _time_reference(end, now, language),
+        },
+    )
+
+
 def _arguments(fact: OutlookFact, now: datetime, language: str) -> dict[str, Any]:
     values = dict(fact.values)
     alternative = _value_time(values, "alternative_at", fact.start)
+    turn_at = _value_time(values, "turn_at", fact.start)
+    peak_at = _value_time(values, "peak_at", fact.start)
     arguments: dict[str, Any] = {
         "variant": 0,
         "kind": fact.kind.replace("_", " "),
         "subject": fact.subject,
-        "start": _time(fact.start),
-        "end": _time(fact.end),
-        "turn_at": _time(_value_time(values, "turn_at", fact.start)),
-        "peak_at": _time(_value_time(values, "peak_at", fact.start)),
-        "alternative_at": _time(alternative),
+        "start": _time_reference(fact.start, now, language),
+        "turn_at": _time_reference(turn_at, now, language),
+        "peak_at": _time_reference(peak_at, now, language),
+        "alternative_at": _time_reference(alternative, now, language),
+        "range": _time_range(fact.start, fact.end, now, language),
         "expected": values.get("expected_percent"),
         "requested": values.get("requested_percent"),
     }

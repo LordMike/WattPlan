@@ -829,8 +829,8 @@ def _retain_previous_when_still_near_best(
     by_id = {fact.fact_id: fact for fact in facts}
     previous_facts = [by_id[fact_id] for fact_id in previous_ids]
     scored = {item.fact.fact_id: item.score for item in score_candidates(facts, now, history)}
-    best_total, _ = set_score(tuple(selected), scored)
-    previous_total, _ = set_score(tuple(previous_facts), scored)
+    best_total, _ = set_score(tuple(selected), scored, now=now)
+    previous_total, _ = set_score(tuple(previous_facts), scored, now=now)
     if best_total - previous_total <= STICKINESS_EPSILON:
         return previous_facts
     return None

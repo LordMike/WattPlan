@@ -16,8 +16,8 @@ outlook-limited-grid-use =
     { $variant ->
        [0] Der forventes kun et lille elforbrug fra elnettet { $period_text }.
        [1] Elforbruget fra elnettet forventes at være lavt { $period_text }.
-       [2] Kun en lille mængde strøm fra elnettet er forventet.
-      *[other] Der forventes lavt elforbrug fra elnettet.
+       [2] Kun en lille mængde strøm fra elnettet er forventet { $period_text }.
+      *[other] Der forventes lavt elforbrug fra elnettet { $period_text }.
     }
 outlook-flat-grid-prices =
     { $variant ->
@@ -28,17 +28,17 @@ outlook-flat-grid-prices =
     }
 outlook-negative-grid-price =
     { $variant ->
-       [0] Elprisen er under nul fra kl. { $start } til kl. { $end }.
-       [1] Der er en negativ elpris fra kl. { $start } til kl. { $end }.
-       [2] Elprisen falder under nul fra kl. { $start } til kl. { $end }.
-      *[other] Elprisen holder sig under nul fra kl. { $start } til kl. { $end }.
+       [0] Elprisen er under nul { $range }.
+       [1] Der er en negativ elpris { $range }.
+       [2] Elprisen falder under nul { $range }.
+      *[other] Elprisen holder sig under nul { $range }.
     }
 outlook-cheaper-grid-prices =
     { $variant ->
-       [0] Der er en lavere elpris fra kl. { $start } til kl. { $end }.
-       [1] Elprisen dykker fra kl. { $start } til kl. { $end }.
-       [2] Elprisen ligger lavere fra kl. { $start } til kl. { $end }.
-      *[other] En billigere elpris gælder fra kl. { $start } til kl. { $end }.
+       [0] Der er en lavere elpris { $range }.
+       [1] Elprisen dykker { $range }.
+       [2] Elprisen ligger lavere { $range }.
+      *[other] En billigere elpris gælder { $range }.
     }
 outlook-grid-price-swing =
     { $variant ->
@@ -49,10 +49,10 @@ outlook-grid-price-swing =
     }
 outlook-solar-surplus =
     { $variant ->
-       [0] Solproduktionen forventes at overstige det forventede forbrug fra kl. { $start } til kl. { $end } og toppe omkring kl. { $peak_at }.
-       [1] Der forventes mere solstrøm end forbrug fra kl. { $start } til kl. { $end }, med en top omkring kl. { $peak_at }.
-       [2] Solproduktionen bør være højere end det forventede forbrug fra kl. { $start } til kl. { $end } og toppe omkring kl. { $peak_at }.
-      *[other] Solen forventes at dække mere end belastningen fra kl. { $start } til kl. { $end }.
+       [0] Solproduktionen forventes at overstige det forventede forbrug { $range } og toppe omkring kl. { $peak_at }.
+       [1] Der forventes mere solstrøm end forbrug { $range }, med en top omkring kl. { $peak_at }.
+       [2] Solproduktionen bør være højere end det forventede forbrug { $range } og toppe omkring kl. { $peak_at }.
+      *[other] Solen forventes at dække mere end belastningen { $range }.
     }
 outlook-solar-modest =
     { $variant ->
@@ -84,31 +84,31 @@ outlook-low-reserve-solo =
     }
 outlook-grid-charge =
     { $variant ->
-       [0] { $subject } er planlagt til opladning fra elnettet fra kl. { $start } til kl. { $end }.
-       [1] { $subject } oplades fra elnettet fra kl. { $start } til kl. { $end }.
-       [2] Opladning fra elnettet er planlagt for { $subject } fra kl. { $start } til kl. { $end }.
-      *[other] { $subject } forventes at bruge strøm fra elnettet til opladning fra kl. { $start } til kl. { $end }.
+       [0] { $subject } er planlagt til opladning fra elnettet { $range }.
+       [1] { $subject } oplades fra elnettet { $range }.
+       [2] Opladning fra elnettet er planlagt for { $subject } { $range }.
+      *[other] { $subject } forventes at bruge strøm fra elnettet til opladning { $range }.
     }
 outlook-grid-charge-solo =
     { $variant ->
-       [0] Opladning fra elnettet kører fra kl. { $start } til kl. { $end }.
-       [1] Opladning fra elnettet er planlagt fra kl. { $start } til kl. { $end }.
-       [2] Batteriet oplades fra elnettet fra kl. { $start } til kl. { $end }.
-      *[other] Strøm fra elnettet bruges til opladning fra kl. { $start } til kl. { $end }.
+       [0] Opladning fra elnettet kører { $range }.
+       [1] Opladning fra elnettet er planlagt { $range }.
+       [2] Batteriet oplades fra elnettet { $range }.
+      *[other] Strøm fra elnettet bruges til opladning { $range }.
     }
 outlook-battery-preserve =
     { $variant ->
-       [0] { $subject } er planlagt til at bevare opladningen fra kl. { $start } til kl. { $end }.
-       [1] Energien i { $subject } gemmes fra kl. { $start } til kl. { $end }.
-       [2] { $subject } er planlagt til ikke at aflade fra kl. { $start } til kl. { $end }.
-      *[other] Opladningen i { $subject } bevares fra kl. { $start } til kl. { $end }.
+       [0] { $subject } er planlagt til at bevare opladningen { $range }.
+       [1] Energien i { $subject } gemmes { $range }.
+       [2] { $subject } er planlagt til ikke at aflade { $range }.
+      *[other] Opladningen i { $subject } bevares { $range }.
     }
 outlook-battery-preserve-solo =
     { $variant ->
-       [0] Den gemte energi bevares fra kl. { $start } til kl. { $end }.
-       [1] Opladningen holdes fra kl. { $start } til kl. { $end }.
-       [2] Afladning er sat på pause fra kl. { $start } til kl. { $end }.
-      *[other] Den gemte opladning bevares fra kl. { $start } til kl. { $end }.
+       [0] Den gemte energi bevares { $range }.
+       [1] Opladningen holdes { $range }.
+       [2] Afladning er sat på pause { $range }.
+      *[other] Den gemte opladning bevares { $range }.
     }
 outlook-battery-self-consume =
     { $variant ->
@@ -182,31 +182,31 @@ outlook-target-reached-missing-solo =
     }
 outlook-comfort-timing =
     { $variant ->
-       [0] { $subject } er planlagt fra kl. { $start } til kl. { $end }, mens der forventes solproduktion.
-       [1] { $subject } kører fra kl. { $start } til kl. { $end }, mens solen forventes at producere strøm.
-       [2] { $subject } er planlagt fra kl. { $start } til kl. { $end } for at overlappe den forventede solproduktion.
-      *[other] Forventet solproduktion overlapper { $subject } fra kl. { $start } til kl. { $end }.
+       [0] { $subject } er planlagt { $range }, mens der forventes solproduktion.
+       [1] { $subject } kører { $range }, mens solen forventes at producere strøm.
+       [2] { $subject } er planlagt { $range } for at overlappe den forventede solproduktion.
+      *[other] Forventet solproduktion overlapper { $subject } { $range }.
     }
 outlook-optional-start =
     { $variant ->
-       [0] Det bedste tidspunkt at starte { $subject } is { $start }.
-       [1] Start { $subject } at { $start }.
+       [0] Det bedste tidspunkt at starte { $subject } er kl. { $start }.
+       [1] Start { $subject } kl. { $start }.
        [2] { $subject } anbefales kl. { $start }.
-      *[other] Det foretrukne starttidspunkt for { $subject } is { $start }.
+      *[other] Det foretrukne starttidspunkt for { $subject } er kl. { $start }.
     }
 outlook-grid-export =
     { $variant ->
-       [0] Overskydende strøm forventes sendt til elnettet fra kl. { $start } til kl. { $end }.
-       [1] Prognosen viser eksport af strøm til elnettet fra kl. { $start } til kl. { $end }.
-       [2] Overskydende strøm sendes til elnettet fra kl. { $start } til kl. { $end }.
-      *[other] Eksport til elnettet forventes fra kl. { $start } til kl. { $end }.
+       [0] Overskydende strøm forventes sendt til elnettet { $range }.
+       [1] Prognosen viser eksport af strøm til elnettet { $range }.
+       [2] Overskydende strøm sendes til elnettet { $range }.
+      *[other] Eksport til elnettet forventes { $range }.
     }
 outlook-heavy-grid-use =
     { $variant ->
        [0] Der forventes stort elforbrug fra nettet { $period_text }.
        [1] Forbruget af strøm fra elnettet forventes at være højt { $period_text }.
-       [2] Det forventes, at en stor del af strømmen kommer fra elnettet.
-      *[other] Boligen forventes at hente meget strøm fra elnettet.
+       [2] Det forventes, at en stor del af strømmen kommer fra elnettet { $period_text }.
+      *[other] Boligen forventes at hente meget strøm fra elnettet { $period_text }.
     }
 outlook-charging-dominates-imports =
     { $variant ->
@@ -317,6 +317,36 @@ outlook-period = { $period ->
     [today] i dag
     [tomorrow] i morgen
    *[weekday] på { $weekday ->
+        [0] mandag
+        [1] tirsdag
+        [2] onsdag
+        [3] torsdag
+        [4] fredag
+        [5] lørdag
+       *[6] søndag
+    }
+}
+
+outlook-time = { $period ->
+    [today] { $time } i dag
+    [tomorrow] { $time } i morgen
+   *[weekday] { $time } på { $weekday ->
+        [0] mandag
+        [1] tirsdag
+        [2] onsdag
+        [3] torsdag
+        [4] fredag
+        [5] lørdag
+       *[6] søndag
+    }
+}
+
+outlook-time-range = fra kl. { $start } til kl. { $end }
+
+outlook-time-range-same-day = { $period ->
+    [today] fra kl. { $start } til kl. { $end } i dag
+    [tomorrow] fra kl. { $start } til kl. { $end } i morgen
+   *[weekday] fra kl. { $start } til kl. { $end } på { $weekday ->
         [0] mandag
         [1] tirsdag
         [2] onsdag

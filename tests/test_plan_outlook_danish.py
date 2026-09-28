@@ -351,10 +351,96 @@ def test_time_ranges_are_explicit_in_both_languages() -> None:
         forced_variant=0,
     )
 
-    assert "from 09:00 to 10:00" in english
-    assert "fra kl. 09:00 til kl. 10:00" in danish
+    assert "from 09:00 to 10:00 today" in english
+    assert "fra kl. 09:00 til kl. 10:00 i dag" in danish
     assert "09:00-10:00" not in english
     assert "09:00-10:00" not in danish
+
+
+def test_same_day_range_mentions_the_day_once() -> None:
+    fact = _fact("grid_charge", subject="Husbatteri_A")
+    model = _model(fact)
+
+    english, _ = render_fact_english(
+        fact, model=model, now=NOW, variation_seed="test", forced_variant=0
+    )
+    danish, _ = render_fact_danish(
+        fact, model=model, now=NOW, variation_seed="test", forced_variant=0
+    )
+
+    assert english.count("today") == 1
+    assert danish.count("i dag") == 1
+
+
+def test_cross_day_range_labels_each_endpoint() -> None:
+    fact = OutlookFact(
+        **{
+            field: getattr(_fact("grid_charge", subject="Husbatteri_A"), field)
+            for field in _fact("grid_charge", subject="Husbatteri_A").__dataclass_fields__
+        }
+        | {
+            "start": NOW.replace(hour=23),
+            "end": NOW.replace(hour=23) + timedelta(hours=2),
+        }
+    )
+    model = _model(fact)
+
+    english, _ = render_fact_english(
+        fact, model=model, now=NOW, variation_seed="test", forced_variant=0
+    )
+    danish, _ = render_fact_danish(
+        fact, model=model, now=NOW, variation_seed="test", forced_variant=0
+    )
+
+    assert "from 23:00 today to 01:00 tomorrow" in english
+    assert "fra kl. 23:00 i dag til kl. 01:00 i morgen" in danish
+
+
+def test_turn_at_peak_at_and_alternative_at_are_day_aware() -> None:
+    swing = _fact(
+        "grid_price_swing",
+        subject="site",
+        values=(("turn_at", (NOW + timedelta(hours=1)).isoformat()), ("direction", "ease_then_rise")),
+    )
+    modest = _fact("solar_modest", values=(("peak_at", (NOW + timedelta(hours=2)).isoformat()),))
+    alternative = _fact(
+        "optional_start",
+        subject="Dishwasher",
+        values=(("alternative_at", (NOW + timedelta(hours=3)).isoformat()),),
+    )
+
+    for renderer in (render_fact_english, render_fact_danish):
+        swing_text, _ = renderer(swing, model=_model(swing), now=NOW, variation_seed="test", forced_variant=0)
+        modest_text, _ = renderer(modest, model=_model(modest), now=NOW, variation_seed="test", forced_variant=0)
+        alternative_text, _ = renderer(alternative, model=_model(alternative), now=NOW, variation_seed="test", forced_variant=0)
+
+        assert "09:00 today" in swing_text or "kl. 09:00 i dag" in swing_text
+        assert "10:00 today" in modest_text or "kl. 10:00 i dag" in modest_text
+        assert "11:00 today" in alternative_text or "kl. 11:00 i dag" in alternative_text
+
+
+def test_limited_grid_use_variants_all_include_period_context() -> None:
+    fact = _fact("limited_grid_use", subject="site")
+    model = _model(fact)
+
+    for renderer in (render_fact_english, render_fact_danish):
+        for variant in range(4):
+            text, _ = renderer(
+                fact, model=model, now=NOW, variation_seed="test", forced_variant=variant
+            )
+            assert "today" in text or "i dag" in text
+
+
+def test_heavy_grid_use_variants_all_include_period_context() -> None:
+    fact = _fact("heavy_grid_use", subject="site")
+    model = _model(fact)
+
+    for renderer in (render_fact_english, render_fact_danish):
+        for variant in range(4):
+            text, _ = renderer(
+                fact, model=model, now=NOW, variation_seed="test", forced_variant=variant
+            )
+            assert "today" in text or "i dag" in text
 
 
 def test_danish_percentages_use_danish_spacing() -> None:
@@ -681,7 +767,7 @@ def test_catalogue_loading_or_formatting_failure_uses_nonrecursive_fallback(monk
     assert _format(
         "da",
         "outlook-grid-charge",
-        {"subject": "Battery", "start": "09:00", "end": "10:00", "variant": 0},
+        {"subject": "Battery", "range": "from 09:00 to 10:00", "variant": 0},
     ).startswith("Battery is scheduled")
 
     monkeypatch.setattr(

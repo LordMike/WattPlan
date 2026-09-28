@@ -9,6 +9,9 @@ sentences. `plan_outlook_renderer.py` supplies selected facts, display arguments
 and deterministic variant indexes to checked-in Project Fluent catalogues in
 `locales/en/plan_outlook.ftl` and `locales/da/plan_outlook.ftl`; the catalogues
 own complete messages, grammar, plurals, punctuation, and localized wording.
+Displayed clock times are always paired with localized calendar context
+(`today`, `tomorrow`, or a weekday); same-day ranges state the day once, while
+cross-day ranges label both endpoints.
 The renderer validates the catalogues before loading and uses the lower-level
 Fluent bundle API so formatting failures remain explicit and non-fatal.
 
@@ -52,8 +55,10 @@ scored for salience from significance, deviation, novelty against recent
 history, timeliness toward the event start, minus a repetition penalty, then
 the best valid 1–3 fact set is enumerated: the set base is the mean member
 salience (quality over quantity, so mediocre filler cannot pad a strong pair),
-with small bonuses for topic/group coverage and related-graph coherence
-(price×action and causal pairs weigh double). A sustained reliability fact
+with diminishing topic/group coverage and related-graph coherence adjustments
+when a third fact is added. Coherence is scaled by the least-timely linked fact, so a routine
+far-future action cannot borrow the full story value of a near-term price event;
+price×action and causal pairs otherwise weigh double. A sustained reliability fact
 short-circuits to one prioritized warning as before. Selection history is
 bounded to 12 `kind.magnitude.period` semantic keys (magnitude tertiles are
 `high`/`med`/`low`) and only advances when the selected story changes. The
