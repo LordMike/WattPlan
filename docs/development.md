@@ -7,35 +7,44 @@ The repository now uses the HACS-standard layout, so the integration lives at `c
 
 ## Setup
 
-Install `uv`, then create a local virtualenv with the test
-dependencies.
+Run Home Assistant integration tests under Linux (WSL works on Windows): the
+Windows Python runtime cannot load all of Home Assistant's Unix dependencies.
+On Windows, enter your WSL Linux shell first (`wsl -d <distribution>`), then
+`cd` to the repository (often under `/mnt/<drive>/`); do not use Git Bash for
+Home Assistant tests. Install `uv`, then work from the WattPlan repository
+root. The test wrapper uses a **predictable, worktree-specific venv under
+`/tmp`**, not a repo-local `.venv`. Keep the venv on Linux's native filesystem
+even when the repository is mounted under `/mnt` or on a network drive:
 
 ```bash
-uv venv --python python3.14 .venv
-. .venv/bin/activate
-uv pip install --python .venv/bin/python '.[test]'
+worktree_key="$(printf '%s' "$PWD" | cksum | awk '{print $1}')"
+venv="/tmp/wattplan-venv-$worktree_key"
+if [ ! -x "$venv/bin/python" ]; then
+  uv venv --python 3.14 "$venv"
+fi
+uv pip install --python "$venv/bin/python" -r requirements-test.txt
+./scripts/run_tests.sh
 ```
 
 Use Python 3.14.2 or newer. The pinned Home Assistant test stack currently
-requires that patch level.
+requires that patch level. The `/tmp` path is predictable for the same
+worktree, but it is temporary: recreate the venv when `/tmp` is cleared, then
+rerun `uv pip install` after requirements change. If an existing venv has an
+outdated or broken interpreter, use `uv venv --clear --python 3.14 "$venv"`
+to replace that *specific* venv, then reinstall the requirements. On WSL, do
+setup and testing in the same Linux invocation if it may stop and clear `/tmp`
+between commands. If the package index is unavailable and the required wheels
+are already cached, add `--offline` to the `uv pip install` command.
 
-On systems where the repo lives on a mounted or network-backed filesystem, a
-repo-local `.venv` may be less reliable with `uv` than a virtualenv created on
-the native local filesystem. If that affects your setup, create the venv in
-your preferred local location and point the test wrapper at it.
-
-Run tests directly from this repo:
-
-```bash
-python -m pytest
-```
-
-The default collection covers the full `tests/` tree, including packaging,
-integration, and optimizer tests.
+`./scripts/run_tests.sh` checks for a working venv and pytest and prints the
+exact setup commands if either is missing. To use a different Linux-native
+location, set `venv=/path/to/venv` before the installation commands above and
+pass `WATTPLAN_TEST_VENV="$venv"` to the wrapper. No `hass-core` checkout or
+symlink is required for these in-repo tests.
 
 ## Testing
 
-Run the full suite from the repo:
+Run the full suite from the repo after setup:
 
 ```bash
 ./scripts/run_tests.sh

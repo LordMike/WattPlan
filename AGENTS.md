@@ -4,7 +4,7 @@ Optimize for clean integration behavior, reliable Home Assistant tests, and rele
 Prefer updating the integration, tests, and docs together when behavior changes.
 
 ## Do / Don't
-- Do: treat `WattPlan` as the canonical repo and `hass-core` as the runtime/test harness via symlink.
+- Do: treat `WattPlan` as the canonical repo; a `hass-core` checkout with symlinks is optional for HA Core development, not required for in-repo tests.
 - Do: keep `custom_components/wattplan/optimizer/` free of `homeassistant` imports.
 - Do: update docs when workflows, release behavior, or architecture changes.
 - Don't: edit the backup copies under `hass-core/*/wattplan.pre-symlink-backup-*`.
@@ -20,7 +20,7 @@ Prefer updating the integration, tests, and docs together when behavior changes.
 ## Core workflows
 - Build: `python scripts/build_hacs_zip.py`
 - Test: `pytest`
-- Run: `PYTHONPATH=. pytest tests` or `PYTHONPATH=. ../hass-core/.venv/bin/pytest tests`
+- Run: `./scripts/run_tests.sh` from Linux/WSL, or `PYTHONPATH=. pytest tests` in a prepared Linux environment. See `docs/development.md` for venv setup.
 - Release: use `docs/release.md` as the authoritative runbook for all release questions, preparation, tag handling, release text, and artifact publication.
 
 ## Testing in Codex
@@ -36,7 +36,7 @@ Prefer updating the integration, tests, and docs together when behavior changes.
 - Optimizer code lives in `custom_components/wattplan/optimizer/`.
 - Home Assistant integration tests live in `tests/integration/`.
 - Optimizer-only tests live in `tests/optimizer/`.
-- `hass-core/config/custom_components/wattplan` and `hass-core/tests/custom_components/wattplan` are symlinks into this repo.
+- If a `hass-core` checkout is configured, its WattPlan integration and test paths may be symlinks into this repo; do not assume that checkout exists.
 - Keep release packaging focused on the integration tree under `custom_components/wattplan/`.
 - The HA integration acquires four planner input series: import price, export price, usage, and PV.
 - Each source uses one configured provider mode, then passes through normalization/fixup to produce one value per planner slot before the optimizer runs.
