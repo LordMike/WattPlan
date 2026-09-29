@@ -4,6 +4,7 @@ from .actions import ActionSensor, BatteryTargetSocSensor, NextActionSensor
 from .diagnostics import (
     OptionalTimestampSensor,
     PlanDetailsSensor,
+    PlannerReproductionSensor,
     ProjectionSensor,
     ProjectionValueTransform,
     UsageForecastSensor,
@@ -22,6 +23,7 @@ __all__ = [
     "OptionalTimestampSensor",
     "PlanOutlookSensor",
     "PlanDetailsSensor",
+    "PlannerReproductionSensor",
     "ProjectionSensor",
     "ProjectionValueTransform",
     "SourceStatusSensor",

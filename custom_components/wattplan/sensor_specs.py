@@ -31,6 +31,7 @@ ENTRY_SENSOR_SPECS: tuple[SensorSpec, ...] = (
     SensorSpec("last_run_duration", object),
     SensorSpec("plan_details", object, {"details_key": "plan_details"}),
     SensorSpec("plan_details_hourly", object, {"details_key": "plan_details_hourly"}),
+    SensorSpec("planner_reproduction", object),
 )
 
 OPTIONAL_SOURCE_STATUS_SPECS: tuple[tuple[str, str], ...] = (

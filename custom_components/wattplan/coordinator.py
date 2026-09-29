@@ -82,6 +82,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         planning_enabled: bool,
         action_emission_enabled: bool,
         outlook_languages: tuple[str, ...] = ("en",),
+        integration_version: str = "unknown",
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
@@ -130,7 +131,10 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             logger=_LOGGER,
         )
         self._projection = PlannerProjectionBuilder(
-            hass, entry_id=entry_id, outlook_languages=outlook_languages
+            hass,
+            entry_id=entry_id,
+            outlook_languages=outlook_languages,
+            integration_version=integration_version,
         )
         self._planning = PlanningRequestBuilder(
             hass,
@@ -618,6 +622,12 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 StageErrorKind.PLANNER_INPUT,
                 f"Planner input validation failed: {err}",
             ) from err
+
+        if self._projection.reproduction_enabled():
+            # Save the validated call arguments before the optimizer can advance
+            # its opaque state. Pydantic's JSON mode preserves the full numeric
+            # precision while serializing dates and nested asset settings.
+            request["_reproduction_optimizer_params"] = params.model_dump(mode="json")
 
         try:
             started_at = time.monotonic()

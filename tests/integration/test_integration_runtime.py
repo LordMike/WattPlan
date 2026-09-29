@@ -537,6 +537,63 @@ async def test_runtime_diagnostic_sensors_disabled_by_default(
     assert duration_entry.entity_category == EntityCategory.DIAGNOSTIC
     assert hass.states.get("sensor.home_last_run_duration") is None
 
+    reproduction_entry = entity_registry.async_get("sensor.home_planner_reproduction")
+    assert reproduction_entry is not None
+    assert reproduction_entry.disabled_by == er.RegistryEntryDisabler.INTEGRATION
+    assert reproduction_entry.entity_category == EntityCategory.DIAGNOSTIC
+    assert hass.states.get("sensor.home_planner_reproduction") is None
+
+
+async def test_enabling_planner_reproduction_records_self_contained_snapshot(
+    hass: HomeAssistant,
+) -> None:
+    """One entity-registry toggle enables compact, replayable plan history."""
+    from homeassistant.helpers.json import json_bytes
+
+    from custom_components.wattplan.optimizer.reproduction_codec import (
+        decode_reproduction,
+    )
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: 60,
+            CONF_HOURS_TO_PLAN: 4,
+            CONF_SOURCES: {
+                CONF_SOURCE_IMPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [0.2, 0.25, 0.3, 0.35] }}",
+                },
+                CONF_SOURCE_USAGE: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
+                CONF_SOURCE_PV: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
+            },
+        },
+        options={CONF_PLANNING_ENABLED: False, CONF_ACTION_EMISSION_ENABLED: False},
+    )
+    entry.add_to_hass(hass)
+    with patch("custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        registry = er.async_get(hass)
+        registry.async_update_entity("sensor.home_planner_reproduction", disabled_by=None)
+        assert await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+        await hass.services.async_call(DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True)
+        await hass.async_block_till_done()
+
+    sensor = hass.states.get("sensor.home_planner_reproduction")
+    assert sensor is not None
+    assert "error" not in sensor.attributes
+    assert len(json_bytes(sensor.attributes)) < 16_384
+    archived = decode_reproduction(sensor.attributes["payload"])
+    assert archived["request"]["optimizer_params"]["grid_import_price_per_kwh"] == [
+        0.2, 0.25, 0.3, 0.35
+    ]
+    assert archived["request"]["optimizer_params"]["lookahead_slots"] > 0
+    assert "result" in archived
+
 
 async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
     """Set up entry with one of each asset and assert runtime entities have data."""

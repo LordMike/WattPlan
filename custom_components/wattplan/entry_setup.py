@@ -22,6 +22,7 @@ from .coordinator import CycleTrigger, WattPlanCoordinator
 from .historical_cost.tracker import HistoricalCostTracker
 from .outlook_languages import resolve_outlook_languages
 from .plan_outlook_renderer import preload_plan_outlook_catalogs
+from .planner_reproduction import async_integration_version
 from .runtime import WattPlanConfigEntry, WattPlanRuntimeData, mark_runtime_updated
 from .services import SERVICE_SPECS
 
@@ -78,6 +79,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) -> 
         planning_enabled=bool(entry.options.get(CONF_PLANNING_ENABLED, True)),
         action_emission_enabled=bool(entry.options.get(CONF_ACTION_EMISSION_ENABLED, True)),
         outlook_languages=outlook_languages,
+        integration_version=await async_integration_version(hass),
     )
     entry.runtime_data = WattPlanRuntimeData(
         coordinator=coordinator,

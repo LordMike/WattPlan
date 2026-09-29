@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import MATCH_ALL, UnitOfEnergy
+from homeassistant.helpers.entity import EntityCategory
 
 from ..coordinator import WattPlanCoordinator
 from .base import WattPlanCoordinatorSensor
@@ -155,6 +156,31 @@ class PlanDetailsSensor(WattPlanCoordinatorSensor):
         if not isinstance(plan_details, dict):
             return None
         return plan_details
+
+
+class PlannerReproductionSensor(WattPlanCoordinatorSensor):
+    """Default-disabled, Recorder-safe diagnostic snapshot of each optimizer run."""
+
+    _attr_entity_registry_enabled_default = False
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_device_class = TIMESTAMP_DEVICE_CLASS
+    _require_usable_plan = True
+
+    @property
+    def native_value(self) -> datetime | None:
+        """Change state after every accepted plan so Recorder keeps the snapshot."""
+        if snapshot := self.snapshot:
+            return snapshot.created_at
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Expose only the compressed record, not the full plan arrays."""
+        if not self.snapshot:
+            return None
+        diagnostics = self.snapshot.diagnostics or {}
+        record = diagnostics.get("planner_reproduction")
+        return record if isinstance(record, dict) else None
 
 
 class ProjectionSensor(WattPlanCoordinatorSensor):

@@ -39,6 +39,7 @@ from .sensors import (
     OptionalTimestampSensor,
     PlanDetailsSensor,
     PlanOutlookSensor,
+    PlannerReproductionSensor,
     SourceStatusSensor,
     StatusMessageSensor,
     StatusSensor,
@@ -60,6 +61,7 @@ ENTRY_FRIENDLY_NAMES: dict[str, str] = {
     "last_run_duration": "Last Run Duration",
     "plan_details": "Plan Details",
     "plan_details_hourly": "Plan Details Hourly",
+    "planner_reproduction": "Planner Reproduction",
 }
 
 
@@ -180,6 +182,7 @@ def _entry_sensors(
         "last_run_duration": LastRunDurationSensor,
         "plan_details": PlanDetailsSensor,
         "plan_details_hourly": PlanDetailsSensor,
+        "planner_reproduction": PlannerReproductionSensor,
     }
     sensors: list[SensorEntity] = []
     for spec in ENTRY_SENSOR_SPECS:

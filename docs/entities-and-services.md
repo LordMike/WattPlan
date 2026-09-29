@@ -27,6 +27,7 @@ These exist once per WattPlan setup:
 | `sensor.<setup_slug>_last_run_duration` | Disabled by default. Duration of the last optimize cycle in milliseconds. |
 | `sensor.<setup_slug>_plan_details` | Disabled by default. Raw planner-detail payload at WattPlan's configured slot size. |
 | `sensor.<setup_slug>_plan_details_hourly` | Disabled by default. The same planner details, aggregated to hourly buckets. |
+| `sensor.<setup_slug>_planner_reproduction` | Disabled by default. Enable this diagnostic entity to publish a compact, self-contained optimizer request/result snapshot after each plan. Recorder may retain its `payload` attribute; see [Planner Diagnostics and History](planner-diagnostics.md) for limits and decoding. |
 | `sensor.<setup_slug>_usage_forecast` | Present when the built-in usage source is configured. Exposes the generated usage forecast. |
 
 Plan Outlook uses the Home Assistant system language by default. Additional

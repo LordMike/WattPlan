@@ -58,6 +58,7 @@ Use [Historical Cost Tracking](docs/historical-cost-tracking.md) to compare meas
 - [Deye, Solcast, and Strømligning Example](docs/example-deye-solcast-stromligning.md) - Concrete end-to-end example using Strømligning, Deye, and Solcast
 - [Extras and Automations](docs/extras.md) - Batteries, comfort loads, optional loads, real-life examples, and how to wire WattPlan actions into your own automations
 - [Entities and Services](docs/entities-and-services.md) - Planner, battery, load entities, services, and battery targets
+- [Planner Diagnostics and History](docs/planner-diagnostics.md) - Default-disabled Planner Reproduction sensor, replay snapshots, Recorder behavior, and decoding
 - [Optimizer Profiles](docs/optimizer-profiles.md) - What Aggressive, Balanced, and Conservative mean in practice
 - [Error Handling](docs/error-handling.md) - Health states, degraded operation, and what `ok`, `degraded`, and `failed` mean
 - [Development](docs/development.md) - Local setup with `uv`, local test env caveats, optional symlink workflow, packaging
