@@ -9,20 +9,24 @@ from typing import Any
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.loader import async_get_integration
 
 from .const import (
     CONF_ACTION_EMISSION_ENABLED,
     CONF_HISTORICAL_COST_TRACKING_ENABLED,
+    CONF_PLANNER_REPRODUCTION_RETENTION_DAYS,
     CONF_OUTLOOK_LANGUAGES,
     CONF_PLANNING_ENABLED,
+    CONF_RECORD_PLANNER_REPRODUCTIONS,
     CONF_SLOT_MINUTES,
     DOMAIN,
+    DEFAULT_PLANNER_REPRODUCTION_RETENTION_DAYS,
+    MAX_PLANNER_REPRODUCTION_RETENTION_DAYS,
 )
 from .coordinator import CycleTrigger, WattPlanCoordinator
 from .historical_cost.tracker import HistoricalCostTracker
 from .outlook_languages import resolve_outlook_languages
 from .plan_outlook_renderer import preload_plan_outlook_catalogs
-from .planner_reproduction import async_integration_version
 from .runtime import WattPlanConfigEntry, WattPlanRuntimeData, mark_runtime_updated
 from .services import SERVICE_SPECS
 
@@ -72,6 +76,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) -> 
     await hass.async_add_executor_job(
         preload_plan_outlook_catalogs, outlook_languages
     )
+    record_plans = bool(entry.options.get(CONF_RECORD_PLANNER_REPRODUCTIONS, False))
+    retention_days = entry.options.get(
+        CONF_PLANNER_REPRODUCTION_RETENTION_DAYS,
+        DEFAULT_PLANNER_REPRODUCTION_RETENTION_DAYS,
+    )
+    if type(retention_days) is not int or not 1 <= retention_days <= MAX_PLANNER_REPRODUCTION_RETENTION_DAYS:
+        _LOGGER.warning("Invalid planner reproduction retention; using the 14-day default")
+        retention_days = DEFAULT_PLANNER_REPRODUCTION_RETENTION_DAYS
     coordinator = WattPlanCoordinator(
         hass,
         entry_id=entry.entry_id,
@@ -79,7 +91,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) -> 
         planning_enabled=bool(entry.options.get(CONF_PLANNING_ENABLED, True)),
         action_emission_enabled=bool(entry.options.get(CONF_ACTION_EMISSION_ENABLED, True)),
         outlook_languages=outlook_languages,
-        integration_version=await async_integration_version(hass),
+        record_planner_reproductions=record_plans,
+        planner_reproduction_retention_days=retention_days,
+        integration_version=(
+            str((await async_get_integration(hass, DOMAIN)).version or "unknown")
+            if record_plans else "unknown"
+        ),
     )
     entry.runtime_data = WattPlanRuntimeData(
         coordinator=coordinator,

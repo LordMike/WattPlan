@@ -27,7 +27,6 @@ These exist once per WattPlan setup:
 | `sensor.<setup_slug>_last_run_duration` | Disabled by default. Duration of the last optimize cycle in milliseconds. |
 | `sensor.<setup_slug>_plan_details` | Disabled by default. Raw planner-detail payload at WattPlan's configured slot size. |
 | `sensor.<setup_slug>_plan_details_hourly` | Disabled by default. The same planner details, aggregated to hourly buckets. |
-| `sensor.<setup_slug>_planner_reproduction` | Disabled by default. Enable this diagnostic entity to publish a compact, self-contained optimizer request/result snapshot after each plan. Recorder may retain its `payload` attribute; see [Planner Diagnostics and History](planner-diagnostics.md) for limits and decoding. |
 | `sensor.<setup_slug>_usage_forecast` | Present when the built-in usage source is configured. Exposes the generated usage forecast. |
 
 Plan Outlook uses the Home Assistant system language by default. Additional
@@ -97,6 +96,7 @@ WattPlan exposes the following services:
 | `wattplan.refresh_sensors` | Re-emit the current plan's actions to HA sensor entities immediately. |
 | `wattplan.export_planner_input` | Rebuild and return the exact planner input for one WattPlan setup. |
 | `wattplan.export_usage_forecast_debug` | Return raw debug data for the built-in usage forecast source. |
+| `wattplan.export_planner_reproductions` | Return one local day's disk-backed planner JSONL and the available date range. |
 
 ### `wattplan.set_target`
 
@@ -197,6 +197,23 @@ Fields:
   - Optional config entry filter.
 - `as_json`
   - Return compact JSON instead of structured service data.
+
+### `wattplan.export_planner_reproductions`
+
+Return the entire JSONL file for a local date, without filtering or modifying
+individual records. The response also gives the earliest and latest available
+file dates. See [Planner Diagnostics and History](planner-diagnostics.md).
+
+Fields:
+
+- `date`
+  - Required local date in `YYYY-MM-DD` format.
+- `entity_id`
+  - Optional entity belonging to the WattPlan setup.
+- `name`
+  - Optional setup title filter.
+- `entry_id`
+  - Optional config entry filter.
 
 ## Repairs Issues
 

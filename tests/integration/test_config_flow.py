@@ -9,7 +9,7 @@ import voluptuous_serialize
 from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.data_entry_flow import FlowResultType, InvalidData
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -45,7 +45,9 @@ from custom_components.wattplan.const import (
     CONF_OPTIMIZER_LOOKAHEAD_SLOTS,
     CONF_OPTIONS_COUNT,
     CONF_OUTLOOK_LANGUAGES,
+    CONF_PLANNER_REPRODUCTION_RETENTION_DAYS,
     CONF_PLANNING_ENABLED,
+    CONF_RECORD_PLANNER_REPRODUCTIONS,
     CONF_ROLLING_WINDOW_HOURS,
     CONF_RUN_WITHIN_HOURS,
     CONF_SLOT_MINUTES,
@@ -935,6 +937,59 @@ async def test_options_outlook_languages_are_advanced_and_optional(
     )
     assert result["type"] is FlowResultType.MENU
     assert updated.options[CONF_OUTLOOK_LANGUAGES] == []
+
+
+async def test_troubleshooting_recording_defaults_and_retention_bounds(
+    hass: HomeAssistant, mock_setup_entry: AsyncMock
+) -> None:
+    """Recording is opt-in and retention remains within one to 730 days."""
+    entry = await _create_basic_entry(hass)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert "troubleshooting" in result["menu_options"]
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "troubleshooting"}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert _schema_default(result, CONF_RECORD_PLANNER_REPRODUCTIONS) is False
+    assert _schema_default(result, CONF_PLANNER_REPRODUCTION_RETENTION_DAYS) == 14
+    retention_field = _serialized_schema_field(
+        result, CONF_PLANNER_REPRODUCTION_RETENTION_DAYS
+    )
+    assert retention_field["selector"]["number"]["min"] == 1
+    assert retention_field["selector"]["number"]["max"] == 730
+
+    for days in (0, 731):
+        with pytest.raises(InvalidData):
+            await hass.config_entries.options.async_configure(
+                result["flow_id"],
+                {
+                    CONF_RECORD_PLANNER_REPRODUCTIONS: True,
+                    CONF_PLANNER_REPRODUCTION_RETENTION_DAYS: days,
+                },
+            )
+
+    fractional = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_RECORD_PLANNER_REPRODUCTIONS: True,
+            CONF_PLANNER_REPRODUCTION_RETENTION_DAYS: 1.5,
+        },
+    )
+    assert fractional["type"] is FlowResultType.FORM
+    assert fractional["errors"][CONF_PLANNER_REPRODUCTION_RETENTION_DAYS] == (
+        "planner_reproduction_whole_days"
+    )
+
+    saved = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_RECORD_PLANNER_REPRODUCTIONS: True,
+            CONF_PLANNER_REPRODUCTION_RETENTION_DAYS: 730,
+        },
+    )
+    assert saved["type"] is FlowResultType.MENU
+    assert entry.options[CONF_RECORD_PLANNER_REPRODUCTIONS] is True
+    assert entry.options[CONF_PLANNER_REPRODUCTION_RETENTION_DAYS] == 730
 
 
 async def test_options_planner_core_defaults_existing_entry_and_saves_lookahead(

@@ -161,3 +161,36 @@ export_usage_forecast_debug:
       default: false
       selector:
         boolean:
+
+export_planner_reproductions:
+  name: Export planner reproductions
+  description: Return the complete JSONL archive for one Home Assistant local date, with the earliest and latest available dates
+  response:
+    optional: false
+  fields:
+    date:
+      name: Local date
+      description: Date to export in YYYY-MM-DD format. A date without recordings returns empty data and the available date range.
+      required: true
+      example: "2026-09-29"
+      selector:
+        date:
+    entity_id:
+      name: WattPlan entity
+      description: Optional entity belonging to the WattPlan setup whose reproductions should be exported
+      required: false
+      selector:
+        entity:
+          integration: wattplan
+    name:
+      name: Setup name
+      description: Optional filter for one WattPlan setup by name
+      required: false
+      selector:
+        text:
+    entry_id:
+      name: Config entry ID
+      description: Optional filter for one WattPlan setup
+      required: false
+      selector:
+        text:

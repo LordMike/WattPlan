@@ -196,6 +196,14 @@ flowchart LR
 
 The coordinator snapshot retains complete time-indexed battery and comfort action schedules separately from the optional plan-detail diagnostic sensors. Action emission selects the slot covering the current time. A plan successfully calculated in the current runtime session continues to advance after a later planning failure, but a snapshot restored after restart is diagnostic-only until a fresh planning run succeeds. Restored battery, comfort, next-action, and optional-start recommendations cannot emit during that validation gap. The plan becomes unusable at the end of its recorded coverage; WattPlan then publishes failed health and makes plan-dependent actions unavailable instead of inventing a fallback action. Scheduler-heartbeat staleness is exposed separately from this action-validation state.
 
+When troubleshooting recording is enabled, each accepted plan is additionally
+appended off the event loop to one JSONL file per HA local date and config
+entry. These self-contained optimizer request/result records are separate from
+the restored coordinator snapshot and Home Assistant Recorder; write failures
+do not change the accepted plan. A response service reads one daily file at a
+time, while retention cleanup removes older daily files after successful
+appends.
+
 ## Optimizer Boundary
 The optimizer package is intentionally kept free of `homeassistant` imports. The integration translates Home Assistant state and wall-clock configuration into slot-based optimizer inputs, including `lookahead_slots`, and translates optimizer results back into entities, services, and diagnostics. It passes the aligned source-window start as `plan_start` together with `slot_minutes`; timestamps remain ordinary timezone-aware Python values inside the optimizer.
 

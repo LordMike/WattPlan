@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 import json
 from typing import Any
 
@@ -28,6 +28,7 @@ from .const import (
     DOMAIN,
     SERVICE_CLEAR_TARGET,
     SERVICE_EXPORT_PLANNER_INPUT,
+    SERVICE_EXPORT_PLANNER_REPRODUCTIONS,
     SERVICE_EXPORT_USAGE_FORECAST_DEBUG,
     SERVICE_REFRESH_SENSORS,
     SERVICE_RUN_OPTIMIZE_NOW,
@@ -86,6 +87,15 @@ EXPORT_USAGE_FORECAST_DEBUG_SERVICE_SCHEMA = vol.Schema(
         vol.Optional(ATTR_ENTRY_ID): cv.string,
         vol.Optional(CONF_NAME): cv.string,
         vol.Optional("as_json", default=False): cv.boolean,
+    }
+)
+
+EXPORT_PLANNER_REPRODUCTIONS_SERVICE_SCHEMA = vol.Schema(
+    {
+        vol.Optional(ATTR_ENTRY_ID): cv.string,
+        vol.Optional(ATTR_ENTITY_ID): cv.entity_id,
+        vol.Optional(CONF_NAME): cv.string,
+        vol.Required("date"): cv.string,
     }
 )
 
@@ -153,6 +163,31 @@ def resolve_single_run_entry(
     if len(matched) != 1:
         raise ServiceValidationError(f"{label} requires exactly one matching WattPlan entry")
     return matched[0]
+
+
+def resolve_planner_reproduction_entry(
+    hass: HomeAssistant, call: ServiceCall
+) -> WattPlanConfigEntry:
+    """Resolve one loaded setup by entity, entry ID, name, or sole entry."""
+    entity_id = call.data.get(ATTR_ENTITY_ID)
+    if entity_id is None:
+        return resolve_single_run_entry(hass, call, label="Planner reproduction export")
+
+    entity = er.async_get(hass).async_get(entity_id)
+    if entity is None or entity.platform != DOMAIN or entity.config_entry_id is None:
+        raise ServiceValidationError("`entity_id` must belong to a WattPlan setup")
+    entry_id = entity.config_entry_id
+    if ATTR_ENTRY_ID in call.data and call.data[ATTR_ENTRY_ID] != entry_id:
+        raise ServiceValidationError("`entity_id` and `entry_id` select different setups")
+    entries = loaded_entries(hass, entry_id)
+    if len(entries) != 1:
+        raise ServiceValidationError("The entity's WattPlan setup is not loaded")
+    entry = entries[0]
+    if CONF_NAME in call.data:
+        name = str(call.data[CONF_NAME]).strip()
+        if not name or name.casefold() != entry.title.casefold():
+            raise ServiceValidationError("`entity_id` and `name` select different setups")
+    return entry
 
 
 def _battery_name_filter(call: ServiceCall) -> str:
@@ -331,6 +366,24 @@ async def async_handle_export_usage_forecast_debug_service(
     )
 
 
+async def async_handle_export_planner_reproductions_service(
+    hass: HomeAssistant, call: ServiceCall
+) -> dict[str, Any]:
+    """Return the complete JSONL archive for one local calendar date."""
+    entry = resolve_planner_reproduction_entry(hass, call)
+    requested = call.data["date"]
+    try:
+        local_date = date.fromisoformat(requested)
+    except ValueError as err:
+        raise ServiceValidationError("`date` must be YYYY-MM-DD") from err
+    if local_date.isoformat() != requested:
+        raise ServiceValidationError("`date` must be YYYY-MM-DD")
+    try:
+        return await entry.runtime_data.coordinator.planner_history.async_read_date(local_date)
+    except (OSError, UnicodeError) as err:
+        raise ServiceValidationError(f"Could not read planner reproductions: {err}") from err
+
+
 SERVICE_SPECS = (
     (SERVICE_SET_TARGET, async_handle_set_target_service, SET_TARGET_SERVICE_SCHEMA, None),
     (SERVICE_CLEAR_TARGET, async_handle_clear_target_service, CLEAR_TARGET_SERVICE_SCHEMA, None),
@@ -346,6 +399,12 @@ SERVICE_SPECS = (
         SERVICE_EXPORT_USAGE_FORECAST_DEBUG,
         async_handle_export_usage_forecast_debug_service,
         EXPORT_USAGE_FORECAST_DEBUG_SERVICE_SCHEMA,
+        SupportsResponse.ONLY,
+    ),
+    (
+        SERVICE_EXPORT_PLANNER_REPRODUCTIONS,
+        async_handle_export_planner_reproductions_service,
+        EXPORT_PLANNER_REPRODUCTIONS_SERVICE_SCHEMA,
         SupportsResponse.ONLY,
     ),
 )

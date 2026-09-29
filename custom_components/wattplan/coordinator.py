@@ -47,6 +47,7 @@ from .coordinator_logic import (
 )
 from .historical_on_off_provider import HistoricalOnOffProvider
 from .optimizer import OptimizationParams, optimize
+from .planner_history import PlannerHistory
 from .source_issues import (
     clear_entry_source_issues,
 )
@@ -82,6 +83,8 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         planning_enabled: bool,
         action_emission_enabled: bool,
         outlook_languages: tuple[str, ...] = ("en",),
+        record_planner_reproductions: bool = False,
+        planner_reproduction_retention_days: int = 14,
         integration_version: str = "unknown",
     ) -> None:
         """Initialize the coordinator."""
@@ -131,11 +134,16 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             logger=_LOGGER,
         )
         self._projection = PlannerProjectionBuilder(
+            hass, entry_id=entry_id, outlook_languages=outlook_languages
+        )
+        self.planner_history = PlannerHistory(
             hass,
             entry_id=entry_id,
-            outlook_languages=outlook_languages,
+            enabled=record_planner_reproductions,
+            retention_days=planner_reproduction_retention_days,
             integration_version=integration_version,
         )
+        self._record_planner_reproductions = record_planner_reproductions
         self._planning = PlanningRequestBuilder(
             hass,
             source_providers=self._source_providers,
@@ -411,6 +419,9 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                     snapshot=self._snapshot,
                 )
                 await self.async_persist_snapshot()
+                await self.planner_history.async_record(
+                    new_snapshot.created_at, request, planner_result
+                )
                 self._sync_source_issues(entry)
                 if trigger is CycleTrigger.SERVICE:
                     self.async_update_listeners()
@@ -623,11 +634,11 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 f"Planner input validation failed: {err}",
             ) from err
 
-        if self._projection.reproduction_enabled():
+        if self._record_planner_reproductions:
             # Save the validated call arguments before the optimizer can advance
             # its opaque state. Pydantic's JSON mode preserves the full numeric
             # precision while serializing dates and nested asset settings.
-            request["_reproduction_optimizer_params"] = params.model_dump(mode="json")
+            request["_recorded_optimizer_params"] = params.model_dump(mode="json")
 
         try:
             started_at = time.monotonic()

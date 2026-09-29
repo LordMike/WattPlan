@@ -1,61 +1,66 @@
 # Planner Diagnostics and History
 
-WattPlan provides a compact, reproducible record for investigating an
-unexpected plan without recording the large Plan Details arrays.
+WattPlan can retain the exact inputs and result of each successful planning run
+in append-only JSONL files. This is intended for temporary investigations and
+does not use Home Assistant Recorder's attribute storage.
 
-## Planner Reproduction sensor
+## Turn on recording
 
-Each WattPlan setup has a **WattPlan Planner Reproduction** sensor. It is
-disabled by default. Enable it from `Settings` -> `Devices & services` ->
-`Entities`, then select the WattPlan Planner Reproduction entity for the setup
-you want to investigate.
+Open `Settings` -> `Devices & services` -> `WattPlan` -> `Configure` ->
+`Troubleshooting`. **Record planner reproductions to disk** is off by default.
+The retention setting accepts **1 to 730 local calendar days**, defaulting to
+**14**. Changing either option reloads WattPlan; it does not recover earlier
+plans. Scheduled and `wattplan.run_optimize_now` plans are recorded alike.
 
-Once enabled, the sensor attempts to emit one compressed, self-contained, versioned replay
-snapshot for every newly produced plan. Its `payload` attribute uses the
-`wattplan-msgpack-v1+lzma+base85` format. The snapshot contains the information
-needed to replay that plan, including its effective planner inputs, settings, and result. Treat
-it as diagnostic data when sharing it, because it can contain details about
-your energy setup and forecasts.
+Each successful run appends one complete JSON object and a newline to
+`<HA config>/wattplan_reproductions/<config entry ID>/YYYY-MM-DD.jsonl`, using
+Home Assistant's configured local date. Each record has its own UTC creation
+timestamp, integration version, validated unrounded optimizer request (including
+settings and initial state), and full optimizer result. No separate settings
+file or reference is needed to replay it. Keep these files private: they contain
+household energy forecasts and battery configuration.
 
-Enabling the entity does not recreate a snapshot for an existing plan. Enable
-it before producing the plan you want to investigate, then run or wait for a
-new planning cycle.
+After each append, WattPlan deletes this setup's day files older than the
+retention window. A one-day setting keeps today's file only. Turning recording
+off stops writes but leaves existing files until recording resumes and the next
+append performs cleanup. A disk error is logged and does not invalidate a
+successful plan. Incomplete trailing lines from an interrupted write are
+excluded from exports and removed before the next append.
 
-## Recorder behavior and storage
+## Retrieve a day
 
-When the Planner Reproduction sensor is enabled, Home Assistant Recorder can
-store its compact attributes. Recording is still subject to Home Assistant's
-16 KiB attribute limit, your Recorder inclusion/exclusion configuration, and
-its retention policy. If the compressed replay blob is too large, WattPlan
-reports an explicit error instead of emitting a partial snapshot.
+Call the response service `wattplan.export_planner_reproductions` with a required
+local `date` (`YYYY-MM-DD`). With one loaded setup no selector is needed; with
+multiple setups pass its `entry_id`, `name`, or any WattPlan `entity_id` (for
+example `sensor.wattplan_last_run`). Multiple selectors must agree. The response
+contains:
 
-The existing **Plan Details** entity remains disabled by default. Its large
-array attributes are excluded from Recorder history; use the Planner
-Reproduction sensor for replayable diagnostic history instead. The Plan Details
-and hourly Plan Details entities remain current inspection views rather than a
-source of recorded replay data.
-
-Recorder storage and retention remain your responsibility. Enable the Planner
-Reproduction sensor only for the investigation period you need, ensure Recorder
-does not exclude it, and account for the retained diagnostic records in your
-database capacity planning.
-
-## Decode a replay snapshot
-
-Use the included decoder to open the `payload` attribute copied from the
-sensor. The decoder uses the WattPlan installation (including its MessagePack
-dependency) and does not execute archived values:
-
-```python
-from custom_components.wattplan.optimizer import OptimizationParams, optimize
-from custom_components.wattplan.optimizer.reproduction_codec import decode_reproduction
-
-payload = "..."  # Value of the sensor's payload attribute
-snapshot = decode_reproduction(payload)
-replayed = optimize(OptimizationParams(**snapshot["request"]["optimizer_params"]))
-
-print(replayed["entities"] == snapshot["result"]["entities"])
+```yaml
+date: "2026-09-29"
+data: '{"created_at":"...",...}\n{"created_at":"...",...}\n'
+min_available_date: "2026-09-20"
+max_available_date: "2026-09-29"
+incomplete_tail: false
 ```
 
-The version contained in the decoded snapshot identifies its replay format.
-Keep the complete payload intact when collecting diagnostics.
+`data` is the day's JSONL text, not a parsed or filtered list. A missing date
+returns an empty string; min/max are `null` if there are no files. Call the
+service once per date to collect a range. Its response is a complete day's
+contents, **not a stream**; a large day may be several megabytes and a client
+may limit the response size.
+
+To replay an individual line locally:
+
+```python
+import json
+
+from custom_components.wattplan.optimizer import OptimizationParams, optimize
+
+record = json.loads(line)
+replayed = optimize(OptimizationParams(**record["request"]["optimizer_params"]))
+print(replayed["entities"] == record["result"]["entities"])
+```
+
+The former Planner Reproduction entity and its Recorder-based binary payload
+are no longer used. The existing Plan Details entities remain current inspection
+views; their large attributes are still excluded from Recorder history.

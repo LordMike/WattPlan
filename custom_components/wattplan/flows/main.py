@@ -8,7 +8,14 @@ from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.const import UnitOfEnergy
 from homeassistant.helpers import entity_registry as er
 
-from ..const import CONF_OUTLOOK_LANGUAGES, SUPPORTED_OUTLOOK_LANGUAGES
+from ..const import (
+    CONF_OUTLOOK_LANGUAGES,
+    CONF_PLANNER_REPRODUCTION_RETENTION_DAYS,
+    CONF_RECORD_PLANNER_REPRODUCTIONS,
+    DEFAULT_PLANNER_REPRODUCTION_RETENTION_DAYS,
+    MAX_PLANNER_REPRODUCTION_RETENTION_DAYS,
+    SUPPORTED_OUTLOOK_LANGUAGES,
+)
 from ..historical_cost.tracker import validate_energy_sensor
 from ..source_providers import CONF_WATTPLAN_ENTITY_ID, source_mode, source_providers
 from .common import _normalize_name, _subentry_display_title, _subentry_name
@@ -748,6 +755,11 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
             CONF_OPTIMIZER_LOOKAHEAD_SLOTS,
             LEGACY_OPTIMIZER_LOOKAHEAD_SLOTS,
         )
+        self._options.setdefault(CONF_RECORD_PLANNER_REPRODUCTIONS, False)
+        self._options.setdefault(
+            CONF_PLANNER_REPRODUCTION_RETENTION_DAYS,
+            DEFAULT_PLANNER_REPRODUCTION_RETENTION_DAYS,
+        )
         self._historical_suggest_discovered = False
         self._pending_timer_options = None
         self._selected_subentry_id = None
@@ -766,11 +778,57 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
             "source_export_price",
             "historical_costs",
             "outlook_languages",
+            "troubleshooting",
         ]
 
         return self.async_show_menu(
             step_id="init",
             menu_options=menu_options,
+        )
+
+    async def async_step_troubleshooting(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Configure bounded, disk-backed planner reproduction history."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            days = user_input[CONF_PLANNER_REPRODUCTION_RETENTION_DAYS]
+            if not float(days).is_integer():
+                errors[CONF_PLANNER_REPRODUCTION_RETENTION_DAYS] = (
+                    "planner_reproduction_whole_days"
+                )
+            else:
+                self._options[CONF_RECORD_PLANNER_REPRODUCTIONS] = user_input[
+                    CONF_RECORD_PLANNER_REPRODUCTIONS
+                ]
+                self._options[CONF_PLANNER_REPRODUCTION_RETENTION_DAYS] = int(days)
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry, options=self._options
+                )
+                return await self.async_step_init()
+
+        return self.async_show_form(
+            step_id="troubleshooting",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_RECORD_PLANNER_REPRODUCTIONS,
+                        default=self._options[CONF_RECORD_PLANNER_REPRODUCTIONS],
+                    ): selector.BooleanSelector(),
+                    vol.Required(
+                        CONF_PLANNER_REPRODUCTION_RETENTION_DAYS,
+                        default=self._options[CONF_PLANNER_REPRODUCTION_RETENTION_DAYS],
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=1,
+                            max=MAX_PLANNER_REPRODUCTION_RETENTION_DAYS,
+                            step=1,
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
+                    ),
+                }
+            ),
+            errors=errors,
         )
 
     async def async_step_planner_core(

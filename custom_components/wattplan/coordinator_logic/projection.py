@@ -9,14 +9,11 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.json import json_bytes
 from homeassistant.util import slugify
 
 from ..const import DOMAIN
 from ..coordinator_parts import CoordinatorSnapshot, TimingEntry
-from ..optimizer.reproduction_codec import encode_reproduction
 from ..plan_outlook import build_plan_outlook
-from ..planner_reproduction import build_reproduction
 from .planning import (
     BATTERY_SKIP_AVAILABILITY_UNAVAILABLE,
     BATTERY_SKIP_SOC_UNAVAILABLE,
@@ -44,16 +41,10 @@ class PlannerProjectionBuilder:
         *,
         entry_id: str,
         outlook_languages: tuple[str, ...] = ("en",),
-        integration_version: str = "unknown",
     ) -> None:
         self._hass = hass
         self._entry_id = entry_id
         self._outlook_languages = outlook_languages
-        self._integration_version = integration_version
-
-    def reproduction_enabled(self) -> bool:
-        """Return whether the user enabled the diagnostic replay entity."""
-        return self._plan_details_enabled("planner_reproduction")
 
     def planner_output_from_result(
         self,
@@ -185,26 +176,6 @@ class PlannerProjectionBuilder:
             },
             **self._build_enabled_plan_details(request, result, timings=timings),
         }
-        if self.reproduction_enabled():
-            try:
-                record = build_reproduction(
-                    request, result, integration_version=self._integration_version
-                )
-                payload = encode_reproduction(record)
-                attributes = {
-                    "payload": payload,
-                    "encoding": "wattplan-msgpack-v1+lzma+base85",
-                }
-                # Recorder discards *all* attributes if the whole state exceeds
-                # 16 KiB. Leave headroom for the sensor's own HA attributes.
-                if len(json_bytes(attributes)) > 16_000:
-                    raise ValueError("Encoded planner snapshot exceeds Recorder limit")
-                diagnostics["planner_reproduction"] = attributes
-            except Exception:  # Diagnostic failure must never discard a usable plan.
-                _LOGGER.exception("Could not record WattPlan optimizer reproduction")
-                diagnostics["planner_reproduction"] = {
-                    "error": "Optimizer reproduction cannot fit in Recorder or be encoded"
-                }
         try:
             diagnostics["outlook"] = build_plan_outlook(
                 request=request,
