@@ -13,6 +13,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 DEFAULT_LOOKAHEAD_SLOTS = 22
 # Saved controls from earlier comfort scheduling strategies are not reusable.
 COMFORT_SCHEDULER_VERSION = 2
+# A previous solver could reuse controls whose small grid-charge flows were
+# published as full-rate inverter actions. Such controls cannot be reused.
+GRID_CHARGE_POLICY_VERSION = 2
 
 
 class ChargeSource(IntFlag):
@@ -700,6 +703,8 @@ def _entity_fingerprint(
     }
     if comfort_entities:
         payload["comfort_scheduler_version"] = COMFORT_SCHEDULER_VERSION
+    if battery_entities:
+        payload["grid_charge_policy_version"] = GRID_CHARGE_POLICY_VERSION
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
 

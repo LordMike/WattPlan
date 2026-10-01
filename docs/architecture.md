@@ -207,6 +207,16 @@ appends.
 ## Optimizer Boundary
 The optimizer package is intentionally kept free of `homeassistant` imports. The integration translates Home Assistant state and wall-clock configuration into slot-based optimizer inputs, including `lookahead_slots`, and translates optimizer results back into entities, services, and diagnostics. It passes the aligned source-window start as `plan_start` together with `slot_minutes`; timestamps remain ordinary timezone-aware Python values inside the optimizer.
 
+Battery grid charging is an executable on/off choice in the MPC solve. The
+integration converts configured kW to kWh per slot; when the grid-charge policy
+is ON, the solve and its per-slot tariff projections account for charging at
+that full slot rate, with PV contribution and capacity saturation reducing the
+necessary grid input. A near-full top-up is eligible only when at least half a
+slot's input can fit, within numeric tolerance. The same full-rate policy is
+used by fixed-policy replay.
+The optimizer fingerprint rejects cached controls from the earlier continuous
+grid-charge model, so an upgrade starts with a fresh battery solve.
+
 `optimizer/prefix_planner.py` controls the timed planning cadence. It performs a full plan initially and after four slot advances, with eight freshly optimized near-term battery actions on intervening consecutive advances. Each fresh battery action retains the configured economic lookahead. Comfort actions first come from the deterministic constraint scheduler, then a bounded single-pass placement step may relocate existing ON runs without changing runtime. It preserves rolling history, current minimum-duration commitments, maximum-off limits, and terminal run feasibility. With batteries, candidates use fixed-policy replay from the current baseline plan; without batteries they use direct net-site cost. If accepted demand changes, cached battery controls are discarded and at most one additional battery planning pass rebuilds the actual plan. The result is retained only when its actual tariff cost does not worsen and hard constraints remain valid. Remaining prefix battery policies are reprojected against current forecasts and the final fixed comfort schedule, and a failed tail feasibility check forces full planning.
 
 Full deadband-enabled calculations pass native HiGHS partial MIP starts between

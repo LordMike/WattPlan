@@ -2,7 +2,7 @@
 
 This page describes the user-facing optimizer profiles exposed by the Home Assistant integration.
 
-These profiles are integration presets. Internally, the optimizer operates on numeric controls such as throughput penalty, action deadband, and mode-switch penalty. The compatible optimizer API retains the historical field names `throughput_cost_per_kwh` and `mode_switch_cost`, but their values are heuristic objective weights, not monetary estimates of battery degradation or switching wear. They influence which plan the optimizer prefers; they are not added to WattPlan's tariff-only projected cost or savings fields. The integration translates the selected profile into those numeric values before calling the optimizer.
+These profiles are integration presets. Internally, the optimizer operates on numeric controls such as throughput penalty, action deadband, and mode-switch penalty. The compatible optimizer API retains the historical field names `throughput_cost_per_kwh` and `mode_switch_cost`, but their values are heuristic objective weights, not monetary estimates of battery degradation or switching wear. They influence which plan the optimizer prefers; they are not added to WattPlan's tariff-only projected cost or savings fields. The integration translates the selected profile into those numeric values before calling the optimizer. The action deadband does not throttle grid charging: once selected, `grid_charge` requests the full feasible slot rate.
 
 ## When to use each profile
 

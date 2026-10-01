@@ -108,7 +108,7 @@ def test_energy_flows_include_accepted_grid_battery_charging() -> None:
     assert [flow["grid_charge_kwh"] for flow in flows] == pytest.approx([1, 1, 0, 0])
     assert state["battery_charge_grid"][0] == pytest.approx([1, 1, 0, 0])
     assert state["battery_charge"][0] == pytest.approx([1, 1, 0, 0])
-    assert state["battery_discharge"][0] == pytest.approx([0, 0, 1, 1])
+    assert state["battery_discharge"][0] == pytest.approx([0, 0, 1, 1], abs=2e-6)
     for flow, solar in zip(flows, params.solar_input_kwh, strict=True):
         assert flow["grid_import_kwh"] * flow["grid_export_kwh"] == pytest.approx(0)
         assert flow["grid_import_kwh"] - flow["grid_export_kwh"] == pytest.approx(

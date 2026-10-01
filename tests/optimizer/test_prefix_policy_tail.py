@@ -85,7 +85,7 @@ def test_policy_tail_solves_exact_prefix_and_reacts_to_current_load(monkeypatch)
     assert schedule[8]["level"] == pytest.approx(schedule[7]["level"] - 0.25)
 
 
-def test_zero_flow_tail_keeps_published_grid_charge_and_preserve_labels():
+def test_zero_flow_tail_turns_unusable_grid_charge_off():
     normalized = _normalized(
         _payload(
             batteries=[
@@ -107,7 +107,7 @@ def test_zero_flow_tail_keeps_published_grid_charge_and_preserve_labels():
     )
 
     grid, reserve = [entity["schedule"] for entity in result["entities"]]
-    assert [point["state"] for point in grid[8:]] == ["grid_charge"] * 4
+    assert [point["state"] for point in grid[8:]] == ["preserve"] * 4
     assert [point["state"] for point in reserve[8:]] == ["preserve"] * 4
     assert [point["level"] for point in grid[8:]] == pytest.approx([1.0] * 4)
     assert [point["level"] for point in reserve[8:]] == pytest.approx([1.0] * 4)

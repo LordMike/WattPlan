@@ -63,7 +63,7 @@ The battery action sensor exposes policy, not raw measured or forecast battery f
 | --- | --- |
 | `preserve` | Save stored energy because the model shows that spending it now would make the plan worse or violate constraints. Your automation should prevent this battery from discharging. PV charging may still be allowed by your inverter setup. |
 | `self_consume` | Normal battery operation. Allow this battery to cover real load. Do not request grid charging. This is the default policy when the plan has no positive reason to preserve or grid-charge. |
-| `grid_charge` | Request or allow grid charging for this battery and prevent the battery from being spent while doing so. |
+| `grid_charge` | Enable charging at the configured full slot rate (subject to available PV, battery capacity, and inverter limits) and prevent the battery from being spent while doing so. A top-up too small to fill half a configured slot is not selected. This is an on/off policy, not a power or energy setpoint. |
 
 PV surplus handling is not a battery action state in this version. PV export is a site-level decision, especially with multiple batteries, and is deferred for a future site-level policy design. Treat PV charging as normal inverter behavior unless your own automation needs a different device-specific rule.
 

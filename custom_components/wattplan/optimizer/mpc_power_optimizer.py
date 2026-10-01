@@ -23,6 +23,7 @@ except ImportError:
 
 
 EPSILON = 1e-6
+MIN_GRID_CHARGE_SLOT_FRACTION = 0.5
 AVG_PRICE_SENTINEL = 1000.0
 PRESERVE_PROBE_MIN_KWH = 0.01
 PRESERVE_OBJECTIVE_TOLERANCE = 1e-7
@@ -691,8 +692,14 @@ def _extract_mip_start(
         "horizon": horizon,
         "battery": [
             {
-                name: x[var[name]].copy() if var[name] is not None else None
-                for name in ("charge_mode", "charge_active", "discharge_active")
+                name: x[var[name]].copy() if var.get(name) is not None else None
+                for name in (
+                    "charge_mode",
+                    "grid_charge_on",
+                    "grid_charge_saturated",
+                    "charge_active",
+                    "discharge_active",
+                )
             }
             for var in battery_vars
         ],
@@ -730,8 +737,14 @@ def _shift_mip_start(
     for b, var in enumerate(battery_vars):
         if not isinstance(previous_battery[b], dict):
             return None
-        for name in ("charge_mode", "charge_active", "discharge_active"):
-            current = var[name]
+        for name in (
+            "charge_mode",
+            "grid_charge_on",
+            "grid_charge_saturated",
+            "charge_active",
+            "discharge_active",
+        ):
+            current = var.get(name)
             previous = previous_battery[b].get(name)
             if current is None or previous is None:
                 continue
@@ -787,12 +800,15 @@ def _solve_mpc_step(
     battery_vars = []
     for entity in battery_entities:
         has_deadband = float(entity.action_deadband_kwh) > 0.0
+        can_charge_from_grid, _ = _charge_ingress_permissions(entity)
         battery_vars.append(
             {
                 "charge_grid": idx.add(horizon),
                 "charge_pv": idx.add(horizon),
                 "discharge": idx.add(horizon),
                 "charge_mode": idx.add(horizon),
+                "grid_charge_on": idx.add(horizon) if can_charge_from_grid else None,
+                "grid_charge_saturated": idx.add(horizon) if can_charge_from_grid else None,
                 "charge_active": idx.add(horizon) if has_deadband else None,
                 "discharge_active": idx.add(horizon) if has_deadband else None,
                 "level": idx.add(horizon + 1),
@@ -865,6 +881,12 @@ def _solve_mpc_step(
             integrality[var["charge_mode"].start + t] = (
                 highspy.HighsVarType.kInteger
             )
+            if grid_on := var["grid_charge_on"]:
+                bounds[grid_on.start + t] = (0.0, 1.0 if charge_limit > EPSILON else 0.0)
+                integrality[grid_on.start + t] = highspy.HighsVarType.kInteger
+                saturated = var["grid_charge_saturated"]
+                bounds[saturated.start + t] = (0.0, 1.0)
+                integrality[saturated.start + t] = highspy.HighsVarType.kInteger
             if action_deadband > 0.0:
                 bounds[var["charge_active"].start + t] = (0.0, 1.0)
                 bounds[var["discharge_active"].start + t] = (0.0, 1.0)
@@ -897,6 +919,56 @@ def _solve_mpc_step(
             row[var["charge_mode"].start + t] = -charge_limit
             A_ub.append(row)
             b_ub.append(0.0)
+
+            if grid_on := var["grid_charge_on"]:
+                # An enabled inverter policy charges at the full feasible slot
+                # rate. PV may supply part of that rate; grid energy fills the
+                # remainder. An OFF slot cannot purchase battery energy.
+                row = _SparseRow()
+                row[var["charge_grid"].start + t] = 1.0
+                row[grid_on.start + t] = -charge_limit
+                A_ub.append(row)
+                b_ub.append(0.0)
+
+                row = _SparseRow()
+                row[var["charge_grid"].start + t] = -1.0
+                row[var["charge_pv"].start + t] = -1.0
+                row[grid_on.start + t] = charge_limit
+                row[saturated.start + t] = -charge_limit
+                A_ub.append(row)
+                b_ub.append(0.0)
+
+                # A short capacity-limited top-up is not worth activating a
+                # full-power inverter policy. Keep a small feasibility margin
+                # at the threshold for solver and SoC rounding.
+                row = _SparseRow()
+                row[var["charge_grid"].start + t] = -1.0
+                row[var["charge_pv"].start + t] = -1.0
+                row[grid_on.start + t] = (
+                    MIN_GRID_CHARGE_SLOT_FRACTION * charge_limit
+                )
+                A_ub.append(row)
+                b_ub.append(EPSILON)
+
+                # If headroom prevents full-rate input, the inverter charges
+                # at that rate until the battery reaches its capacity instead.
+                row = _SparseRow()
+                row[var["level"].start + t + 1] = -1.0
+                row[saturated.start + t] = capacity
+                A_ub.append(row)
+                b_ub.append(0.0)
+
+                row = _SparseRow()
+                row[saturated.start + t] = 1.0
+                row[grid_on.start + t] = -1.0
+                A_ub.append(row)
+                b_ub.append(0.0)
+
+                row = _SparseRow()
+                row[var["charge_grid"].start + t] = -1.0
+                row[grid_on.start + t] = max(action_deadband, EPSILON)
+                A_ub.append(row)
+                b_ub.append(0.0)
 
             row = _SparseRow()
             row[var["discharge"].start + t] = 1.0
@@ -1103,6 +1175,18 @@ def _battery_available_discharge_kwh(entity: BatteryEntity, level: float) -> flo
     return max(float(level) - float(entity.minimum_kwh), 0.0) * discharge_eff
 
 
+def _grid_charge_headroom_sufficient(
+    entity: BatteryEntity, level: float, charge_limit: float
+) -> bool:
+    """Return whether a capacity-limited ON slot can fill at least half a slot."""
+    if charge_limit <= EPSILON:
+        return False
+    available_input = max(float(entity.capacity_kwh) - level, 0.0) / float(
+        entity.charge_efficiency
+    )
+    return available_input + EPSILON >= MIN_GRID_CHARGE_SLOT_FRACTION * charge_limit
+
+
 def _battery_preserve_probe_kwh(entity: BatteryEntity, level: float) -> float:
     _, discharge_limit = _battery_power_limits(entity, level)
     available = _battery_available_discharge_kwh(entity, level)
@@ -1204,21 +1288,36 @@ def _apply_controls_step(
         if not can_charge_from_pv:
             requested_pv = 0.0
 
-        total_requested = requested_grid + requested_pv
         max_charge_input_by_capacity = (
             max(float(entity.capacity_kwh) - level, 0.0) / charge_eff
             if charge_eff > EPSILON
             else 0.0
         )
         max_charge = min(charge_limit, max_charge_input_by_capacity)
+        if (
+            requested_grid > EPSILON
+            and not _grid_charge_headroom_sufficient(entity, level, charge_limit)
+        ):
+            requested_grid = 0.0
+        total_requested = requested_grid + requested_pv
         if total_requested > EPSILON and max_charge > 0.0:
             scale = min(1.0, max_charge / total_requested)
             requested_grid *= scale
             requested_pv *= scale
 
-            actual_pv = min(requested_pv, pv_surplus_remaining)
+            actual_pv = min(
+                max_charge if requested_grid > EPSILON and can_charge_from_pv else requested_pv,
+                pv_surplus_remaining,
+            )
             pv_surplus_remaining = max(pv_surplus_remaining - actual_pv, 0.0)
-            actual_grid = requested_grid
+            # The published grid-charge command is ON/OFF, not a power
+            # setpoint. Once ON, grid energy fills the feasible full-rate slot
+            # after any PV charge, just as the inverter policy replay does.
+            actual_grid = (
+                max(max_charge - actual_pv, 0.0)
+                if requested_grid > EPSILON
+                else 0.0
+            )
 
             if enforce_action_deadband and not _meets_action_deadband(
                 actual_grid + actual_pv, action_deadband
@@ -1394,6 +1493,10 @@ def _fixed_policy_controls_step(
         can_charge_from_grid, _ = _charge_ingress_permissions(entity)
         if not can_charge_from_grid:
             continue
+        if not _grid_charge_headroom_sufficient(
+            entity, float(battery_levels[i]), charge_limits[i]
+        ):
+            continue
         charge_eff = float(entity.charge_efficiency)
         capacity_after_pv = float(battery_levels[i]) + charge_pv[i] * charge_eff
         capacity_input = (
@@ -1544,6 +1647,19 @@ def _run_mpc(
 
     for t in range(total_steps):
         horizon = min(lookahead_slots, total_steps - t)
+
+        if t < reused_steps and any(
+            float(reuse_plan["battery_charge_grid"][i, t]) > EPSILON
+            and not _grid_charge_headroom_sufficient(
+                entity,
+                float(battery_levels[i, t]),
+                _battery_power_limits(entity, float(battery_levels[i, t]))[0],
+            )
+            for i, entity in enumerate(battery_entities)
+        ):
+            # A shifted ON decision no longer fits the current SoC. Re-solve
+            # instead of turning its cached full-rate policy into a short top-up.
+            reused_steps = t
 
         replay_policy_tail = t >= tail_start
         if replay_policy_tail:
@@ -1962,6 +2078,7 @@ def _replay_policy_cost(
     total_cost = 0.0
 
     for t in range(total_steps):
+        battery_levels_before_pv = battery_levels.copy()
         total_usage = float(usage[t])
         for i, entity in enumerate(comfort_entities):
             if comfort_enabled[i, t] == 1:
@@ -2027,6 +2144,10 @@ def _replay_policy_cost(
             can_charge_from_grid, _ = _charge_ingress_permissions(entity)
             if not can_charge_from_grid:
                 continue
+            if not _grid_charge_headroom_sufficient(
+                entity, float(battery_levels_before_pv[i]), charge_limits[i]
+            ):
+                continue
             capacity_input = max(
                 float(entity.capacity_kwh) - battery_levels[i], 0.0
             ) / float(entity.charge_efficiency)
@@ -2086,7 +2207,16 @@ def _effective_battery_policy_states(
                 battery_policy_override is not None
                 and battery_policy_override[i][t] is not None
             ):
-                row.append(str(battery_policy_override[i][t]))
+                policy = str(battery_policy_override[i][t])
+                if policy == "grid_charge" and not _meets_action_deadband(
+                    float(result["battery_charge_grid"][i, t]),
+                    float(entity.action_deadband_kwh),
+                ):
+                    # Tail replay may find the battery too full for an earlier
+                    # ON decision. Preserve its no-discharge behavior, but turn
+                    # grid charging OFF rather than publishing a stale command.
+                    policy = "preserve"
+                row.append(policy)
             else:
                 row.append(_battery_schedule_state(result, entity, i, t))
         states.append(row)
