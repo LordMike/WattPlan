@@ -99,6 +99,7 @@ from ..const import (
     CONF_TEMPLATE,
     CONF_TIME_KEY,
     CONF_VALUE_KEY,
+    CONF_VALUE_UNIT,
     DOMAIN,
     DEFAULT_OPTIMIZER_LOOKAHEAD_HOURS,
     EDGE_FILL_MODE_HOLD,
@@ -124,6 +125,8 @@ from ..const import (
     SUBENTRY_TYPE_BATTERY,
     SUBENTRY_TYPE_COMFORT,
     SUBENTRY_TYPE_OPTIONAL,
+    VALUE_UNIT_KW,
+    VALUE_UNIT_KWH,
 )
 from ..datetime_utils import parse_datetime_like
 from ..forecast_provider import ForecastProvider
@@ -160,6 +163,8 @@ CONF_REVIEW_ACTION = "review_action"
 REVIEW_ACTION_CONFIRM = "confirm"
 REVIEW_ACTION_EDIT = "edit"
 CONF_ACCEPT_SOURCE_SUMMARY = "accept_source_summary"
+# Sources whose values are energy and may instead be given as average power.
+ENERGY_SOURCE_KEYS = frozenset({CONF_SOURCE_USAGE, CONF_SOURCE_PV})
 
 
 def _format_coverage_datetime(
@@ -192,6 +197,7 @@ def _source_modifier_fields(
     defaults: dict[str, Any],
     *,
     allow_edge_fill_none: bool = True,
+    include_value_unit: bool = False,
 ) -> dict[Any, Any]:
     """Build shared source modifier selector fields."""
     edge_fill_options = [
@@ -203,7 +209,7 @@ def _source_modifier_fields(
             selector.SelectOptionDict(value=EDGE_FILL_MODE_NONE, label="Disabled"),
         )
 
-    return {
+    fields: dict[Any, Any] = {
         vol.Required(
             CONF_AGGREGATION_MODE,
             default=defaults.get(CONF_AGGREGATION_MODE, AGGREGATION_MODE_MEAN),
@@ -263,6 +269,26 @@ def _source_modifier_fields(
             )
         ),
     }
+    if include_value_unit:
+        fields[
+            vol.Required(
+                CONF_VALUE_UNIT,
+                default=defaults.get(CONF_VALUE_UNIT, VALUE_UNIT_KWH),
+            )
+        ] = selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=[
+                    selector.SelectOptionDict(
+                        value=VALUE_UNIT_KWH, label="Energy per interval (kWh)"
+                    ),
+                    selector.SelectOptionDict(
+                        value=VALUE_UNIT_KW, label="Average power (kW)"
+                    ),
+                ],
+                mode=selector.SelectSelectorMode.DROPDOWN,
+            )
+        )
+    return fields
 
 
 def _source_fixup_fields(
@@ -271,6 +297,7 @@ def _source_fixup_fields(
     include_advanced: bool,
     fixup_options: list[selector.SelectOptionDict] | None = None,
     allow_edge_fill_none: bool = True,
+    include_value_unit: bool = False,
 ) -> dict[Any, Any]:
     """Build shared fixup fields for provider input steps."""
     if fixup_options is None:
@@ -304,11 +331,14 @@ def _source_fixup_fields(
                 if key in default_modifier_values()
             },
         }
+        if include_value_unit:
+            advanced_defaults[CONF_VALUE_UNIT] = defaults.get(CONF_VALUE_UNIT, VALUE_UNIT_KWH)
         schema[vol.Optional(SECTION_SOURCE_ADVANCED, default=advanced_defaults)] = section(
             vol.Schema(
                 _source_modifier_fields(
                     advanced_defaults,
                     allow_edge_fill_none=allow_edge_fill_none,
+                    include_value_unit=include_value_unit,
                 )
             ),
             {"collapsed": True},
@@ -1202,7 +1232,9 @@ def _source_mode_schema(
     )
 
 
-def _source_template_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
+def _source_template_schema(
+    defaults: dict[str, Any] | None = None, *, include_value_unit: bool = False
+) -> vol.Schema:
     """Build template source schema."""
     defaults = defaults or {}
     return vol.Schema(
@@ -1211,12 +1243,16 @@ def _source_template_schema(defaults: dict[str, Any] | None = None) -> vol.Schem
                 CONF_TEMPLATE,
                 default=defaults.get(CONF_TEMPLATE, DEFAULT_SOURCE_TEMPLATE),
             ): selector.TemplateSelector(),
-            **_source_fixup_fields(defaults, include_advanced=True),
+            **_source_fixup_fields(
+                defaults, include_advanced=True, include_value_unit=include_value_unit
+            ),
         }
     )
 
 
-def _source_adapter_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
+def _source_adapter_schema(
+    defaults: dict[str, Any] | None = None, *, include_value_unit: bool = False
+) -> vol.Schema:
     """Build entity adapter source schema."""
     defaults = defaults or {}
     adapter_options: list[selector.SelectOptionDict] = [
@@ -1282,12 +1318,16 @@ def _source_adapter_schema(defaults: dict[str, Any] | None = None) -> vol.Schema
                 ),
                 {"collapsed": True},
             ),
-            **_source_fixup_fields(defaults, include_advanced=True),
+            **_source_fixup_fields(
+                defaults, include_advanced=True, include_value_unit=include_value_unit
+            ),
         }
     )
 
 
-def _source_service_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
+def _source_service_schema(
+    defaults: dict[str, Any] | None = None, *, include_value_unit: bool = False
+) -> vol.Schema:
     """Build service adapter source schema."""
     defaults = defaults or {}
     adapter_options: list[selector.SelectOptionDict] = [
@@ -1342,7 +1382,9 @@ def _source_service_schema(defaults: dict[str, Any] | None = None) -> vol.Schema
                 ),
                 {"collapsed": True},
             ),
-            **_source_fixup_fields(defaults, include_advanced=True),
+            **_source_fixup_fields(
+                defaults, include_advanced=True, include_value_unit=include_value_unit
+            ),
         }
     )
 
@@ -1924,7 +1966,10 @@ class _SharedSourceFlow:
         return self.async_show_form(
             step_id=step_id,
             data_schema=self.add_suggested_values_to_schema(
-                _source_template_schema(existing), defaults
+                _source_template_schema(
+                    existing, include_value_unit=key in ENERGY_SOURCE_KEYS
+                ),
+                defaults,
             ),
             errors=errors,
             description_placeholders=self._source_description_placeholders(key),
@@ -1957,7 +2002,10 @@ class _SharedSourceFlow:
         return self.async_show_form(
             step_id=step_id,
             data_schema=self.add_suggested_values_to_schema(
-                _source_adapter_schema(existing), defaults
+                _source_adapter_schema(
+                    existing, include_value_unit=key in ENERGY_SOURCE_KEYS
+                ),
+                defaults,
             ),
             errors=errors,
             description_placeholders=self._source_description_placeholders(key),
@@ -1990,7 +2038,10 @@ class _SharedSourceFlow:
         return self.async_show_form(
             step_id=step_id,
             data_schema=self.add_suggested_values_to_schema(
-                _source_service_schema(existing), defaults
+                _source_service_schema(
+                    existing, include_value_unit=key in ENERGY_SOURCE_KEYS
+                ),
+                defaults,
             ),
             errors=errors,
             description_placeholders=self._source_description_placeholders(key),

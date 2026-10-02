@@ -82,6 +82,7 @@ CONF_TEMPLATE = "template"
 CONF_TARGET_ON_HOURS_PER_WINDOW = "target_on_hours_per_window"
 CONF_TIME_KEY = "time_key"
 CONF_VALUE_KEY = "value_key"
+CONF_VALUE_UNIT = "value_unit"
 CONF_EDGE_FILL_MODE = "edge_fill_mode"
 CONF_FIXUP_PROFILE = "fixup_profile"
 CONF_WAS_ON_FOR_MINUTES = "was_on_for_minutes"
@@ -109,6 +110,10 @@ RESAMPLE_MODE_LINEAR = "linear"
 
 EDGE_FILL_MODE_NONE = "none"
 EDGE_FILL_MODE_HOLD = "hold"
+
+# Usage/PV value meaning: energy per source interval, or average power over it.
+VALUE_UNIT_KWH = "kwh"
+VALUE_UNIT_KW = "kw"
 
 FIXUP_PROFILE_STRICT = "strict_input"
 FIXUP_PROFILE_REPAIR = "repair_gaps"

@@ -303,7 +303,7 @@ async def test_adapter_pipeline_keeps_advanced_provider_settings(
     # the same way in tests as it is in runtime planning and flow review.
     provider = build_source_base_provider(
         hass,
-        source_key="price",
+        source_key="import_price",
         source_config={
             CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
             "entity_id": ["sensor.forecast"],

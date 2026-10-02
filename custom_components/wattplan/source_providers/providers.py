@@ -32,6 +32,7 @@ from ..const import (
     CONF_SOURCE_MODE,
     CONF_TIME_KEY,
     CONF_VALUE_KEY,
+    CONF_VALUE_UNIT,
     EDGE_FILL_MODE_HOLD,
     EDGE_FILL_MODE_NONE,
     RESAMPLE_MODE_FORWARD_FILL,
@@ -42,6 +43,8 @@ from ..const import (
     SOURCE_MODE_ENTITY_ADAPTER,
     SOURCE_MODE_SERVICE_ADAPTER,
     SOURCE_MODE_TEMPLATE,
+    VALUE_UNIT_KW,
+    VALUE_UNIT_KWH,
 )
 from ..datetime_utils import parse_datetime_like, typical_step
 from ..forecast_provider import ForecastProvider
@@ -70,6 +73,7 @@ VALID_RESAMPLE_MODES = {
     RESAMPLE_MODE_LINEAR,
 }
 VALID_EDGE_FILL_MODES = {EDGE_FILL_MODE_NONE, EDGE_FILL_MODE_HOLD}
+VALID_VALUE_UNITS = {VALUE_UNIT_KWH, VALUE_UNIT_KW}
 # Per-kWh sources: values are repeated across finer slots, never divided.
 # Every other source (usage, PV) carries energy per interval.
 PRICE_SOURCE_KEYS = frozenset({CONF_SOURCE_IMPORT_PRICE, CONF_SOURCE_EXPORT_PRICE})
@@ -93,6 +97,7 @@ class TemplateAdapterSourceProvider(SourceProvider):
         self._clamp_mode = self._clamp_mode(source_config)
         self._resample_mode = self._resample_mode(source_config)
         self._edge_fill_mode = self._edge_fill_mode(source_config)
+        self._value_unit = self._value_unit(source_config)
 
         mode = source_mode(source_config)
         if mode == SOURCE_MODE_TEMPLATE:
@@ -250,6 +255,8 @@ class TemplateAdapterSourceProvider(SourceProvider):
                     },
                 )
             values_per_slot = len(payload) // window.slots
+        # Index 0 is the current slot. Longer lists split each slot evenly.
+        value_step = timedelta(minutes=window.slot_minutes) / values_per_slot
         for index, value in enumerate(payload):
             try:
                 numeric = float(value)
@@ -266,9 +273,7 @@ class TemplateAdapterSourceProvider(SourceProvider):
                 raise self._nonfinite_value_error(index=index, value=value)
             points.append(
                 {
-                    "start": (
-                        start_at + timedelta(minutes=window.slot_minutes * (index // values_per_slot))
-                    ).isoformat(),
+                    "start": (start_at + (value_step * index)).isoformat(),
                     "value": numeric,
                 }
             )
@@ -352,7 +357,8 @@ class TemplateAdapterSourceProvider(SourceProvider):
         slot_delta = timedelta(minutes=window.slot_minutes)
         start_at = self._as_utc(window.start_at)
         end_at = start_at + (slot_delta * window.slots)
-        snapped_points = self._snapped_points(points, start_at, slot_delta)
+        grid = self._snap_grid(points, slot_delta)
+        snapped_points = self._snapped_points(points, start_at, grid)
         intervals = self._intervals_from_points(
             self._deduplicated_points(snapped_points), slot_delta
         )
@@ -365,20 +371,38 @@ class TemplateAdapterSourceProvider(SourceProvider):
         )
         return self._complete_slots(known)
 
+    def _snap_grid(
+        self,
+        points: list[tuple[datetime, float]],
+        slot_delta: timedelta,
+    ) -> timedelta:
+        """Return the grid that timestamps are aligned to.
+
+        This is the planner slot, unless most source steps are at most half a
+        slot. Such a source is finer than the planner, so it is aligned to the
+        matching whole fraction of a slot to keep every sub-slot interval.
+        """
+        starts = sorted({point_start for point_start, _value in points})
+        steps = [right - left for left, right in pairwise(starts)]
+        step = typical_step(starts)
+        if step is None or step * 2 > slot_delta or steps.count(step) * 2 <= len(steps):
+            return slot_delta
+        return slot_delta / round(slot_delta / step)
+
     def _snapped_points(
         self,
         points: list[tuple[datetime, float]],
         start_at: datetime,
-        slot_delta: timedelta,
+        grid: timedelta,
     ) -> list[tuple[datetime, float]]:
-        """Return points aligned to slot boundaries, sorted by timestamp.
+        """Return points aligned to the grid, sorted by timestamp.
 
         The sort is stable, so points sharing a timestamp keep provider and
         payload order for first/last aggregation.
         """
         return sorted(
             (
-                (self._snap_timestamp(point_start, start_at, slot_delta), value)
+                (self._snap_timestamp(point_start, start_at, grid), value)
                 for point_start, value in points
             ),
             key=lambda point: point[0],
@@ -427,7 +451,9 @@ class TemplateAdapterSourceProvider(SourceProvider):
 
         Prices are per kWh, so an interval's price applies unchanged to every
         slot it overlaps and slots covering several intervals aggregate them
-        (time-weighted for mean). Energy is split in proportion to overlap.
+        (time-weighted for mean). Energy is split in proportion to overlap
+        and the parts landing in one slot are summed; average power (kW) is
+        first converted to energy over its interval.
         """
         slot_seconds = slot_delta.total_seconds()
         slot_values: dict[int, list[tuple[float, float]]] = {}
@@ -439,6 +465,8 @@ class TemplateAdapterSourceProvider(SourceProvider):
             effective_start = max(interval_start, start_at)
             effective_end = min(interval_end, end_at)
             interval_seconds = (interval_end - interval_start).total_seconds()
+            if not self._is_price and self._value_unit == VALUE_UNIT_KW:
+                value *= interval_seconds / 3600
             first_slot = max(
                 0,
                 int(math.floor((effective_start - start_at).total_seconds() / slot_seconds)),
@@ -465,35 +493,33 @@ class TemplateAdapterSourceProvider(SourceProvider):
 
         known: list[float | None] = [None] * window.slots
         for slot_index, contributions in slot_values.items():
-            if self._is_price and self._aggregation_mode == AGGREGATION_MODE_MEAN:
-                known[slot_index] = self._time_weighted_mean(contributions)
+            if not self._is_price:
+                result = sum(contribution for contribution, _seconds in contributions)
+            elif self._aggregation_mode == AGGREGATION_MODE_MEAN:
+                total_seconds = sum(seconds for _value, seconds in contributions)
+                result = (
+                    sum(value * seconds for value, seconds in contributions) / total_seconds
+                )
             else:
-                known[slot_index] = self._aggregate_values(
+                result = self._aggregate_values(
                     [contribution for contribution, _seconds in contributions]
                 )
+            if not math.isfinite(result):
+                raise self._nonfinite_value_error(stage="aggregation")
+            known[slot_index] = result
         return known
-
-    def _time_weighted_mean(self, contributions: list[tuple[float, float]]) -> float:
-        """Return the mean of values weighted by how long each one applies."""
-        total_seconds = sum(seconds for _value, seconds in contributions)
-        result = sum(value * seconds for value, seconds in contributions) / total_seconds
-        if not math.isfinite(result):
-            raise self._nonfinite_value_error(stage="aggregation")
-        return result
 
     def _snap_timestamp(
         self,
         value: datetime,
         start_at: datetime,
-        slot_delta: timedelta,
+        grid: timedelta,
     ) -> datetime:
         """Return timestamp aligned according to the configured clamp mode."""
         if self._clamp_mode == CLAMP_MODE_NEAREST:
-            slot_index = self._nearest_slot_index(value, start_at, slot_delta)
-            return start_at + (slot_delta * slot_index)
+            return start_at + (grid * self._nearest_grid_index(value, start_at, grid))
 
-        offset = value - start_at
-        if (offset.total_seconds() % slot_delta.total_seconds()) != 0:
+        if (value - start_at) % grid:
             raise SourceProviderError(
                 "source_validation",
                 (
@@ -633,13 +659,11 @@ class TemplateAdapterSourceProvider(SourceProvider):
             return value.replace(tzinfo=UTC)
         return value.astimezone(UTC)
 
-    def _nearest_slot_index(
-        self, point_start: datetime, start_at: datetime, slot_delta: timedelta
+    def _nearest_grid_index(
+        self, point_start: datetime, start_at: datetime, grid: timedelta
     ) -> int:
-        """Return nearest slot index for a timestamp, negative before the window."""
-        offset_seconds = (point_start - start_at).total_seconds()
-        slot_seconds = slot_delta.total_seconds()
-        return math.floor((offset_seconds / slot_seconds) + 0.5)
+        """Return nearest grid index for a timestamp, negative before the window."""
+        return math.floor(((point_start - start_at) / grid) + 0.5)
 
     def _clamp_mode(self, source_config: dict[str, Any]) -> str:
         """Return validated clamp mode."""
@@ -673,6 +697,17 @@ class TemplateAdapterSourceProvider(SourceProvider):
                 details={"source": self._source_name, "edge_fill_mode": mode},
             )
         return mode
+
+    def _value_unit(self, source_config: dict[str, Any]) -> str:
+        """Return validated value unit for energy sources."""
+        unit = str(source_config.get(CONF_VALUE_UNIT, VALUE_UNIT_KWH))
+        if unit not in VALID_VALUE_UNITS:
+            raise SourceProviderError(
+                "source_validation",
+                f"{self._source_name} value unit `{unit}` is not supported",
+                details={"source": self._source_name, "value_unit": unit},
+            )
+        return unit
 
 
 class MergedSourceProvider(TemplateAdapterSourceProvider):

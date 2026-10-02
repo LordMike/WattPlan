@@ -382,13 +382,15 @@
               "aggregation_mode": "Aggregation mode",
               "clamp_mode": "Timestamp alignment",
               "resample_mode": "Gap repair",
-              "edge_fill_mode": "Edge fill"
+              "edge_fill_mode": "Edge fill",
+              "value_unit": "Value unit"
             },
             "data_description": {
-              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "aggregation_mode": "Applies when several source samples share one timestamp. Energy from several shorter source intervals inside one planner interval is always summed.",
               "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
               "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
-              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete.",
+              "value_unit": "Energy per interval means each value is the kWh used or produced during its own interval. Choose Average power when the source reports kW averaged over each interval, for example Solcast `detailedForecast` `pv_estimate`; WattPlan then multiplies each value by its interval length."
             }
           }
         }
@@ -427,13 +429,15 @@
               "aggregation_mode": "Aggregation mode",
               "clamp_mode": "Timestamp alignment",
               "resample_mode": "Gap repair",
-              "edge_fill_mode": "Edge fill"
+              "edge_fill_mode": "Edge fill",
+              "value_unit": "Value unit"
             },
             "data_description": {
-              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "aggregation_mode": "Applies when several source samples share one timestamp. Energy from several shorter source intervals inside one planner interval is always summed.",
               "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
               "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
-              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete.",
+              "value_unit": "Energy per interval means each value is the kWh used or produced during its own interval. Choose Average power when the source reports kW averaged over each interval, for example Solcast `detailedForecast` `pv_estimate`; WattPlan then multiplies each value by its interval length."
             }
           }
         }
@@ -472,13 +476,15 @@
               "aggregation_mode": "Aggregation mode",
               "clamp_mode": "Timestamp alignment",
               "resample_mode": "Gap repair",
-              "edge_fill_mode": "Edge fill"
+              "edge_fill_mode": "Edge fill",
+              "value_unit": "Value unit"
             },
             "data_description": {
-              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "aggregation_mode": "Applies when several source samples share one timestamp. Energy from several shorter source intervals inside one planner interval is always summed.",
               "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
               "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
-              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete.",
+              "value_unit": "Energy per interval means each value is the kWh used or produced during its own interval. Choose Average power when the source reports kW averaged over each interval, for example Solcast `detailedForecast` `pv_estimate`; WattPlan then multiplies each value by its interval length."
             }
           }
         }
@@ -526,13 +532,15 @@
               "aggregation_mode": "Aggregation mode",
               "clamp_mode": "Timestamp alignment",
               "resample_mode": "Gap repair",
-              "edge_fill_mode": "Edge fill"
+              "edge_fill_mode": "Edge fill",
+              "value_unit": "Value unit"
             },
             "data_description": {
-              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "aggregation_mode": "Applies when several source samples share one timestamp. Energy from several shorter source intervals inside one planner interval is always summed.",
               "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
               "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
-              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete.",
+              "value_unit": "Energy per interval means each value is the kWh used or produced during its own interval. Choose Average power when the source reports kW averaged over each interval, for example Solcast `detailedForecast` `pv_estimate`; WattPlan then multiplies each value by its interval length."
             }
           }
         }
@@ -571,13 +579,15 @@
               "aggregation_mode": "Aggregation mode",
               "clamp_mode": "Timestamp alignment",
               "resample_mode": "Gap repair",
-              "edge_fill_mode": "Edge fill"
+              "edge_fill_mode": "Edge fill",
+              "value_unit": "Value unit"
             },
             "data_description": {
-              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "aggregation_mode": "Applies when several source samples share one timestamp. Energy from several shorter source intervals inside one planner interval is always summed.",
               "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
               "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
-              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete.",
+              "value_unit": "Energy per interval means each value is the kWh used or produced during its own interval. Choose Average power when the source reports kW averaged over each interval, for example Solcast `detailedForecast` `pv_estimate`; WattPlan then multiplies each value by its interval length."
             }
           }
         }
@@ -616,13 +626,15 @@
               "aggregation_mode": "Aggregation mode",
               "clamp_mode": "Timestamp alignment",
               "resample_mode": "Gap repair",
-              "edge_fill_mode": "Edge fill"
+              "edge_fill_mode": "Edge fill",
+              "value_unit": "Value unit"
             },
             "data_description": {
-              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "aggregation_mode": "Applies when several source samples share one timestamp. Energy from several shorter source intervals inside one planner interval is always summed.",
               "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
               "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
-              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete.",
+              "value_unit": "Energy per interval means each value is the kWh used or produced during its own interval. Choose Average power when the source reports kW averaged over each interval, for example Solcast `detailedForecast` `pv_estimate`; WattPlan then multiplies each value by its interval length."
             }
           }
         }
@@ -973,13 +985,15 @@
               "aggregation_mode": "Aggregation mode",
               "clamp_mode": "Timestamp alignment",
               "resample_mode": "Gap repair",
-              "edge_fill_mode": "Edge fill"
+              "edge_fill_mode": "Edge fill",
+              "value_unit": "Value unit"
             },
             "data_description": {
-              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "aggregation_mode": "Applies when several source samples share one timestamp. Energy from several shorter source intervals inside one planner interval is always summed.",
               "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
               "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
-              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete.",
+              "value_unit": "Energy per interval means each value is the kWh used or produced during its own interval. Choose Average power when the source reports kW averaged over each interval, for example Solcast `detailedForecast` `pv_estimate`; WattPlan then multiplies each value by its interval length."
             }
           }
         }
@@ -1010,13 +1024,15 @@
               "aggregation_mode": "Aggregation mode",
               "clamp_mode": "Timestamp alignment",
               "resample_mode": "Gap repair",
-              "edge_fill_mode": "Edge fill"
+              "edge_fill_mode": "Edge fill",
+              "value_unit": "Value unit"
             },
             "data_description": {
-              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "aggregation_mode": "Applies when several source samples share one timestamp. Energy from several shorter source intervals inside one planner interval is always summed.",
               "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
               "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
-              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete.",
+              "value_unit": "Energy per interval means each value is the kWh used or produced during its own interval. Choose Average power when the source reports kW averaged over each interval, for example Solcast `detailedForecast` `pv_estimate`; WattPlan then multiplies each value by its interval length."
             }
           }
         }
@@ -1050,13 +1066,15 @@
               "aggregation_mode": "Aggregation mode",
               "clamp_mode": "Timestamp alignment",
               "resample_mode": "Gap repair",
-              "edge_fill_mode": "Edge fill"
+              "edge_fill_mode": "Edge fill",
+              "value_unit": "Value unit"
             },
             "data_description": {
-              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "aggregation_mode": "Applies when several source samples share one timestamp. Energy from several shorter source intervals inside one planner interval is always summed.",
               "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
               "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
-              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete.",
+              "value_unit": "Energy per interval means each value is the kWh used or produced during its own interval. Choose Average power when the source reports kW averaged over each interval, for example Solcast `detailedForecast` `pv_estimate`; WattPlan then multiplies each value by its interval length."
             }
           }
         }
@@ -1091,13 +1109,15 @@
               "aggregation_mode": "Aggregation mode",
               "clamp_mode": "Timestamp alignment",
               "resample_mode": "Gap repair",
-              "edge_fill_mode": "Edge fill"
+              "edge_fill_mode": "Edge fill",
+              "value_unit": "Value unit"
             },
             "data_description": {
-              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "aggregation_mode": "Applies when several source samples share one timestamp. Energy from several shorter source intervals inside one planner interval is always summed.",
               "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
               "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
-              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete.",
+              "value_unit": "Energy per interval means each value is the kWh used or produced during its own interval. Choose Average power when the source reports kW averaged over each interval, for example Solcast `detailedForecast` `pv_estimate`; WattPlan then multiplies each value by its interval length."
             }
           }
         }
@@ -1431,13 +1451,15 @@
               "aggregation_mode": "Aggregation mode",
               "clamp_mode": "Timestamp alignment",
               "resample_mode": "Gap repair",
-              "edge_fill_mode": "Edge fill"
+              "edge_fill_mode": "Edge fill",
+              "value_unit": "Value unit"
             },
             "data_description": {
-              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "aggregation_mode": "Applies when several source samples share one timestamp. Energy from several shorter source intervals inside one planner interval is always summed.",
               "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
               "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
-              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete.",
+              "value_unit": "Energy per interval means each value is the kWh used or produced during its own interval. Choose Average power when the source reports kW averaged over each interval, for example Solcast `detailedForecast` `pv_estimate`; WattPlan then multiplies each value by its interval length."
             }
           }
         }
@@ -1472,13 +1494,15 @@
               "aggregation_mode": "Aggregation mode",
               "clamp_mode": "Timestamp alignment",
               "resample_mode": "Gap repair",
-              "edge_fill_mode": "Edge fill"
+              "edge_fill_mode": "Edge fill",
+              "value_unit": "Value unit"
             },
             "data_description": {
-              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "aggregation_mode": "Applies when several source samples share one timestamp. Energy from several shorter source intervals inside one planner interval is always summed.",
               "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
               "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
-              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete.",
+              "value_unit": "Energy per interval means each value is the kWh used or produced during its own interval. Choose Average power when the source reports kW averaged over each interval, for example Solcast `detailedForecast` `pv_estimate`; WattPlan then multiplies each value by its interval length."
             }
           }
         }

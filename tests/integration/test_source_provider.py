@@ -826,7 +826,7 @@ async def test_aggregation_mode_groups_values(hass: HomeAssistant) -> None:
     hass.states.async_set("sensor.forecast", "ok", {"prices": [1, 2, 3, 4, 5, 6, 7, 8]})
     provider = TemplateAdapterSourceProvider(
         hass,
-        source_name="price",
+        source_name="import_price",
         source_config={
             CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
             "entity_id": "sensor.forecast",
