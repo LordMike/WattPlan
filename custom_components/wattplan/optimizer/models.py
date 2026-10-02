@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 DEFAULT_LOOKAHEAD_SLOTS = 22
+DEFAULT_SOLVER_TIME_LIMIT_SECONDS = 20.0
 # Saved controls from earlier comfort scheduling strategies are not reusable.
 COMFORT_SCHEDULER_VERSION = 2
 # A previous solver could reuse controls whose small grid-charge flows were
@@ -368,6 +369,15 @@ class OptimizationParams(BaseModel):
             "and is excluded from tariff cost and savings projections."
         ),
     )
+    solver_time_limit_seconds: float = Field(
+        DEFAULT_SOLVER_TIME_LIMIT_SECONDS,
+        gt=0,
+        le=3600,
+        description=(
+            "Wall-clock limit for each MILP solve. A solve stopped by the limit "
+            "is used when it holds a feasible solution and fails otherwise."
+        ),
+    )
     infer_battery_preserve_policy: bool = Field(
         True,
         description=(
@@ -642,6 +652,7 @@ class CalculationInput:
     optional_entities: List[NormalizedOptionalEntity]
     state: NormalizedState | None
     fingerprint: str
+    solver_time_limit_seconds: float = DEFAULT_SOLVER_TIME_LIMIT_SECONDS
 
 
 def _entity_fingerprint(
@@ -1035,4 +1046,5 @@ def normalize_calculation_input(params: OptimizationParams):
         optional_entities=optional_entities,
         state=state,
         fingerprint=fingerprint,
+        solver_time_limit_seconds=float(params.solver_time_limit_seconds),
     )

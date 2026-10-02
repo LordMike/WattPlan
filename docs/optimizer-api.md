@@ -50,6 +50,7 @@ result = optimize(params)
 | `action_deadband_kwh` | `float` | No | `0.0` | Finite, `>= 0` | Battery flow is constrained to zero or at least this inclusive threshold. |
 | `mode_switch_cost` | `float` | No | `0.0` | Finite, `>= 0` | Heuristic objective weight that discourages changing modeled battery behavior. It is not a monetary switching or wear estimate. |
 | `infer_battery_preserve_policy` | `bool` | No | `true` | - | Enables the model-backed counterfactual used to emit `preserve` battery policy states. When disabled, all `battery_preserve` booleans are `false` and non-grid-charging battery slots fall back to `self_consume`. |
+| `solver_time_limit_seconds` | `float` | No | `20` | `> 0`, `<= 3600` | Wall-clock limit for each MILP solve. A solve stopped by the limit is used when HiGHS holds a feasible solution (logged as a warning) and fails otherwise. The integration additionally bounds the whole optimizer call by the slot length (at least 60 seconds) and reports a timeout as a `planner_execution` error. |
 | `battery_entities` | `list[BatteryEntityParams]` | Yes | - | May be empty | Main controllable storage entities. |
 | `comfort_entities` | `list[ComfortEntityParams]` | Yes | - | May be empty | Required comfort entities with bounded cost-aware placement. |
 | `optional_entities` | `list[OptionalEntityParams]` | No | `[]` | Fully validated for feasibility | Advisory start-time options only. |

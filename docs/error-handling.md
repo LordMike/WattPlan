@@ -70,7 +70,7 @@ Typical examples:
 - import price failed and no usable fallback remains
 - configured usage forecast failed and no usable fallback remains
 - a source returned NaN or an infinite value and no finite cached fallback remains
-- planning failed entirely
+- planning failed entirely, including an optimizer run that does not finish within one slot (at least 60 seconds)
 - the active or retained plan no longer covers the current time
 - coordinator state has gone stale and the plan can no longer be trusted
 

@@ -1,3 +1,4 @@
+import logging
 import time
 
 import numpy as np
@@ -21,6 +22,8 @@ try:
 except ImportError:
     highspy = None
 
+
+_LOGGER = logging.getLogger(__name__)
 
 EPSILON = 1e-6
 MIN_GRID_CHARGE_SLOT_FRACTION = 0.5
@@ -502,6 +505,7 @@ def _solve_lp(
     bounds,
     integrality=None,
     mip_start=None,
+    time_limit_seconds=None,
 ):
     if highspy is None:
         raise RuntimeError("highspy is required but not installed")
@@ -623,6 +627,8 @@ def _solve_lp(
 
     highs = highspy.Highs()
     highs.setOptionValue("output_flag", False)
+    if time_limit_seconds is not None:
+        highs.setOptionValue("time_limit", float(time_limit_seconds))
     highs.passModel(lp)
     mip_start_status = None
     if mip_start is not None:
@@ -636,6 +642,8 @@ def _solve_lp(
         if mip_start_status != highspy.HighsStatus.kOk:
             highs = highspy.Highs()
             highs.setOptionValue("output_flag", False)
+            if time_limit_seconds is not None:
+                highs.setOptionValue("time_limit", float(time_limit_seconds))
             highs.passModel(lp)
     highs.run()
     model_status = highs.getModelStatus()
@@ -661,17 +669,38 @@ def _solve_lp(
             self.num_rows = int(total_rows)
             self.num_nonzeros = int(values.size)
 
-    if model_status != highspy.HighsModelStatus.kOptimal:
+    if not _solution_usable(model_status, info.primal_solution_status):
         return _HighspyResult(False, None)
 
     solution = highs.getSolution()
     if not solution.value_valid:
         return _HighspyResult(False, None)
+    if model_status != highspy.HighsModelStatus.kOptimal:
+        _LOGGER.warning(
+            "MILP solve hit its %.1f s time limit; using the best feasible "
+            "solution found (MIP gap %.3g)",
+            float(time_limit_seconds),
+            float(info.mip_gap),
+        )
 
     return _HighspyResult(
         True,
         np.asarray(solution.col_value, dtype=np.float64),
         float(highs.getObjectiveValue()),
+    )
+
+
+def _solution_usable(model_status, primal_solution_status) -> bool:
+    """Return whether a HiGHS run produced a solution the planner may use.
+
+    A solve stopped by the time limit is accepted only when HiGHS holds a
+    feasible incumbent; a proven-optimal solve is always accepted.
+    """
+    if model_status == highspy.HighsModelStatus.kOptimal:
+        return True
+    return (
+        model_status == highspy.HighsModelStatus.kTimeLimit
+        and primal_solution_status == highspy.kSolutionStatusFeasible
     )
 
 
@@ -793,6 +822,7 @@ def _solve_mpc_step(
     forced_discharge_first=None,
     mip_start=None,
     return_mip_start=False,
+    time_limit_seconds=None,
 ):
     horizon = len(prices_h)
     num_battery = len(battery_entities)
@@ -1139,6 +1169,7 @@ def _solve_mpc_step(
         bounds=bounds,
         integrality=integrality,
         mip_start=shifted_mip_start,
+        time_limit_seconds=time_limit_seconds,
     )
 
     if not result.success:
@@ -1532,6 +1563,7 @@ def _run_mpc(
     policy_tail_start=None,
     battery_policy_override=None,
     fixed_comfort_override=None,
+    solver_time_limit_seconds=None,
 ):
     num_battery = len(battery_entities)
     num_comfort = len(comfort_entities)
@@ -1728,6 +1760,7 @@ def _run_mpc(
                 ),
                 mip_start=primary_mip_start if use_mip_starts else None,
                 return_mip_start=use_mip_starts,
+                time_limit_seconds=solver_time_limit_seconds,
             )
             if solve_result is None:
                 raise RuntimeError("MPC solve failed for MILP model")
@@ -1804,6 +1837,7 @@ def _run_mpc(
                             else np.zeros(num_battery, dtype=np.int32)
                         ),
                         forced_discharge_first={b: probe_kwh},
+                        time_limit_seconds=solver_time_limit_seconds,
                     )
                     if counterfactual is None or _objective_is_worse(
                         counterfactual["objective_value"],
@@ -2465,6 +2499,7 @@ def optimize_internal(
         normalized.infer_battery_preserve_policy,
         policy_tail_start,
         battery_policy_override,
+        solver_time_limit_seconds=normalized.solver_time_limit_seconds,
     )
     baseline_score = _score_result(
         baseline_result,
@@ -2594,6 +2629,7 @@ def optimize_internal(
                 policy_tail_start,
                 battery_policy_override,
                 fixed_comfort_override=accepted,
+                solver_time_limit_seconds=normalized.solver_time_limit_seconds,
             )
             additional_successful_solves = int(
                 candidate_result["successful_solves"]

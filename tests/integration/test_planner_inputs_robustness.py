@@ -19,6 +19,7 @@ from custom_components.wattplan.const import (
     CONF_SOURCE_PV,
     SOURCE_MODE_SERVICE_ADAPTER,
 )
+from custom_components.wattplan import coordinator as coordinator_module
 from custom_components.wattplan.coordinator import PlanningStageError
 from custom_components.wattplan.coordinator_parts import StageErrorKind
 from custom_components.wattplan.source_providers.payloads import (
@@ -144,3 +145,39 @@ async def test_missing_service_for_pv_source_degrades_plan(
     assert hass.states.get("sensor.home_status").state == "degraded"
     assert hass.states.get("sensor.home_pv_status").state == "degraded"
     assert entry.runtime_data.coordinator.data is not None
+
+
+async def test_optimizer_timeout_fails_plan_with_execution_error(
+    hass: HomeAssistant,
+    entity_registry_enabled_by_default: None,  # noqa: F811
+) -> None:
+    entry = _entry(
+        title="Home",
+        subentries_data=[_battery_subentry(subentry_id="battery", name="battery")],
+    )
+    await _setup_entry(hass, entry)
+    coordinator = entry.runtime_data.coordinator
+
+    original = hass.async_add_executor_job
+
+    async def hang_on_optimizer(target: Any, *args: Any) -> Any:
+        # The test hass runs executor jobs inline, so simulate a stuck solve.
+        if target is coordinator_module.optimize:
+            await asyncio.sleep(5)
+        return await original(target, *args)
+
+    with (
+        patch.object(coordinator, "_optimizer_timeout_seconds", return_value=0.05),
+        patch.object(hass, "async_add_executor_job", hang_on_optimizer),
+        patch.object(
+            coordinator_module, "optimize", side_effect=_fake_optimize_with_entities
+        ),
+        pytest.raises(PlanningStageError) as err,
+    ):
+        await _run_optimize(hass)
+
+    assert err.value.kind is StageErrorKind.PLANNER_EXECUTION
+    assert "did not finish" in str(err.value)
+    assert coordinator._plan_error.kind is StageErrorKind.PLANNER_EXECUTION
+    # The plan from setup is retained, so the status degrades instead of failing.
+    assert hass.states.get("sensor.home_status").state == "degraded"

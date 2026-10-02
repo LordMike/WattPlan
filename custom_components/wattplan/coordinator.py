@@ -69,6 +69,7 @@ def _snapshot_schema_id() -> str:
 
 
 SCHEDULE_OFFSET = timedelta(seconds=2)
+MIN_OPTIMIZER_TIMEOUT_SECONDS = 60
 
 
 class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
@@ -637,9 +638,18 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             # precision while serializing dates and nested asset settings.
             request["_recorded_optimizer_params"] = params.model_dump(mode="json")
 
+        # Each MILP solve has its own HiGHS time limit; this bounds the whole
+        # plan so a hard instance cannot hold the plan lock past one slot.
+        timeout_seconds = self._optimizer_timeout_seconds(request["slot_minutes"])
         try:
             started_at = time.monotonic()
-            result = await self.hass.async_add_executor_job(optimize, params)
+            async with asyncio.timeout(timeout_seconds):
+                result = await self.hass.async_add_executor_job(optimize, params)
+        except TimeoutError as err:
+            raise PlanningStageError(
+                StageErrorKind.PLANNER_EXECUTION,
+                f"Optimizer did not finish within {timeout_seconds} seconds",
+            ) from err
         except Exception as err:
             raise PlanningStageError(
                 StageErrorKind.PLANNER_EXECUTION,
@@ -663,6 +673,10 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         )
         runtime_data.optimizer_state = result.get("state")
         return result
+
+    def _optimizer_timeout_seconds(self, slot_minutes: int) -> float:
+        """Return the wall-clock bound for one optimizer call."""
+        return max(MIN_OPTIMIZER_TIMEOUT_SECONDS, slot_minutes * 60)
 
     def _sample_values(self, values: list[float], sample_size: int = 6) -> list[float]:
         """Return a short rounded sample for debug logging."""
