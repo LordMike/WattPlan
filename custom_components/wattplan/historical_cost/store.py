@@ -391,9 +391,9 @@ class HistoricalCostStore:
         except OverflowError:
             summed = math.inf
         total = round(summed, 4) if values and math.isfinite(summed) else None
-        if total is None and not records and self._tracking_intersects_period(
-            period_start, period_end
-        ):
+        if total is None and not records and self._tracking_started_before(period_end):
+            # No slot of this period has completed yet (for example right after
+            # midnight or the first of the month); report zero, not unavailable.
             total = 0.0
         return HistoricalPeriodSummary(
             value=total,
@@ -582,8 +582,8 @@ class HistoricalCostStore:
         value = self.data.get("tracking_started_at")
         return str(value) if value else None
 
-    def _tracking_intersects_period(self, period_start: datetime, period_end: datetime) -> bool:
-        """Return whether the store has started tracking within this aggregate period."""
+    def _tracking_started_before(self, moment: datetime) -> bool:
+        """Return whether tracking began, or a slot was processed, before ``moment``."""
         for raw in (
             self.data.get("tracking_started_at"),
             self.data.get("last_processed_slot"),
@@ -593,8 +593,7 @@ class HistoricalCostStore:
             parsed = dt_util.parse_datetime(raw)
             if parsed is None:
                 continue
-            tracked_at = parsed.astimezone(UTC)
-            if period_start <= tracked_at < period_end:
+            if parsed.astimezone(UTC) < moment:
                 return True
         return False
 
