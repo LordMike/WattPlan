@@ -43,7 +43,7 @@ from ..const import (
     SOURCE_MODE_SERVICE_ADAPTER,
     SOURCE_MODE_TEMPLATE,
 )
-from ..datetime_utils import parse_datetime_like
+from ..datetime_utils import parse_datetime_like, typical_step
 from ..forecast_provider import ForecastProvider
 from ..source_types import SourceProvider, SourceProviderError, SourceWindow
 from .config import CONF_WATTPLAN_ENTITY_ID, source_mode, source_providers
@@ -398,34 +398,21 @@ class TemplateAdapterSourceProvider(SourceProvider):
         points: list[tuple[datetime, float]],
         slot_delta: timedelta,
     ) -> list[tuple[datetime, datetime, float]]:
-        """Return [start, end) intervals for sorted, unique timestamped values."""
-        default_interval = self._default_interval(points, slot_delta)
+        """Return [start, end) intervals for sorted, unique timestamped values.
+
+        Each point lasts until the next point but never longer than the
+        source's typical cadence, so a hole in the data stays a gap for the
+        resample and edge-fill modes (and strict validation) to handle.
+        """
+        cadence = typical_step([point_start for point_start, _value in points]) or slot_delta
         intervals: list[tuple[datetime, datetime, float]] = []
         for index, (point_start, value) in enumerate(points):
+            end_dt = point_start + cadence
             if index + 1 < len(points):
-                end_dt = points[index + 1][0]
-            else:
-                end_dt = point_start + default_interval
+                end_dt = min(end_dt, points[index + 1][0])
             intervals.append((point_start, end_dt, value))
 
         return intervals
-
-    def _default_interval(
-        self,
-        points: list[tuple[datetime, float]],
-        slot_delta: timedelta,
-    ) -> timedelta:
-        """Return the inferred cadence for the trailing interval."""
-        durations_seconds: list[int] = []
-        for left, right in pairwise(points):
-            delta_seconds = int((right[0] - left[0]).total_seconds())
-            if delta_seconds > 0:
-                durations_seconds.append(delta_seconds)
-
-        if not durations_seconds:
-            return slot_delta
-
-        return timedelta(seconds=durations_seconds[-1])
 
     def _intervals_to_slots(
         self,

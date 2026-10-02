@@ -903,7 +903,9 @@ async def test_resample_mode_forward_fill_fills_gaps(hass: HomeAssistant) -> Non
 
     values = await provider.async_values(_window())
 
-    assert values == [0.5, 0.5, 3.0, 4.0]
+    # The 15-minute cadence leaves 00:15 as a real gap instead of stretching
+    # the 00:00 value over it.
+    assert values == [1.0, 1.0, 3.0, 4.0]
 
 
 async def test_edge_fill_mode_hold_fills_edges(hass: HomeAssistant) -> None:

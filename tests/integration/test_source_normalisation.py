@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
 
 from custom_components.wattplan.const import (
     AGGREGATION_MODE_FIRST,
@@ -10,19 +11,33 @@ from custom_components.wattplan.const import (
     CLAMP_MODE_NEAREST,
     CONF_AGGREGATION_MODE,
     CONF_CLAMP_MODE,
+    CONF_CONFIG_ENTRY_ID,
+    CONF_EDGE_FILL_MODE,
+    CONF_FIXUP_PROFILE,
+    CONF_RESAMPLE_MODE,
     CONF_SOURCE_EXPORT_PRICE,
     CONF_SOURCE_IMPORT_PRICE,
     CONF_SOURCE_MODE,
     CONF_SOURCE_PV,
     CONF_SOURCE_USAGE,
     CONF_TEMPLATE,
+    EDGE_FILL_MODE_HOLD,
+    FIXUP_PROFILE_REPAIR,
+    FIXUP_PROFILE_STRICT,
+    RESAMPLE_MODE_FORWARD_FILL,
+    RESAMPLE_MODE_LINEAR,
+    SOURCE_MODE_ENERGY_PROVIDER,
     SOURCE_MODE_TEMPLATE,
 )
+from custom_components.wattplan.source_config.provider import build_source_value_provider
 from custom_components.wattplan.source_provider import TemplateAdapterSourceProvider
-from custom_components.wattplan.source_types import SourceWindow
+from custom_components.wattplan.source_types import SourceProviderError, SourceWindow
 import pytest
 
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
+
+from tests.common import MockConfigEntry
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
@@ -116,6 +131,103 @@ async def test_duplicate_timestamps_follow_payload_order(
     values = await provider.async_values(_window(slots=8))
 
     assert values == pytest.approx([expected_first_hour] * 4 + [0.40] * 4)
+
+
+def _holey_hourly_prices() -> list[dict]:
+    """Return hourly prices with 02:00 and 03:00 missing."""
+    return [
+        point
+        for point in _points(60, [1.0, 2.0, 0.0, 0.0, 5.0, 6.0])
+        if point["value"] != 0.0
+    ]
+
+
+async def test_multi_hour_hole_fails_under_strict_profile(hass: HomeAssistant) -> None:
+    """A hole is not hidden by holding the previous value when strict."""
+    provider = build_source_value_provider(
+        hass,
+        source_key=CONF_SOURCE_IMPORT_PRICE,
+        source_config={
+            CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+            CONF_TEMPLATE: f"{{{{ {_holey_hourly_prices()!r} }}}}",
+            CONF_FIXUP_PROFILE: FIXUP_PROFILE_STRICT,
+            CONF_RESAMPLE_MODE: RESAMPLE_MODE_FORWARD_FILL,
+            CONF_EDGE_FILL_MODE: EDGE_FILL_MODE_HOLD,
+        },
+    )
+
+    with pytest.raises(SourceProviderError) as err:
+        await provider.async_values(_window(slot_minutes=60, slots=6))
+
+    assert err.value.details["available_count"] == 4
+    assert err.value.details["required_count"] == 6
+
+
+@pytest.mark.parametrize(
+    ("resample_mode", "expected"),
+    [
+        (RESAMPLE_MODE_FORWARD_FILL, [1.0, 2.0, 2.0, 2.0, 5.0, 6.0]),
+        (RESAMPLE_MODE_LINEAR, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]),
+    ],
+)
+async def test_multi_hour_hole_is_left_to_resample_mode(
+    hass: HomeAssistant, resample_mode: str, expected: list[float]
+) -> None:
+    """The configured resample mode, not interval stretching, fills a hole."""
+    provider = build_source_value_provider(
+        hass,
+        source_key=CONF_SOURCE_IMPORT_PRICE,
+        source_config={
+            CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+            CONF_TEMPLATE: f"{{{{ {_holey_hourly_prices()!r} }}}}",
+            CONF_FIXUP_PROFILE: FIXUP_PROFILE_REPAIR,
+            CONF_RESAMPLE_MODE: resample_mode,
+        },
+    )
+
+    values = await provider.async_values(_window(slot_minutes=60, slots=6))
+
+    assert values == pytest.approx(expected)
+
+
+async def test_energy_provider_night_without_periods_is_zero(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Energy forecasts that skip night periods mean zero, not missing data."""
+    entry = MockConfigEntry(
+        domain="forecast_solar",
+        entry_id="solar-entry",
+        title="Forecast.Solar",
+        state=ConfigEntryState.LOADED,
+    )
+    entry.async_unload = AsyncMock(return_value=True)
+    entry.add_to_hass(hass)
+    wh_hours = {
+        "2026-01-01T00:00:00+00:00": 500.0,
+        "2026-01-01T01:00:00+00:00": 400.0,
+        "2026-01-01T04:00:00+00:00": 300.0,
+        "2026-01-01T05:00:00+00:00": 200.0,
+    }
+    monkeypatch.setattr(
+        "custom_components.wattplan.source_providers.payloads.async_get_energy_solar_forecast_platforms",
+        AsyncMock(
+            return_value={
+                "forecast_solar": AsyncMock(return_value={"wh_hours": wh_hours})
+            }
+        ),
+    )
+    provider = TemplateAdapterSourceProvider(
+        hass,
+        source_name=CONF_SOURCE_PV,
+        source_config={
+            CONF_SOURCE_MODE: SOURCE_MODE_ENERGY_PROVIDER,
+            CONF_CONFIG_ENTRY_ID: entry.entry_id,
+        },
+    )
+
+    values = await provider.async_values(_window(slot_minutes=60, slots=6))
+
+    assert values == pytest.approx([0.5, 0.4, 0.0, 0.0, 0.3, 0.2])
 
 
 @pytest.mark.parametrize("source_name", [CONF_SOURCE_USAGE, CONF_SOURCE_PV])

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
+from itertools import pairwise
 import math
 from typing import Any
 
@@ -16,7 +17,7 @@ from homeassistant.helpers.template import Template
 import voluptuous as vol
 
 from ..adapter_auto import resolve_nested_value
-from ..datetime_utils import parse_datetime_like
+from ..datetime_utils import parse_datetime_like, typical_step
 from ..const import (
     ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
     ADAPTER_TYPE_ATTRIBUTE_VALUES,
@@ -312,6 +313,8 @@ class EnergySolarForecastPayloadProvider(BasePayloadProvider):
                         "provider_reason": "nonfinite_value",
                     },
                 )
+            if start_dt.tzinfo is None:
+                start_dt = start_dt.replace(tzinfo=UTC)
             rows.append((start_dt, numeric_value))
 
         return [
@@ -319,8 +322,29 @@ class EnergySolarForecastPayloadProvider(BasePayloadProvider):
                 "start": start_dt.isoformat(),
                 "value": numeric_value,
             }
-            for start_dt, numeric_value in rows
+            for start_dt, numeric_value in _zero_fill_holes(sorted(rows))
         ]
+
+
+def _zero_fill_holes(rows: list[tuple[datetime, float]]) -> list[tuple[datetime, float]]:
+    """Fill holes between forecast periods with zero energy.
+
+    Energy solar forecasts may omit periods without production (for example
+    the night between sunset and sunrise). Inside the forecast range a missing
+    period means no energy, not unknown data, so it must not become a gap.
+    """
+    step = typical_step([start_dt for start_dt, _value in rows])
+    if step is None:
+        return rows
+    filled: list[tuple[datetime, float]] = []
+    for (start_dt, value), (next_start, _next_value) in pairwise(rows):
+        filled.append((start_dt, value))
+        hole_start = start_dt + step
+        while hole_start < next_start:
+            filled.append((hole_start, 0.0))
+            hole_start += step
+    filled.append(rows[-1])
+    return filled
 
 
 __all__ = [
