@@ -20,6 +20,7 @@ from .const import (
     CONF_RECORD_PLANNER_REPRODUCTIONS,
     CONF_SLOT_MINUTES,
     DOMAIN,
+    SUBENTRY_TYPE_BATTERY,
     DEFAULT_PLANNER_REPRODUCTION_RETENTION_DAYS,
     MAX_PLANNER_REPRODUCTION_RETENTION_DAYS,
 )
@@ -29,6 +30,7 @@ from .outlook_languages import resolve_outlook_languages
 from .plan_outlook_renderer import preload_plan_outlook_catalogs
 from .runtime import WattPlanConfigEntry, WattPlanRuntimeData, mark_runtime_updated
 from .services import SERVICE_SPECS
+from .target_persistence import BatteryTargetStore
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BUTTON]
 
@@ -123,6 +125,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) -> 
             )
         )
 
+    # Battery targets are user intent and survive reloads and restarts.
+    target_store = BatteryTargetStore(hass, entry.entry_id)
+    entry.runtime_data.battery_target_store = target_store
+    entry.runtime_data.battery_targets = await target_store.async_load(
+        {
+            subentry.subentry_id
+            for subentry in entry.subentries.values()
+            if subentry.subentry_type == SUBENTRY_TYPE_BATTERY
+        }
+    )
+
     had_snapshot = await coordinator.async_restore_snapshot()
     entry.async_on_unload(entry.add_update_listener(async_update_listener))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -136,6 +149,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) ->
     if entry.runtime_data.historical_tracker is not None:
         await entry.runtime_data.historical_tracker.async_shutdown()
     await entry.runtime_data.coordinator.async_shutdown()
+    if (target_store := entry.runtime_data.battery_target_store) is not None:
+        await target_store.async_save(entry.runtime_data.battery_targets)
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if not unload_ok:
         return False

@@ -100,7 +100,7 @@ WattPlan exposes the following services:
 
 ### `wattplan.set_target`
 
-Set a battery target SoC that the optimizer should reach by a deadline.
+Set a battery target SoC that the optimizer should reach by a deadline. Targets are stored separately from the plan snapshot and restored after a reload or restart until their deadline passes.
 
 Fields:
 

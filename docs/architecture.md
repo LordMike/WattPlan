@@ -97,6 +97,7 @@ The main runtime center is the coordinator:
 - `config_flow.py`: Collects source configuration and planner settings.
 - `coordinator.py`: Builds planner input, runs planning, tracks stage errors, and updates runtime entities.
 - `binary_sensor.py` / `sensor.py`: Expose planning state, diagnostics, and error scopes.
+- `target_runtime.py` / `target_persistence.py`: Hold user battery targets from `wattplan.set_target` and persist them in a small per-entry store (`wattplan.targets.<entry_id>`), restored on setup. Expired targets and targets for removed batteries are dropped.
 - `source_pipeline.py`, `source_provider.py`, `source_fixup.py`: Resolve raw source data and normalize it into planner-ready values.
 
 ## Data Acquisition

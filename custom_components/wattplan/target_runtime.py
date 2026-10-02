@@ -3,15 +3,23 @@
 from __future__ import annotations
 
 from datetime import datetime
+import logging
 from typing import Any
 
 from homeassistant.util import dt as dt_util
 
+_LOGGER = logging.getLogger(__name__)
+
 
 def _notify_target_listeners(runtime_data: Any, subentry_id: str) -> None:
-    """Push target updates to any entities reflecting this battery target."""
+    """Persist targets and push updates to entities reflecting this battery target."""
+    if (store := runtime_data.battery_target_store) is not None:
+        store.async_schedule_save(runtime_data.battery_targets)
     for listener in list(runtime_data.battery_target_update_listeners.get(subentry_id, ())):
-        listener()
+        try:
+            listener()
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Battery target listener failed")
 
 
 def set_battery_target(runtime_data: Any, subentry_id: str, target: Any) -> None:
