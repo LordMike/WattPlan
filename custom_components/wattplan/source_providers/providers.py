@@ -643,10 +643,10 @@ class TemplateAdapterSourceProvider(SourceProvider):
     def _nearest_slot_index(
         self, point_start: datetime, start_at: datetime, slot_delta: timedelta
     ) -> int:
-        """Return nearest slot index for a timestamp."""
+        """Return nearest slot index for a timestamp, negative before the window."""
         offset_seconds = (point_start - start_at).total_seconds()
         slot_seconds = slot_delta.total_seconds()
-        return int((offset_seconds / slot_seconds) + 0.5)
+        return math.floor((offset_seconds / slot_seconds) + 0.5)
 
     def _clamp_mode(self, source_config: dict[str, Any]) -> str:
         """Return validated clamp mode."""
