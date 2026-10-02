@@ -135,6 +135,7 @@ If you instead use **Entity attribute**, the relevant Solcast structure is typic
 - **Attribute path:** `detailedForecast`
 - **Timestamp key:** `period_start`
 - **Value key:** `pv_estimate`
+- **Value unit** (under Advanced processing): `Average power (kW)`, because `pv_estimate` is the average kW over each half hour rather than the kWh produced in it
 
 Use the entity-attribute path only when you intentionally want to map Solcast data directly. The Energy Provider path is the preferred setup because it reads the forecast intervals exposed through Home Assistant Energy and lets WattPlan convert them into planner slots.
 

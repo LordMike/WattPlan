@@ -116,11 +116,14 @@ Every provider first resolves into timestamp/value points. The source pipeline t
 
 The acquisition pipeline for each source is:
 1. Select the configured provider mode and fetch raw payload or direct slot values.
-2. Normalize the provider output into one finite numeric value per planner slot. NaN and infinities are rejected as source parse failures; signed finite tariffs remain valid.
-3. Apply slot-level aggregation when multiple values land in the same slot.
-4. Optionally align timestamps to the nearest slot, repair gaps by resampling, and fill edges.
-5. Optionally extend the tail with the value from 24 hours earlier when the source uses an extend-style fixup path.
-6. Optionally reuse the last successful normalized window for a limited time when a refresh fails. Only fully finite windows can update this cache.
+2. Parse the payload into timestamp/value points. NaN and infinities are rejected as source parse failures; signed finite tariffs remain valid.
+3. Align timestamps to the slot grid (or a whole fraction of a slot for finer sources), exactly or to the nearest grid point, and resolve duplicate timestamps with the aggregation mode in provider order.
+4. Turn points into intervals capped at the source's typical spacing, then map them onto slots: prices (per kWh) repeat across the slots they cover and aggregate when several fall in one slot; usage and PV energy is split proportionally and summed. Usage/PV values given as average kW are converted to kWh first.
+5. Optionally repair gaps by resampling and fill edges, then require one finite value per slot.
+6. Optionally extend the tail with the value from 24 hours earlier when the source uses an extend-style fixup path.
+7. Optionally reuse the last successful normalized window for a limited time when a refresh fails. Only fully finite windows can update this cache.
+
+`docs/source-data.md` describes these rules from the user's side.
 
 After this, the coordinator holds four slot-aligned numeric arrays that are passed to the optimizer:
 - `grid_import_price_per_kwh`
