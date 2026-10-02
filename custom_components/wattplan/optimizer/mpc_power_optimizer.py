@@ -2106,7 +2106,9 @@ def _score_schedule(
             next_level = float(battery_levels[i, t + 1])
             total_usage += float(battery_charge[i, t]) - float(battery_discharge[i, t])
 
-            if next_level < float(entity.minimum_kwh):
+            # Efficiency arithmetic and MILP feasibility tolerance can land a
+            # hair outside a bound the plan actually honours.
+            if next_level < float(entity.minimum_kwh) - EPSILON:
                 missed = float(entity.minimum_kwh) - next_level
                 denom = (
                     float(entity.initial_kwh) - float(entity.minimum_kwh)
@@ -2139,11 +2141,11 @@ def _score_schedule(
         level_at_target = float(battery_levels[i, timeslot + 1])
         if target["lower_kwh"] is not None and level_at_target < float(
             target["lower_kwh"]
-        ):
+        ) - EPSILON:
             reasons.add("battery_target_unmet")
         if target["upper_kwh"] is not None and level_at_target > float(
             target["upper_kwh"]
-        ):
+        ) + EPSILON:
             reasons.add("battery_target_unmet")
 
     for i, entity in enumerate(comfort_entities):
