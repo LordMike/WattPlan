@@ -2,6 +2,8 @@
 
 from datetime import UTC, datetime, timedelta
 
+from types import SimpleNamespace
+
 import pytest
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.const import CONF_NAME, UnitOfEnergy
@@ -46,7 +48,12 @@ from custom_components.wattplan.historical_cost.models import (
     SCENARIO_ACTUAL,
     SlotRecord,
 )
+from custom_components.wattplan.historical_cost import store as store_module
 from custom_components.wattplan.historical_cost.store import HistoricalCostStore
+from custom_components.wattplan.sensors.historical import (
+    HISTORICAL_SENSOR_DESCRIPTIONS,
+    HistoricalCostSensor,
+)
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
@@ -368,3 +375,79 @@ async def test_failed_plan_keeps_earlier_real_export_prices(
 
     assert tracker.store.cached_price(start, "import") == pytest.approx(2.0)
     assert tracker.store.cached_price(start, "export") == pytest.approx(0.1)
+
+
+async def test_sensor_properties_share_one_computed_summary(
+    hass: HomeAssistant, freezer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """available, native_value and attributes must not each rescan the store (PERF-11)."""
+    store = await _loaded_store(hass, freezer, datetime(2026, 5, 25, 12, 0, 5, tzinfo=UTC))
+    for hour in range(8, 12):
+        store.append_slot(_record(datetime(2026, 5, 25, hour, tzinfo=UTC)))
+    tracker = SimpleNamespace(
+        hass=hass,
+        summary=store.summary,
+        scenario_enabled=lambda _: True,
+        self_consumption_simulation_attributes=lambda: {},
+    )
+    description = next(
+        d
+        for d in HISTORICAL_SENSOR_DESCRIPTIONS
+        if d.key == "historical_actual_cost_today"
+    )
+    sensor = HistoricalCostSensor(
+        MockConfigEntry(domain=DOMAIN, title="Review"),
+        tracker,
+        description,
+        entry_slug="review",
+    )
+    calls = []
+    original = store._records_between
+    monkeypatch.setattr(
+        store,
+        "_records_between",
+        lambda *args: calls.append(args) or original(*args),
+    )
+
+    assert sensor.available is True
+    assert sensor.native_value == pytest.approx(4.0)
+    assert sensor.extra_state_attributes["slots"] == 4
+    assert len(calls) == 1
+
+    # Another metric for the same period reuses the parsed records.
+    store.summary(
+        metric=HistoricalMetric.SAVINGS_VS_GRID_ONLY,
+        period=PERIOD_TODAY,
+        scenario=None,
+    )
+    assert len(calls) == 1
+
+    # New data invalidates the cache.
+    store.append_slot(_record(datetime(2026, 5, 25, 12, tzinfo=UTC)))
+    assert sensor.native_value == pytest.approx(5.0)
+    assert len(calls) == 2
+
+
+async def test_summary_only_parses_days_overlapping_the_period(
+    hass: HomeAssistant, freezer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Retained days outside the requested period are not visited (PERF-11)."""
+    store = await _loaded_store(hass, freezer, datetime(2026, 5, 25, 12, 0, 5, tzinfo=UTC))
+    for day in range(1, 26):
+        store.append_slot(_record(datetime(2026, 5, day, 10, tzinfo=UTC)))
+    parsed: list[object] = []
+    original = store_module._parse_utc
+    monkeypatch.setattr(
+        store_module, "_parse_utc", lambda raw: parsed.append(raw) or original(raw)
+    )
+
+    today = _cost(store, PERIOD_TODAY, datetime(2026, 5, 25, 12, tzinfo=UTC))
+
+    assert today.value == pytest.approx(1.0)
+    assert len(parsed) == 1
+    parsed.clear()
+
+    month = _cost(store, PERIOD_THIS_MONTH, datetime(2026, 5, 25, 12, tzinfo=UTC))
+
+    assert month.value == pytest.approx(25.0)
+    assert len(parsed) == 25

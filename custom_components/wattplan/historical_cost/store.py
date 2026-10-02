@@ -80,6 +80,12 @@ class HistoricalCostStore:
             started_at=datetime.now(tz=UTC),
         )
         self._loaded = False
+        # Bumped whenever retained slots or cursors change. Period records and
+        # summaries are cached against it so sensor updates do not rescan.
+        self._revision = 0
+        self._cache_revision = 0
+        self._record_cache: dict[tuple[datetime, datetime], list[SlotRecord]] = {}
+        self._summary_cache: dict[tuple[Any, ...], HistoricalPeriodSummary] = {}
 
     async def async_load(self) -> None:
         """Load, migrate, and prune stored historical data."""
@@ -91,6 +97,7 @@ class HistoricalCostStore:
                 started_at=datetime.now(tz=UTC),
             )
         self.data = self._migrate(payload)
+        self._revision += 1
         self.prune(datetime.now(tz=UTC))
         self._loaded = True
 
@@ -114,6 +121,7 @@ class HistoricalCostStore:
         meter_stale_slots: dict[str, int] | None = None,
     ) -> None:
         """Update persisted cursors and configuration metadata."""
+        self._revision += 1
         if last_processed_slot is not None:
             self.data["last_processed_slot"] = _utc_iso(last_processed_slot)
             self.data.pop("meter_cursor_seeded", None)
@@ -366,6 +374,7 @@ class HistoricalCostStore:
         )
         day_payload["flags"].append(int(record.flags))
         self.data["last_processed_slot"] = _utc_iso(record.start)
+        self._revision += 1
         self.mark_dirty()
 
     def prune(self, now: datetime) -> None:
@@ -380,9 +389,11 @@ class HistoricalCostStore:
                     day = date.fromisoformat(str(key))
                 except ValueError:
                     del days[key]
+                    self._revision += 1
                     continue
                 if day < cutoff:
                     del days[key]
+                    self._revision += 1
 
         cache = self.data.setdefault("price_cache", {})
         if not isinstance(cache, dict):
@@ -407,7 +418,31 @@ class HistoricalCostStore:
         """Return an aggregate summary for one sensor."""
         now = now or datetime.now(tz=UTC)
         period_start, period_end = self._period_bounds(period, now)
-        records = list(self._records_between(period_start, period_end))
+        if self._cache_revision != self._revision:
+            self._record_cache.clear()
+            self._summary_cache.clear()
+            self._cache_revision = self._revision
+        key = (metric, scenario, period_start, period_end)
+        if (cached := self._summary_cache.get(key)) is not None:
+            return cached
+        summary = self._build_summary(
+            metric=metric,
+            scenario=scenario,
+            period_start=period_start,
+            period_end=period_end,
+        )
+        self._summary_cache[key] = summary
+        return summary
+
+    def _build_summary(
+        self,
+        *,
+        metric: HistoricalMetric,
+        scenario: str | None,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> HistoricalPeriodSummary:
+        records = self._period_records(period_start, period_end)
         missing_slots = 0
         values: list[float] = []
         for record in records:
@@ -442,6 +477,15 @@ class HistoricalCostStore:
                 )
             ),
         )
+
+    def _period_records(self, start: datetime, end: datetime) -> list[SlotRecord]:
+        """Return the parsed records of one period, shared by all metrics."""
+        key = (start, end)
+        records = self._record_cache.get(key)
+        if records is None:
+            records = self._records_between(start, end)
+            self._record_cache[key] = records
+        return records
 
     def _record_value(
         self,
@@ -530,18 +574,21 @@ class HistoricalCostStore:
         days = self.data.get("days", {})
         if not isinstance(days, dict):
             return records
-        for day_payload in days.values():
+        # Days are keyed by local date, so only the days the period touches
+        # need to be visited.
+        day = self._local_date(start)
+        last_day = self._local_date(end - timedelta(microseconds=1))
+        while day <= last_day:
+            day_payload = days.get(day.isoformat())
+            day += timedelta(days=1)
             if not isinstance(day_payload, dict):
                 continue
             starts = day_payload.get("starts", [])
             if not isinstance(starts, list):
                 continue
             for index, raw_start in enumerate(starts):
-                parsed = dt_util.parse_datetime(str(raw_start))
-                if parsed is None:
-                    continue
-                slot_start = parsed.astimezone(UTC)
-                if slot_start < start or slot_start >= end:
+                slot_start = _parse_utc(raw_start)
+                if slot_start is None or slot_start < start or slot_start >= end:
                     continue
                 records.append(self._record_from_day(day_payload, index, slot_start))
         records.sort(key=lambda record: record.start)
@@ -877,6 +924,18 @@ def _finite_float(value: Any) -> float | None:
     if not math.isfinite(parsed):
         return None
     return parsed
+
+
+def _parse_utc(raw: Any) -> datetime | None:
+    """Parse a stored ISO timestamp to UTC; stored slot starts are ``...Z`` strings."""
+    text = str(raw)
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        parsed = dt_util.parse_datetime(text)
+        if parsed is None:
+            return None
+    return parsed.astimezone(UTC)
 
 
 def _utc_iso(value: datetime) -> str:
