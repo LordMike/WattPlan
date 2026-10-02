@@ -849,7 +849,9 @@ def _solve_mpc_step(
         integrality[grid_import_mode.start + t] = highspy.HighsVarType.kInteger
         integrality[pv_surplus_mode.start + t] = highspy.HighsVarType.kInteger
 
-    penalty_battery_min = 0.0
+    # Minimum SoC is a soft floor so a battery that starts below its reserve
+    # still yields a plan that recovers as fast as the limits allow.
+    penalty_battery_min = 5000.0
     penalty_battery_target = 5000.0
 
     A_eq = []
@@ -896,8 +898,7 @@ def _solve_mpc_step(
                 integrality[var["discharge_active"].start + t] = (
                     highspy.HighsVarType.kInteger
                 )
-            # Keep minimum state-of-charge as a hard floor.
-            bounds[var["min_slack"].start + t] = (0.0, 0.0)
+            bounds[var["min_slack"].start + t] = (0.0, None)
             bounds[var["target_under"].start] = (0.0, None)
             bounds[var["target_over"].start] = (0.0, None)
             objective[var["charge_grid"].start + t] += throughput_penalty
@@ -1729,7 +1730,7 @@ def _run_mpc(
                 return_mip_start=use_mip_starts,
             )
             if solve_result is None:
-                raise RuntimeError("MPC solve failed for softened MILP model")
+                raise RuntimeError("MPC solve failed for MILP model")
             successful_solves += 1
             if use_mip_starts:
                 primary_mip_start = solve_result.get("mip_start")

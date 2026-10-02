@@ -70,7 +70,7 @@ result = optimize(params)
 | `name` | `str` | Yes | - | Non-empty | Unique globally. |
 | `initial_kwh` | `float` | Yes | - | Finite, `0..capacity_kwh` | Initial state of charge (kWh). |
 | `target` | `BatteryTargetParams \| None` | No | `null` | If set: `timeslot < horizon` | Optional deadline target constraint. |
-| `minimum_kwh` | `float` | Yes | - | Finite, `0..capacity_kwh` | Minimum desired state (kWh). |
+| `minimum_kwh` | `float` | Yes | - | Finite, `0..capacity_kwh` | Minimum desired state (kWh). Soft floor: a battery that starts below it is planned to recover as fast as its limits allow and the plan reports `battery_min_unmet`. |
 | `capacity_kwh` | `float` | Yes | - | Finite, `> 0` | Storage capacity (kWh). |
 | `charge_curve_kwh` | `list[float]` | Yes | - | Non-empty, finite, `>= 0` | Chargeable energy per slot by SoC curve (kWh per slot). |
 | `discharge_curve_kwh` | `list[float]` | Yes | - | Non-empty, finite, `>= 0` | Dischargeable energy per slot by SoC curve (kWh per slot). |
