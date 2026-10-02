@@ -111,9 +111,9 @@ Fields:
 - `device_id`
   - Optional WattPlan device selection.
 - `soc_kwh`
-  - Required target state of charge in kWh.
+  - Required target state of charge in kWh. Must not exceed the capacity of any matched battery.
 - `reach_at`
-  - Required deadline as a Home Assistant datetime.
+  - Required deadline as a Home Assistant datetime. Must be in the future.
 - `entry_id`
   - Optional filter for a single WattPlan setup.
 

@@ -22,6 +22,7 @@ from .const import (
     ATTR_REACH_AT,
     ATTR_RUN_OPTIMIZE,
     ATTR_SOC_KWH,
+    CONF_CAPACITY_KWH,
     CONF_SOURCE_MODE,
     CONF_SOURCE_USAGE,
     CONF_SOURCES,
@@ -282,6 +283,16 @@ async def async_handle_set_target_service(hass: HomeAssistant, call: ServiceCall
         soc_kwh=float(call.data[ATTR_SOC_KWH]),
         reach_at=dt_util.as_utc(call.data[ATTR_REACH_AT]),
     )
+    if target.reach_at <= dt_util.utcnow():
+        raise ServiceValidationError("`reach_at` must be in the future")
+    for entry_id, subentry_id in sorted(matches):
+        subentry = loaded[entry_id].subentries[subentry_id]
+        capacity_kwh = float(subentry.data[CONF_CAPACITY_KWH])
+        if target.soc_kwh > capacity_kwh:
+            raise ServiceValidationError(
+                f"`soc_kwh` ({target.soc_kwh:g}) exceeds the capacity of battery "
+                f"`{subentry_name(subentry)}` ({capacity_kwh:g} kWh)"
+            )
     for runtime_data, subentry_id in _iter_target_runtime_data(loaded, matches):
         set_battery_target(runtime_data, subentry_id, target)
     if call.data[ATTR_RUN_OPTIMIZE]:
