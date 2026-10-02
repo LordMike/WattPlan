@@ -920,6 +920,13 @@ def _solve_mpc_step(
         action_deadband = float(entity.action_deadband_kwh)
         previous_state = int(battery_states_now[b]) if battery_states_now.size else 0
 
+        # One target slack pair per battery; its penalty must not scale with
+        # the horizon length.
+        bounds[var["target_under"].start] = (0.0, None)
+        bounds[var["target_over"].start] = (0.0, None)
+        objective[var["target_under"].start] = penalty_battery_target
+        objective[var["target_over"].start] = penalty_battery_target
+
         for t in range(horizon):
             grid_upper = charge_limit if can_charge_from_grid else 0.0
             pv_upper = charge_limit if can_charge_from_pv else 0.0
@@ -946,14 +953,10 @@ def _solve_mpc_step(
                     highspy.HighsVarType.kInteger
                 )
             bounds[var["min_slack"].start + t] = (0.0, None)
-            bounds[var["target_under"].start] = (0.0, None)
-            bounds[var["target_over"].start] = (0.0, None)
             objective[var["charge_grid"].start + t] += throughput_penalty
             objective[var["charge_pv"].start + t] += throughput_penalty
             objective[var["discharge"].start + t] += throughput_penalty
             objective[var["min_slack"].start + t] += penalty_battery_min
-            objective[var["target_under"].start] += penalty_battery_target
-            objective[var["target_over"].start] += penalty_battery_target
             if t == 0 and mode_switch_cost > 0.0:
                 if previous_state != 1:
                     objective[var["charge_grid"].start + t] += mode_switch_cost
