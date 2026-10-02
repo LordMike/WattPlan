@@ -83,6 +83,8 @@ class UsageForecastSensor(WattPlanCoordinatorSensor):
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_entity_registry_enabled_default = False
     _attr_suggested_display_precision = 2
+    # The full per-slot forecast is large and changes with every plan.
+    _unrecorded_attributes = frozenset({"forecast", "time_key", "value_key"})
     _require_usable_plan = True
 
     @property
@@ -160,6 +162,15 @@ class PlanDetailsSensor(WattPlanCoordinatorSensor):
 class ProjectionSensor(WattPlanCoordinatorSensor):
     """Sensor exposing projected cost savings metrics from the optimizer."""
 
+    # Per-slot series change with every plan; the total and span stay recorded.
+    _unrecorded_attributes = frozenset(
+        {
+            "values",
+            "baseline_cost_values",
+            "projected_cost_values",
+            "projected_savings_cost_values",
+        }
+    )
     _require_usable_plan = True
 
     def __init__(

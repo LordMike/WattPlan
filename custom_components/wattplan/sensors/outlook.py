@@ -15,6 +15,18 @@ _LOGGER = logging.getLogger(__name__)
 class PlanOutlookSensor(WattPlanCoordinatorSensor):
     """Expose concise accepted-plan prose without controlling any device."""
 
+    # Keep the prose and its identifiers in history; the per-fact breakdown and
+    # coverage timestamps change on every plan and bloat the Recorder.
+    _unrecorded_attributes = frozenset(
+        {
+            "fact_details",
+            "statements",
+            "covered_start",
+            "covered_end",
+            "plan_created_at",
+            "valid_until",
+        }
+    )
     _require_usable_plan = False
     _require_snapshot = False
 

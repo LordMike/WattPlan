@@ -35,6 +35,8 @@ language is always included. Unsupported selections fall back to English. Every
 enabled language is exposed as its own always-suffixed entity; there is no
 unsuffixed Plan Outlook entity.
 
+Large or constantly changing attributes are excluded from the Home Assistant Recorder so history stays small: the plan details attributes (all of them), the usage forecast's `forecast` series, the per-slot series on the projection sensors (`values` and the `*_cost_values` lists), and the Plan Outlook's `fact_details`, `statements` and coverage timestamps (`covered_start`, `covered_end`, `plan_created_at`, `valid_until`). The attributes remain available on the live state.
+
 When `sensor.<setup_slug>_status` is `failed`, plan-dependent entities such as action sensors, plan details, and usage forecast become unavailable rather than continuing to expose stale plan data.
 
 The overall status sensor is the canonical view of plan and scheduler health. Its `plan_created_at` attribute is the snapshot creation time, and its `expires_at` attribute is the end of the current plan coverage from the optimizer horizon. `scheduler_stale` reports only whether the fixed scheduler heartbeat is overdue; the compatibility attribute `is_stale` can also become true when plan coverage expires. `action_recommendations_validated` reports whether the current action recommendations came from a successful plan in this Home Assistant runtime session.
