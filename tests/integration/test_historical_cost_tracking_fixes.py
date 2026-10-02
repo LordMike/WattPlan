@@ -1,5 +1,6 @@
 """Regression tests for historical cost tracking review fixes."""
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 from types import SimpleNamespace
@@ -557,3 +558,52 @@ async def test_long_downtime_backfill_is_clamped_and_written_once(
     assert appends[0][-1].start == completed
     assert len(store.data["days"]) == 60
     assert store.last_processed_slot() == completed
+
+
+async def test_tick_in_flight_during_shutdown_does_not_rearm_timer(
+    hass: HomeAssistant, freezer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unload must not leave a live timer behind a running tick (ROB-21)."""
+    start = datetime(2026, 5, 24, 10, 0, tzinfo=UTC)
+    tracker = await _setup_tracker(hass, freezer, start)
+    assert tracker._unsub_timer is not None
+
+    release = asyncio.Event()
+    events: list[str] = []
+
+    async def _slow_refresh(now=None):
+        events.append("tick started")
+        await release.wait()
+        events.append("tick finished")
+
+    original_flush = tracker.store.async_flush
+
+    async def _flush():
+        events.append("flush")
+        await original_flush()
+
+    monkeypatch.setattr(tracker, "async_refresh", _slow_refresh)
+    monkeypatch.setattr(tracker.store, "async_flush", _flush)
+
+    async def _hold_lock_like_a_tick():
+        async with tracker._process_lock:
+            await tracker._async_timer(start + timedelta(minutes=15, seconds=5))
+
+    tick = hass.async_create_task(_hold_lock_like_a_tick())
+    await asyncio.sleep(0)
+    shutdown = hass.async_create_task(tracker.async_shutdown())
+    await asyncio.sleep(0)
+    assert events == ["tick started"]  # shutdown waits for the process lock
+
+    release.set()
+    await tick
+    await shutdown
+
+    assert events == ["tick started", "tick finished", "flush"]
+    assert tracker._unsub_timer is None
+
+    # A late refresh after unload does nothing and cannot schedule a timer.
+    monkeypatch.undo()
+    await tracker.async_process_completed_slot(start + timedelta(hours=3))
+    assert tracker._unsub_timer is None
+    assert tracker.store.last_processed_slot() == start

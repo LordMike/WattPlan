@@ -91,6 +91,7 @@ class HistoricalCostTracker:
         self._source_providers: dict[str, SourceProvider] = {}
         self._listeners: set[HistoricalUpdateListener] = set()
         self._process_lock = asyncio.Lock()
+        self._closed = False
 
     async def async_start(self) -> None:
         """Load state, seed cursors, and start scheduling."""
@@ -126,11 +127,17 @@ class HistoricalCostTracker:
         self._schedule_next(datetime.now(tz=UTC))
 
     async def async_shutdown(self) -> None:
-        """Stop scheduling and flush pending store state."""
+        """Stop scheduling and flush pending store state.
+
+        Marks the tracker closed so a tick in flight cannot re-arm the timer,
+        then waits for any slot being processed before flushing.
+        """
+        self._closed = True
         if self._unsub_timer is not None:
             self._unsub_timer()
             self._unsub_timer = None
-        await self.store.async_flush()
+        async with self._process_lock:
+            await self.store.async_flush()
 
     @callback
     def async_add_listener(self, listener: HistoricalUpdateListener) -> CALLBACK_TYPE:
@@ -227,6 +234,8 @@ class HistoricalCostTracker:
         now: datetime | None,
     ) -> None:
         """Process one completed slot while holding the transaction lock."""
+        if self._closed:
+            return
         now = now or datetime.now(tz=UTC)
         completed_slot = self._floor_to_slot(now) - self._interval
         last_processed = self.store.last_processed_slot()
@@ -329,6 +338,9 @@ class HistoricalCostTracker:
 
     async def _async_timer(self, now: datetime) -> None:
         """Handle one scheduled tracker tick."""
+        self._unsub_timer = None
+        if self._closed:
+            return
         try:
             await self.async_refresh(now)
         except Exception as err:  # noqa: BLE001
@@ -342,6 +354,8 @@ class HistoricalCostTracker:
 
     def _schedule_next(self, now: datetime) -> None:
         """Schedule the next slot-aligned tick."""
+        if self._closed:
+            return
         if self._unsub_timer is not None:
             self._unsub_timer()
         refresh_at = self._floor_to_slot(now) + self._interval + SCHEDULE_OFFSET
