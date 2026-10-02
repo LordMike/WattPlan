@@ -553,12 +553,19 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         if historical_tracker is None:
             return
         optimizer_params = request["optimizer_params"]
+        # Zeros the planner substituted for an unavailable export source are
+        # not real prices; do not retain them.
+        export_prices = (
+            list(optimizer_params["grid_export_price_per_kwh"])
+            if request.get("export_price_from_source", True)
+            else None
+        )
         try:
             historical_tracker.remember_price_series(
                 start_at=request["window"].start_at,
                 slot_minutes=int(request["slot_minutes"]),
                 import_prices=list(optimizer_params["grid_import_price_per_kwh"]),
-                export_prices=list(optimizer_params["grid_export_price_per_kwh"]),
+                export_prices=export_prices,
             )
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning(

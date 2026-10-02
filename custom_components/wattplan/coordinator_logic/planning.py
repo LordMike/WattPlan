@@ -384,6 +384,8 @@ class PlanningRequestBuilder:
                 "hours_to_plan": hours_to_plan,
                 "window": window,
                 "local_timezone": self._hass.config.time_zone,
+                # False when the planner substituted zeros for export prices.
+                "export_price_from_source": export_price_values is not None,
                 "source_provenance": {
                     "import_price": {
                         "configured": import_price_source.get(CONF_SOURCE_MODE)

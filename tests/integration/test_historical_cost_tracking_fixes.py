@@ -9,7 +9,10 @@ from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.wattplan.const import (
+    ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
     CONF_ACTION_EMISSION_ENABLED,
+    CONF_ADAPTER_TYPE,
+    CONF_FIXUP_PROFILE,
     CONF_HISTORICAL_COST_TRACKING_ENABLED,
     CONF_HISTORICAL_GRID_EXPORT_SENSOR,
     CONF_HISTORICAL_GRID_IMPORT_SENSOR,
@@ -19,15 +22,22 @@ from custom_components.wattplan.const import (
     CONF_HOURS_TO_PLAN,
     CONF_PLANNING_ENABLED,
     CONF_SLOT_MINUTES,
+    CONF_SOURCE_EXPORT_PRICE,
     CONF_SOURCE_IMPORT_PRICE,
     CONF_SOURCE_MODE,
     CONF_SOURCES,
     CONF_TEMPLATE,
+    CONF_TIME_KEY,
+    CONF_VALUE_KEY,
     DOMAIN,
+    FIXUP_PROFILE_STRICT,
+    SOURCE_MODE_ENTITY_ADAPTER,
     SOURCE_MODE_TEMPLATE,
 )
+from custom_components.wattplan.coordinator import CycleTrigger
 from custom_components.wattplan.historical_cost.models import (
     FLAG_METER_RESET,
+    FLAG_MISSING_EXPORT_PRICE,
     FLAG_MISSING_METER,
     FLAG_MULTI_SLOT_DELTA,
     HistoricalMetric,
@@ -246,3 +256,115 @@ async def test_longer_outage_is_not_booked_as_one_slot(
     day = tracker.store.data["days"]["2026-05-24"]
     assert day["flags"] == [FLAG_MISSING_METER] * 3 + [0]
     assert day["grid_import"] == [None, None, None, pytest.approx(1.0)]
+
+
+async def _plan_with_export_source(
+    hass: HomeAssistant, freezer, start: datetime, *, export_healthy: bool
+):
+    """Plan once with a configured export source that is healthy or missing."""
+    freezer.move_to(start + timedelta(seconds=2))
+    points = [
+        {"start": (start + timedelta(minutes=15 * i)).isoformat(), "value": 0.1 + i / 100}
+        for i in range(4)
+    ]
+    if export_healthy:
+        hass.states.async_set("sensor.export_price_forecast", "ok", {"prices": points})
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: 15,
+            CONF_HOURS_TO_PLAN: 1,
+            CONF_SOURCES: {
+                CONF_SOURCE_IMPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [1.0, 1.0, 1.0, 1.0] }}",
+                },
+                CONF_SOURCE_EXPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+                    "entity_id": "sensor.export_price_forecast",
+                    CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
+                    CONF_NAME: "prices",
+                    CONF_TIME_KEY: "start",
+                    CONF_VALUE_KEY: "value",
+                    CONF_FIXUP_PROFILE: FIXUP_PROFILE_STRICT,
+                },
+            },
+        },
+        options={
+            CONF_PLANNING_ENABLED: False,
+            CONF_ACTION_EMISSION_ENABLED: False,
+            CONF_HISTORICAL_COST_TRACKING_ENABLED: True,
+            CONF_HISTORICAL_GRID_IMPORT_SENSOR: "sensor.grid_import_total",
+            CONF_HISTORICAL_USAGE_SENSOR: "sensor.usage_total",
+            CONF_HISTORICAL_GRID_EXPORT_SENSOR: "sensor.grid_export_total",
+            CONF_HISTORICAL_PV_SENSOR: None,
+            CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION: False,
+        },
+    )
+    entry.add_to_hass(hass)
+    _set_meter(hass, "sensor.grid_import_total", 100.0)
+    _set_meter(hass, "sensor.grid_export_total", 10.0)
+    _set_meter(hass, "sensor.usage_total", 200.0)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    await entry.runtime_data.coordinator.async_plan(trigger=CycleTrigger.SERVICE)
+    return entry.runtime_data.historical_tracker
+
+
+async def test_unavailable_export_source_prices_are_not_cached_as_zero(
+    hass: HomeAssistant, freezer
+) -> None:
+    """Zeros substituted for a failed export source must not become prices (COR-36)."""
+    start = datetime(2026, 5, 24, 10, 0, tzinfo=UTC)
+    tracker = await _plan_with_export_source(hass, freezer, start, export_healthy=False)
+
+    assert tracker.store.cached_price(start, "import") == pytest.approx(1.0)
+    assert tracker.store.cached_price(start, "export") is None
+
+    # The completed slot falls back to a live read, which also fails: the slot
+    # is flagged instead of silently booking zero export revenue.
+    tracker.store.update_metadata(
+        last_processed_slot=start - timedelta(minutes=15),
+        last_meter_values={"grid_import": 100.0, "grid_export": 10.0, "usage": 200.0, "pv": 0.0},
+        meter_config=tracker._meter_config(),
+    )
+    freezer.move_to(start + timedelta(minutes=15, seconds=2))
+    _set_meter(hass, "sensor.grid_import_total", 101.0)
+    _set_meter(hass, "sensor.grid_export_total", 10.5)
+    _set_meter(hass, "sensor.usage_total", 201.0)
+    await tracker.async_process_completed_slot()
+
+    day = tracker.store.data["days"]["2026-05-24"]
+    assert day["flags"] == [FLAG_MISSING_EXPORT_PRICE]
+    assert day["export_price"] == [None]
+
+
+async def test_healthy_export_source_prices_are_still_cached(
+    hass: HomeAssistant, freezer
+) -> None:
+    """A healthy export source keeps feeding real prices to the cache."""
+    start = datetime(2026, 5, 24, 10, 0, tzinfo=UTC)
+    tracker = await _plan_with_export_source(hass, freezer, start, export_healthy=True)
+
+    assert tracker.store.cached_price(start, "export") == pytest.approx(0.1)
+    assert tracker.store.cached_price(start + timedelta(minutes=15), "export") == pytest.approx(0.11)
+
+
+async def test_failed_plan_keeps_earlier_real_export_prices(
+    hass: HomeAssistant, freezer
+) -> None:
+    """A later plan without export prices must not erase earlier real ones."""
+    start = datetime(2026, 5, 24, 10, 0, tzinfo=UTC)
+    tracker = await _plan_with_export_source(hass, freezer, start, export_healthy=True)
+
+    tracker.remember_price_series(
+        start_at=start,
+        slot_minutes=15,
+        import_prices=[2.0] * 4,
+        export_prices=None,
+    )
+
+    assert tracker.store.cached_price(start, "import") == pytest.approx(2.0)
+    assert tracker.store.cached_price(start, "export") == pytest.approx(0.1)

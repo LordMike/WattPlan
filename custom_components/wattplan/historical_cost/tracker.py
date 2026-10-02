@@ -174,9 +174,12 @@ class HistoricalCostTracker:
         start_at: datetime,
         slot_minutes: int,
         import_prices: list[float],
-        export_prices: list[float],
+        export_prices: list[float] | None,
     ) -> None:
-        """Retain normalized planner prices for later historical slot processing."""
+        """Retain normalized planner prices for later historical slot processing.
+
+        ``export_prices`` is None when the planner had no real export prices.
+        """
         self.store.remember_price_series(
             start_at=start_at,
             slot_minutes=slot_minutes,

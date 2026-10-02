@@ -289,9 +289,15 @@ class HistoricalCostStore:
         start_at: datetime,
         slot_minutes: int,
         import_prices: list[float],
-        export_prices: list[float],
+        export_prices: list[float] | None,
     ) -> None:
-        """Retain normalized planner price values by UTC slot start."""
+        """Retain normalized planner price values by UTC slot start.
+
+        Pass ``export_prices=None`` when the export price source did not
+        deliver real values for this plan (the planner then substitutes zeros).
+        Only import prices are retained in that case, and any export price
+        remembered earlier is left untouched.
+        """
         if int(slot_minutes) != self.slot_minutes:
             return
         cache = self.data.setdefault("price_cache", {})
@@ -306,15 +312,20 @@ class HistoricalCostStore:
             if import_price is None:
                 continue
             slot_start = start_at.astimezone(UTC) + (interval * index)
-            export_price = _finite_float(
-                export_prices[index] if index < len(export_prices) else 0.0
-            )
-            if export_price is None:
-                continue
-            cache[_utc_iso(slot_start)] = {
-                "import_price": import_price,
-                "export_price": export_price,
-            }
+            key = _utc_iso(slot_start)
+            entry: dict[str, float] = {"import_price": import_price}
+            if export_prices is not None:
+                export_price = _finite_float(
+                    export_prices[index] if index < len(export_prices) else 0.0
+                )
+                if export_price is None:
+                    continue
+                entry["export_price"] = export_price
+            else:
+                existing = cache.get(key)
+                if isinstance(existing, dict) and "export_price" in existing:
+                    entry["export_price"] = existing["export_price"]
+            cache[key] = entry
             changed = True
         if changed:
             self.mark_dirty()
@@ -686,12 +697,17 @@ class HistoricalCostStore:
                 del migrated["price_cache"][slot_key]
                 continue
             import_price = _finite_float(price_payload.get("import_price"))
-            export_price = _finite_float(price_payload.get("export_price"))
-            if import_price is None or export_price is None:
+            if import_price is None:
                 del migrated["price_cache"][slot_key]
                 continue
             price_payload["import_price"] = import_price
-            price_payload["export_price"] = export_price
+            # Export prices are optional: plans without a healthy export source
+            # retain import prices only.
+            export_price = _finite_float(price_payload.get("export_price"))
+            if export_price is None:
+                price_payload.pop("export_price", None)
+            else:
+                price_payload["export_price"] = export_price
         for day_key, day_payload in list(migrated["days"].items()):
             if not isinstance(day_payload, dict):
                 del migrated["days"][day_key]

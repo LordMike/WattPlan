@@ -24,7 +24,7 @@ Required historical meters:
 
 Use sensors with a steadily increasing `kWh` total, usually with Home Assistant device class `energy` and state class `total` or `total_increasing`. Do not use instant `kW` power sensors, current battery level sensors, or forecast-only sensors as historical meters.
 
-Historical tracking also needs prices for each completed slot. WattPlan keeps the normalized import/export prices from successful planner runs and falls back to live price source reads when needed.
+Historical tracking also needs prices for each completed slot. WattPlan keeps the normalized import/export prices from successful planner runs and falls back to live price source reads when needed. When the export price source was unavailable during a planner run, the zeros the planner substitutes are not kept as prices; the slot then uses a live export price read, or is marked as missing an export price, rather than booking zero export revenue.
 
 ## How The Numbers Update
 
