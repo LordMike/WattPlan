@@ -5,9 +5,27 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+import time
 from typing import Any
 
+# (label, milliseconds since run start at the end of that step)
 type TimingEntry = tuple[str, int]
+
+
+class RunTimer:
+    """Cumulative checkpoint timer for one planning run."""
+
+    __slots__ = ("_started_at", "entries")
+
+    def __init__(self) -> None:
+        """Start the timer."""
+        self._started_at = time.monotonic()
+        self.entries: list[TimingEntry] = []
+
+    def mark(self, label: str) -> None:
+        """Record that the step `label` just finished."""
+        elapsed_ms = int(round((time.monotonic() - self._started_at) * 1000))
+        self.entries.append((label, elapsed_ms))
 
 
 class CycleTrigger(StrEnum):
@@ -87,6 +105,7 @@ __all__ = [
     "CycleTrigger",
     "EmitStageError",
     "PlanningStageError",
+    "RunTimer",
     "Stage",
     "StageErrorKind",
     "StageErrorState",

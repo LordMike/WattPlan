@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import time
 from datetime import UTC, datetime, timedelta
 from typing import Any, Callable
 
@@ -60,7 +59,7 @@ from ..const import (
     SUBENTRY_TYPE_COMFORT,
     SUBENTRY_TYPE_OPTIONAL,
 )
-from ..coordinator_parts import PlanningStageError, StageErrorKind, TimingEntry
+from ..coordinator_parts import PlanningStageError, RunTimer, StageErrorKind
 from ..historical_on_off_provider import HistoricalOnOffProvider
 from ..source_pipeline import build_source_value_provider
 from ..source_types import SourceProvider, SourceProviderError, SourceWindow
@@ -89,11 +88,6 @@ BATTERY_SKIP_SOC_UNAVAILABLE = "soc_unavailable"
 BATTERY_SKIP_AVAILABILITY_UNAVAILABLE = "availability_unavailable"
 
 type SourceIssueRecorder = Callable[..., None]
-
-
-def _duration_ms(started_at: float) -> int:
-    """Return elapsed monotonic time in whole milliseconds."""
-    return int(round((time.monotonic() - started_at) * 1000))
 
 
 def _configured_source(
@@ -125,8 +119,8 @@ class PlanningRequestBuilder:
         self._record_source_issue = record_source_issue
 
     async def async_build_request(
-        self, entry: ConfigEntry
-    ) -> tuple[dict[str, Any], list[TimingEntry]]:
+        self, entry: ConfigEntry, timer: RunTimer
+    ) -> dict[str, Any]:
         """Fetch and validate all inputs and build a planning request."""
         slot_minutes = int(entry.data[CONF_SLOT_MINUTES])
         hours_to_plan = int(entry.data[CONF_HOURS_TO_PLAN])
@@ -150,17 +144,16 @@ class PlanningRequestBuilder:
                 "Source configuration is missing or invalid",
             )
 
-        timings: list[TimingEntry] = []
+        timer.mark("Request setup")
 
         import_price_source = sources.get(CONF_SOURCE_IMPORT_PRICE, {})
-        started_at = time.monotonic()
         price_values = await self._async_resolve_source(
             entry=entry,
             source_key=CONF_SOURCE_IMPORT_PRICE,
             source_config=import_price_source,
             window=window,
         )
-        timings.append(("Import price source fetch", _duration_ms(started_at)))
+        timer.mark("Import price source fetch")
 
         export_price_source = _configured_source(sources, CONF_SOURCE_EXPORT_PRICE)
         export_price_values = await self._async_optional_source_values(
@@ -170,7 +163,7 @@ class PlanningRequestBuilder:
             window=window,
             blocks_planning=False,
             timing_label="Export price source fetch",
-            timings=timings,
+            timer=timer,
         )
 
         usage_source = _configured_source(sources, CONF_SOURCE_USAGE)
@@ -181,7 +174,7 @@ class PlanningRequestBuilder:
             window=window,
             blocks_planning=True,
             timing_label="Usage source fetch",
-            timings=timings,
+            timer=timer,
         )
 
         pv_source = _configured_source(sources, CONF_SOURCE_PV)
@@ -192,7 +185,7 @@ class PlanningRequestBuilder:
             window=window,
             blocks_planning=False,
             timing_label="PV source fetch",
-            timings=timings,
+            timer=timer,
         )
 
         usage_forecast_points: list[dict[str, Any]] | None = None
@@ -227,6 +220,7 @@ class PlanningRequestBuilder:
                 )
                 if skip is not None:
                     skipped_batteries[subentry_id] = skip
+                    timer.mark(f"Battery inputs: {name}")
                     continue
                 can_charge_from = (
                     (1 if bool(subentry.data.get(CONF_CAN_CHARGE_FROM_GRID, False)) else 0)
@@ -274,6 +268,7 @@ class PlanningRequestBuilder:
                         }
                 battery_entities.append(battery_payload)
                 battery_name_to_subentry[name] = subentry_id
+                timer.mark(f"Battery inputs: {name}")
                 continue
 
             if subentry.subentry_type == SUBENTRY_TYPE_COMFORT:
@@ -304,6 +299,7 @@ class PlanningRequestBuilder:
                         f"Failed to read comfort history for `{on_off_source}`: {err}",
                         details={"source": "comfort_history", "entity_id": on_off_source},
                     ) from err
+                timer.mark(f"Comfort history: {name}")
                 comfort_entities.append(
                     {
                         "name": name,
@@ -340,6 +336,7 @@ class PlanningRequestBuilder:
                     }
                 )
                 comfort_name_to_subentry[name] = subentry_id
+                timer.mark(f"Comfort entity build: {name}")
                 continue
 
             if subentry.subentry_type == SUBENTRY_TYPE_OPTIONAL:
@@ -370,6 +367,7 @@ class PlanningRequestBuilder:
                     }
                 )
                 optional_name_to_subentry[name] = subentry_id
+                timer.mark(f"Optional entity build: {name}")
 
         if len(rolling_window_slots_set) > 1:
             raise PlanningStageError(
@@ -377,67 +375,66 @@ class PlanningRequestBuilder:
                 "All comfort loads must use the same rolling window duration",
             )
 
-        return (
-            {
-                "entry_id": entry.entry_id,
-                "slot_minutes": slot_minutes,
-                "hours_to_plan": hours_to_plan,
-                "window": window,
-                "local_timezone": self._hass.config.time_zone,
-                # False when the planner substituted zeros for export prices.
-                "export_price_from_source": export_price_values is not None,
-                "source_provenance": {
-                    "import_price": {
-                        "configured": import_price_source.get(CONF_SOURCE_MODE)
-                        != SOURCE_MODE_NOT_USED,
-                    },
-                    "export_price": {
-                        "configured": export_price_source is not None
-                        and export_price_source.get(CONF_SOURCE_MODE)
-                        != SOURCE_MODE_NOT_USED,
-                    },
-                    "usage": {
-                        "configured": usage_source is not None
-                        and usage_source.get(CONF_SOURCE_MODE)
-                        != SOURCE_MODE_NOT_USED,
-                    },
-                    "pv": {
-                        "configured": pv_source is not None
-                        and pv_source.get(CONF_SOURCE_MODE) != SOURCE_MODE_NOT_USED,
-                    },
+        request: dict[str, Any] = {
+            "entry_id": entry.entry_id,
+            "slot_minutes": slot_minutes,
+            "hours_to_plan": hours_to_plan,
+            "window": window,
+            "local_timezone": self._hass.config.time_zone,
+            # False when the planner substituted zeros for export prices.
+            "export_price_from_source": export_price_values is not None,
+            "source_provenance": {
+                "import_price": {
+                    "configured": import_price_source.get(CONF_SOURCE_MODE)
+                    != SOURCE_MODE_NOT_USED,
                 },
-                "optimizer_params": {
-                    "plan_start": window.start_at.isoformat(),
-                    "slot_minutes": slot_minutes,
-                    "grid_import_price_per_kwh": price_values,
-                    "grid_export_price_per_kwh": (
-                        export_price_values if export_price_values is not None else [0.0] * expected_slots
-                    ),
-                    "solar_input_kwh": pv_values if pv_values is not None else [0.0] * expected_slots,
-                    "usage_kwh": usage_values if usage_values is not None else [0.0] * expected_slots,
-                    "rolling_window_slots": (
-                        next(iter(rolling_window_slots_set)) if rolling_window_slots_set else 24
-                    ),
-                    "lookahead_slots": lookahead_slots,
-                    **PROFILE_SETTINGS.get(
-                        str(entry.options.get(CONF_OPTIMIZER_PROFILE, OPTIMIZER_PROFILE_BALANCED)),
-                        PROFILE_SETTINGS[OPTIMIZER_PROFILE_BALANCED],
-                    ),
-                    "battery_entities": battery_entities,
-                    "comfort_entities": comfort_entities,
-                    "optional_entities": optional_entities,
-                    "state": runtime_data.optimizer_state,
+                "export_price": {
+                    "configured": export_price_source is not None
+                    and export_price_source.get(CONF_SOURCE_MODE)
+                    != SOURCE_MODE_NOT_USED,
                 },
-                "name_to_subentry": {
-                    "batteries": battery_name_to_subentry,
-                    "comforts": comfort_name_to_subentry,
-                    "optionals": optional_name_to_subentry,
+                "usage": {
+                    "configured": usage_source is not None
+                    and usage_source.get(CONF_SOURCE_MODE)
+                    != SOURCE_MODE_NOT_USED,
                 },
-                "skipped_batteries": skipped_batteries,
-                "usage_forecast_points": usage_forecast_points,
+                "pv": {
+                    "configured": pv_source is not None
+                    and pv_source.get(CONF_SOURCE_MODE) != SOURCE_MODE_NOT_USED,
+                },
             },
-            timings,
-        )
+            "optimizer_params": {
+                "plan_start": window.start_at.isoformat(),
+                "slot_minutes": slot_minutes,
+                "grid_import_price_per_kwh": price_values,
+                "grid_export_price_per_kwh": (
+                    export_price_values if export_price_values is not None else [0.0] * expected_slots
+                ),
+                "solar_input_kwh": pv_values if pv_values is not None else [0.0] * expected_slots,
+                "usage_kwh": usage_values if usage_values is not None else [0.0] * expected_slots,
+                "rolling_window_slots": (
+                    next(iter(rolling_window_slots_set)) if rolling_window_slots_set else 24
+                ),
+                "lookahead_slots": lookahead_slots,
+                **PROFILE_SETTINGS.get(
+                    str(entry.options.get(CONF_OPTIMIZER_PROFILE, OPTIMIZER_PROFILE_BALANCED)),
+                    PROFILE_SETTINGS[OPTIMIZER_PROFILE_BALANCED],
+                ),
+                "battery_entities": battery_entities,
+                "comfort_entities": comfort_entities,
+                "optional_entities": optional_entities,
+                "state": runtime_data.optimizer_state,
+            },
+            "name_to_subentry": {
+                "batteries": battery_name_to_subentry,
+                "comforts": comfort_name_to_subentry,
+                "optionals": optional_name_to_subentry,
+            },
+            "skipped_batteries": skipped_batteries,
+            "usage_forecast_points": usage_forecast_points,
+        }
+        timer.mark("Request assembly")
+        return request
 
     async def _async_optional_source_values(
         self,
@@ -448,12 +445,11 @@ class PlanningRequestBuilder:
         window: SourceWindow,
         blocks_planning: bool,
         timing_label: str,
-        timings: list[TimingEntry],
+        timer: RunTimer,
     ) -> list[float] | None:
         """Resolve one optional source and append its timing when enabled."""
         if source_config is None:
             return None
-        started_at = time.monotonic()
         values = await self._async_resolve_optional_source(
             entry=entry,
             source_key=source_key,
@@ -461,7 +457,7 @@ class PlanningRequestBuilder:
             window=window,
             blocks_planning=blocks_planning,
         )
-        timings.append((timing_label, _duration_ms(started_at)))
+        timer.mark(timing_label)
         return values
 
     async def _async_resolve_source(

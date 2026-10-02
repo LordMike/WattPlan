@@ -6,7 +6,6 @@ import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 import logging
-import time
 from typing import Any
 
 from pydantic import ValidationError
@@ -33,6 +32,7 @@ from .coordinator_parts import (
     CycleTrigger,
     EmitStageError,
     PlanningStageError,
+    RunTimer,
     Stage,
     StageErrorKind,
     StageErrorState,
@@ -56,11 +56,6 @@ from .source_types import SourceProvider
 _LOGGER = logging.getLogger(__name__)
 HEARTBEAT_OFFSET = timedelta(minutes=3)
 STORAGE_VERSION = 1
-
-
-def _duration_ms(started_at: float) -> int:
-    """Return elapsed monotonic time in whole milliseconds."""
-    return int(round((time.monotonic() - started_at) * 1000))
 
 
 def _snapshot_schema_id() -> str:
@@ -387,7 +382,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             return
 
         started = datetime.now(tz=UTC)
-        total_started = time.monotonic()
+        timer = RunTimer()
         self._last_attempt_at = started
         self._last_run_timings = None
 
@@ -395,20 +390,17 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             try:
                 self._source_status.reset()
                 entry = self._require_entry()
-                request, timings = await self._async_build_planning_request(entry)
+                request = await self._async_build_planning_request(entry, timer)
                 planner_result = await self._async_run_optimizer(
-                    request, entry.runtime_data, timings=timings
+                    request, entry.runtime_data, timer=timer
                 )
                 self._remember_historical_price_series(entry, request)
+                timer.mark("Historical price retention")
                 planner_output = self._planner_output_from_result(
-                    request, planner_result, timings=timings
+                    request, planner_result, timer=timer
                 )
-                self._append_total_timing(
-                    timings=timings,
-                    total_ms=_duration_ms(total_started),
-                )
-                self._last_run_timings = list(timings)
                 new_snapshot = self._project_snapshot(planner_output)
+                timer.mark("Snapshot projection")
                 self._snapshot = new_snapshot
                 self.data = new_snapshot
                 self._action_recommendations_validated = True
@@ -419,11 +411,18 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                     planner_output=planner_output,
                     snapshot=self._snapshot,
                 )
+                # Persist the checkpoints reached so far so they survive restarts;
+                # the complete list replaces them once the run finishes.
+                self._last_run_timings = list(timer.entries)
                 await self.async_persist_snapshot()
+                timer.mark("Snapshot persist")
                 await self.planner_history.async_record(
                     new_snapshot.created_at, request, planner_result
                 )
+                timer.mark("Planner history record")
                 self._sync_source_issues(entry)
+                timer.mark("total")
+                self._last_run_timings = list(timer.entries)
                 if trigger is CycleTrigger.SERVICE:
                     self.async_update_listeners()
             except PlanningStageError as err:
@@ -532,16 +531,15 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         return entry
 
     async def _async_build_planning_request(
-        self, entry: ConfigEntry
-    ) -> tuple[dict[str, Any], list[TimingEntry]]:
+        self, entry: ConfigEntry, timer: RunTimer
+    ) -> dict[str, Any]:
         """Fetch and validate all inputs and build a planning request."""
-        return await self._planning.async_build_request(entry)
+        return await self._planning.async_build_request(entry, timer)
 
     async def async_build_planner_input_export(self) -> dict[str, Any]:
         """Rebuild and return the current planning request for export."""
         entry = self._require_entry()
-        request, _timings = await self._async_build_planning_request(entry)
-        return request
+        return await self._async_build_planning_request(entry, RunTimer())
 
     def _remember_historical_price_series(
         self,
@@ -593,7 +591,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         request: dict[str, Any],
         runtime_data: Any,
         *,
-        timings: list[TimingEntry],
+        timer: RunTimer,
     ) -> dict[str, Any]:
         """Run poweroptim in the executor and normalize planner exceptions."""
         optimizer_params = request["optimizer_params"]
@@ -638,18 +636,19 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 StageErrorKind.PLANNER_INPUT,
                 f"Planner input validation failed: {err}",
             ) from err
+        timer.mark("Optimizer input validation")
 
         if self._record_planner_reproductions:
             # Save the validated call arguments before the optimizer can advance
             # its opaque state. Pydantic's JSON mode preserves the full numeric
             # precision while serializing dates and nested asset settings.
             request["_recorded_optimizer_params"] = params.model_dump(mode="json")
+            timer.mark("Reproduction params recording")
 
         # Each MILP solve has its own HiGHS time limit; this bounds the whole
         # plan so a hard instance cannot hold the plan lock past one slot.
         timeout_seconds = self._optimizer_timeout_seconds(request["slot_minutes"])
         try:
-            started_at = time.monotonic()
             async with asyncio.timeout(timeout_seconds):
                 result = await self.hass.async_add_executor_job(optimize, params)
         except TimeoutError as err:
@@ -663,21 +662,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 f"Optimizer execution failed: {err}",
             ) from err
 
-        timings.append(
-            (
-                "Optimizer plan calculation",
-                int(
-                    round(
-                        float(
-                            result.get(
-                                "execution_time", _duration_ms(started_at) / 1000
-                            )
-                        )
-                        * 1000
-                    )
-                ),
-            )
-        )
+        timer.mark("Optimizer executor job")
         runtime_data.optimizer_state = result.get("state")
         return result
 
@@ -693,17 +678,6 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         """Convert a power limit in kW to energy per solver slot in kWh."""
         return power_kw * (slot_minutes / 60.0)
 
-    def _append_total_timing(self, *, timings: list[TimingEntry], total_ms: int) -> None:
-        """Append the final total timing entry to one timing list."""
-        while (
-            timings
-            and isinstance(timings[-1], tuple | list)
-            and len(timings[-1]) == 2
-            and timings[-1][0] == "total"
-        ):
-            timings.pop()
-        timings.append(("total", int(total_ms)))
-
     def _set_last_plan_duration(self, started: datetime) -> None:
         """Store elapsed wall-clock time for the latest planning attempt."""
         self._last_duration_ms = int(
@@ -715,7 +689,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         request: dict[str, Any],
         result: dict[str, Any],
         *,
-        timings: list[TimingEntry],
+        timer: RunTimer,
     ) -> dict[str, Any]:
         """Map poweroptim output to coordinator planner output shape."""
         previous_outlook = None
@@ -726,7 +700,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         return self._projection.planner_output_from_result(
             request,
             result,
-            timings=timings,
+            timer=timer,
             source_health=self._source_status.source_health_diagnostics(),
             previous_outlook=previous_outlook,
         )

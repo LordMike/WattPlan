@@ -24,7 +24,7 @@ These exist once per WattPlan setup:
 | `sensor.<setup_slug>_pv_status` | Present when PV is configured. PV source health: `ok`, `degraded`, or `failed`. |
 | `sensor.<setup_slug>_last_run` | Timestamp of the last successful optimize (plan calculation) cycle. |
 | `sensor.<setup_slug>_next_run` | Disabled by default. Timestamp of the next scheduled planning cycle. |
-| `sensor.<setup_slug>_last_run_duration` | Disabled by default. Duration of the last optimize cycle in milliseconds. |
+| `sensor.<setup_slug>_last_run_duration` | Disabled by default. Duration of the last optimize cycle in milliseconds. The `timings` attribute is a list of `[label, ms]` checkpoints, where `ms` is the time since the run started at the end of that step (cumulative, non-decreasing, ending with `total`). The gap between two consecutive checkpoints is the time spent in the later step. `optimizer_reported_ms` is the optimizer's own reported solve time, shown separately because it is not a checkpoint. |
 | `sensor.<setup_slug>_plan_details` | Disabled by default. Raw planner-detail payload at WattPlan's configured slot size. |
 | `sensor.<setup_slug>_plan_details_hourly` | Disabled by default. The same planner details, aggregated to hourly buckets. |
 | `sensor.<setup_slug>_usage_forecast` | Present when the built-in usage source is configured. Exposes the generated usage forecast. |

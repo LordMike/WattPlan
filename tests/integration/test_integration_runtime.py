@@ -3082,14 +3082,33 @@ async def test_plan_details_sensor_exposes_horizon_length_arrays(
     assert duration_state is not None
     timings = duration_state.attributes["timings"]
     assert isinstance(timings, list)
-    assert [entry[0] for entry in timings] == [
+    labels = [entry[0] for entry in timings]
+    assert labels == [
+        "Request setup",
         "Import price source fetch",
         "Usage source fetch",
         "PV source fetch",
-        "Optimizer plan calculation",
+        "Battery inputs: battery",
+        "Comfort history: comfort",
+        "Comfort entity build: comfort",
+        "Optional entity build: optional",
+        "Request assembly",
+        "Optimizer input validation",
+        "Optimizer executor job",
+        "Historical price retention",
+        "Planner output mapping",
         "Plan details payload build",
+        "Plan details hourly aggregation",
+        "Plan outlook build",
+        "Snapshot projection",
+        "Snapshot persist",
+        "Planner history record",
         "total",
     ]
+    # Entries are cumulative checkpoints, so they never decrease.
+    values = [entry[1] for entry in timings]
+    assert values == sorted(values)
+    assert "optimizer_reported_ms" in duration_state.attributes
     assert all(isinstance(entry, list | tuple) and len(entry) == 2 for entry in timings)
     assert all(isinstance(entry[1], int) for entry in timings)
 
@@ -3149,7 +3168,8 @@ async def test_plan_details_timings_omit_unconfigured_sources(
     assert "Export price source fetch" not in tasks
     assert "Usage source fetch" not in tasks
     assert "PV source fetch" not in tasks
-    assert tasks[-2:] == ["Plan details payload build", "total"]
+    assert tasks[-1] == "total"
+    assert "Plan details payload build" in tasks
 
 
 async def test_plan_details_timings_keep_merged_source_as_single_source_entry(

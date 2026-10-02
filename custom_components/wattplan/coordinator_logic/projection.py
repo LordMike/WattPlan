@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 import logging
-import time
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -12,7 +11,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.util import slugify
 
 from ..const import DOMAIN
-from ..coordinator_parts import CoordinatorSnapshot, TimingEntry
+from ..coordinator_parts import CoordinatorSnapshot, RunTimer
 from ..plan_outlook import build_plan_outlook
 from .planning import (
     BATTERY_SKIP_AVAILABILITY_UNAVAILABLE,
@@ -25,11 +24,6 @@ BATTERY_DEGRADED_SKIP_REASONS = {
 }
 
 _LOGGER = logging.getLogger(__name__)
-
-
-def _duration_ms(started_at: float) -> int:
-    """Return elapsed monotonic time in whole milliseconds."""
-    return int(round((time.monotonic() - started_at) * 1000))
 
 
 class PlannerProjectionBuilder:
@@ -51,7 +45,7 @@ class PlannerProjectionBuilder:
         request: dict[str, Any],
         result: dict[str, Any],
         *,
-        timings: list[TimingEntry],
+        timer: RunTimer,
         source_health: dict[str, dict[str, Any]] | None = None,
         previous_outlook: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -154,6 +148,7 @@ class PlannerProjectionBuilder:
             message = "Plan solved with one or more batteries skipped"
         else:
             message = "Plan solved"
+        timer.mark("Planner output mapping")
         diagnostics = {
             "batteries": batteries,
             "skipped_batteries": skipped_batteries,
@@ -174,7 +169,7 @@ class PlannerProjectionBuilder:
                 "span_start": start_at.isoformat(),
                 "span_end": (start_at + timedelta(minutes=horizon_slots * slot_minutes)).isoformat(),
             },
-            **self._build_enabled_plan_details(request, result, timings=timings),
+            **self._build_enabled_plan_details(request, result, timer=timer),
         }
         try:
             diagnostics["outlook"] = build_plan_outlook(
@@ -194,6 +189,7 @@ class PlannerProjectionBuilder:
                 start_at.isoformat(),
             )
             diagnostics["outlook"] = None
+        timer.mark("Plan outlook build")
         return {
             "status": status,
             "message": message,
@@ -220,27 +216,26 @@ class PlannerProjectionBuilder:
         request: dict[str, Any],
         result: dict[str, Any],
         *,
-        timings: list[TimingEntry],
+        timer: RunTimer,
     ) -> dict[str, Any]:
         diagnostics: dict[str, Any] = {}
         raw_details: dict[str, Any] | None = None
         full_details_enabled = self._plan_details_enabled("plan_details")
 
         if full_details_enabled:
-            started_at = time.monotonic()
             raw_details = self._build_plan_details_payload(request, result)
-            timings.append(("Plan details payload build", _duration_ms(started_at)))
+            timer.mark("Plan details payload build")
             diagnostics["plan_details"] = raw_details
 
         if self._plan_details_enabled("plan_details_hourly"):
             if raw_details is None:
-                started_at = time.monotonic()
                 raw_details = self._build_plan_details_payload(request, result)
-                timings.append(("Plan details payload build", _duration_ms(started_at)))
+                timer.mark("Plan details payload build")
             diagnostics["plan_details_hourly"] = self._aggregate_plan_details(
                 raw_details,
                 target_slot_minutes=60,
             )
+            timer.mark("Plan details hourly aggregation")
 
         return diagnostics
 
