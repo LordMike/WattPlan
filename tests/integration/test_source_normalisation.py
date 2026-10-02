@@ -373,6 +373,49 @@ async def test_average_power_unit_converts_to_energy(
     assert values == pytest.approx(expected)
 
 
+async def test_strict_profile_applies_to_multi_provider_sources(
+    hass: HomeAssistant,
+) -> None:
+    """"Direct only" disables gap repair and edge fill for merged providers too."""
+    hass.states.async_set(
+        "sensor.prices_today",
+        "ok",
+        {"prices": _points(60, [1.0, 2.0])},
+    )
+    hass.states.async_set(
+        "sensor.prices_tomorrow",
+        "ok",
+        {"prices": _points(60, [5.0], offset_minutes=4 * 60)},
+    )
+    provider = build_source_value_provider(
+        hass,
+        source_key=CONF_SOURCE_IMPORT_PRICE,
+        source_config={
+            CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+            CONF_PROVIDERS: [
+                {
+                    CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+                    "entity_id": entity_id,
+                    CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
+                    CONF_NAME: "prices",
+                    CONF_TIME_KEY: "start",
+                    CONF_VALUE_KEY: "value",
+                }
+                for entity_id in ("sensor.prices_today", "sensor.prices_tomorrow")
+            ],
+            CONF_FIXUP_PROFILE: FIXUP_PROFILE_STRICT,
+            CONF_RESAMPLE_MODE: RESAMPLE_MODE_LINEAR,
+            CONF_EDGE_FILL_MODE: EDGE_FILL_MODE_HOLD,
+        },
+    )
+
+    with pytest.raises(SourceProviderError) as err:
+        await provider.async_values(_window(slot_minutes=60, slots=6))
+
+    assert err.value.details["available_count"] == 3
+    assert err.value.details["required_count"] == 6
+
+
 def _advanced_fields(result: dict) -> set[str]:
     """Return the field names inside a form's advanced section."""
     for key, value in result["data_schema"].schema.items():

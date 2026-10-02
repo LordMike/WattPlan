@@ -95,7 +95,7 @@ def build_source_base_provider(
     return MergedSourceProvider(
         hass,
         source_name=source_key,
-        source_config=source_config,
+        source_config=effective_provider_config(source_config),
         validate_built_in_entity=validate_built_in_entity,
         allow_partial_failures=allow_partial_failures,
     )
