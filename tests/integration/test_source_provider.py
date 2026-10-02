@@ -935,7 +935,7 @@ async def test_all_modifiers_with_irregular_data(hass: HomeAssistant) -> None:
     ]
     provider = TemplateAdapterSourceProvider(
         hass,
-        source_name="price",
+        source_name="import_price",
         source_config=_template_config(
             payload,
             **{
@@ -949,7 +949,9 @@ async def test_all_modifiers_with_irregular_data(hass: HomeAssistant) -> None:
 
     values = await provider.async_values(_window())
 
-    assert values == [10.0, 10.0, 17.0, 24.0]
+    # 00:44 and 00:46 share the 00:45 slot (mean 24); the 00:15 price holds
+    # until the next point, so nothing is left for linear repair.
+    assert values == [10.0, 10.0, 10.0, 24.0]
 
 
 async def test_template_string_output_raises_error(hass: HomeAssistant) -> None:

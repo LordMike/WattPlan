@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 from custom_components.wattplan.const import (
     AGGREGATION_MODE_FIRST,
+    AGGREGATION_MODE_LAST,
     CLAMP_MODE_NEAREST,
     CONF_AGGREGATION_MODE,
     CONF_CLAMP_MODE,
@@ -90,6 +91,31 @@ async def test_hourly_price_repeats_across_quarter_hour_slots(
     values = await provider.async_values(_window(slots=8))
 
     assert values == pytest.approx([0.30] * 4 + [0.40] * 4)
+
+
+@pytest.mark.parametrize(
+    ("aggregation_mode", "expected_first_hour"),
+    [(AGGREGATION_MODE_FIRST, 0.50), (AGGREGATION_MODE_LAST, 0.30)],
+)
+async def test_duplicate_timestamps_follow_payload_order(
+    hass: HomeAssistant, aggregation_mode: str, expected_first_hour: float
+) -> None:
+    """First/last pick by payload order, and duplicates keep interval coverage."""
+    payload = [
+        {"start": START.isoformat(), "value": 0.50},
+        {"start": START.isoformat(), "value": 0.30},
+        {"start": (START + timedelta(hours=1)).isoformat(), "value": 0.40},
+    ]
+    provider = _template_provider(
+        hass,
+        CONF_SOURCE_IMPORT_PRICE,
+        payload,
+        **{CONF_AGGREGATION_MODE: aggregation_mode},
+    )
+
+    values = await provider.async_values(_window(slots=8))
+
+    assert values == pytest.approx([expected_first_hour] * 4 + [0.40] * 4)
 
 
 @pytest.mark.parametrize("source_name", [CONF_SOURCE_USAGE, CONF_SOURCE_PV])

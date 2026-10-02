@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from itertools import pairwise
+from itertools import groupby, pairwise
 import logging
 import math
 from typing import Any
@@ -353,11 +353,9 @@ class TemplateAdapterSourceProvider(SourceProvider):
         start_at = self._as_utc(window.start_at)
         end_at = start_at + (slot_delta * window.slots)
         snapped_points = self._snapped_points(points, start_at, slot_delta)
-        if len(snapped_points) != len({point_start for point_start, _value in snapped_points}):
-            known = self._point_slots(snapped_points, window, start_at, end_at, slot_delta)
-            return self._complete_slots(known)
-
-        intervals = self._intervals_from_points(snapped_points, slot_delta)
+        intervals = self._intervals_from_points(
+            self._deduplicated_points(snapped_points), slot_delta
+        )
         known = self._intervals_to_slots(
             intervals=intervals,
             window=window,
@@ -373,60 +371,41 @@ class TemplateAdapterSourceProvider(SourceProvider):
         start_at: datetime,
         slot_delta: timedelta,
     ) -> list[tuple[datetime, float]]:
-        """Return sorted points aligned to the configured slot boundaries."""
+        """Return points aligned to slot boundaries, sorted by timestamp.
+
+        The sort is stable, so points sharing a timestamp keep provider and
+        payload order for first/last aggregation.
+        """
         return sorted(
             (
-                self._snap_timestamp(point_start, start_at, slot_delta),
-                value,
-            )
-            for point_start, value in points
+                (self._snap_timestamp(point_start, start_at, slot_delta), value)
+                for point_start, value in points
+            ),
+            key=lambda point: point[0],
         )
 
-    def _point_slots(
-        self,
-        snapped_points: list[tuple[datetime, float]],
-        window: SourceWindow,
-        start_at: datetime,
-        end_at: datetime,
-        slot_delta: timedelta,
-    ) -> list[float | None]:
-        """Map timestamps to planner slots without interval distribution."""
-        buckets: dict[int, list[float]] = {}
-        for point_start, value in snapped_points:
-            if point_start < start_at or point_start >= end_at:
-                continue
-            slot_index = int((point_start - start_at) // slot_delta)
-            buckets.setdefault(slot_index, []).append(value)
-
-        known: list[float | None] = [None] * window.slots
-        for slot_index, slot_values in buckets.items():
-            known[slot_index] = self._aggregate_values(slot_values)
-        return known
+    def _deduplicated_points(
+        self, snapped_points: list[tuple[datetime, float]]
+    ) -> list[tuple[datetime, float]]:
+        """Resolve points sharing one timestamp with the aggregation mode."""
+        return [
+            (point_start, self._aggregate_values([value for _start, value in group]))
+            for point_start, group in groupby(snapped_points, key=lambda point: point[0])
+        ]
 
     def _intervals_from_points(
         self,
-        snapped_points: list[tuple[datetime, float]],
+        points: list[tuple[datetime, float]],
         slot_delta: timedelta,
     ) -> list[tuple[datetime, datetime, float]]:
-        """Return normalized [start, end) intervals for timestamped values."""
-        default_interval = self._default_interval(snapped_points, slot_delta)
+        """Return [start, end) intervals for sorted, unique timestamped values."""
+        default_interval = self._default_interval(points, slot_delta)
         intervals: list[tuple[datetime, datetime, float]] = []
-        for index, (point_start, value) in enumerate(snapped_points):
-            if index + 1 < len(snapped_points):
-                end_dt = snapped_points[index + 1][0]
+        for index, (point_start, value) in enumerate(points):
+            if index + 1 < len(points):
+                end_dt = points[index + 1][0]
             else:
                 end_dt = point_start + default_interval
-
-            if end_dt <= point_start:
-                raise SourceProviderError(
-                    "source_validation",
-                    (
-                        f"{self._source_name} point interval starting at "
-                        f"`{point_start.isoformat()}` has a non-positive duration"
-                    ),
-                    details={"source": self._source_name},
-                )
-
             intervals.append((point_start, end_dt, value))
 
         return intervals
