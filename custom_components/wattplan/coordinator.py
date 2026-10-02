@@ -58,6 +58,11 @@ HEARTBEAT_OFFSET = timedelta(minutes=3)
 STORAGE_VERSION = 1
 
 
+def snapshot_storage_key(entry_id: str) -> str:
+    """Return the storage key of one entry's cached snapshot."""
+    return f"{DOMAIN}.snapshot.{entry_id}"
+
+
 def _snapshot_schema_id() -> str:
     """Return schema identity for serialized snapshot cache."""
     return snapshot_schema_id()
@@ -119,7 +124,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         self._snapshot_store = Store[dict[str, Any]](
             hass,
             STORAGE_VERSION,
-            f"{DOMAIN}.snapshot.{entry_id}",
+            snapshot_storage_key(entry_id),
             private=True,
         )
         self._snapshot_schema_id = snapshot_schema_id()

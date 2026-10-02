@@ -18,6 +18,11 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 
+def reproduction_directory(hass: HomeAssistant, entry_id: str) -> Path:
+    """Return the directory holding one entry's reproduction files."""
+    return Path(hass.config.path(f"{DOMAIN}_reproductions", entry_id))
+
+
 class PlannerHistory:
     """Store complete optimizer runs in one JSONL file per local calendar day."""
 
@@ -31,7 +36,7 @@ class PlannerHistory:
         integration_version: str,
     ) -> None:
         self._hass = hass
-        self._directory = Path(hass.config.path(f"{DOMAIN}_reproductions", entry_id))
+        self._directory = reproduction_directory(hass, entry_id)
         self._timezone = ZoneInfo(hass.config.time_zone)
         self._enabled = enabled
         self._retention_days = retention_days

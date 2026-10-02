@@ -54,6 +54,11 @@ class HistoricalPeriodSummary:
     reference_segment_ids: tuple[str, ...]
 
 
+def history_storage_key(entry_id: str) -> str:
+    """Return the storage key of one entry's historical cost data."""
+    return f"{DOMAIN}.history.{entry_id}"
+
+
 class HistoricalCostStore:
     """Thin wrapper around Home Assistant Store for one config entry."""
 
@@ -73,7 +78,7 @@ class HistoricalCostStore:
         self._store = Store[dict[str, Any]](
             hass,
             STORE_VERSION,
-            f"{DOMAIN}.history.{entry_id}",
+            history_storage_key(entry_id),
             private=True,
         )
         self.data = default_store_payload(

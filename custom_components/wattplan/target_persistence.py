@@ -20,13 +20,18 @@ STORAGE_VERSION = 1
 SAVE_DELAY_SECONDS = 1.0
 
 
+def targets_storage_key(entry_id: str) -> str:
+    """Return the storage key of one entry's battery targets."""
+    return f"{DOMAIN}.targets.{entry_id}"
+
+
 class BatteryTargetStore:
     """Keep battery targets across reloads and restarts for one config entry."""
 
     def __init__(self, hass: HomeAssistant, entry_id: str) -> None:
         """Initialize the store for one config entry."""
         self._store = Store[dict[str, Any]](
-            hass, STORAGE_VERSION, f"{DOMAIN}.targets.{entry_id}", private=True
+            hass, STORAGE_VERSION, targets_storage_key(entry_id), private=True
         )
 
     async def async_load(
