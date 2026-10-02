@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 from typing import Any
 from unittest.mock import patch
 
 import pytest
-from homeassistant.const import CONF_NAME, STATE_UNAVAILABLE
+from homeassistant.const import CONF_NAME, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 
 from custom_components.wattplan.const import (
@@ -22,6 +23,9 @@ from custom_components.wattplan.const import (
 from custom_components.wattplan import coordinator as coordinator_module
 from custom_components.wattplan.coordinator import PlanningStageError
 from custom_components.wattplan.coordinator_parts import StageErrorKind
+from custom_components.wattplan.historical_on_off_provider import (
+    HistoricalOnOffProvider,
+)
 from custom_components.wattplan.source_providers.payloads import (
     async_service_response,
     split_service_name,
@@ -31,6 +35,7 @@ from custom_components.wattplan.source_types import SourceProviderError
 from .test_integration_e2e import (
     _base_sources,
     _battery_subentry,
+    _comfort_subentry,
     _entry,
     _fake_optimize_with_entities,
     _run_optimize,
@@ -181,3 +186,45 @@ async def test_optimizer_timeout_fails_plan_with_execution_error(
     assert coordinator._plan_error.kind is StageErrorKind.PLANNER_EXECUTION
     # The plan from setup is retained, so the status degrades instead of failing.
     assert hass.states.get("sensor.home_status").state == "degraded"
+
+
+@pytest.mark.parametrize("state", [STATE_UNAVAILABLE, STATE_UNKNOWN])
+async def test_unavailable_comfort_state_is_unknown_history_not_off(
+    hass: HomeAssistant, freezer: Any, state: str
+) -> None:
+    hass.states.async_set("binary_sensor.heating", state)
+    # An old state would give a naive OFF streak of 24 slots.
+    freezer.tick(timedelta(hours=6))
+    runtime = await HistoricalOnOffProvider(
+        hass, "binary_sensor.heating"
+    ).async_runtime_state(rolling_window_slots=4, slot_minutes=15)
+
+    assert runtime == (False, None, 0, 0)
+
+
+async def test_unavailable_comfort_entity_sends_no_off_streak_to_the_planner(
+    hass: HomeAssistant,
+    entity_registry_enabled_by_default: None,  # noqa: F811
+) -> None:
+    entry = _entry(
+        title="Home",
+        subentries_data=[
+            _battery_subentry(subentry_id="battery", name="battery"),
+            _comfort_subentry(subentry_id="comfort", name="comfort"),
+        ],
+    )
+    await _setup_entry(hass, entry)
+    hass.states.async_set("binary_sensor.comfort_on_off", STATE_UNAVAILABLE)
+    captured: list[Any] = []
+
+    def capture(params: Any) -> dict[str, object]:
+        captured.append(params)
+        return _fake_optimize_with_entities(params)
+
+    with patch("custom_components.wattplan.coordinator.optimize", side_effect=capture):
+        await _run_optimize(hass)
+
+    comfort = captured[-1].comfort_entities[0]
+    assert comfort.on_history is None
+    assert comfort.off_streak_slots_now == 0
+    assert comfort.is_on_now is False

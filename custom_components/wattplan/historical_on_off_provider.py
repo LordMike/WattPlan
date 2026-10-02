@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from homeassistant.const import STATE_ON
+from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
 
 from .rolling_history_cache import RollingHistoryCache
@@ -39,6 +39,12 @@ class HistoricalOnOffProvider:
         state = self._hass.states.get(self._entity_id)
         if state is None:
             raise ValueError(f"On/off source `{self._entity_id}` was not found")
+
+        if state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            # The load's real state is unknown. Report unknown history and no
+            # OFF streak instead of inventing one that could force the load on;
+            # the optimizer marks the plan degraded for missing history.
+            return False, None, 0, 0
 
         now = datetime.now(tz=UTC)
         slot_seconds = slot_minutes * 60

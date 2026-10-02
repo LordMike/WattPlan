@@ -51,6 +51,7 @@ Typical examples:
 - a service-adapter source failed (service not found, service error, invalid service name, or no response within 30 seconds); this is handled like any other fetch failure, so stale cached data is used when available
 - a provider returned NaN or an infinite value, so WattPlan rejected that refresh and retained a finite cached window
 - the optimizer solved the plan with reduced confidence
+- a comfort load's on/off entity is `unavailable` or `unknown`, so its runtime history is treated as unknown (not as OFF) and the optimizer reports `comfort_history_unavailable`
 - planning failed, but a previous plan is retained and still covers the current time
 
 In practice, `degraded` means:
