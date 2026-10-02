@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Any
 
 RETENTION_DAYS = 60
+# Planner prices are only read while a slot is recorded; keep this much history.
+PRICE_CACHE_MARGIN = timedelta(hours=2)
 STORE_VERSION = 1
 SAVE_DELAY_SECONDS = 10
 

@@ -180,13 +180,13 @@ class HistoricalCostTracker:
 
         ``export_prices`` is None when the planner had no real export prices.
         """
-        self.store.remember_price_series(
+        if self.store.remember_price_series(
             start_at=start_at,
             slot_minutes=slot_minutes,
             import_prices=import_prices,
             export_prices=export_prices,
-        )
-        self._notify()
+        ):
+            self._notify()
 
     def self_consumption_simulation_attributes(self) -> dict[str, Any]:
         """Return current self-consumption simulation state attributes."""
@@ -247,10 +247,9 @@ class HistoricalCostTracker:
             self.store.invalidate_simulation(
                 at=next_slot, reason="skipped_slot_boundary"
             )
-            missing_slot = next_slot
-            while missing_slot <= completed_slot:
-                await self._async_append_gap(missing_slot, FLAG_GAP)
-                missing_slot += self._interval
+            self.store.append_slots(
+                self._gap_records(next_slot, completed_slot, now, FLAG_GAP)
+            )
             await self._async_seed(
                 now,
                 processed_slot=completed_slot,
@@ -379,20 +378,40 @@ class HistoricalCostTracker:
             self.store.data.pop("meter_cursor_seeded", None)
         self._schedule_next(now)
 
-    async def _async_append_gap(self, slot_start: datetime, flags: int) -> None:
-        """Record an explicit missing/gap slot."""
-        record = SlotRecord(
-            start=slot_start,
-            import_price=None,
-            export_price=None,
-            grid_import=None,
-            grid_export=None,
-            usage=None,
-            pv=None,
-            self_consumption_segment_id=None,
-            flags=flags,
-        )
-        self.store.append_slot(record)
+    def _gap_records(
+        self,
+        first_slot: datetime,
+        last_slot: datetime,
+        now: datetime,
+        flags: int,
+    ) -> list[SlotRecord]:
+        """Return explicit missing/gap records for slots first_slot..last_slot.
+
+        Slots older than the retention window would be pruned straight away, so
+        they are not created.
+        """
+        oldest = self.store.retention_start(now)
+        if first_slot < oldest:
+            skipped = math.ceil((oldest - first_slot) / self._interval)
+            first_slot += skipped * self._interval
+        records: list[SlotRecord] = []
+        slot_start = first_slot
+        while slot_start <= last_slot:
+            records.append(
+                SlotRecord(
+                    start=slot_start,
+                    import_price=None,
+                    export_price=None,
+                    grid_import=None,
+                    grid_export=None,
+                    usage=None,
+                    pv=None,
+                    self_consumption_segment_id=None,
+                    flags=flags,
+                )
+            )
+            slot_start += self._interval
+        return records
 
     def _read_meter_values(self) -> tuple[dict[str, float | None], int]:
         """Read configured cumulative meter states."""

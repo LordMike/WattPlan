@@ -49,6 +49,10 @@ Meter resets and unavailable readings cost as few slots as possible:
 | A meter is unavailable or not numeric for one slot | That slot is missing. The last good reading stays the baseline, and the next slot books the increase since it, which covers two slots of energy. That slot is flagged (`multi_slot_delta`) and priced at its own slot price. |
 | A meter is unavailable for two or more slots in a row | Every affected slot, including the first one after the meter returns, is missing. The energy cannot be attributed to a single slot. |
 
+## Retention And Storage
+
+WattPlan keeps the last 60 local days of slot records; older days are dropped when a slot is processed. After a long outage, missing slots are only back-filled within that retention window, in one batch. The normalized planner prices are retained only for slots that have not been recorded yet (plus a short margin), and changes are saved in the background in coalesced writes.
+
 ## Scenarios
 
 | Scenario | What it means | How to read it |

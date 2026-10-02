@@ -451,3 +451,109 @@ async def test_summary_only_parses_days_overlapping_the_period(
 
     assert month.value == pytest.approx(25.0)
     assert len(parsed) == 25
+
+
+async def test_mark_dirty_does_not_prune_and_unchanged_prices_do_not_save(
+    hass: HomeAssistant, freezer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pruning runs per processed slot and an unchanged price plan is a no-op (PERF-12)."""
+    now = datetime(2026, 5, 25, 12, 0, 5, tzinfo=UTC)
+    store = await _loaded_store(hass, freezer, now, slot_minutes=15)
+    prunes = []
+    dirty = []
+    original_prune = store.prune
+    original_dirty = store.mark_dirty
+    monkeypatch.setattr(store, "prune", lambda n: prunes.append(n) or original_prune(n))
+    monkeypatch.setattr(store, "mark_dirty", lambda: dirty.append(1) or original_dirty())
+    slot = datetime(2026, 5, 25, 12, tzinfo=UTC)
+
+    for _ in range(5):
+        store.mark_dirty()
+    assert prunes == []
+
+    assert store.remember_price_series(
+        start_at=slot, slot_minutes=15, import_prices=[1.0, 1.1], export_prices=[0.1, 0.1]
+    )
+    assert len(dirty) == 6
+    assert not store.remember_price_series(
+        start_at=slot, slot_minutes=15, import_prices=[1.0, 1.1], export_prices=[0.1, 0.1]
+    )
+    assert len(dirty) == 6
+    assert store.remember_price_series(
+        start_at=slot, slot_minutes=15, import_prices=[1.0, 1.2], export_prices=[0.1, 0.1]
+    )
+    assert len(dirty) == 7
+
+    store.update_metadata(last_processed_slot=slot)
+    assert len(prunes) == 1
+
+
+async def test_price_cache_only_keeps_unrecorded_slots(
+    hass: HomeAssistant, freezer
+) -> None:
+    """Prices of recorded slots are dropped instead of kept for 60 days (PERF-12)."""
+    now = datetime(2026, 5, 25, 12, 0, 5, tzinfo=UTC)
+    store = await _loaded_store(hass, freezer, now, slot_minutes=60)
+    store.update_metadata(last_processed_slot=datetime(2026, 5, 25, 11, tzinfo=UTC))
+
+    # A plan that starts in the past only retains the slots still to be recorded.
+    store.remember_price_series(
+        start_at=datetime(2026, 5, 24, 11, tzinfo=UTC),
+        slot_minutes=60,
+        import_prices=[1.0] * 30,
+        export_prices=[0.1] * 30,
+    )
+    cached = sorted(store.data["price_cache"])
+    assert cached[0] == "2026-05-25T09:00:00Z"
+    assert cached[-1] == "2026-05-25T16:00:00Z"
+
+    # Moving the cursor forward trims what has been recorded since.
+    store.update_metadata(last_processed_slot=datetime(2026, 5, 25, 14, tzinfo=UTC))
+    assert min(store.data["price_cache"]) == "2026-05-25T12:00:00Z"
+
+
+async def test_long_downtime_backfill_is_clamped_and_written_once(
+    hass: HomeAssistant, freezer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A long outage creates at most the retained window in one batch (PERF-13)."""
+    start = datetime(2026, 5, 24, 10, 0, tzinfo=UTC)
+    await hass.config.async_set_time_zone("UTC")
+    tracker = await _setup_tracker(hass, freezer, start)
+    store = tracker.store
+    store.update_metadata(
+        last_processed_slot=start - timedelta(days=200),
+        last_meter_values={
+            "grid_import": 100.0,
+            "grid_export": 0.0,
+            "usage": 200.0,
+            "pv": 0.0,
+        },
+        meter_config=tracker._meter_config(),
+    )
+    prunes = []
+    appends = []
+    original_prune = store.prune
+    original_append = store.append_slots
+
+    def _append(records):
+        records = list(records)
+        appends.append(records)
+        original_append(records)
+
+    monkeypatch.setattr(store, "prune", lambda n: prunes.append(n) or original_prune(n))
+    monkeypatch.setattr(store, "append_slots", _append)
+
+    now = start + timedelta(minutes=2)
+    freezer.move_to(now)
+    await tracker.async_process_completed_slot()
+
+    assert len(appends) == 1
+    assert len(prunes) == 1
+    completed = start - timedelta(minutes=15)
+    window_start = store.retention_start(now)
+    expected = int((completed - window_start) / timedelta(minutes=15)) + 1
+    assert len(appends[0]) == expected
+    assert appends[0][0].start == window_start
+    assert appends[0][-1].start == completed
+    assert len(store.data["days"]) == 60
+    assert store.last_processed_slot() == completed

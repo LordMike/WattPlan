@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 import math
@@ -22,6 +23,7 @@ from .models import (
     HistoricalMetric,
     PERIOD_THIS_MONTH,
     PERIOD_TODAY,
+    PRICE_CACHE_MARGIN,
     RETENTION_DAYS,
     SAVE_DELAY_SECONDS,
     SCENARIO_ACTUAL,
@@ -103,7 +105,6 @@ class HistoricalCostStore:
 
     def mark_dirty(self) -> None:
         """Schedule a delayed coalesced save."""
-        self.prune(datetime.now(tz=UTC))
         self._store.async_delay_save(lambda: self.data, SAVE_DELAY_SECONDS)
 
     async def async_flush(self) -> None:
@@ -125,6 +126,8 @@ class HistoricalCostStore:
         if last_processed_slot is not None:
             self.data["last_processed_slot"] = _utc_iso(last_processed_slot)
             self.data.pop("meter_cursor_seeded", None)
+            # Prune once per processed slot rather than on every dirty mark.
+            self.prune(datetime.now(tz=UTC))
         if last_meter_values is not None:
             self.data["last_meter_values"] = {
                 str(key): _finite_float(value) if value is not None else None
@@ -298,29 +301,34 @@ class HistoricalCostStore:
         slot_minutes: int,
         import_prices: list[float],
         export_prices: list[float] | None,
-    ) -> None:
+    ) -> bool:
         """Retain normalized planner price values by UTC slot start.
 
         Pass ``export_prices=None`` when the export price source did not
         deliver real values for this plan (the planner then substitutes zeros).
         Only import prices are retained in that case, and any export price
-        remembered earlier is left untouched.
+        remembered earlier is left untouched. Slots that are already recorded
+        are skipped. Returns whether the cache changed.
         """
         if int(slot_minutes) != self.slot_minutes:
-            return
+            return False
         cache = self.data.setdefault("price_cache", {})
         if not isinstance(cache, dict):
             cache = {}
             self.data["price_cache"] = cache
 
         interval = timedelta(minutes=self.slot_minutes)
+        oldest_useful = self._price_cache_floor(datetime.now(tz=UTC))
         changed = False
         for index, raw_import_price in enumerate(import_prices):
             import_price = _finite_float(raw_import_price)
             if import_price is None:
                 continue
             slot_start = start_at.astimezone(UTC) + (interval * index)
+            if slot_start < oldest_useful:
+                continue
             key = _utc_iso(slot_start)
+            existing = cache.get(key)
             entry: dict[str, float] = {"import_price": import_price}
             if export_prices is not None:
                 export_price = _finite_float(
@@ -329,14 +337,14 @@ class HistoricalCostStore:
                 if export_price is None:
                     continue
                 entry["export_price"] = export_price
-            else:
-                existing = cache.get(key)
-                if isinstance(existing, dict) and "export_price" in existing:
-                    entry["export_price"] = existing["export_price"]
-            cache[key] = entry
-            changed = True
+            elif isinstance(existing, dict) and "export_price" in existing:
+                entry["export_price"] = existing["export_price"]
+            if existing != entry:
+                cache[key] = entry
+                changed = True
         if changed:
             self.mark_dirty()
+        return changed
 
     def cached_price(self, slot_start: datetime, kind: str) -> float | None:
         """Return a retained planner price for one UTC slot, if available."""
@@ -350,32 +358,45 @@ class HistoricalCostStore:
 
     def append_slot(self, record: SlotRecord) -> None:
         """Append one slot fact record to retained history."""
-        record = _sanitize_record(record)
-        local_day = self._local_date(record.start).isoformat()
+        self.append_slots([record])
+
+    def append_slots(self, records: Iterable[SlotRecord]) -> None:
+        """Append slot fact records in order and schedule a single save."""
         days = self.data.setdefault("days", {})
-        day_payload = days.setdefault(local_day, empty_day_payload())
-        for key in DAY_ARRAY_KEYS:
-            day_payload.setdefault(key, [])
-        day_payload["starts"].append(_utc_iso(record.start))
-        day_payload["import_price"].append(record.import_price)
-        day_payload["export_price"].append(record.export_price)
-        day_payload["grid_import"].append(record.grid_import)
-        day_payload["grid_export"].append(record.grid_export)
-        day_payload["usage"].append(record.usage)
-        day_payload["pv"].append(record.pv)
-        day_payload["self_consumption_grid_import"].append(
-            record.self_consumption_grid_import
-        )
-        day_payload["self_consumption_grid_export"].append(
-            record.self_consumption_grid_export
-        )
-        day_payload["self_consumption_segment_id"].append(
-            record.self_consumption_segment_id
-        )
-        day_payload["flags"].append(int(record.flags))
-        self.data["last_processed_slot"] = _utc_iso(record.start)
-        self._revision += 1
-        self.mark_dirty()
+        appended = False
+        for record in records:
+            record = _sanitize_record(record)
+            local_day = self._local_date(record.start).isoformat()
+            day_payload = days.setdefault(local_day, empty_day_payload())
+            for key in DAY_ARRAY_KEYS:
+                day_payload.setdefault(key, [])
+            day_payload["starts"].append(_utc_iso(record.start))
+            day_payload["import_price"].append(record.import_price)
+            day_payload["export_price"].append(record.export_price)
+            day_payload["grid_import"].append(record.grid_import)
+            day_payload["grid_export"].append(record.grid_export)
+            day_payload["usage"].append(record.usage)
+            day_payload["pv"].append(record.pv)
+            day_payload["self_consumption_grid_import"].append(
+                record.self_consumption_grid_import
+            )
+            day_payload["self_consumption_grid_export"].append(
+                record.self_consumption_grid_export
+            )
+            day_payload["self_consumption_segment_id"].append(
+                record.self_consumption_segment_id
+            )
+            day_payload["flags"].append(int(record.flags))
+            self.data["last_processed_slot"] = _utc_iso(record.start)
+            appended = True
+        if appended:
+            self._revision += 1
+            self.mark_dirty()
+
+    def retention_start(self, now: datetime) -> datetime:
+        """Return the UTC start of the oldest retained local day."""
+        cutoff = self._local_date(now) - timedelta(days=RETENTION_DAYS - 1)
+        return dt_util.start_of_local_day(cutoff).astimezone(UTC)
 
     def prune(self, now: datetime) -> None:
         """Drop retained local days and cached prices outside the retention window."""
@@ -399,13 +420,23 @@ class HistoricalCostStore:
         if not isinstance(cache, dict):
             self.data["price_cache"] = {}
             return
+        oldest_useful = self._price_cache_floor(now)
         for key in list(cache):
-            parsed = dt_util.parse_datetime(str(key))
-            if parsed is None:
+            parsed = _parse_utc(key)
+            if parsed is None or parsed < oldest_useful:
                 del cache[key]
-                continue
-            if self._local_date(parsed.astimezone(UTC)) < cutoff:
-                del cache[key]
+
+    def _price_cache_floor(self, now: datetime) -> datetime:
+        """Return the oldest slot start whose cached prices can still be used.
+
+        Cached prices are only read while a slot is being recorded, so slots
+        before the last processed one (less a small margin) are dropped.
+        """
+        floor = self.retention_start(now)
+        last_processed = self.last_processed_slot()
+        if last_processed is not None:
+            floor = max(floor, last_processed - PRICE_CACHE_MARGIN)
+        return floor
 
     def summary(
         self,
