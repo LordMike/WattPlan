@@ -1,20 +1,25 @@
 {
   "domain": "wattplan",
   "name": "WattPlan",
-  "version": "0.6.4-alpha",
-  "integration_type": "service",
+  "after_dependencies": [
+    "energy",
+    "recorder"
+  ],
   "codeowners": [
     "@lordmike"
   ],
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/LordMike/WattPlan/blob/main/README.md",
+  "integration_type": "service",
   "iot_class": "calculated",
+  "issue_tracker": "https://github.com/LordMike/WattPlan/issues",
   "quality_scale": "bronze",
   "requirements": [
     "numpy",
     "pydantic>=2",
     "highspy",
     "fluent.runtime==0.4.0"
-  ]
+  ],
+  "version": "0.6.4-alpha"
 }

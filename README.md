@@ -16,6 +16,8 @@ This documentation is intended for Home Assistant users, energy enthusiasts, and
 - **Community Support**: Engage with a community of users and developers to enhance your energy management experience.
 
 ## Quickstart
+WattPlan requires Home Assistant 2025.8.0 or newer (also declared as the minimum in `hacs.json`). The `recorder` integration (part of the default Home Assistant setup) is needed for history-based usage forecasts and comfort runtime context; without it WattPlan falls back to its built-in behaviour.
+
 1. In HACS, open the menu in the top-right and choose `Custom repositories`.
 2. Add `https://github.com/LordMike/WattPlan` with type `Integration`.
 3. Search for `WattPlan` in HACS and install it.
