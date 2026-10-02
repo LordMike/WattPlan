@@ -9,8 +9,11 @@ from custom_components.wattplan.const import (
     CLAMP_MODE_NEAREST,
     CONF_AGGREGATION_MODE,
     CONF_CLAMP_MODE,
+    CONF_SOURCE_EXPORT_PRICE,
     CONF_SOURCE_IMPORT_PRICE,
     CONF_SOURCE_MODE,
+    CONF_SOURCE_PV,
+    CONF_SOURCE_USAGE,
     CONF_TEMPLATE,
     SOURCE_MODE_TEMPLATE,
 )
@@ -75,3 +78,27 @@ async def test_past_points_do_not_land_on_current_slot(hass: HomeAssistant) -> N
     )
 
     assert await provider.async_values(_window()) == [1.0, 2.0, 3.0, 4.0]
+
+
+@pytest.mark.parametrize("source_name", [CONF_SOURCE_IMPORT_PRICE, CONF_SOURCE_EXPORT_PRICE])
+async def test_hourly_price_repeats_across_quarter_hour_slots(
+    hass: HomeAssistant, source_name: str
+) -> None:
+    """A per-kWh price applies unchanged to every slot its hour covers."""
+    provider = _template_provider(hass, source_name, _points(60, [0.30, 0.40]))
+
+    values = await provider.async_values(_window(slots=8))
+
+    assert values == pytest.approx([0.30] * 4 + [0.40] * 4)
+
+
+@pytest.mark.parametrize("source_name", [CONF_SOURCE_USAGE, CONF_SOURCE_PV])
+async def test_hourly_energy_splits_across_quarter_hour_slots(
+    hass: HomeAssistant, source_name: str
+) -> None:
+    """Energy per hour is divided over the quarter-hour slots it covers."""
+    provider = _template_provider(hass, source_name, _points(60, [1.0, 2.0]))
+
+    values = await provider.async_values(_window(slots=8))
+
+    assert values == pytest.approx([0.25] * 4 + [0.5] * 4)

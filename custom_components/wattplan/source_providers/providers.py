@@ -27,6 +27,8 @@ from ..const import (
     CONF_HISTORY_DAYS,
     CONF_RESAMPLE_MODE,
     CONF_SERVICE,
+    CONF_SOURCE_EXPORT_PRICE,
+    CONF_SOURCE_IMPORT_PRICE,
     CONF_SOURCE_MODE,
     CONF_TIME_KEY,
     CONF_VALUE_KEY,
@@ -68,6 +70,9 @@ VALID_RESAMPLE_MODES = {
     RESAMPLE_MODE_LINEAR,
 }
 VALID_EDGE_FILL_MODES = {EDGE_FILL_MODE_NONE, EDGE_FILL_MODE_HOLD}
+# Per-kWh sources: values are repeated across finer slots, never divided.
+# Every other source (usage, PV) carries energy per interval.
+PRICE_SOURCE_KEYS = frozenset({CONF_SOURCE_IMPORT_PRICE, CONF_SOURCE_EXPORT_PRICE})
 
 
 class TemplateAdapterSourceProvider(SourceProvider):
@@ -83,6 +88,7 @@ class TemplateAdapterSourceProvider(SourceProvider):
         """Initialize one configured source provider instance."""
         self._source_name = source_name
         self._source_config = source_config
+        self._is_price = source_name in PRICE_SOURCE_KEYS
         self._aggregation_mode = self._aggregation_mode(source_config)
         self._clamp_mode = self._clamp_mode(source_config)
         self._resample_mode = self._resample_mode(source_config)
@@ -451,9 +457,14 @@ class TemplateAdapterSourceProvider(SourceProvider):
         end_at: datetime,
         slot_delta: timedelta,
     ) -> list[float | None]:
-        """Distribute interval energy across overlapping planner slots."""
+        """Map source intervals onto overlapping planner slots.
+
+        Prices are per kWh, so an interval's price applies unchanged to every
+        slot it overlaps and slots covering several intervals aggregate them
+        (time-weighted for mean). Energy is split in proportion to overlap.
+        """
         slot_seconds = slot_delta.total_seconds()
-        slot_values: dict[int, list[float]] = {}
+        slot_values: dict[int, list[tuple[float, float]]] = {}
 
         for interval_start, interval_end, value in intervals:
             if interval_end <= start_at or interval_start >= end_at:
@@ -479,14 +490,30 @@ class TemplateAdapterSourceProvider(SourceProvider):
                 overlap_seconds = (overlap_end - overlap_start).total_seconds()
                 if overlap_seconds <= 0:
                     continue
+                contribution = (
+                    value if self._is_price else value * (overlap_seconds / interval_seconds)
+                )
                 slot_values.setdefault(slot_index, []).append(
-                    value * (overlap_seconds / interval_seconds)
+                    (contribution, overlap_seconds)
                 )
 
         known: list[float | None] = [None] * window.slots
         for slot_index, contributions in slot_values.items():
-            known[slot_index] = self._aggregate_values(contributions)
+            if self._is_price and self._aggregation_mode == AGGREGATION_MODE_MEAN:
+                known[slot_index] = self._time_weighted_mean(contributions)
+            else:
+                known[slot_index] = self._aggregate_values(
+                    [contribution for contribution, _seconds in contributions]
+                )
         return known
+
+    def _time_weighted_mean(self, contributions: list[tuple[float, float]]) -> float:
+        """Return the mean of values weighted by how long each one applies."""
+        total_seconds = sum(seconds for _value, seconds in contributions)
+        result = sum(value * seconds for value, seconds in contributions) / total_seconds
+        if not math.isfinite(result):
+            raise self._nonfinite_value_error(stage="aggregation")
+        return result
 
     def _snap_timestamp(
         self,
