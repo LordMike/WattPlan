@@ -3,9 +3,33 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from homeassistant.components.sensor import SensorDeviceClass
+from homeassistant.const import CONF_NAME, UnitOfEnergy
 from homeassistant.core import HomeAssistant
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.wattplan.const import (
+    CONF_ACTION_EMISSION_ENABLED,
+    CONF_HISTORICAL_COST_TRACKING_ENABLED,
+    CONF_HISTORICAL_GRID_EXPORT_SENSOR,
+    CONF_HISTORICAL_GRID_IMPORT_SENSOR,
+    CONF_HISTORICAL_PV_SENSOR,
+    CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION,
+    CONF_HISTORICAL_USAGE_SENSOR,
+    CONF_HOURS_TO_PLAN,
+    CONF_PLANNING_ENABLED,
+    CONF_SLOT_MINUTES,
+    CONF_SOURCE_IMPORT_PRICE,
+    CONF_SOURCE_MODE,
+    CONF_SOURCES,
+    CONF_TEMPLATE,
+    DOMAIN,
+    SOURCE_MODE_TEMPLATE,
+)
 from custom_components.wattplan.historical_cost.models import (
+    FLAG_METER_RESET,
+    FLAG_MISSING_METER,
+    FLAG_MULTI_SLOT_DELTA,
     HistoricalMetric,
     PERIOD_THIS_MONTH,
     PERIOD_TODAY,
@@ -13,6 +37,8 @@ from custom_components.wattplan.historical_cost.models import (
     SlotRecord,
 )
 from custom_components.wattplan.historical_cost.store import HistoricalCostStore
+
+pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
 
 def _record(start: datetime, **changes) -> SlotRecord:
@@ -104,3 +130,119 @@ async def test_summary_stays_unavailable_before_tracking_started(
     summary = _cost(store, PERIOD_TODAY, datetime(2026, 5, 24, 12, tzinfo=UTC))
 
     assert summary.value is None
+
+
+def _set_meter(hass: HomeAssistant, entity_id: str, value: float | str) -> None:
+    hass.states.async_set(
+        entity_id,
+        str(value),
+        {
+            "device_class": SensorDeviceClass.ENERGY,
+            "unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR,
+        },
+    )
+
+
+async def _setup_tracker(hass: HomeAssistant, freezer, start: datetime):
+    """Set up a 15-minute tracker with import/usage meters and a fixed price."""
+    freezer.move_to(start)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        data={
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: 15,
+            CONF_HOURS_TO_PLAN: 1,
+            CONF_SOURCES: {
+                CONF_SOURCE_IMPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [1.0, 1.0, 1.0, 1.0] }}",
+                },
+            },
+        },
+        options={
+            CONF_PLANNING_ENABLED: False,
+            CONF_ACTION_EMISSION_ENABLED: False,
+            CONF_HISTORICAL_COST_TRACKING_ENABLED: True,
+            CONF_HISTORICAL_GRID_IMPORT_SENSOR: "sensor.grid_import_total",
+            CONF_HISTORICAL_USAGE_SENSOR: "sensor.usage_total",
+            CONF_HISTORICAL_GRID_EXPORT_SENSOR: None,
+            CONF_HISTORICAL_PV_SENSOR: None,
+            CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION: False,
+        },
+    )
+    entry.add_to_hass(hass)
+    _set_meter(hass, "sensor.grid_import_total", 100.0)
+    _set_meter(hass, "sensor.usage_total", 200.0)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    tracker = entry.runtime_data.historical_tracker
+    assert tracker is not None
+    tracker.remember_price_series(
+        start_at=start,
+        slot_minutes=15,
+        import_prices=[1.0] * 8,
+        export_prices=[0.0] * 8,
+    )
+    return tracker
+
+
+async def _tick(hass, freezer, tracker, start: datetime, minutes: int, grid_import, usage):
+    freezer.move_to(start + timedelta(minutes=minutes, seconds=2))
+    _set_meter(hass, "sensor.grid_import_total", grid_import)
+    _set_meter(hass, "sensor.usage_total", usage)
+    await tracker.async_process_completed_slot()
+
+
+async def test_meter_reset_costs_only_the_reset_slot(
+    hass: HomeAssistant, freezer
+) -> None:
+    """After a counter reset the new reading is the baseline (COR-35)."""
+    start = datetime(2026, 5, 24, 10, 0, tzinfo=UTC)
+    tracker = await _setup_tracker(hass, freezer, start)
+
+    await _tick(hass, freezer, tracker, start, 15, 101.0, 201.0)
+    await _tick(hass, freezer, tracker, start, 30, 0.5, 0.5)  # counters reset
+    assert tracker.store.last_meter_values()["grid_import"] == pytest.approx(0.5)
+    await _tick(hass, freezer, tracker, start, 45, 1.5, 2.0)
+
+    day = tracker.store.data["days"]["2026-05-24"]
+    assert day["flags"] == [0, FLAG_METER_RESET, 0]
+    assert day["grid_import"] == [pytest.approx(1.0), None, pytest.approx(1.0)]
+    assert day["usage"] == [pytest.approx(1.0), None, pytest.approx(1.5)]
+
+
+async def test_single_unavailable_reading_costs_one_slot(
+    hass: HomeAssistant, freezer
+) -> None:
+    """The last finite baseline is kept and the spanning delta is flagged (COR-35)."""
+    start = datetime(2026, 5, 24, 10, 0, tzinfo=UTC)
+    tracker = await _setup_tracker(hass, freezer, start)
+
+    await _tick(hass, freezer, tracker, start, 15, "unavailable", "unavailable")
+    assert tracker.store.last_meter_values()["grid_import"] == pytest.approx(100.0)
+    await _tick(hass, freezer, tracker, start, 30, 102.0, 203.0)
+    await _tick(hass, freezer, tracker, start, 45, 103.0, 204.0)
+
+    day = tracker.store.data["days"]["2026-05-24"]
+    assert day["flags"] == [FLAG_MISSING_METER, FLAG_MULTI_SLOT_DELTA, 0]
+    # The slot after the outage carries the energy of both slots, flagged.
+    assert day["grid_import"] == [None, pytest.approx(2.0), pytest.approx(1.0)]
+    assert tracker.store.meter_stale_slots() == {}
+
+
+async def test_longer_outage_is_not_booked_as_one_slot(
+    hass: HomeAssistant, freezer
+) -> None:
+    """A delta that spans several slots cannot be attributed and stays missing."""
+    start = datetime(2026, 5, 24, 10, 0, tzinfo=UTC)
+    tracker = await _setup_tracker(hass, freezer, start)
+
+    await _tick(hass, freezer, tracker, start, 15, "unavailable", "unavailable")
+    await _tick(hass, freezer, tracker, start, 30, "unavailable", "unavailable")
+    await _tick(hass, freezer, tracker, start, 45, 104.0, 206.0)
+    await _tick(hass, freezer, tracker, start, 60, 105.0, 207.0)
+
+    day = tracker.store.data["days"]["2026-05-24"]
+    assert day["flags"] == [FLAG_MISSING_METER] * 3 + [0]
+    assert day["grid_import"] == [None, None, None, pytest.approx(1.0)]

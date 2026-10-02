@@ -111,6 +111,7 @@ class HistoricalCostStore:
         last_processed_slot: datetime | None = None,
         last_meter_values: dict[str, float | None] | None = None,
         meter_config: dict[str, Any] | None = None,
+        meter_stale_slots: dict[str, int] | None = None,
     ) -> None:
         """Update persisted cursors and configuration metadata."""
         if last_processed_slot is not None:
@@ -121,9 +122,27 @@ class HistoricalCostStore:
                 str(key): _finite_float(value) if value is not None else None
                 for key, value in last_meter_values.items()
             }
+        if meter_stale_slots is not None:
+            self.data["meter_stale_slots"] = {
+                str(key): int(count)
+                for key, count in meter_stale_slots.items()
+                if int(count) > 0
+            }
         if meter_config is not None:
             self.data["meter_config"] = dict(meter_config)
         self.mark_dirty()
+
+    def meter_stale_slots(self) -> dict[str, int]:
+        """Return how many consecutive slots each meter reading was unavailable."""
+        raw = self.data.get("meter_stale_slots")
+        if not isinstance(raw, dict):
+            return {}
+        stale: dict[str, int] = {}
+        for key, value in raw.items():
+            count = _finite_float(value)
+            if count is not None and count > 0:
+                stale[str(key)] = int(count)
+        return stale
 
     def last_processed_slot(self) -> datetime | None:
         """Return the last processed slot cursor."""

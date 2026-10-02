@@ -43,6 +43,7 @@ from .models import (
     FLAG_MISSING_EXPORT_PRICE,
     FLAG_MISSING_IMPORT_PRICE,
     FLAG_MISSING_METER,
+    FLAG_MULTI_SLOT_DELTA,
     FLAG_SELF_CONSUMPTION_UNAVAILABLE,
     HistoricalMetric,
     SCENARIO_ACTUAL,
@@ -58,6 +59,9 @@ from .store import HistoricalCostStore, HistoricalPeriodSummary
 
 _LOGGER = logging.getLogger(__name__)
 SCHEDULE_OFFSET = timedelta(seconds=5)
+# One unavailable reading makes the next delta span two slots; book that, but
+# treat anything longer as unattributable.
+MAX_BOOKED_STALE_SLOTS = 1
 
 type HistoricalUpdateListener = Callable[[], None]
 
@@ -254,16 +258,13 @@ class HistoricalCostTracker:
 
         current_meters, meter_flags = self._read_meter_values()
         previous_meters = self.store.last_meter_values()
-        deltas, delta_flags = self._meter_deltas(previous_meters, current_meters)
-        for key in ("grid_import", "grid_export", "usage", "pv"):
-            previous_value = previous_meters.get(key)
-            current_value = current_meters.get(key)
-            if (
-                previous_value is not None
-                and current_value is not None
-                and current_value < previous_value
-            ):
-                current_meters[key] = None
+        stale_slots = self.store.meter_stale_slots()
+        deltas, delta_flags = self._meter_deltas(
+            previous_meters, current_meters, stale_slots
+        )
+        baselines, stale_slots = self._next_meter_baselines(
+            previous_meters, current_meters, stale_slots
+        )
         flags = meter_flags | delta_flags
         import_price = await self._async_price(CONF_SOURCE_IMPORT_PRICE, completed_slot)
         if import_price is None:
@@ -302,7 +303,8 @@ class HistoricalCostTracker:
         self.store.append_slot(record)
         self.store.update_metadata(
             last_processed_slot=completed_slot,
-            last_meter_values=current_meters,
+            last_meter_values=baselines,
+            meter_stale_slots=stale_slots,
             meter_config=self._meter_config(),
         )
         self.store.data.pop("meter_cursor_seeded", None)
@@ -365,6 +367,7 @@ class HistoricalCostTracker:
         self.store.update_metadata(
             last_processed_slot=seed_slot,
             last_meter_values=meters,
+            meter_stale_slots={},
             meter_config=self._meter_config(),
         )
         if processed_slot is None:
@@ -419,8 +422,17 @@ class HistoricalCostTracker:
         self,
         previous: dict[str, float | None],
         current: dict[str, float | None],
+        stale_slots: dict[str, int] | None = None,
     ) -> tuple[dict[str, float | None], int]:
-        """Return cumulative meter deltas and validation flags."""
+        """Return cumulative meter deltas and validation flags.
+
+        ``stale_slots`` counts how many slots in a row a meter's reading was
+        unavailable, so the baseline is that many slots old. After one bad
+        reading the delta covers two slots; it is booked to this slot and
+        flagged. After a longer outage the energy cannot be attributed to one
+        slot at all and the slot is recorded as missing.
+        """
+        stale_slots = stale_slots or {}
         deltas: dict[str, float | None] = {}
         flags = 0
         for key in ("grid_import", "grid_export", "usage", "pv"):
@@ -439,8 +451,38 @@ class HistoricalCostTracker:
                 deltas[key] = None
                 flags |= FLAG_METER_RESET
                 continue
+            stale = stale_slots.get(key, 0)
+            if stale > MAX_BOOKED_STALE_SLOTS:
+                deltas[key] = None
+                flags |= FLAG_MISSING_METER
+                continue
+            if stale:
+                flags |= FLAG_MULTI_SLOT_DELTA
             deltas[key] = delta
         return deltas, flags
+
+    @staticmethod
+    def _next_meter_baselines(
+        previous: dict[str, float | None],
+        current: dict[str, float | None],
+        stale_slots: dict[str, int],
+    ) -> tuple[dict[str, float | None], dict[str, int]]:
+        """Return the baselines and stale counters to persist after one slot.
+
+        A finite reading always becomes the new baseline, including the reading
+        after a counter reset. An unavailable reading keeps the last finite
+        baseline so a single bad reading does not also cost the next slot.
+        """
+        baselines: dict[str, float | None] = {}
+        stale: dict[str, int] = {}
+        for key in ("grid_import", "grid_export", "usage", "pv"):
+            reading = current.get(key)
+            if reading is not None:
+                baselines[key] = reading
+                continue
+            baselines[key] = previous.get(key)
+            stale[key] = stale_slots.get(key, 0) + 1
+        return baselines, stale
 
     async def _async_price(self, source_key: str, slot_start: datetime) -> float | None:
         """Fetch one configured price value for a slot."""

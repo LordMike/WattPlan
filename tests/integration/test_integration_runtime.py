@@ -82,6 +82,7 @@ from custom_components.wattplan.historical_cost.models import (
     FLAG_METER_RESET,
     FLAG_MISSING_IMPORT_PRICE,
     FLAG_MISSING_METER,
+    FLAG_MULTI_SLOT_DELTA,
     FLAG_SELF_CONSUMPTION_UNAVAILABLE,
     HistoricalMetric,
     SCENARIO_ACTUAL,
@@ -1137,7 +1138,9 @@ async def test_identical_self_consumption_execution_has_zero_reported_savings(
         _set_energy_meter(
             hass,
             "sensor.usage_total",
-            -1.0 if variant == "usage_reset" and hour == 1 else float(hour),
+            (-1.0 if hour == 1 else float(hour - 2))
+            if variant == "usage_reset"
+            else float(hour),
         )
         _set_energy_meter(hass, "sensor.pv_total",
                           float("nan") if variant == "missing_pv" and hour == 1 else 0.0)
@@ -1151,9 +1154,9 @@ async def test_identical_self_consumption_execution_has_zero_reported_savings(
     assert sensor.attributes["slots"] == (4 if variant == "skipped_boundary" else 3)
     assert sensor.attributes["missing_slots"] == (
         2
-        if variant in {"missing_pv", "usage_reset", "skipped_boundary"}
+        if variant in {"missing_pv", "skipped_boundary"}
         else 1
-        if variant in {"missing_price", "missing_simulation_state"}
+        if variant in {"missing_price", "missing_simulation_state", "usage_reset"}
         else 0
     )
     assert float(sensor.state) == pytest.approx(0.0)
@@ -1771,12 +1774,12 @@ async def test_historical_cost_tracking_flags_meter_reset_and_missing_price(
 
 
 @pytest.mark.parametrize("invalid_state", ["nan", "inf", "-inf"])
-async def test_historical_meter_nonfinite_recovery_requires_new_finite_baseline(
+async def test_historical_meter_nonfinite_reading_costs_one_slot(
     hass: HomeAssistant,
     freezer,
     invalid_state: str,
 ) -> None:
-    """Nonfinite readings must leave two missing slots before finite deltas resume."""
+    """A nonfinite reading never becomes a baseline and costs a single slot."""
     start = datetime(2026, 5, 24, 10, 0, tzinfo=UTC)
     freezer.move_to(start)
     entry = MockConfigEntry(
@@ -1825,9 +1828,9 @@ async def test_historical_meter_nonfinite_recovery_requires_new_finite_baseline(
         await tracker.async_process_completed_slot()
 
     day = tracker.store.data["days"]["2026-05-24"]
-    assert day["flags"] == [FLAG_MISSING_METER, FLAG_MISSING_METER, 0]
-    assert day["grid_import"] == [None, None, pytest.approx(1.0)]
-    assert day["usage"] == [None, None, pytest.approx(1.0)]
+    assert day["flags"] == [FLAG_MISSING_METER, FLAG_MULTI_SLOT_DELTA, 0]
+    assert day["grid_import"] == [None, pytest.approx(2.0), pytest.approx(1.0)]
+    assert day["usage"] == [None, pytest.approx(3.0), pytest.approx(1.0)]
     assert tracker.store.last_meter_values()["grid_import"] == pytest.approx(103.0)
     summary = tracker.store.summary(
         metric=HistoricalMetric.COST,
@@ -1835,9 +1838,9 @@ async def test_historical_meter_nonfinite_recovery_requires_new_finite_baseline(
         scenario=SCENARIO_ACTUAL,
         now=start + timedelta(hours=1),
     )
-    assert summary.value == pytest.approx(1.0)
+    assert summary.value == pytest.approx(3.0)
     assert summary.slots == 3
-    assert summary.missing_slots == 2
+    assert summary.missing_slots == 1
 
 
 async def test_historical_meter_delta_overflow_is_missing(hass: HomeAssistant) -> None:

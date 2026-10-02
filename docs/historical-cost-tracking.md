@@ -41,6 +41,14 @@ WattPlan only processes completed slots. If the setup uses 15-minute slots, the 
 
 When historical tracking first reads the cumulative meters partway through a slot, that reading becomes the baseline for the current slot. At the next boundary, WattPlan records only the increase observed since that baseline in the current slot; it does not extrapolate energy for the unobserved beginning of the slot. Later slots use the preceding boundary reading normally. If one or more boundaries are missed instead, WattPlan keeps the existing gap behavior: it marks the affected slots as missing and reseeds the meter baseline without distributing accumulated energy across them.
 
+Meter resets and unavailable readings cost as few slots as possible:
+
+| Situation | What is recorded |
+| --- | --- |
+| A cumulative counter resets (the reading drops) | Only the reset slot is missing. The new reading becomes the baseline, so the next slot is a normal delta. |
+| A meter is unavailable or not numeric for one slot | That slot is missing. The last good reading stays the baseline, and the next slot books the increase since it, which covers two slots of energy. That slot is flagged (`multi_slot_delta`) and priced at its own slot price. |
+| A meter is unavailable for two or more slots in a row | Every affected slot, including the first one after the meter returns, is missing. The energy cannot be attributed to a single slot. |
+
 ## Scenarios
 
 | Scenario | What it means | How to read it |
