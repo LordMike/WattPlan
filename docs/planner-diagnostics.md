@@ -12,6 +12,12 @@ The retention setting accepts **1 to 730 local calendar days**, defaulting to
 **14**. Changing either option reloads WattPlan; it does not recover earlier
 plans. Scheduled and `wattplan.run_optimize_now` plans are recorded alike.
 
+Recording uses roughly **10 MB of disk per day** at 15-minute planning
+intervals (one full request and result per plan), so the 14-day default needs
+about 140 MB and the 730-day maximum several gigabytes. There is deliberately
+no size cap; pick a retention that fits your storage, and turn recording off
+once an investigation is finished.
+
 Each successful run appends one complete JSON object and a newline to
 `<HA config>/wattplan_reproductions/<config entry ID>/YYYY-MM-DD.jsonl`, using
 Home Assistant's configured local date. Each record has its own UTC creation

@@ -33,3 +33,19 @@ def test_hacs_declares_minimum_home_assistant_version() -> None:
     """OptionsFlowWithReload needs Home Assistant 2025.8, so HACS must say so."""
     parts = [int(part) for part in HACS["homeassistant"].split(".")]
     assert tuple(parts) >= (2025, 8, 0)
+
+
+def test_reproduction_retention_description_mentions_disk_use() -> None:
+    """The retention setting warns about disk use and both string files agree."""
+    descriptions = []
+    for relative in ("strings.json", "translations/en.json"):
+        strings = json.loads(
+            (ROOT / "custom_components/wattplan" / relative).read_text(encoding="utf-8")
+        )
+        descriptions.append(
+            strings["options"]["step"]["troubleshooting"]["data_description"][
+                "planner_reproduction_retention_days"
+            ]
+        )
+    assert descriptions[0] == descriptions[1]
+    assert "10 MB" in descriptions[0]

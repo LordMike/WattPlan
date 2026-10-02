@@ -775,7 +775,7 @@
         },
         "data_description": {
           "record_planner_reproductions": "Warning: Every successful scheduled or manual plan writes its full optimizer request and result to disk. Enable temporarily when investigating a problem.",
-          "planner_reproduction_retention_days": "Keep 1 to 730 local calendar days (default: 14). Old daily files are deleted after the next recorded plan."
+          "planner_reproduction_retention_days": "Keep 1 to 730 local calendar days (default: 14). Old daily files are deleted after the next recorded plan. Recording uses roughly 10 MB of disk per day at 15-minute planning intervals."
         }
       },
       "source_price": {
