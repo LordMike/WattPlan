@@ -220,9 +220,24 @@ grid-charge model, so an upgrade starts with a fresh battery solve.
 
 `optimizer/prefix_planner.py` controls the timed planning cadence. It performs a full plan initially and after four slot advances, with eight freshly optimized near-term battery actions on intervening consecutive advances. Each fresh battery action retains the configured economic lookahead. Comfort actions first come from the deterministic constraint scheduler, then a bounded single-pass placement step may relocate existing ON runs without changing runtime. It preserves rolling history, current minimum-duration commitments, maximum-off limits, and terminal run feasibility. With batteries, candidates use fixed-policy replay from the current baseline plan; without batteries they use direct net-site cost. If accepted demand changes, cached battery controls are discarded and at most one additional battery planning pass rebuilds the actual plan. The result is retained only when its actual tariff cost does not worsen and hard constraints remain valid. Remaining prefix battery policies are reprojected against current forecasts and the final fixed comfort schedule, and a failed tail feasibility check forces full planning.
 
+A full plan does not solve every slot. MPC solves run every slot for the first
+eight hours of the plan (`FINE_HORIZON_MINUTES`), which covers every action the
+prefix cadence can publish before the next full plan. Beyond that, one solve
+runs per hour (`COARSE_BLOCK_MINUTES`) and the intermediate slots replay that
+solve's own planned battery controls through the normal per-slot physics. A
+replayed slot falls back to a real solve whenever the replay could not be
+reproduced exactly: the planned charge or discharge would be clipped at the
+actual level, a grid-charge ON slot lacks headroom, or its preserve flag would
+need a counterfactual probe. Preserve and policy states therefore keep their
+meaning in replayed slots. At 15-minute resolution this cuts a 48-hour full plan
+from 192 to roughly 72 solves; the near-term schedule is identical to solving
+every slot, while the later forecast is slightly less refined. Hourly or coarser
+slots are unaffected.
+
 Full deadband-enabled calculations pass native HiGHS partial MIP starts between
-adjacent MPC solves. Only future overlapping integer mode assignments are
-shifted; the current action slot and newly appended terminal slot remain
+consecutive MPC solves. Only future overlapping integer mode assignments are
+shifted, by the actual distance between the two solves; the current action slot
+and newly appended terminal slot remain
 unknown, and the previous decisions are never fixed as constraints. HiGHS may
 use up to ten nodes to complete a partial start. A rejected start falls back to
 the same cold model. Starts are enabled only when the effective initial solve

@@ -34,7 +34,20 @@ MIP_START_MIN_LOOKAHEAD_SLOTS = 40
 COMFORT_PLACEMENT_MAX_CANDIDATES_PER_ENTITY = 16
 COMFORT_PLACEMENT_MAX_TOTAL_CANDIDATES = 48
 COMFORT_PLACEMENT_SEARCH_SECONDS = 0.1
+# Near-term actions are re-solved every slot. Later actions only shape the
+# displayed forecast and the repair tail, so they are solved once per block and
+# the solve's own planned actions are replayed between block starts.
+FINE_HORIZON_MINUTES = 480
+COARSE_BLOCK_MINUTES = 60
 _AUTO_REUSE = object()
+
+
+def _solve_cadence(slot_minutes):
+    """Return (fine_slots, block_slots) for the MPC solve schedule."""
+    slot_minutes = max(int(slot_minutes), 1)
+    fine_slots = -(-FINE_HORIZON_MINUTES // slot_minutes)
+    block_slots = max(COARSE_BLOCK_MINUTES // slot_minutes, 1)
+    return fine_slots, block_slots
 
 
 def _meets_action_deadband(amount: float, deadband: float) -> bool:
@@ -745,19 +758,21 @@ def _shift_mip_start(
     pv_surplus_mode,
     *,
     omit_first=False,
+    shift=1,
 ):
+    """Map a previous solve's integers onto a solve starting `shift` slots later."""
     if not isinstance(mip_start, dict):
         return None
     previous_horizon = mip_start.get("horizon")
     previous_battery = mip_start.get("battery")
     if (
         not isinstance(previous_horizon, int)
-        or previous_horizon <= 1
+        or previous_horizon <= shift
         or not isinstance(previous_battery, list)
         or len(previous_battery) != len(battery_vars)
     ):
         return None
-    overlap = min(horizon, previous_horizon - 1)
+    overlap = min(horizon, previous_horizon - shift)
     if overlap <= 0:
         return None
 
@@ -780,7 +795,7 @@ def _shift_mip_start(
             previous = np.asarray(previous, dtype=np.float64)
             if previous.shape != (previous_horizon,):
                 return None
-            first = 1 if not omit_first else 2
+            first = shift + (1 if omit_first else 0)
             count = overlap if not omit_first else max(overlap - 1, 0)
             current_start = current.start + (1 if omit_first else 0)
             start_indices.extend(range(current_start, current_start + count))
@@ -793,7 +808,7 @@ def _shift_mip_start(
         previous = np.asarray(mip_start.get(name), dtype=np.float64)
         if previous.shape != (previous_horizon,):
             return None
-        first = 1 if not omit_first else 2
+        first = shift + (1 if omit_first else 0)
         count = overlap if not omit_first else max(overlap - 1, 0)
         current_start = current.start + (1 if omit_first else 0)
         start_indices.extend(range(current_start, current_start + count))
@@ -823,6 +838,8 @@ def _solve_mpc_step(
     mip_start=None,
     return_mip_start=False,
     time_limit_seconds=None,
+    mip_start_shift=1,
+    return_plan=False,
 ):
     horizon = len(prices_h)
     num_battery = len(battery_entities)
@@ -1159,6 +1176,7 @@ def _solve_mpc_step(
         grid_import_mode,
         pv_surplus_mode,
         omit_first=True,
+        shift=mip_start_shift,
     )
     result = _solve_lp(
         objective=objective,
@@ -1195,6 +1213,17 @@ def _solve_mpc_step(
         "discharge": discharge_cmd,
         "objective_value": float(result.objective_value),
     }
+    if return_plan:
+        # Planned per-slot controls over the whole horizon, shape (battery, horizon).
+        for key, name in (
+            ("plan_charge_grid", "charge_grid"),
+            ("plan_charge_pv", "charge_pv"),
+            ("plan_discharge", "discharge"),
+        ):
+            solve_result[key] = np.array(
+                [x[battery_vars[b][name]] for b in range(num_battery)],
+                dtype=np.float64,
+            ).reshape(num_battery, horizon)
     if return_mip_start:
         solve_result["mip_start"] = _extract_mip_start(
             x, horizon, battery_vars, grid_import_mode, pv_surplus_mode
@@ -1225,6 +1254,91 @@ def _battery_preserve_probe_kwh(entity: BatteryEntity, level: float) -> float:
     action_deadband = max(float(entity.action_deadband_kwh), EPSILON)
     requested_probe = max(action_deadband, PRESERVE_PROBE_MIN_KWH)
     return min(available, discharge_limit, requested_probe)
+
+
+def _preserve_without_probe(entity, level, charge_grid, discharge):
+    """Return the preserve flag when no counterfactual solve is needed, else None."""
+    action_deadband = max(float(entity.action_deadband_kwh), EPSILON)
+    if _meets_action_deadband(charge_grid, action_deadband):
+        return False
+    if _meets_action_deadband(discharge, action_deadband):
+        return False
+    available = _battery_available_discharge_kwh(entity, level)
+    if float(entity.minimum_kwh) > EPSILON and available <= action_deadband:
+        return True
+    if _battery_preserve_probe_kwh(entity, level) <= action_deadband:
+        return False
+    return None
+
+
+def _coarse_replay_step(
+    t,
+    coarse_plan,
+    fine_slots,
+    block_slots,
+    battery_entities,
+    battery_levels,
+    infer_battery_preserve_policy,
+):
+    """Return replayed controls and preserve flags inside a coarse block.
+
+    Returns None when slot `t` must be solved: inside the fine horizon, at a
+    block start, or when the planned action cannot be reproduced exactly from
+    the current state (a grid-charge ON without headroom, or a preserve flag
+    that needs its own counterfactual solve).
+    """
+    if (
+        coarse_plan is None
+        or t < fine_slots
+        or (t - fine_slots) % block_slots == 0
+    ):
+        return None
+    solve_result, solved_t = coarse_plan
+    offset = t - solved_t
+    if not 0 < offset < min(block_slots, solve_result["plan_charge_grid"].shape[1]):
+        return None
+
+    charge_grid = solve_result["plan_charge_grid"][:, offset].copy()
+    charge_pv = solve_result["plan_charge_pv"][:, offset].copy()
+    discharge = solve_result["plan_discharge"][:, offset].copy()
+    preserve = np.zeros(len(battery_entities), dtype=np.bool_)
+    for b, entity in enumerate(battery_entities):
+        level = float(battery_levels[b])
+        charge_limit, discharge_limit = _battery_power_limits(entity, level)
+        if float(charge_grid[b]) > EPSILON and not _grid_charge_headroom_sufficient(
+            entity, level, charge_limit
+        ):
+            return None
+        # Replay only actions the slot physics reproduces exactly. Once the
+        # actual level drifts from the solve's prediction, curve limits and the
+        # full-rate grid-charge rule would silently change the planned energy.
+        max_charge = min(
+            charge_limit,
+            max(float(entity.capacity_kwh) - level, 0.0)
+            / max(float(entity.charge_efficiency), EPSILON),
+        )
+        charge = float(charge_grid[b]) + float(charge_pv[b])
+        if charge > max_charge + EPSILON or (
+            float(charge_grid[b]) > EPSILON and abs(charge - max_charge) > EPSILON
+        ):
+            return None
+        if float(discharge[b]) > min(
+            discharge_limit, _battery_available_discharge_kwh(entity, level)
+        ) + EPSILON:
+            return None
+        if infer_battery_preserve_policy:
+            decided = _preserve_without_probe(
+                entity, level, float(charge_grid[b]), float(discharge[b])
+            )
+            if decided is None:
+                return None
+            preserve[b] = decided
+    return {
+        "charge": charge_grid + charge_pv,
+        "charge_grid": charge_grid,
+        "charge_pv": charge_pv,
+        "discharge": discharge,
+    }, preserve
 
 
 def _slot_modeled_load_kwh(
@@ -1564,6 +1678,7 @@ def _run_mpc(
     battery_policy_override=None,
     fixed_comfort_override=None,
     solver_time_limit_seconds=None,
+    slot_minutes=15,
 ):
     num_battery = len(battery_entities)
     num_comfort = len(comfort_entities)
@@ -1677,6 +1792,9 @@ def _run_mpc(
         battery_entities, min(lookahead_slots, total_steps)
     )
     primary_mip_start = None
+    primary_mip_start_t = None
+    fine_slots, block_slots = _solve_cadence(slot_minutes)
+    coarse_plan = None
 
     for t in range(total_steps):
         horizon = min(lookahead_slots, total_steps - t)
@@ -1740,6 +1858,21 @@ def _run_mpc(
                 "discharge": np.zeros(0, dtype=np.float64),
                 "comfort_on": fixed_comfort_on[:, t].copy(),
             }
+        elif (
+            replay := _coarse_replay_step(
+                t,
+                coarse_plan,
+                fine_slots,
+                block_slots,
+                battery_entities,
+                battery_levels[:, t],
+                infer_battery_preserve_policy,
+            )
+        ) is not None:
+            controls, replay_preserve = replay
+            controls["comfort_on"] = fixed_comfort_on[:, t].copy()
+            if infer_battery_preserve_policy:
+                battery_preserve[:, t] = replay_preserve
         else:
             usage_h = usage[t : t + horizon].astype(np.float64, copy=True)
             if num_comfort:
@@ -1761,12 +1894,18 @@ def _run_mpc(
                 mip_start=primary_mip_start if use_mip_starts else None,
                 return_mip_start=use_mip_starts,
                 time_limit_seconds=solver_time_limit_seconds,
+                mip_start_shift=(
+                    t - primary_mip_start_t if primary_mip_start_t is not None else 1
+                ),
+                return_plan=block_slots > 1,
             )
             if solve_result is None:
                 raise RuntimeError("MPC solve failed for MILP model")
             successful_solves += 1
+            coarse_plan = (solve_result, t)
             if use_mip_starts:
                 primary_mip_start = solve_result.get("mip_start")
+                primary_mip_start_t = t
 
             controls = {
                 "charge": solve_result["charge"],
@@ -1785,31 +1924,19 @@ def _run_mpc(
                 )
                 pv_surplus = max(float(solar_input[t]) - modeled_load, 0.0)
                 for b, entity in enumerate(battery_entities):
-                    action_deadband = max(float(entity.action_deadband_kwh), EPSILON)
-                    if _meets_action_deadband(
-                        float(solve_result["charge_grid"][b]), action_deadband
-                    ):
-                        continue
-                    if _meets_action_deadband(
-                        float(solve_result["discharge"][b]), action_deadband
-                    ):
-                        continue
-
-                    available = _battery_available_discharge_kwh(
-                        entity, float(battery_levels[b, t])
+                    decided = _preserve_without_probe(
+                        entity,
+                        float(battery_levels[b, t]),
+                        float(solve_result["charge_grid"][b]),
+                        float(solve_result["discharge"][b]),
                     )
-                    if (
-                        float(entity.minimum_kwh) > EPSILON
-                        and available <= action_deadband
-                    ):
-                        battery_preserve[b, t] = True
+                    if decided is not None:
+                        battery_preserve[b, t] = decided
                         continue
 
                     probe_kwh = _battery_preserve_probe_kwh(
                         entity, float(battery_levels[b, t])
                     )
-                    if probe_kwh <= action_deadband:
-                        continue
 
                     # A preserve policy is about unexpected real load, not the
                     # forecast load already in the plan. If PV surplus exists, the
@@ -2500,6 +2627,7 @@ def optimize_internal(
         policy_tail_start,
         battery_policy_override,
         solver_time_limit_seconds=normalized.solver_time_limit_seconds,
+        slot_minutes=normalized.slot_minutes,
     )
     baseline_score = _score_result(
         baseline_result,
@@ -2630,6 +2758,7 @@ def optimize_internal(
                 battery_policy_override,
                 fixed_comfort_override=accepted,
                 solver_time_limit_seconds=normalized.solver_time_limit_seconds,
+                slot_minutes=normalized.slot_minutes,
             )
             additional_successful_solves = int(
                 candidate_result["successful_solves"]

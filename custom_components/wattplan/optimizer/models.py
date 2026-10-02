@@ -646,6 +646,7 @@ class CalculationInput:
     usage: np.ndarray
     rolling_window_slots: int
     lookahead_slots: int
+    slot_minutes: int
     infer_battery_preserve_policy: bool
     battery_entities: List[BatteryEntity]
     comfort_entities: List[ComfortEntity]
@@ -1040,6 +1041,7 @@ def normalize_calculation_input(params: OptimizationParams):
         usage=usage,
         rolling_window_slots=int(params.rolling_window_slots),
         lookahead_slots=int(params.lookahead_slots),
+        slot_minutes=int(params.slot_minutes),
         infer_battery_preserve_policy=bool(params.infer_battery_preserve_policy),
         battery_entities=battery_entities,
         comfort_entities=comfort_entities,
