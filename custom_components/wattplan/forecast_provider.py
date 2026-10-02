@@ -108,22 +108,32 @@ class ForecastProvider(SourceProvider):
         max_interval_kwh = MAX_IMPLIED_POWER_KW * (window.slot_minutes / 60.0)
         debug_events: list[dict[str, Any]] = []
 
-        states = await self._history_cache.async_fetch(
-            window_start=history_start,
-            now=start_at,
-        )
-        long_term_data = await get_instance(self._hass).async_add_executor_job(
-            partial(
-                statistics_during_period,
-                self._hass,
-                history_start,
-                start_at,
-                {self._entity_id},
-                "hour",
-                None,
-                {"sum"},
+        try:
+            states = await self._history_cache.async_fetch(
+                window_start=history_start,
+                now=start_at,
             )
-        )
+            long_term_data = await get_instance(self._hass).async_add_executor_job(
+                partial(
+                    statistics_during_period,
+                    self._hass,
+                    history_start,
+                    start_at,
+                    {self._entity_id},
+                    "hour",
+                    None,
+                    {"sum"},
+                )
+            )
+        except Exception as err:  # noqa: BLE001
+            raise SourceProviderError(
+                "source_fetch",
+                f"Recorder query failed for `{self._entity_id}`: {err}",
+                details={
+                    "entity_id": self._entity_id,
+                    "built_in_reason": "recorder_error",
+                },
+            ) from err
 
         # Both recorder state history and long-term statistics are treated as
         # cumulative meter readings. The first normalization step is therefore

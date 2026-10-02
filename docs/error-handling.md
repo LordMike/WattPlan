@@ -48,6 +48,7 @@ Typical examples:
 
 - a non-critical source such as PV or export price is unavailable
 - a critical source is temporarily backed by stale cached data
+- a service-adapter source failed (service not found, service error, invalid service name, or no response within 30 seconds); this is handled like any other fetch failure, so stale cached data is used when available
 - a provider returned NaN or an infinite value, so WattPlan rejected that refresh and retained a finite cached window
 - the optimizer solved the plan with reduced confidence
 - planning failed, but a previous plan is retained and still covers the current time

@@ -439,9 +439,6 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 # availability changes without waiting for the next tick.
                 self.async_update_listeners()
                 raise
-            except ServiceValidationError:
-                self._set_last_plan_duration(started)
-                raise
             except Exception as err:
                 self._set_last_plan_duration(started)
                 self._source_status.mark_failed_status(err, snapshot=self._snapshot)

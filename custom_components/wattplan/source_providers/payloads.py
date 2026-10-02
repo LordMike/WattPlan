@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import asyncio
 from datetime import datetime
 import math
 from typing import Any
@@ -10,7 +11,9 @@ from typing import Any
 from homeassistant.const import CONF_NAME
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.template import Template
+import voluptuous as vol
 
 from ..adapter_auto import resolve_nested_value
 from ..datetime_utils import parse_datetime_like
@@ -27,29 +30,46 @@ from ..source_types import SourceProviderError
 from .config import CONF_WATTPLAN_ENTITY_ID
 from .discovery import async_get_energy_solar_forecast_platforms
 
+SERVICE_CALL_TIMEOUT_SECONDS = 30
+
 
 def split_service_name(service_name: str, *, label: str) -> tuple[str, str]:
     """Return validated domain and service parts for a service adapter."""
-    try:
-        return service_name.split(".", 1)
-    except ValueError as err:
+    domain, separator, service = str(service_name).strip().partition(".")
+    if not separator or not domain.strip() or not service.strip():
         raise SourceProviderError(
             "source_validation",
             f"{label} service `{service_name}` is invalid",
             details={"service": service_name},
+        )
+    return domain.strip(), service.strip()
+
+
+async def async_service_response(
+    hass: HomeAssistant, service_name: str, *, label: str = "Service"
+) -> Any:
+    """Call a no-argument service and return its response payload.
+
+    Every failure of the call itself is reported as a `source_fetch`
+    `SourceProviderError` so callers get stale-cache fallback and health
+    reporting instead of an unhandled Home Assistant exception.
+    """
+    domain, service = split_service_name(service_name, label=label)
+    try:
+        async with asyncio.timeout(SERVICE_CALL_TIMEOUT_SECONDS):
+            return await hass.services.async_call(
+                domain,
+                service,
+                {},
+                blocking=True,
+                return_response=True,
+            )
+    except (HomeAssistantError, vol.Invalid, TimeoutError) as err:
+        raise SourceProviderError(
+            "source_fetch",
+            f"{label} service `{service_name}` failed: {err or type(err).__name__}",
+            details={"service": service_name},
         ) from err
-
-
-async def async_service_response(hass: HomeAssistant, service_name: str) -> Any:
-    """Call a no-argument service and return its response payload."""
-    domain, service = split_service_name(service_name, label="Service")
-    return await hass.services.async_call(
-        domain,
-        service,
-        {},
-        blocking=True,
-        return_response=True,
-    )
 
 
 class BasePayloadProvider(ABC):
@@ -185,14 +205,9 @@ class ServiceResponsePayloadProvider(BasePayloadProvider):
                 details={"source": self._source_name, "adapter_type": adapter_type},
             )
 
-        try:
-            response = await async_service_response(self._hass, str(service_name))
-        except SourceProviderError as err:
-            raise SourceProviderError(
-                "source_validation",
-                f"{self._source_name} service `{service_name}` is invalid",
-                details={"source": self._source_name, "service": str(service_name)},
-            ) from err
+        response = await async_service_response(
+            self._hass, str(service_name), label=self._source_name
+        )
         payload = resolve_nested_value(response, str(root_key))
         if payload is None:
             raise SourceProviderError(
