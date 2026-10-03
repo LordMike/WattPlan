@@ -3758,3 +3758,64 @@ def test_preserve_probe_is_skipped_when_the_plan_never_uses_the_battery(monkeypa
     states = [point["state"] for point in skipped["entities"][0]["schedule"]]
     assert states == [point["state"] for point in probed["entities"][0]["schedule"]]
     assert "preserve" not in states
+
+
+def test_replay_from_a_start_matches_a_full_replay_exactly():
+    params = optimizer.OptimizationParams(
+        grid_import_price_per_kwh=[0.1, 0.3, 0.2, 0.5, 0.1, 0.4, 0.2, 0.3],
+        grid_export_price_per_kwh=[0.05] * 8,
+        solar_input_kwh=[0.0, 0.6, 1.5, 0.2, 0.0, 0.0, 1.0, 0.0],
+        usage_kwh=[0.4, 0.5, 0.3, 0.6, 0.4, 0.5, 0.3, 0.4],
+        battery_entities=[
+            {
+                "name": "a",
+                "initial_kwh": 1.0,
+                "minimum_kwh": 0.2,
+                "capacity_kwh": 2.0,
+                "charge_curve_kwh": [1.0],
+                "discharge_curve_kwh": [1.0],
+                "can_charge_from": 3,
+            },
+            {
+                "name": "b",
+                "initial_kwh": 0.5,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 1.0,
+                "charge_curve_kwh": [0.5],
+                "discharge_curve_kwh": [0.5],
+                "can_charge_from": 2,
+            },
+        ],
+        comfort_entities=[],
+    )
+    normalized = optimizer.normalize_calculation_input(params)
+    modes = [
+        ["self_consume", "grid_charge", "preserve", "self_consume"] * 2,
+        ["self_consume", "self_consume", "preserve", "grid_charge"] * 2,
+    ]
+    comfort_enabled = optimizer.np.zeros((0, 8), dtype=optimizer.np.int32)
+
+    def replay(optional_usage, **kwargs):
+        return optimizer._replay_policy_cost(
+            normalized.grid_import_prices,
+            normalized.grid_export_prices,
+            normalized.usage,
+            normalized.solar_input,
+            normalized.battery_entities,
+            modes,
+            comfort_enabled,
+            normalized.comfort_entities,
+            optional_usage,
+            **kwargs,
+        )
+
+    trace = []
+    baseline = replay(optimizer.np.zeros(8), trace=trace)
+    assert len(trace) == 8
+    for start in range(7):
+        optional_usage = optimizer.np.zeros(8)
+        optional_usage[start : start + 2] = [0.7, 0.3]
+        full = replay(optional_usage)
+        resumed = replay(optional_usage, resume_from=(start, trace))
+        assert resumed == full
+        assert resumed != baseline or start == 0

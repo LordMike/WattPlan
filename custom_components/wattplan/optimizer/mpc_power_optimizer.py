@@ -2334,16 +2334,30 @@ def _replay_policy_cost(
     comfort_enabled,
     comfort_entities,
     optional_usage,
+    trace=None,
+    resume_from=None,
 ):
-    """Replay grid cost under fixed battery modes and comfort actions."""
+    """Replay grid cost under fixed battery modes and comfort actions.
+
+    ``trace`` collects ``(battery_levels, cost_so_far)`` at the start of every
+    step. ``resume_from=(step, trace)`` continues from that step of an earlier
+    trace, which is exact when ``optional_usage`` is zero before ``step``.
+    """
     total_steps = len(usage)
     battery_levels = np.asarray(
         [float(entity.initial_kwh) for entity in battery_entities],
         dtype=np.float64,
     )
     total_cost = 0.0
+    first_step = 0
+    if resume_from is not None:
+        first_step, earlier_trace = resume_from
+        battery_levels, total_cost = earlier_trace[first_step]
+        battery_levels = battery_levels.copy()
 
-    for t in range(total_steps):
+    for t in range(first_step, total_steps):
+        if trace is not None:
+            trace.append((battery_levels.copy(), total_cost))
         battery_levels_before_pv = battery_levels.copy()
         total_usage = float(usage[t])
         for i, entity in enumerate(comfort_entities):
@@ -2614,11 +2628,28 @@ def _optional_entity_options(
     comfort_enabled,
     comfort_entities,
     baseline_policy_cost,
+    baseline_trace=None,
 ):
     duration = entity.duration_timeslots
     profile = entity.energy_profile
     total_steps = len(grid_import_prices)
     candidates = []
+    if baseline_trace is None:
+        # Replay the unloaded plan once; each candidate then only replays from
+        # its own start, since nothing differs before it.
+        baseline_trace = []
+        _replay_policy_cost(
+            grid_import_prices=grid_import_prices,
+            grid_export_prices=grid_export_prices,
+            usage=usage,
+            solar_input=solar_input,
+            battery_entities=battery_entities,
+            battery_modes=battery_modes,
+            comfort_enabled=comfort_enabled,
+            comfort_entities=comfort_entities,
+            optional_usage=np.zeros(total_steps, dtype=np.float64),
+            trace=baseline_trace,
+        )
     for start_timeslot in range(entity.start_min, entity.start_max + 1):
         optional_usage = np.zeros(total_steps, dtype=np.float64)
         optional_usage[start_timeslot : start_timeslot + duration] = profile
@@ -2632,6 +2663,7 @@ def _optional_entity_options(
             comfort_enabled=comfort_enabled,
             comfort_entities=comfort_entities,
             optional_usage=optional_usage,
+            resume_from=(start_timeslot, baseline_trace),
         )
         incremental_cost = float(loaded_cost - baseline_policy_cost)
         candidates.append((start_timeslot, incremental_cost))
@@ -3049,6 +3081,7 @@ def optimize_internal(
     optional_entity_options = []
     if optional_entities:
         battery_modes = battery_policy_states
+        baseline_trace = []
         baseline_policy_cost = _replay_policy_cost(
             grid_import_prices=grid_import_prices,
             grid_export_prices=grid_export_prices,
@@ -3059,6 +3092,7 @@ def optimize_internal(
             comfort_enabled=result["comfort_enabled"],
             comfort_entities=comfort_entities,
             optional_usage=np.zeros(total_steps, dtype=np.float64),
+            trace=baseline_trace,
         )
         for optional in optional_entities:
             optional_entity_options.append(
@@ -3075,6 +3109,7 @@ def optimize_internal(
                         comfort_enabled=result["comfort_enabled"],
                         comfort_entities=comfort_entities,
                         baseline_policy_cost=baseline_policy_cost,
+                        baseline_trace=baseline_trace,
                     ),
                 }
             )
