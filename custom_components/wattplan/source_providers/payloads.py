@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import asyncio
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
 from itertools import pairwise
 import math
@@ -33,6 +36,39 @@ from .discovery import async_get_energy_solar_forecast_platforms
 
 SERVICE_CALL_TIMEOUT_SECONDS = 30
 
+# Config-flow review and accept resolve one source several times (raw coverage,
+# fixed coverage, accept validation). Remote providers may be rate limited, so
+# the flow scopes a cache around those calls and each remote fetch happens once.
+_fetch_cache: ContextVar[dict[Any, Any] | None] = ContextVar(
+    "wattplan_fetch_cache", default=None
+)
+
+
+@contextmanager
+def reuse_remote_fetches(cache: dict[Any, Any]) -> Iterator[None]:
+    """Serve repeated remote fetches inside this block from `cache`."""
+    token = _fetch_cache.set(cache)
+    try:
+        yield
+    finally:
+        _fetch_cache.reset(token)
+
+
+async def _cached_fetch(key: Any, fetch: Callable[[], Awaitable[Any]]) -> Any:
+    """Run `fetch` once per active cache, remembering failures too."""
+    cache = _fetch_cache.get()
+    if cache is None:
+        return await fetch()
+    if key not in cache:
+        try:
+            cache[key] = (await fetch(), None)
+        except SourceProviderError as err:
+            cache[key] = (None, err)
+    value, error = cache[key]
+    if error is not None:
+        raise error
+    return value
+
 
 def split_service_name(service_name: str, *, label: str) -> tuple[str, str]:
     """Return validated domain and service parts for a service adapter."""
@@ -56,21 +92,26 @@ async def async_service_response(
     reporting instead of an unhandled Home Assistant exception.
     """
     domain, service = split_service_name(service_name, label=label)
-    try:
-        async with asyncio.timeout(SERVICE_CALL_TIMEOUT_SECONDS):
-            return await hass.services.async_call(
-                domain,
-                service,
-                {},
-                blocking=True,
-                return_response=True,
-            )
-    except (HomeAssistantError, vol.Invalid, TimeoutError) as err:
-        raise SourceProviderError(
-            "source_fetch",
-            f"{label} service `{service_name}` failed: {err or type(err).__name__}",
-            details={"service": service_name},
-        ) from err
+
+    async def fetch() -> Any:
+        try:
+            async with asyncio.timeout(SERVICE_CALL_TIMEOUT_SECONDS):
+                return await hass.services.async_call(
+                    domain,
+                    service,
+                    {},
+                    blocking=True,
+                    return_response=True,
+                )
+        except (HomeAssistantError, vol.Invalid, TimeoutError) as err:
+            raise SourceProviderError(
+                "source_fetch",
+                f"{label} service `{service_name}` failed: "
+                f"{err or type(err).__name__}",
+                details={"service": service_name},
+            ) from err
+
+    return await _cached_fetch(("service", domain, service), fetch)
 
 
 class BasePayloadProvider(ABC):
@@ -256,7 +297,10 @@ class EnergySolarForecastPayloadProvider(BasePayloadProvider):
                 },
             )
 
-        forecast = await platforms[entry.domain](self._hass, entry.entry_id)
+        forecast = await _cached_fetch(
+            ("energy_forecast", entry.entry_id),
+            lambda: platforms[entry.domain](self._hass, entry.entry_id),
+        )
         if forecast is None:
             raise SourceProviderError(
                 "source_fetch",

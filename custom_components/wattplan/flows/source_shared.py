@@ -141,6 +141,7 @@ from ..source_config import (
     staged_entity_source_input,
     staged_service_source_input,
 )
+from ..source_providers.payloads import reuse_remote_fetches
 from ..source_providers import (
     async_auto_detect_entity_adapter,
     async_auto_detect_service_adapter,
@@ -2131,15 +2132,18 @@ class _SharedSourceFlow:
     ) -> dict[str, Any]:
         """Rebuild the staged source summary for the current core data."""
         state = self._state()
-        state.pending_source_summary = await _async_source_summary(
-            self.hass,
-            core_data=self._core_data(),
-            key=key,
-            source=source,
-            source_input=source_input,
-            floor_to_slot=self._floor_to_slot,
-            validate_built_in_entity=self._validate_built_in_usage_entity,
-        )
+        # A fresh review fetches fresh data; accepting reuses what this review saw.
+        state.pending_fetch_cache = {}
+        with reuse_remote_fetches(state.pending_fetch_cache):
+            state.pending_source_summary = await _async_source_summary(
+                self.hass,
+                core_data=self._core_data(),
+                key=key,
+                source=source,
+                source_input=source_input,
+                floor_to_slot=self._floor_to_slot,
+                validate_built_in_entity=self._validate_built_in_usage_entity,
+            )
         return state.pending_source_summary
 
     async def _async_prepare_source_review(
@@ -2188,7 +2192,8 @@ class _SharedSourceFlow:
             if not is_valid or not user_input[CONF_ACCEPT_SOURCE_SUMMARY]:
                 return await self._async_return_to_pending_source_step()
             try:
-                await self._async_validate_source(key, resolved_pending)
+                with reuse_remote_fetches(state.pending_fetch_cache):
+                    await self._async_validate_source(key, resolved_pending)
             except vol.Invalid as err:
                 errors["base"] = str(err)
                 summary = await self._async_refresh_pending_source_summary(

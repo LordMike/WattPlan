@@ -753,6 +753,60 @@ async def test_options_flow_auto_detects_service_adapter(
     assert provider["value_key"] == "price"
 
 
+async def test_service_adapter_review_and_accept_call_service_once(
+    hass: HomeAssistant,
+) -> None:
+    """Reviewing and accepting a service source should fetch from it only once."""
+    start = datetime.now(tz=UTC).replace(minute=0, second=0, microsecond=0)
+    calls: list[str] = []
+
+    async def _handle_prices(call: ServiceCall) -> dict[str, object]:
+        calls.append(call.service)
+        return {
+            "prices": [
+                {
+                    "start": (start + timedelta(hours=hour)).isoformat(),
+                    "price": float(hour + 1),
+                }
+                for hour in range(12)
+            ]
+        }
+
+    hass.services.async_register(
+        "test",
+        "counted_prices",
+        _handle_prices,
+        supports_response=SupportsResponse.ONLY,
+    )
+    entry = await _create_entry_with_price_template(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "source_price"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_SERVICE_ADAPTER}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_SERVICE: "test.counted_prices",
+            CONF_ADAPTER_TYPE: ADAPTER_TYPE_AUTO_DETECT,
+            SECTION_SOURCE_MANUAL: {CONF_NAME: "", "time_key": "", "value_key": ""},
+            CONF_FIXUP_PROFILE: FIXUP_PROFILE_REPAIR,
+        },
+    )
+    assert result["step_id"] == "source_review"
+    assert result["errors"] == {}
+    assert len(calls) == 1
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"accept_source_summary": True}
+    )
+    assert result["type"] is FlowResultType.MENU
+    assert len(calls) == 1
+
+
 async def test_options_flow_routes_failed_service_auto_detect_to_review(
     hass: HomeAssistant,
 ) -> None:
