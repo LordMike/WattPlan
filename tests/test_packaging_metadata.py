@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = json.loads(
     (ROOT / "custom_components/wattplan/manifest.json").read_text(encoding="utf-8")
 )
+PYPROJECT = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 HACS = json.loads((ROOT / "hacs.json").read_text(encoding="utf-8"))
 
 
@@ -49,3 +51,33 @@ def test_reproduction_retention_description_mentions_disk_use() -> None:
         )
     assert descriptions[0] == descriptions[1]
     assert "10 MB" in descriptions[0]
+
+
+def _requirements_file_lines() -> list[str]:
+    lines = (ROOT / "requirements-test.txt").read_text(encoding="utf-8").splitlines()
+    return [line.strip() for line in lines if line.strip() and not line.startswith("#")]
+
+
+def test_runtime_requirements_agree_across_manifest_and_pyproject() -> None:
+    """The manifest is what Home Assistant installs; pyproject must match it."""
+    assert sorted(MANIFEST["requirements"]) == sorted(
+        PYPROJECT["project"]["dependencies"]
+    )
+
+
+def test_test_requirements_cover_runtime_and_test_extra() -> None:
+    """requirements-test.txt is the single install path for CI and local runs."""
+    expected = set(PYPROJECT["project"]["dependencies"]) | set(
+        PYPROJECT["project"]["optional-dependencies"]["test"]
+    )
+    assert set(_requirements_file_lines()) == expected
+
+
+def test_solver_dependencies_have_upper_bounds() -> None:
+    """Optimizer tests assert exact plans, so numpy and HiGHS must not float."""
+    bounded = {
+        requirement.split(">")[0].split("=")[0]
+        for requirement in MANIFEST["requirements"]
+        if "<" in requirement or "==" in requirement
+    }
+    assert {"numpy", "highspy"} <= bounded

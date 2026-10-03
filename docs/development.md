@@ -80,7 +80,11 @@ source-specific wording. Keep the two catalogues in semantic parity when adding
 or changing a branch, including each declared variant count.
 
 `fluent.runtime==0.4.0` is a runtime integration dependency and must remain in
-the manifest, project dependency list, and test requirements. Run the Outlook
+the manifest, project dependency list, and test requirements (a test checks
+that the three agree). `numpy` and `highspy` are bounded to the current major
+because optimizer tests assert exact plans; raise the bound deliberately after
+checking the tests. `requirements-test.txt` is the only install path, used by CI
+and `run_tests.sh` alike. Run the Outlook
 tests after catalog edits; they reject Fluent `Junk`, missing semantic messages,
 formatting failures, and uncached per-render catalog reads:
 

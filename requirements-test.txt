@@ -1,5 +1,6 @@
-numpy
+numpy>=2,<3
 pydantic>=2
-highspy
+highspy>=1.15,<2
 fluent.runtime==0.4.0
 pytest-homeassistant-custom-component==0.13.317
+pytest-cov

@@ -7,15 +7,16 @@ name = "wattplan"
 version = "0.6.4-alpha"
 requires-python = ">=3.14"
 dependencies = [
-  "numpy",
+  "numpy>=2,<3",
   "pydantic>=2",
-  "highspy",
+  "highspy>=1.15,<2",
   "fluent.runtime==0.4.0",
 ]
 
 [project.optional-dependencies]
 test = [
   "pytest-homeassistant-custom-component==0.13.317",
+  "pytest-cov",
 ]
 
 [tool.pytest.ini_options]

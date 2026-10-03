@@ -16,9 +16,9 @@
   "issue_tracker": "https://github.com/LordMike/WattPlan/issues",
   "quality_scale": "bronze",
   "requirements": [
-    "numpy",
+    "numpy>=2,<3",
     "pydantic>=2",
-    "highspy",
+    "highspy>=1.15,<2",
     "fluent.runtime==0.4.0"
   ],
   "version": "0.6.4-alpha"
