@@ -384,6 +384,52 @@ async def test_forecast_spreads_sparse_meter_delta_over_elapsed_time(
     assert values == pytest.approx([40.0 / 96.0] * 4)
 
 
+async def test_forecast_counts_only_in_window_share_of_clipped_segment(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A segment straddling the lookback start only contributes its in-window share."""
+    hass.config.components.add("recorder")
+    entity_id = "sensor.house_load_kwh"
+    hass.states.async_set(entity_id, "124.0", _VALID_LOAD_ATTRS)
+    # History starts at 2026-01-11 00:00. The meter reads 12h before that and
+    # 12h after it, so half of the 24 kWh delta falls inside the window.
+    recorder = _FakeRecorder(
+        history_response={
+            entity_id: [
+                SimpleNamespace(
+                    state="100.0", last_changed=datetime(2026, 1, 10, 12, 0, tzinfo=UTC)
+                ),
+                SimpleNamespace(
+                    state="124.0", last_changed=datetime(2026, 1, 11, 12, 0, tzinfo=UTC)
+                ),
+            ]
+        },
+        statistics_response={entity_id: []},
+    )
+    monkeypatch.setattr(cache_module, "get_instance", lambda _hass: recorder)
+    monkeypatch.setattr(provider_module, "get_instance", lambda _hass: recorder)
+
+    provider = ForecastProvider(
+        hass,
+        entity_id=entity_id,
+        lookback_days=1,
+        same_weekday_weight=1.0,
+        other_weekday_weight=1.0,
+        recency_decay=0.0,
+    )
+    values = await provider.async_values(
+        SourceWindow(
+            start_at=datetime(2026, 1, 12, 0, 0, tzinfo=UTC),
+            slot_minutes=15,
+            slots=4,
+        )
+    )
+
+    # 24 kWh over 24h is 0.25 kWh per 15 minutes; the clipped-duration divisor
+    # would have produced 0.5.
+    assert values == pytest.approx([0.25] * 4)
+
+
 async def test_forecast_fetches_incrementally_from_cache_end(
     hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
 ) -> None:

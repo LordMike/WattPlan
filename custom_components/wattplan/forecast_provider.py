@@ -475,14 +475,18 @@ class ForecastProvider(SourceProvider):
                 continue
             bounded_start = max(segment_start, history_start)
             bounded_end = min(segment_end, end_at)
-            duration_seconds = (bounded_end - bounded_start).total_seconds()
+            if bounded_end <= bounded_start:
+                continue
+            duration_seconds = (segment_end - segment_start).total_seconds()
             if duration_seconds <= 0:
                 continue
 
             # Spread a segment's energy across every planner interval it overlaps
             # in proportion to overlap duration. This is what prevents sparse
             # daily or hourly meter readings from becoming huge single-slot
-            # values in the forecast.
+            # values in the forecast. The divisor is the full segment duration,
+            # so a segment clipped by the window only contributes its in-window
+            # share of the energy.
             slot_start = history_start + (
                 ((bounded_start - history_start) // slot_delta) * slot_delta
             )
