@@ -726,12 +726,18 @@ def encode_state_blob(state_obj):
     return base64.urlsafe_b64encode(raw).decode("ascii")
 
 
-def _parse_state_blob(state_blob):
+def decode_state_blob(state_blob):
+    """Return the JSON object inside a state blob."""
+    raw = base64.urlsafe_b64decode(str(state_blob).encode("ascii"))
+    return json.loads(raw.decode("utf-8"))
+
+
+def _parse_state_blob(state_blob, decoded=None):
+    """Validate a state blob; ``decoded`` skips decoding a blob the caller already has."""
     if state_blob is None:
         return None
 
-    raw = base64.urlsafe_b64decode(str(state_blob).encode("ascii"))
-    obj = json.loads(raw.decode("utf-8"))
+    obj = decoded if decoded is not None else decode_state_blob(state_blob)
 
     try:
         num_steps = int(obj["num_steps"])
@@ -938,7 +944,7 @@ def _parse_state_blob(state_blob):
     )
 
 
-def normalize_calculation_input(params: OptimizationParams):
+def normalize_calculation_input(params: OptimizationParams, decoded_state=None):
     total_steps = len(params.grid_import_price_per_kwh)
     grid_import_prices = np.asarray(params.grid_import_price_per_kwh, dtype=np.float64)
     grid_export_prices = np.asarray(params.grid_export_price_per_kwh, dtype=np.float64)
@@ -1031,7 +1037,7 @@ def normalize_calculation_input(params: OptimizationParams):
         params.lookahead_slots,
         params.infer_battery_preserve_policy,
     )
-    state = _parse_state_blob(params.state)
+    state = _parse_state_blob(params.state, decoded_state)
 
     return CalculationInput(
         total_steps=total_steps,

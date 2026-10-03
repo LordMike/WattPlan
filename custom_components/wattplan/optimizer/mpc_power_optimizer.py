@@ -2721,7 +2721,14 @@ def optimize_internal(
     battery_policy_override=None,
     cadence_diagnostics=None,
     comfort_replan_budget=1,
+    state_as_object=False,
 ):
+    """Plan once.
+
+    ``state_as_object`` returns the opaque state as ``state_obj`` (a dict) in
+    place of the encoded ``state`` blob, for callers that extend it and encode
+    it themselves.
+    """
     total_steps = normalized.total_steps
     grid_import_prices = normalized.grid_import_prices
     grid_export_prices = normalized.grid_export_prices
@@ -3167,8 +3174,11 @@ def optimize_internal(
         "successful_solves": total_successful_solves,
         "entities": entities,
         "optional_entity_options": optional_entity_options,
-        "state": encode_state_blob(state_obj),
     }
+    if state_as_object:
+        response["state_obj"] = state_obj
+    else:
+        response["state"] = encode_state_blob(state_obj)
     if cadence_diagnostics is not None:
         response["cadence"] = cadence_diagnostics
     if placement_diagnostics is not None:

@@ -406,3 +406,23 @@ def test_forecast_datetime_range_is_validated():
     request["plan_start"] = datetime(9999, 12, 31, 23, 59, tzinfo=UTC)
     with pytest.raises(ValidationError, match="datetime range"):
         OptimizationParams(**request)
+
+
+def test_each_call_decodes_the_incoming_state_blob_once(monkeypatch):
+    from custom_components.wattplan.optimizer import models
+
+    first = optimize(OptimizationParams(**payload(0)))
+    decodes = []
+    original = models.decode_state_blob
+
+    def counted(blob):
+        decodes.append(blob)
+        return original(blob)
+
+    monkeypatch.setattr(models, "decode_state_blob", counted)
+    monkeypatch.setattr(planner, "decode_state_blob", counted)
+
+    repair = optimize(OptimizationParams(**payload(1, first["state"])))
+
+    assert repair["cadence"]["mode"] == "repair"
+    assert decodes == [first["state"]]

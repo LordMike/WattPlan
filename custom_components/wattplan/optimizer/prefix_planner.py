@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 from datetime import UTC, datetime, timedelta
 import hashlib
 import json
@@ -14,6 +13,7 @@ from . import mpc_power_optimizer as core
 from .models import (
     COMFORT_SCHEDULER_VERSION,
     OptimizationParams,
+    decode_state_blob,
     encode_state_blob,
     normalize_calculation_input,
 )
@@ -28,7 +28,14 @@ POLICIES = frozenset(("grid_charge", "preserve", "self_consume"))
 def _decode(blob):
     if blob is None:
         return {}
-    return json.loads(base64.urlsafe_b64decode(blob.encode("ascii")).decode("utf-8"))
+    return decode_state_blob(blob)
+
+
+def _result_state(result):
+    """Return a result's state as an object, decoding a blob only if needed."""
+    if "state_obj" in result:
+        return result["state_obj"]
+    return _decode(result["state"])
 
 
 def _timestamp(value):
@@ -140,7 +147,8 @@ def _valid_policies(state, batteries, slots):
 
 
 def _finish(result, params, signature, last_full, mode, reason, fresh_slots, new_slots=0):
-    state = _decode(result["state"])
+    state = _result_state(result)
+    result.pop("state_obj", None)
     count = len(params.battery_entities)
     state["battery_policy_states"] = [
         [point["state"] for point in result["entities"][i]["schedule"]]
@@ -192,7 +200,7 @@ def _finish(result, params, signature, last_full, mode, reason, fresh_slots, new
 
 def _fresh_prefix_reuse(result, normalized, locks):
     """Reuse only decisions just solved for these exact inputs in this call."""
-    state = _decode(result["state"])
+    state = _result_state(result)
     slots = normalized.total_steps
     reuse = dict(locks or {})
     reuse["overlap_steps"] = PREFIX_SLOTS
@@ -247,12 +255,14 @@ def _full(params, normalized, locks, signature, reason, *, fallback=False, prefi
             normalized,
             reuse_plan_override=locks,
             comfort_replan_budget=comfort_replan_budget,
+            state_as_object=True,
         )
     else:
         reuse, policies = _fresh_prefix_reuse(prefix, normalized, locks)
         result = core.optimize_internal(
             normalized, reuse_plan_override=reuse, battery_policy_override=policies,
             comfort_replan_budget=comfort_replan_budget,
+            state_as_object=True,
         )
         result["execution_time"] += prefix["execution_time"]
         result["successful_solves"] += prefix["successful_solves"]
@@ -279,7 +289,7 @@ def _tail_plan(normalized, state, shift, locks):
 
 def _tail_violation(result, normalized):
     """Validate reused battery decisions; comfort is freshly scheduled each call."""
-    state = _decode(result["state"])
+    state = _result_state(result)
     slots = normalized.total_steps
     levels = np.asarray(state["battery_levels"], dtype=float)
     for i, battery in enumerate(normalized.battery_entities):
@@ -318,8 +328,8 @@ def _tail_violation(result, normalized):
 
 def optimize(params: OptimizationParams) -> dict:
     """Refresh eight slots between full plans, using explicit forecast timestamps."""
-    normalized = normalize_calculation_input(params)
     state = _decode(params.state)
+    normalized = normalize_calculation_input(params, state if state else None)
     metadata = state.get("cadence_prefix")
     if params.plan_start is None:
         # No clock means no inferred slide. Preserve the legacy API for old states.
@@ -363,7 +373,7 @@ def optimize(params: OptimizationParams) -> dict:
     tail, modes = _tail_plan(normalized, state, shift, locks)
     result = core.optimize_internal(
         normalized, reuse_plan_override=tail, policy_tail_start=PREFIX_SLOTS,
-        battery_policy_override=modes,
+        battery_policy_override=modes, state_as_object=True,
     )
     violation = _tail_violation(result, normalized)
     if violation is not None:
