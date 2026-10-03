@@ -89,6 +89,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) -> 
     coordinator = WattPlanCoordinator(
         hass,
         entry_id=entry.entry_id,
+        config_entry=entry,
         update_interval=timedelta(minutes=int(entry.data[CONF_SLOT_MINUTES])),
         planning_enabled=bool(entry.options.get(CONF_PLANNING_ENABLED, True)),
         action_emission_enabled=bool(entry.options.get(CONF_ACTION_EMISSION_ENABLED, True)),
@@ -139,6 +140,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) -> 
     had_snapshot = await coordinator.async_restore_snapshot()
     entry.async_on_unload(entry.add_update_listener(async_update_listener))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    coordinator.async_start_scheduler()
     if not had_snapshot:
         await async_try_initial_plan(entry)
     return True

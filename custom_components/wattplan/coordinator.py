@@ -80,6 +80,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         hass: HomeAssistant,
         *,
         entry_id: str,
+        config_entry: ConfigEntry | None = None,
         update_interval: timedelta,
         planning_enabled: bool,
         action_emission_enabled: bool,
@@ -92,11 +93,17 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=config_entry,
             name=f"{DOMAIN}_{entry_id}",
-            update_interval=update_interval,
+            # WattPlan runs its own slot-aligned scheduler (see async_start_scheduler),
+            # so the base class must never arm a timer of its own.
+            update_interval=None,
         )
         self._entry_id = entry_id
         self._base_update_interval = update_interval
+        self._interval: timedelta | None = update_interval
+        self._scheduler_started = False
+        self._unsub_schedule: CALLBACK_TYPE | None = None
         self._planning_enabled = planning_enabled
         self._action_emission_enabled = action_emission_enabled
 
@@ -153,7 +160,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         )
 
         if not self.scheduler_enabled:
-            self._set_update_interval(None)
+            self._interval = None
         else:
             self._async_start_heartbeat()
 
@@ -251,9 +258,9 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
     @property
     def expires_at(self) -> datetime | None:
         """Return when coordinator state should be considered expired."""
-        if self.update_interval is None or self._last_attempt_at is None:
+        if self._interval is None or self._last_attempt_at is None:
             return None
-        return self._last_attempt_at + (self.update_interval * 2)
+        return self._last_attempt_at + (self._interval * 2)
 
     async def async_set_runtime_flags(
         self, *, planning_enabled: bool, action_emission_enabled: bool
@@ -270,61 +277,71 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             self._async_stop_heartbeat()
 
     def _set_update_interval(self, interval: timedelta | None) -> None:
-        """Set coordinator update interval and re-schedule when needed."""
-        self.update_interval = interval
-        if not self._listeners:
-            return
-        if interval is None:
-            self._unschedule_refresh()
-            return
-        self._schedule_refresh()
+        """Set the planning interval and re-arm the scheduler when it is running."""
+        self._interval = interval
+        if self._scheduler_started:
+            self._arm_schedule()
 
     @callback
-    def _schedule_refresh(self) -> None:
-        """Schedule the next refresh aligned to the planner interval."""
-        if self._update_interval_seconds is None:
-            return
+    def async_start_scheduler(self) -> None:
+        """Start planning at every slot boundary until shutdown."""
+        self._scheduler_started = True
+        self._arm_schedule()
 
-        if self.config_entry and self.config_entry.pref_disable_polling:
-            return
-
-        self._async_unsub_refresh()
+    @callback
+    def _cancel_schedule(self) -> None:
+        """Cancel the pending slot-boundary timer, if any."""
+        if self._unsub_schedule is not None:
+            self._unsub_schedule()
+            self._unsub_schedule = None
         self._next_refresh_at = None
 
-        update_interval = self._update_interval_seconds
-        if self._retry_after is not None:
-            update_interval = self._retry_after
-            self._retry_after = None
-
-        now = datetime.now(tz=UTC)
-        if float(update_interval).is_integer():
-            refresh_at = self._aligned_refresh_time(
-                now,
-                interval=timedelta(seconds=int(update_interval)),
-            )
-        else:
-            refresh_at = now + timedelta(seconds=update_interval)
-
+    @callback
+    def _arm_schedule(self) -> None:
+        """Arm one timer for the next slot boundary, replacing any pending one."""
+        self._cancel_schedule()
+        if self._interval is None:
+            return
+        refresh_at = self._aligned_refresh_time(
+            datetime.now(tz=UTC), interval=self._interval
+        )
         self._next_refresh_at = refresh_at
-        self._unsub_refresh = async_track_point_in_utc_time(
-            self.hass,
-            self._async_handle_refresh_interval,
-            refresh_at,
+        self._unsub_schedule = async_track_point_in_utc_time(
+            self.hass, self._async_handle_schedule, refresh_at
         )
 
     @callback
-    def _async_handle_refresh_interval(self, _now: datetime) -> None:
-        """Run the coordinator refresh callback on the HA event loop."""
-        self._DataUpdateCoordinator__wrap_handle_refresh_interval()
+    def _async_handle_schedule(self, _now: datetime) -> None:
+        """Start one scheduled run on the HA event loop."""
+        self._unsub_schedule = None
+        self._next_refresh_at = None
+        if self.config_entry is not None:
+            self.config_entry.async_create_background_task(
+                self.hass, self._async_run_scheduled(), f"{self.name} scheduled run"
+            )
+        else:
+            self.hass.async_create_background_task(
+                self._async_run_scheduled(), f"{self.name} scheduled run"
+            )
+
+    async def _async_run_scheduled(self) -> None:
+        """Run one scheduled tick, then arm the next slot boundary."""
+        try:
+            await self.async_refresh()
+        finally:
+            if self._scheduler_started:
+                self._arm_schedule()
 
     async def async_shutdown(self) -> None:
-        """Stop coordinator background callbacks."""
+        """Stop the scheduler, heartbeat and other background callbacks."""
+        self._scheduler_started = False
+        self._cancel_schedule()
         self._async_stop_heartbeat()
         clear_entry_source_issues(self.hass, self._entry_id)
+        await super().async_shutdown()
 
     async def _async_update_data(self) -> CoordinatorSnapshot | None:
         """Handle one scheduled tick."""
-        self._next_refresh_at = None
         await self.async_tick(trigger=CycleTrigger.SCHEDULE)
         return self._snapshot
 
@@ -802,7 +819,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
     @callback
     def _async_start_heartbeat(self) -> None:
         """Schedule a lenient heartbeat to refresh listener availability."""
-        if self.update_interval is None:
+        if self._interval is None:
             return
         if self._heartbeat_start_unsub or self._heartbeat_interval_unsub:
             return
@@ -810,7 +827,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         # Delay heartbeat so normal coordinator updates have time to run first.
         # This heartbeat exists to keep entity availability accurate when
         # scheduled updates stall, not to duplicate normal state writes.
-        first_heartbeat = datetime.now(tz=UTC) + self.update_interval + HEARTBEAT_OFFSET
+        first_heartbeat = datetime.now(tz=UTC) + self._interval + HEARTBEAT_OFFSET
         self._heartbeat_start_unsub = async_track_point_in_utc_time(
             self.hass, self._async_handle_first_heartbeat, first_heartbeat
         )
@@ -831,10 +848,10 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         """Start periodic heartbeats after the delayed first heartbeat."""
         self._heartbeat_start_unsub = None
         self._async_heartbeat(_now)
-        if self.update_interval is None:
+        if self._interval is None:
             return
         self._heartbeat_interval_unsub = async_track_time_interval(
-            self.hass, self._async_heartbeat, self.update_interval
+            self.hass, self._async_heartbeat, self._interval
         )
 
     @callback

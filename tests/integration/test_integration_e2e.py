@@ -612,6 +612,46 @@ async def test_scheduler_runs_at_interval(hass: HomeAssistant) -> None:
     assert coordinator.last_attempt_at > initial_attempt_at
 
 
+async def test_scheduler_rearms_after_each_run_and_stops_on_unload(
+    hass: HomeAssistant,
+) -> None:
+    """The coordinator-owned scheduler re-arms after a run and cancels on unload."""
+    entry = _entry(
+        title="Home",
+        subentries_data=[_battery_subentry(subentry_id="battery", name="battery")],
+        options={
+            CONF_PLANNING_ENABLED: True,
+            CONF_ACTION_EMISSION_ENABLED: True,
+        },
+    )
+
+    with patch("custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize):
+        await _setup_entry(hass, entry)
+        coordinator = entry.runtime_data.coordinator
+        assert coordinator.config_entry is entry
+        first_refresh_at = coordinator.next_refresh_at
+        first_attempt_at = coordinator.last_attempt_at
+        assert first_refresh_at is not None
+
+        async_fire_time_changed(hass, first_refresh_at + timedelta(seconds=1))
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert coordinator.last_attempt_at > first_attempt_at
+        assert coordinator.next_refresh_at is not None
+
+        await coordinator.async_set_runtime_flags(
+            planning_enabled=False, action_emission_enabled=False
+        )
+        assert coordinator.next_refresh_at is None
+        await coordinator.async_set_runtime_flags(
+            planning_enabled=True, action_emission_enabled=True
+        )
+        assert coordinator.next_refresh_at is not None
+
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+        assert coordinator.next_refresh_at is None
+
+
 @pytest.mark.parametrize(
     ("source_override", "patch_optimize", "expected_status", "expected_source"),
     [
