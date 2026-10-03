@@ -86,6 +86,10 @@ result = optimize(params)
 - **Efficiency Semantics:**
   - Charging: `SoC gain = charged_energy * charge_efficiency`
   - Discharging: `SoC drop = delivered_energy / discharge_efficiency`
+- **Known limitations of the power curves and targets:**
+  - Each MPC solve reads the charge and discharge limits once, at the battery's SoC when that solve starts, and applies them to every slot in its lookahead. A curve that tapers with SoC is therefore exact for the slot being decided but only an approximation for later slots in the window (a battery that will charge into the taper is planned as if it kept its current rate). Each following solve starts from the real SoC and corrects this, and applied controls are always clipped to the true curve.
+  - A `target` becomes a constraint only once its deadline falls inside the lookahead window. A target further away is invisible to the solve until it enters the window, and by then a large or slow-to-reach SoC may no longer be reachable; the plan then reports `battery_target_unmet`. Use a `lookahead_slots` large enough to cover the time needed to reach the target, or set the target earlier.
+  - Energy left in a battery at the end of the lookahead (or the horizon) has no terminal value, so the plan does not hold charge for value beyond what it can see.
 
 ### Battery Target Model (`BatteryTargetParams`)
 | Field | Type | Required | Default | Constraints | Notes |
