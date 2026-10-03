@@ -13,6 +13,7 @@ from custom_components.wattplan.optimizer import optimize
 from custom_components.wattplan.optimizer import mpc_power_optimizer as core
 from custom_components.wattplan.optimizer.comfort_placement import (
     ComfortPlacementInput,
+    ComfortPlacementResult,
     place_comfort_schedules,
 )
 from custom_components.wattplan.optimizer.models import (
@@ -464,3 +465,75 @@ def test_prefix_fallback_shares_one_comfort_replan_budget(monkeypatch):
     assert placement["additional_planning_passes"] <= 1
     assert calls <= 3
     assert "discarded_prefix_work" in placement
+
+
+def _late_placement_payload():
+    slots = 40
+    prices = [0.10 if slot % 8 < 4 else 0.40 for slot in range(slots)]
+    return {
+        "grid_import_price_per_kwh": prices,
+        "grid_export_price_per_kwh": [0.02] * slots,
+        "solar_input_kwh": [0.0] * slots,
+        "usage_kwh": [0.2] * slots,
+        "rolling_window_slots": 10,
+        "lookahead_slots": 4,
+        "action_deadband_kwh": 0.01,
+        "battery_entities": [{
+            "name": "battery",
+            "initial_kwh": 1.0,
+            "minimum_kwh": 0.0,
+            "capacity_kwh": 2.0,
+            "charge_curve_kwh": [1.0],
+            "discharge_curve_kwh": [1.0],
+            "can_charge_from": 3,
+        }],
+        "comfort_entities": [{
+            "name": "heat",
+            "target_on_slots_per_rolling_window": 1,
+            "min_consecutive_on_slots": 1,
+            "min_consecutive_off_slots": 1,
+            "max_consecutive_off_slots": 10,
+            "power_usage_kwh": 1.0,
+            "is_on_now": False,
+            "on_history": [True] + [False] * 8,
+            "off_streak_slots_now": 3,
+        }],
+    }
+
+
+@pytest.mark.parametrize("mip_starts", [False, True])
+def test_comfort_replan_resumes_early_steps_with_identical_results(
+    monkeypatch, mip_starts
+):
+    monkeypatch.setattr(core, "_use_mip_starts", lambda *_args: mip_starts)
+    calls = []
+    original = core._run_mpc
+
+    def capture(*args, **kwargs):
+        result = original(*args, **kwargs)
+        calls.append((args, kwargs, result))
+        return result
+
+    def move_last_run_earlier(inputs, *_args, **_kwargs):
+        schedule = list(inputs[0].schedule)
+        last = max(slot for slot, on in enumerate(schedule) if on)
+        schedule[last], schedule[last - 3] = False, True
+        return ComfortPlacementResult(
+            schedules=(tuple(schedule),), status="improved", violations=((),)
+        )
+
+    monkeypatch.setattr(core, "_run_mpc", capture)
+    monkeypatch.setattr(core, "place_comfort_schedules", move_last_run_earlier)
+    optimize(OptimizationParams(**_late_placement_payload()))
+
+    assert len(calls) == 2
+    args, kwargs, resumed = calls[1]
+    assert kwargs["resume"] is not None
+    assert kwargs["resume"][1] > 0
+
+    full = original(*args, **{**kwargs, "resume": None})
+    for key, value in full.items():
+        if key in {"step_solver_state", "successful_solves"}:
+            continue
+        np.testing.assert_array_equal(resumed[key], value, err_msg=key)
+    assert resumed["successful_solves"] < full["successful_solves"]

@@ -1711,7 +1711,14 @@ def _run_mpc(
     fixed_comfort_override=None,
     solver_time_limit_seconds=None,
     slot_minutes=15,
+    resume=None,
 ):
+    """Run the receding-horizon plan.
+
+    ``resume=(earlier_result, step)`` copies the first ``step`` steps from an
+    earlier run of the same inputs and continues from ``step``. The caller
+    guarantees that nothing those steps read differs from that earlier run.
+    """
     num_battery = len(battery_entities)
     num_comfort = len(comfort_entities)
     total_steps = len(prices)
@@ -1827,8 +1834,53 @@ def _run_mpc(
     primary_mip_start_t = None
     fine_slots, block_slots = _solve_cadence(slot_minutes)
     coarse_plan = None
+    # Solver state at the top of each step, so a later run can resume from here.
+    step_solver_state = [None] * total_steps
+    start_step = 0
+    if resume is not None:
+        resume_result, start_step = resume
+        battery_levels[:, : start_step + 1] = resume_result["battery_levels"][
+            :, : start_step + 1
+        ]
+        comfort_levels[:, : start_step + 1] = resume_result["comfort_levels"][
+            :, : start_step + 1
+        ]
+        comfort_off_streaks[:, : start_step + 1] = resume_result[
+            "comfort_off_streaks"
+        ][:, : start_step + 1]
+        comfort_history[:, : start_step + 1] = resume_result["comfort_history"][
+            :, : start_step + 1
+        ]
+        for name, array in (
+            ("battery_states", battery_states),
+            ("comfort_enabled", comfort_enabled),
+            ("battery_charge", battery_charge),
+            ("battery_charge_grid", battery_charge_grid),
+            ("battery_charge_pv", battery_charge_pv),
+            ("battery_discharge", battery_discharge),
+            ("battery_preserve", battery_preserve),
+            ("comfort_on", comfort_on),
+            ("comfort_lock_mode", comfort_lock_mode_series),
+            ("comfort_lock_remaining", comfort_lock_remaining_series),
+        ):
+            array[:, :start_step] = resume_result[name][:, :start_step]
+        grid_export[:start_step] = resume_result["grid_export"][:start_step]
+        step_solver_state[:start_step] = resume_result["step_solver_state"][
+            :start_step
+        ]
+        if num_comfort:
+            comfort_lock_mode = resume_result["comfort_lock_mode"][
+                :, start_step
+            ].astype(np.int32)
+            comfort_lock_remaining = resume_result["comfort_lock_remaining"][
+                :, start_step
+            ].astype(np.int32)
+        coarse_plan, primary_mip_start, primary_mip_start_t = resume_result[
+            "step_solver_state"
+        ][start_step]
 
-    for t in range(total_steps):
+    for t in range(start_step, total_steps):
+        step_solver_state[t] = (coarse_plan, primary_mip_start, primary_mip_start_t)
         horizon = min(lookahead_slots, total_steps - t)
 
         if t < reused_steps and any(
@@ -2110,6 +2162,8 @@ def _run_mpc(
         "initial_comfort_lock_mode": initial_comfort_lock_mode,
         "initial_comfort_lock_remaining": initial_comfort_lock_remaining,
         "reused_steps": reused_steps + policy_reused_tail_steps,
+        "plan_reused_steps": reused_steps,
+        "step_solver_state": step_solver_state,
         "successful_solves": successful_solves,
     }
 
@@ -2513,6 +2567,25 @@ def _comfort_replan_reuse(reuse_plan):
     return clean
 
 
+def _comfort_replan_resume(baseline_result, accepted, lookahead_slots):
+    """Return ``(baseline_result, step)`` when the replan can reuse early steps.
+
+    A step only reads comfort demand inside its lookahead window, so steps that
+    end before the first changed slot are identical in the replan. That holds
+    only if the baseline solved those steps itself rather than reusing an older
+    plan, because the replan never reuses one.
+    """
+    if baseline_result["plan_reused_steps"] != 0:
+        return None
+    changed_slots = np.flatnonzero(
+        np.any(accepted != baseline_result["comfort_enabled"], axis=0)
+    )
+    step = int(changed_slots[0]) - int(lookahead_slots)
+    if step <= 0:
+        return None
+    return baseline_result, step
+
+
 def _invalid_final_reasons(reasons):
     hard = {
         "battery_min_unmet",
@@ -2793,6 +2866,11 @@ def optimize_internal(
         fallback_reason = placement_error
         additional_successful_solves = 0
         if changed:
+            resume = _comfort_replan_resume(
+                baseline_result,
+                accepted,
+                normalized.lookahead_slots,
+            )
             candidate_result = _run_mpc(
                 grid_import_prices,
                 grid_export_prices,
@@ -2809,6 +2887,7 @@ def optimize_internal(
                 fixed_comfort_override=accepted,
                 solver_time_limit_seconds=normalized.solver_time_limit_seconds,
                 slot_minutes=normalized.slot_minutes,
+                resume=resume,
             )
             additional_successful_solves = int(
                 candidate_result["successful_solves"]
