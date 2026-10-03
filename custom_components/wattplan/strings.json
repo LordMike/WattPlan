@@ -79,7 +79,7 @@
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
-          "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
+          "entity_id": "One or more entities to inspect. Auto detect checks each selected entity and keeps one detected mapping per usable entity.",
           "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
@@ -209,7 +209,7 @@
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
-          "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
+          "entity_id": "One or more entities to inspect. Auto detect checks each selected entity and keeps one detected mapping per usable entity.",
           "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
@@ -325,20 +325,6 @@
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
-          "manual": {
-            "name": "Manual mapping",
-            "description": "Only applies when \"Auto detect\" is not selected.",
-            "data": {
-              "name": "Attribute name",
-              "time_key": "Timestamp key",
-              "value_key": "Value key"
-            },
-            "data_description": {
-              "name": "Attribute path that contains the forecast list. Used only when Auto detect is not selected.",
-              "time_key": "Key containing the timestamp. Used only when Auto detect is not selected.",
-              "value_key": "Key containing the numeric value. Used only when Auto detect is not selected."
-            }
-          },
           "advanced": {
             "name": "Advanced processing",
             "data": {
@@ -367,7 +353,7 @@
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
-          "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
+          "entity_id": "One or more entities to inspect. Auto detect checks each selected entity and keeps one detected mapping per usable entity.",
           "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
@@ -475,20 +461,6 @@
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
-          "manual": {
-            "name": "Manual mapping",
-            "description": "Only applies when \"Auto detect\" is not selected.",
-            "data": {
-              "name": "Attribute name",
-              "time_key": "Timestamp key",
-              "value_key": "Value key"
-            },
-            "data_description": {
-              "name": "Attribute path that contains the forecast list. Used only when Auto detect is not selected.",
-              "time_key": "Key containing the timestamp. Used only when Auto detect is not selected.",
-              "value_key": "Key containing the numeric value. Used only when Auto detect is not selected."
-            }
-          },
           "advanced": {
             "name": "Advanced processing",
             "data": {
@@ -517,7 +489,7 @@
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
-          "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
+          "entity_id": "One or more entities to inspect. Auto detect checks each selected entity and keeps one detected mapping per usable entity.",
           "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
@@ -614,10 +586,6 @@
           "fixup_profile": "Choose how WattPlan handles missing tail coverage after converting the provider's native forecast intervals."
         },
         "sections": {
-          "manual": {
-            "name": "Manual mapping",
-            "description": "Only applies when \"Auto detect\" is not selected."
-          },
           "advanced": {
             "name": "Advanced processing",
             "data": {
@@ -658,7 +626,7 @@
       "attribute_name_required": "An attribute name is required for this adapter.",
       "invalid_payload": "Source output must be a list of numeric values or a list of objects containing timestamp and value fields.",
       "auto_detect_no_match": "Auto detect did not find a compatible forecast list. Review the candidate paths and pick manual mapping if needed.",
-      "auto_detect_conflict": "Auto detect found forecast data, but the selected entities did not resolve to the same root path and fields.",
+      "auto_detect_conflict": "Auto detect found forecast data, but the selected input did not resolve to one consistent structure. Review the detected mappings and adjust the selection or switch to manual mapping if needed.",
       "built_in_no_numeric_history": "No usable numeric history was found for the selected load sensor in the configured lookback period.",
       "review_ready": "This source is **ready** for the selected horizon. ✅",
       "review_ready_extended": "This source is usable for the selected horizon, but only **{raw_coverage_summary}** came from the source itself. WattPlan repaired or extended it to cover the full plan. ⚠️ If you can provide more native forecast data, go back and choose a source with longer coverage.",
@@ -761,10 +729,6 @@
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
-          "manual": {
-            "name": "Manual mapping",
-            "description": "Only applies when \"Auto detect\" is not selected."
-          },
           "advanced": {
             "name": "Advanced processing",
             "data": {
@@ -788,23 +752,27 @@
         "data": {
           "entity_id": "Entity",
           "adapter_type": "Adapter type",
-          "name": "Attribute name",
-          "time_key": "Timestamp key",
-          "value_key": "Value key",
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
-          "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
+          "entity_id": "One or more entities to inspect. Auto detect checks each selected entity and keeps one detected mapping per usable entity.",
           "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
-          "name": "Attribute path that contains the forecast list. Ignored in auto detect mode.",
-          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
-          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
           "manual": {
             "name": "Manual mapping",
-            "description": "Only applies when \"Auto detect\" is not selected."
+            "description": "Only applies when \"Auto detect\" is not selected.",
+            "data": {
+              "name": "Attribute name",
+              "time_key": "Timestamp key",
+              "value_key": "Value key"
+            },
+            "data_description": {
+              "name": "Attribute path that contains the forecast list. Used only when Auto detect is not selected.",
+              "time_key": "Key containing the timestamp. Used only when Auto detect is not selected.",
+              "value_key": "Key containing the numeric value. Used only when Auto detect is not selected."
+            }
           },
           "advanced": {
             "name": "Advanced processing",
@@ -869,23 +837,72 @@
         "data": {
           "entity_id": "Entity",
           "adapter_type": "Adapter type",
-          "name": "Attribute name",
-          "time_key": "Timestamp key",
-          "value_key": "Value key",
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
-          "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
+          "entity_id": "One or more entities to inspect. Auto detect checks each selected entity and keeps one detected mapping per usable entity.",
           "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
-          "name": "Attribute path that contains the forecast list. Ignored in auto detect mode.",
-          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
-          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
           "manual": {
             "name": "Manual mapping",
-            "description": "Only applies when \"Auto detect\" is not selected."
+            "description": "Only applies when \"Auto detect\" is not selected.",
+            "data": {
+              "name": "Attribute name",
+              "time_key": "Timestamp key",
+              "value_key": "Value key"
+            },
+            "data_description": {
+              "name": "Attribute path that contains the forecast list. Used only when Auto detect is not selected.",
+              "time_key": "Key containing the timestamp. Used only when Auto detect is not selected.",
+              "value_key": "Key containing the numeric value. Used only when Auto detect is not selected."
+            }
+          },
+          "advanced": {
+            "name": "Advanced processing",
+            "data": {
+              "aggregation_mode": "Aggregation mode",
+              "clamp_mode": "Timestamp alignment",
+              "resample_mode": "Gap repair",
+              "edge_fill_mode": "Edge fill"
+            },
+            "data_description": {
+              "aggregation_mode": "This always applies when multiple source samples land in one planner interval.",
+              "clamp_mode": "Nearest interval snaps timestamps to the nearest {slot_minutes}-minute interval. Strict requires exact interval timestamps.",
+              "resample_mode": "Linear interpolates between nearby known values. Forward fill repeats the most recent value across short gaps.",
+              "edge_fill_mode": "Hold edge repeats the nearest known value at the beginning or end when the source is almost complete."
+            }
+          }
+        }
+      },
+      "source_export_price_service": {
+        "title": "Export price source service call",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse a Home Assistant service call for export price forecast data.\n\nAdapter type formats:\n- **Auto detect** (recommended): inspect the returned payload and infer the list path plus timestamp/value keys\n- **Service call**: use an explicit response path and key mapping\n\nServices must not require input arguments.",
+        "data": {
+          "service": "Service call",
+          "adapter_type": "Adapter type",
+          "fixup_profile": "Fixup profile"
+        },
+        "data_description": {
+          "service": "Service to call in `domain.service` format. WattPlan calls it without arguments and reads the returned response.",
+          "adapter_type": "Choose Auto detect for the recommended setup path, or Service call to enter the fields yourself.",
+          "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
+        },
+        "sections": {
+          "manual": {
+            "name": "Manual mapping",
+            "description": "Only applies when \"Auto detect\" is not selected.",
+            "data": {
+              "name": "Root path",
+              "time_key": "Timestamp key",
+              "value_key": "Value key"
+            },
+            "data_description": {
+              "name": "Root path containing the forecast list in the service response. Used only when Auto detect is not selected.",
+              "time_key": "Key containing the timestamp. Used only when Auto detect is not selected.",
+              "value_key": "Key containing the numeric value. Used only when Auto detect is not selected."
+            }
           },
           "advanced": {
             "name": "Advanced processing",
@@ -964,20 +981,28 @@
         "data": {
           "entity_id": "Entity",
           "adapter_type": "Adapter type",
-          "name": "Attribute name",
-          "time_key": "Timestamp key",
-          "value_key": "Value key",
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
-          "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
+          "entity_id": "One or more entities to inspect. Auto detect checks each selected entity and keeps one detected mapping per usable entity.",
           "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
-          "name": "Attribute path that contains the forecast list. Ignored in auto detect mode.",
-          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
-          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
+          "manual": {
+            "name": "Manual mapping",
+            "description": "Only applies when \"Auto detect\" is not selected.",
+            "data": {
+              "name": "Attribute name",
+              "time_key": "Timestamp key",
+              "value_key": "Value key"
+            },
+            "data_description": {
+              "name": "Attribute path that contains the forecast list. Used only when Auto detect is not selected.",
+              "time_key": "Key containing the timestamp. Used only when Auto detect is not selected.",
+              "value_key": "Key containing the numeric value. Used only when Auto detect is not selected."
+            }
+          },
           "advanced": {
             "name": "Advanced processing",
             "data": {
@@ -1045,23 +1070,27 @@
         "data": {
           "entity_id": "Entity",
           "adapter_type": "Adapter type",
-          "name": "Attribute name",
-          "time_key": "Timestamp key",
-          "value_key": "Value key",
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
-          "entity_id": "One or more entities to inspect. Auto detect checks them in order and uses the first compatible forecast list it finds.",
+          "entity_id": "One or more entities to inspect. Auto detect checks each selected entity and keeps one detected mapping per usable entity.",
           "adapter_type": "Choose Auto detect for the recommended setup path, or choose an explicit adapter type to enter the fields yourself.",
-          "name": "Attribute path that contains the forecast list. Ignored in auto detect mode.",
-          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
-          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
           "manual": {
             "name": "Manual mapping",
-            "description": "Only applies when \"Auto detect\" is not selected."
+            "description": "Only applies when \"Auto detect\" is not selected.",
+            "data": {
+              "name": "Attribute name",
+              "time_key": "Timestamp key",
+              "value_key": "Value key"
+            },
+            "data_description": {
+              "name": "Attribute path that contains the forecast list. Used only when Auto detect is not selected.",
+              "time_key": "Key containing the timestamp. Used only when Auto detect is not selected.",
+              "value_key": "Key containing the numeric value. Used only when Auto detect is not selected."
+            }
           },
           "advanced": {
             "name": "Advanced processing",
@@ -1198,20 +1227,28 @@
         "data": {
           "service": "Service call",
           "adapter_type": "Adapter type",
-          "name": "Root path",
-          "time_key": "Timestamp key",
-          "value_key": "Value key",
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
           "service": "Service to call in `domain.service` format. WattPlan calls it without arguments and reads the returned response.",
           "adapter_type": "Choose Auto detect for the recommended setup path, or Service call to enter the fields yourself.",
-          "name": "Root path containing the forecast list in the service response. Ignored in auto detect mode.",
-          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
-          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
+          "manual": {
+            "name": "Manual mapping",
+            "description": "Only applies when \"Auto detect\" is not selected.",
+            "data": {
+              "name": "Root path",
+              "time_key": "Timestamp key",
+              "value_key": "Value key"
+            },
+            "data_description": {
+              "name": "Root path containing the forecast list in the service response. Used only when Auto detect is not selected.",
+              "time_key": "Key containing the timestamp. Used only when Auto detect is not selected.",
+              "value_key": "Key containing the numeric value. Used only when Auto detect is not selected."
+            }
+          },
           "advanced": {
             "name": "Advanced processing",
             "data": {
@@ -1235,20 +1272,28 @@
         "data": {
           "service": "Service call",
           "adapter_type": "Adapter type",
-          "name": "Root path",
-          "time_key": "Timestamp key",
-          "value_key": "Value key",
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
           "service": "Service to call in `domain.service` format. WattPlan calls it without arguments and reads the returned response.",
           "adapter_type": "Choose Auto detect for the recommended setup path, or Service call to enter the fields yourself.",
-          "name": "Root path containing the forecast list in the service response. Ignored in auto detect mode.",
-          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
-          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
+          "manual": {
+            "name": "Manual mapping",
+            "description": "Only applies when \"Auto detect\" is not selected.",
+            "data": {
+              "name": "Root path",
+              "time_key": "Timestamp key",
+              "value_key": "Value key"
+            },
+            "data_description": {
+              "name": "Root path containing the forecast list in the service response. Used only when Auto detect is not selected.",
+              "time_key": "Key containing the timestamp. Used only when Auto detect is not selected.",
+              "value_key": "Key containing the numeric value. Used only when Auto detect is not selected."
+            }
+          },
           "advanced": {
             "name": "Advanced processing",
             "data": {
@@ -1274,23 +1319,27 @@
         "data": {
           "service": "Service call",
           "adapter_type": "Adapter type",
-          "name": "Root path",
-          "time_key": "Timestamp key",
-          "value_key": "Value key",
           "fixup_profile": "Fixup profile"
         },
         "data_description": {
           "service": "Service to call in `domain.service` format. WattPlan calls it without arguments and reads the returned response.",
           "adapter_type": "Choose Auto detect for the recommended setup path, or Service call to enter the fields yourself.",
-          "name": "Root path containing the forecast list in the service response. Ignored in auto detect mode.",
-          "time_key": "Key containing the timestamp. Ignored in auto detect mode.",
-          "value_key": "Key containing the numeric value. Ignored in auto detect mode.",
           "fixup_profile": "Direct only uses only clean input. Repair local gaps also fills small gaps near known values. Extend daily pattern can also repeat values from 24 hours earlier when enough data already exists."
         },
         "sections": {
           "manual": {
             "name": "Manual mapping",
-            "description": "Only applies when **Auto detect** is not selected."
+            "description": "Only applies when \"Auto detect\" is not selected.",
+            "data": {
+              "name": "Root path",
+              "time_key": "Timestamp key",
+              "value_key": "Value key"
+            },
+            "data_description": {
+              "name": "Root path containing the forecast list in the service response. Used only when Auto detect is not selected.",
+              "time_key": "Key containing the timestamp. Used only when Auto detect is not selected.",
+              "value_key": "Key containing the numeric value. Used only when Auto detect is not selected."
+            }
           },
           "advanced": {
             "name": "Advanced processing",
@@ -1323,7 +1372,7 @@
       "attribute_name_required": "An attribute name is required for this adapter.",
       "invalid_payload": "Source output must be a list of numeric values or a list of objects containing timestamp and value fields.",
       "auto_detect_no_match": "Auto detect did not find a compatible forecast list. Review the candidate paths and pick manual mapping if needed.",
-      "auto_detect_conflict": "Auto detect found forecast data, but the selected entities did not resolve to the same root path and fields.",
+      "auto_detect_conflict": "Auto detect found forecast data, but the selected input did not resolve to one consistent structure. Review the detected mappings and adjust the selection or switch to manual mapping if needed.",
       "built_in_no_numeric_history": "No usable numeric history was found for the selected load sensor in the configured lookback period.",
       "invalid_start": "One or more entries has an invalid timestamp. Check the configured time key and use ISO format with timezone.",
       "invalid_value": "One or more entries has a non-numeric value. Check the configured value key and output numeric values.",
@@ -1334,7 +1383,11 @@
       "comfort_duration_exceeds_lookahead": "Set this duration shorter than the planner's effective economic lookahead and plan coverage, or increase economic lookahead in General settings.",
       "optimizer_lookahead_invalid_resolution": "Choose a lookahead that converts to a whole number of slots at the selected resolution and contains at least two slots.",
       "optimizer_lookahead_too_short_for_comfort": "Increase economic lookahead or reduce the minimum-on/minimum-off duration of the configured comfort loads. Each minimum duration must be shorter than the effective lookahead and plan coverage.",
-      "planner_reproduction_whole_days": "Retention must be a whole number of days."
+      "planner_reproduction_whole_days": "Retention must be a whole number of days.",
+      "required": "This field is required.",
+      "invalid_energy_sensor": "Select a sensor that reports cumulative energy in kWh.",
+      "energy_provider_none_available": "No loaded Home Assistant Energy solar forecast providers were found.",
+      "energy_provider_unavailable": "The selected Energy solar forecast provider is unavailable or returned no forecast data."
     }
   },
   "config_subentries": {
