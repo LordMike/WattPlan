@@ -265,6 +265,7 @@ outlook-duration = { $unit ->
 
 outlook-period = { $period ->
     [rest-of-today] for the rest of today
+    [whole-forecast] across the whole forecast
     [today] today
     [tomorrow] tomorrow
    *[weekday] on { $weekday ->

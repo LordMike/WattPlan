@@ -647,6 +647,38 @@ def test_flat_price_period_uses_localized_today_tomorrow_and_weekdays(
     assert danish in da_text
 
 
+def test_past_start_fact_reaching_tomorrow_is_not_rest_of_today() -> None:
+    fact = replace(
+        _fact("flat_grid_prices"),
+        start=NOW - timedelta(minutes=30),
+        end=NOW + timedelta(days=1, hours=2),
+    )
+    model = _model(fact)
+    en_text, _ = render_fact_english(fact, model=model, now=NOW, variation_seed="period", forced_variant=0)
+    da_text, _ = render_fact_danish(fact, model=model, now=NOW, variation_seed="period", forced_variant=0)
+
+    assert "across the whole forecast" in en_text
+    assert "rest of today" not in en_text
+    assert "i hele prognosen" in da_text
+    assert "resten af dagen" not in da_text
+
+
+def test_past_start_fact_ending_at_midnight_is_rest_of_today() -> None:
+    next_midnight = datetime.combine(
+        NOW.date() + timedelta(days=1), datetime.min.time(), tzinfo=NOW.tzinfo
+    )
+    fact = replace(
+        _fact("flat_grid_prices"),
+        start=NOW - timedelta(minutes=30),
+        end=next_midnight,
+    )
+    en_text, _ = render_fact_english(
+        fact, model=_model(fact), now=NOW, variation_seed="period", forced_variant=0
+    )
+
+    assert "rest of today" in en_text
+
+
 def test_render_plan_outlook_uses_model_timezone_for_day_labels() -> None:
     local_now = datetime(2026, 9, 25, 1, 30, tzinfo=ZoneInfo("Europe/Copenhagen"))
     fact = replace(

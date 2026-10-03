@@ -288,6 +288,9 @@ def _variant(
 
 def _period(fact: OutlookFact, now: datetime) -> tuple[str, int]:
     if fact.start < now:
+        # fact.end is exclusive, so a fact ending at midnight still ends today.
+        if (fact.end - timedelta(microseconds=1)).date() > now.date():
+            return "whole-forecast", fact.start.weekday()
         return "rest-of-today", fact.start.weekday()
     if fact.start.date() == now.date():
         return "today", fact.start.weekday()

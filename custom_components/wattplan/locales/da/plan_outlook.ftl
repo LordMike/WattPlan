@@ -271,6 +271,7 @@ outlook-duration = { $unit ->
 
 outlook-period = { $period ->
     [rest-of-today] resten af dagen
+    [whole-forecast] i hele prognosen
     [today] i dag
     [tomorrow] i morgen
    *[weekday] på { $weekday ->
