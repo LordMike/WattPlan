@@ -63,6 +63,7 @@ from .source_shared import (
     _lookahead_slots_from_hours,
     _normalize_core_input,
     _SharedSourceFlow,
+    _with_source_steps,
     _source_mode_schema,
     _source_mode_summary,
     _validate_core_data,
@@ -299,6 +300,7 @@ def _discovered_historical_meter_defaults(hass, data: dict[str, Any]) -> dict[st
 CONF_ACCEPT_MANUAL_SCHEDULING = "accept_manual_scheduling"
 
 
+@_with_source_steps
 class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
     """Handle a config flow for WattPlan."""
 
@@ -492,148 +494,6 @@ class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
             last_step=False,
         )
 
-    async def async_step_source_price_template(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Configure price source template."""
-        return await self._async_source_template_step(
-            CONF_SOURCE_IMPORT_PRICE, user_input, step_id="source_price_template"
-        )
-
-    async def async_step_source_export_price_template(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Configure export price source template."""
-        return await self._async_source_template_step(
-            CONF_SOURCE_EXPORT_PRICE, user_input, step_id="source_export_price_template"
-        )
-
-    async def async_step_source_usage_template(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Configure usage source template."""
-        return await self._async_source_template_step(
-            CONF_SOURCE_USAGE, user_input, step_id="source_usage_template"
-        )
-
-    async def async_step_source_pv_template(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Configure PV source template."""
-        return await self._async_source_template_step(
-            CONF_SOURCE_PV, user_input, step_id="source_pv_template"
-        )
-
-    async def async_step_source_price_adapter(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Configure price source adapter."""
-        return await self._async_step_source_adapter(
-            CONF_SOURCE_IMPORT_PRICE, user_input, step_id="source_price_adapter"
-        )
-
-    async def async_step_source_export_price_adapter(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Configure export price source adapter."""
-        return await self._async_step_source_adapter(
-            CONF_SOURCE_EXPORT_PRICE, user_input, step_id="source_export_price_adapter"
-        )
-
-    async def async_step_source_usage_adapter(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Configure usage source adapter."""
-        return await self._async_step_source_adapter(
-            CONF_SOURCE_USAGE, user_input, step_id="source_usage_adapter"
-        )
-
-    async def async_step_source_pv_adapter(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Configure PV source adapter."""
-        return await self._async_step_source_adapter(
-            CONF_SOURCE_PV, user_input, step_id="source_pv_adapter"
-        )
-
-    async def async_step_source_price_service(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Configure price source service adapter."""
-        return await self._async_step_source_service(
-            CONF_SOURCE_IMPORT_PRICE, user_input, step_id="source_price_service"
-        )
-
-    async def async_step_source_export_price_service(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Configure export price source service adapter."""
-        return await self._async_step_source_service(
-            CONF_SOURCE_EXPORT_PRICE, user_input, step_id="source_export_price_service"
-        )
-
-    async def async_step_source_usage_service(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Configure usage source service adapter."""
-        return await self._async_step_source_service(
-            CONF_SOURCE_USAGE, user_input, step_id="source_usage_service"
-        )
-
-    async def async_step_source_pv_service(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Configure PV source service adapter."""
-        return await self._async_step_source_service(
-            CONF_SOURCE_PV, user_input, step_id="source_pv_service"
-        )
-
-    async def async_step_source_pv_energy_provider(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Configure PV source from an Energy solar forecast provider."""
-        return await self._async_step_source_energy_provider(
-            CONF_SOURCE_PV, user_input, step_id="source_pv_energy_provider"
-        )
-
-    async def async_step_source_usage_built_in(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Configure usage source built-in forecast mode."""
-        return await self._async_source_built_in_step(user_input)
-
-    async def _async_step_source_adapter(
-        self,
-        key: str,
-        user_input: dict[str, Any] | None,
-        *,
-        step_id: str,
-    ) -> ConfigFlowResult:
-        """Configure source using entity adapter mode."""
-        return await self._async_source_adapter_step(key, user_input, step_id=step_id)
-
-    async def _async_step_source_service(
-        self,
-        key: str,
-        user_input: dict[str, Any] | None,
-        *,
-        step_id: str,
-    ) -> ConfigFlowResult:
-        """Configure source using service adapter mode."""
-        return await self._async_source_service_step(key, user_input, step_id=step_id)
-
-    async def _async_step_source_energy_provider(
-        self,
-        key: str,
-        user_input: dict[str, Any] | None,
-        *,
-        step_id: str,
-    ) -> ConfigFlowResult:
-        """Configure source using an Energy solar forecast provider."""
-        return await self._async_source_energy_provider_step(
-            key, user_input, step_id=step_id
-        )
-
     def _core_data(self) -> dict[str, Any]:
         """Return planner core data for the setup flow."""
         return self._core
@@ -723,6 +583,7 @@ class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
             last_step=True,
         )
 
+@_with_source_steps
 class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
     """Handle WattPlan options flow."""
 
@@ -1178,142 +1039,6 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
             errors=errors,
             last_step=False,
         )
-
-    async def async_step_source_price_template(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Edit price source template in options."""
-        return await self._async_source_template_step(
-            CONF_SOURCE_IMPORT_PRICE,
-            user_input,
-            step_id="source_price_template",
-        )
-
-    async def async_step_source_export_price_template(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Edit export price source template in options."""
-        return await self._async_source_template_step(
-            CONF_SOURCE_EXPORT_PRICE,
-            user_input,
-            step_id="source_export_price_template",
-        )
-
-    async def async_step_source_usage_template(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Edit usage source template in options."""
-        return await self._async_source_template_step(
-            CONF_SOURCE_USAGE,
-            user_input,
-            step_id="source_usage_template",
-        )
-
-    async def async_step_source_pv_template(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Edit PV source template in options."""
-        return await self._async_source_template_step(
-            CONF_SOURCE_PV,
-            user_input,
-            step_id="source_pv_template",
-        )
-
-    async def async_step_source_price_adapter(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Edit price source adapter in options."""
-        return await self._async_source_adapter_step(
-            CONF_SOURCE_IMPORT_PRICE,
-            user_input,
-            step_id="source_price_adapter",
-        )
-
-    async def async_step_source_export_price_adapter(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Edit export price source adapter in options."""
-        return await self._async_source_adapter_step(
-            CONF_SOURCE_EXPORT_PRICE,
-            user_input,
-            step_id="source_export_price_adapter",
-        )
-
-    async def async_step_source_usage_adapter(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Edit usage source adapter in options."""
-        return await self._async_source_adapter_step(
-            CONF_SOURCE_USAGE,
-            user_input,
-            step_id="source_usage_adapter",
-        )
-
-    async def async_step_source_pv_adapter(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Edit PV source adapter in options."""
-        return await self._async_source_adapter_step(
-            CONF_SOURCE_PV,
-            user_input,
-            step_id="source_pv_adapter",
-        )
-
-    async def async_step_source_price_service(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Edit price source service adapter in options."""
-        return await self._async_source_service_step(
-            CONF_SOURCE_IMPORT_PRICE,
-            user_input,
-            step_id="source_price_service",
-        )
-
-    async def async_step_source_export_price_service(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Edit export price source service adapter in options."""
-        return await self._async_source_service_step(
-            CONF_SOURCE_EXPORT_PRICE,
-            user_input,
-            step_id="source_export_price_service",
-        )
-
-    async def async_step_source_usage_service(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Edit usage source service adapter in options."""
-        return await self._async_source_service_step(
-            CONF_SOURCE_USAGE,
-            user_input,
-            step_id="source_usage_service",
-        )
-
-    async def async_step_source_pv_service(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Edit PV source service adapter in options."""
-        return await self._async_source_service_step(
-            CONF_SOURCE_PV,
-            user_input,
-            step_id="source_pv_service",
-        )
-
-    async def async_step_source_pv_energy_provider(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Edit PV Energy solar forecast provider in options."""
-        return await self._async_source_energy_provider_step(
-            CONF_SOURCE_PV,
-            user_input,
-            step_id="source_pv_energy_provider",
-        )
-
-    async def async_step_source_usage_built_in(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Edit usage source built-in forecast mode in options."""
-        return await self._async_source_built_in_step(user_input)
 
     def _core_data(self) -> dict[str, Any]:
         """Return planner core data for the options flow."""

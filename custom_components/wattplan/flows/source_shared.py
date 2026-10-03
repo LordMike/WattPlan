@@ -30,7 +30,6 @@ from .common import (
     _subentry_display_title,
     _subentry_name,
 )
-from .persistence import SourceFlowPersistence
 from .state import SourceFlowState
 from ..const import (
     ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
@@ -1804,24 +1803,6 @@ class _SharedSourceFlow:
         """Return the currently persisted source config for a source key."""
         raise NotImplementedError
 
-    def _source_persistence(self) -> SourceFlowPersistence:
-        """Return the persistence facade for this flow."""
-        return self  # type: ignore[return-value]
-
-    async def default_source_step(self) -> ConfigFlowResult:
-        """Adapter for persistence-backed default step handling."""
-        return await self._async_default_source_step()
-
-    async def commit_reviewed_source(
-        self, key: str, resolved_pending: dict[str, Any]
-    ) -> ConfigFlowResult:
-        """Adapter for persistence-backed source commit handling."""
-        return await self._async_commit_reviewed_source(key, resolved_pending)
-
-    def review_form_last_step(self, key: str) -> bool:
-        """Adapter for persistence-backed review-step handling."""
-        return self._review_form_last_step(key)
-
     async def _async_handle_source_marked_not_used(self, key: str) -> ConfigFlowResult:
         """Persist a not-used source choice and continue the flow."""
         raise NotImplementedError
@@ -2189,7 +2170,7 @@ class _SharedSourceFlow:
         """Review and confirm one staged source."""
         state = self._state()
         if state.pending_source_key is None or state.pending_source is None:
-            return await self._source_persistence().default_source_step()
+            return await self._async_default_source_step()
 
         key = state.pending_source_key
         pending = dict(state.pending_source)
@@ -2218,7 +2199,7 @@ class _SharedSourceFlow:
                 defaults[CONF_ACCEPT_SOURCE_SUMMARY] = is_valid
             else:
                 state.clear_pending_source()
-                return await self._source_persistence().commit_reviewed_source(
+                return await self._async_commit_reviewed_source(
                     key, resolved_pending
                 )
 
@@ -2266,14 +2247,14 @@ class _SharedSourceFlow:
                 "diagnostic_text": str(summary.get("diagnostic_text", "")),
                 "accept_note": accept_note,
             },
-            last_step=self._source_persistence().review_form_last_step(key),
+            last_step=self._review_form_last_step(key),
         )
 
     async def _async_return_to_pending_source_step(self) -> ConfigFlowResult:
         """Return to the staged source input step."""
         state = self._state()
         if state.pending_source_step_id is None:
-            return await self._source_persistence().default_source_step()
+            return await self._async_default_source_step()
         return await getattr(
             self, f"async_step_{state.pending_source_step_id}"
         )()
@@ -2334,3 +2315,39 @@ SOURCE_STEP_REGISTRY: dict[str, dict[str, str]] = {
         SOURCE_MODE_ENERGY_PROVIDER: "source_pv_energy_provider",
     },
 }
+
+
+def _source_step(source_key: str, mode: str, step_id: str):
+    """Build the pass-through flow step for one registered source input step."""
+
+    async def step(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if mode == SOURCE_MODE_TEMPLATE:
+            return await self._async_source_template_step(
+                source_key, user_input, step_id=step_id
+            )
+        if mode == SOURCE_MODE_ENTITY_ADAPTER:
+            return await self._async_source_adapter_step(
+                source_key, user_input, step_id=step_id
+            )
+        if mode == SOURCE_MODE_SERVICE_ADAPTER:
+            return await self._async_source_service_step(
+                source_key, user_input, step_id=step_id
+            )
+        if mode == SOURCE_MODE_ENERGY_PROVIDER:
+            return await self._async_source_energy_provider_step(
+                source_key, user_input, step_id=step_id
+            )
+        assert mode == SOURCE_MODE_BUILT_IN
+        return await self._async_source_built_in_step(user_input)
+
+    step.__name__ = f"async_step_{step_id}"
+    step.__qualname__ = step.__name__
+    return step
+
+
+def _with_source_steps(cls):
+    """Add async_step_<id> for every step listed in SOURCE_STEP_REGISTRY."""
+    for source_key, modes in SOURCE_STEP_REGISTRY.items():
+        for mode, step_id in modes.items():
+            setattr(cls, f"async_step_{step_id}", _source_step(source_key, mode, step_id))
+    return cls
