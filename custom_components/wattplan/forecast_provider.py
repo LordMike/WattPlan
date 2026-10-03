@@ -4,14 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from functools import partial
 import logging
 import math
 from math import isnan
 from typing import Any
 
-from homeassistant.components.recorder import get_instance
-from homeassistant.components.recorder.statistics import statistics_during_period
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
@@ -29,8 +26,6 @@ class _ForecastRun:
     start_at: datetime
     state: Any
     states: list[Any]
-    long_term_rows: list[Any]
-    state_samples: list[tuple[datetime, datetime, float]]
     samples: list[tuple[datetime, datetime, float]]
     by_slot: dict[int, list[tuple[float, int, int]]]
     debug_events: list[dict[str, Any]]
@@ -81,23 +76,16 @@ class ForecastProvider(SourceProvider):
 
     async def async_values(self, window: SourceWindow) -> list[float]:
         """Return exactly `window.slots` forecast values."""
-        run = await self._async_run(window, include_statistics=False)
+        run = await self._async_run(window)
         return run.values
 
     async def async_debug_payload(self, window: SourceWindow) -> dict[str, Any]:
         """Return raw and normalized forecast data for debugging."""
-        run = await self._async_run(window, include_statistics=True)
+        run = await self._async_run(window)
         return self._debug_payload(window, run)
 
-    async def _async_run(
-        self, window: SourceWindow, *, include_statistics: bool
-    ) -> _ForecastRun:
-        """Compute forecast values from recorder history.
-
-        Long-term statistics are only a fallback for sparse recorder history, so
-        they are fetched only when state history gave no usable samples or when
-        the caller wants them for diagnostics.
-        """
+    async def _async_run(self, window: SourceWindow) -> _ForecastRun:
+        """Compute forecast values from recorder state history."""
         if window.slot_minutes <= 0:
             raise SourceProviderError(
                 "source_validation",
@@ -144,36 +132,9 @@ class ForecastProvider(SourceProvider):
             )
         except Exception as err:  # noqa: BLE001
             raise self._recorder_error(err) from err
-        state_samples = self._delta_state_samples(states)
-        long_term_rows: list[Any] = []
-        if include_statistics or not state_samples:
-            try:
-                long_term_data = await get_instance(self._hass).async_add_executor_job(
-                    partial(
-                        statistics_during_period,
-                        self._hass,
-                        history_start,
-                        start_at,
-                        {self._entity_id},
-                        "hour",
-                        None,
-                        {"sum"},
-                    )
-                )
-            except Exception as err:  # noqa: BLE001
-                raise self._recorder_error(err) from err
-            long_term_rows = long_term_data.get(self._entity_id, [])
-
-        # Both recorder state history and long-term statistics are treated as
-        # cumulative meter readings. The first normalization step is therefore
-        # to convert them into usage segments: `(segment_start, segment_end,
-        # energy_delta_kwh)`.
-        statistics_samples = self._delta_statistics_samples(long_term_rows)
-        # Recorder history and long-term statistics often describe the same
-        # underlying energy usage at different granularities. Do not merge them,
-        # or the same consumption can be counted twice. Prefer recorder history
-        # when available, and use statistics only as fallback on sparse systems.
-        samples = state_samples or statistics_samples
+        # Recorder states are treated as cumulative meter readings and converted
+        # into usage segments: `(segment_start, segment_end, energy_delta_kwh)`.
+        samples = self._delta_state_samples(states)
         if not samples:
             raise SourceProviderError(
                 "source_parse",
@@ -256,8 +217,6 @@ class ForecastProvider(SourceProvider):
             start_at=start_at,
             state=state,
             states=states,
-            long_term_rows=long_term_rows,
-            state_samples=state_samples,
             samples=samples,
             by_slot=by_slot,
             debug_events=debug_events,
@@ -283,7 +242,6 @@ class ForecastProvider(SourceProvider):
         state = run.state
         states = run.states
         samples = run.samples
-        state_samples = run.state_samples
         by_slot = run.by_slot
         debug_events = run.debug_events
         values = run.values
@@ -310,18 +268,6 @@ class ForecastProvider(SourceProvider):
                 }
                 for item in states
             ],
-            "raw_statistics_rows": [
-                {
-                    "start": (
-                        self._as_utc(row["start"]).isoformat()
-                        if isinstance(row.get("start"), datetime)
-                        else None
-                    ),
-                    "sum": row.get("sum"),
-                    "mean": row.get("mean"),
-                }
-                for row in run.long_term_rows
-            ],
             "normalized_segments": [
                 {
                     "start": segment_start.isoformat(),
@@ -330,9 +276,6 @@ class ForecastProvider(SourceProvider):
                 }
                 for segment_start, segment_end, delta in samples
             ],
-            "selected_sample_source": "recorder_history"
-            if state_samples
-            else "long_term_statistics",
             "slot_observations": {
                 str(slot_key): [
                     {
@@ -347,60 +290,6 @@ class ForecastProvider(SourceProvider):
             "guardrail_events": debug_events,
             "forecast_values": values,
         }
-
-    def _delta_statistics_samples(
-        self, rows: list[Any]
-    ) -> list[tuple[datetime, datetime, float]]:
-        """Extract interval usage segments from cumulative long-term statistics."""
-        samples: list[tuple[datetime, datetime, float]] = []
-        previous_value: float | None = None
-        previous_start: datetime | None = None
-        for row in rows:
-            raw = row.get("sum")
-            start = row.get("start")
-            if not isinstance(start, datetime):
-                continue
-            start_at = self._as_utc(start)
-            try:
-                value = float(raw)
-            except (TypeError, ValueError):
-                continue
-            if isnan(value):
-                continue
-            if previous_value is None or previous_start is None:
-                previous_value = value
-                previous_start = start_at
-                continue
-
-            # Long-term statistics `sum` is assumed cumulative here. Convert the
-            # increase between two samples into one usage segment covering the
-            # full elapsed period between their timestamps.
-            delta = value - previous_value
-            previous_value = value
-            segment_start = previous_start
-            previous_start = start_at
-            # Treat negative deltas as meter resets. We skip the reset jump itself
-            # and continue from the new baseline on the next sample.
-            if not math.isfinite(delta) or delta < 0:
-                continue
-            if start_at <= segment_start:
-                continue
-            duration_hours = (start_at - segment_start).total_seconds() / 3600.0
-            if duration_hours <= 0:
-                continue
-            if (delta / duration_hours) > MAX_IMPLIED_POWER_KW:
-                _LOGGER.debug(
-                    "Discarding statistics segment for %s from %s to %s: %.3f kWh over %.3f h implies %.3f kW",
-                    self._entity_id,
-                    segment_start.isoformat(),
-                    start_at.isoformat(),
-                    delta,
-                    duration_hours,
-                    delta / duration_hours,
-                )
-                continue
-            samples.append((segment_start, start_at, delta))
-        return samples
 
     def _delta_state_samples(
         self, states: list[Any]

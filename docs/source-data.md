@@ -54,7 +54,7 @@ If this source is not configured, WattPlan values exported power at zero.
 Usage is optional.
 
 **Supported Provider Styles:**
-- **Built-in:** Preferred when you already have a proper `kWh` energy sensor and want WattPlan to build a forecast from recorded history/statistics (14 days of history by default).
+- **Built-in:** Preferred when you already have a proper `kWh` energy sensor and want WattPlan to build a forecast from recorded history (14 days of history by default). It uses recorder state history only, so the lookback is capped by recorder retention (`purge_keep_days`, 10 days by default in Home Assistant); a longer `history_days` has no extra effect.
 - **Entity Adapter:** Preferred when another integration already exposes a structured usage forecast as entity data.
 - **Service Adapter:** Preferred when usage forecast data is available through a service response.
 - **Template:** Fallback when you need to model or reshape usage data yourself.

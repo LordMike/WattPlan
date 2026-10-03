@@ -303,7 +303,7 @@
       },
       "source_usage_built_in": {
         "title": "Usage source built in forecast",
-        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse Home Assistant history to forecast usage for the next planner window.\n\nProvide a sensor with your running usage in kWh. WattPlan uses recorder history and long-term statistics from the last N days, with weekday weighting, to build enough values for your selected {slot_minutes}-minute interval.",
+        "description": "Questions about source setup? See the source guide on GitHub: [Open source guide](https://github.com/LordMike/WattPlan/blob/main/docs/source-data.md).\n\nUse Home Assistant history to forecast usage for the next planner window.\n\nProvide a sensor with your running usage in kWh. WattPlan uses recorder history from the last N days (limited by recorder retention), with weekday weighting, to build enough values for your selected {slot_minutes}-minute interval.",
         "data": {
           "entity_id": "Load sensor",
           "history_days": "History days"
@@ -927,7 +927,7 @@
       },
       "source_usage_built_in": {
         "title": "Usage source built in forecast",
-        "description": "Use Home Assistant history to forecast usage for the next planner window.\n\nProvide a sensor with your running usage in kWh. WattPlan uses recorder history and long-term statistics from the last N days, with weekday weighting, to build enough values for your selected {slot_minutes}-minute interval.",
+        "description": "Use Home Assistant history to forecast usage for the next planner window.\n\nProvide a sensor with your running usage in kWh. WattPlan uses recorder history from the last N days (limited by recorder retention), with weekday weighting, to build enough values for your selected {slot_minutes}-minute interval.",
         "data": {
           "entity_id": "Load sensor",
           "history_days": "History days"

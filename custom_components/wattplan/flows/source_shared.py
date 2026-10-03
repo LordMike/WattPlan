@@ -415,11 +415,6 @@ def _built_in_history_coverage(
         if last_changed is not None:
             rows.append(last_changed)
     if not rows:
-        for row in debug.get("raw_statistics_rows", []):
-            started = parse_datetime_like(row.get("start"))
-            if started is not None:
-                rows.append(started)
-    if not rows:
         return start_at, start_at, 0.0
     coverage_start = min(rows)
     coverage_end = max(rows)

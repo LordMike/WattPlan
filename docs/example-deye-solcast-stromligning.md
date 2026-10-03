@@ -94,7 +94,7 @@ Good entity in this example:
 
 Why this is a good fit:
 - it represents household/load energy in `kWh`
-- the built-in usage model can use Home Assistant history/statistics from this kind of source
+- the built-in usage model can use Home Assistant recorder state history from this kind of source
 - it avoids templates if the sensor already reflects whole-home or inverter-reported load appropriately
 
 What to consider before choosing a usage sensor:

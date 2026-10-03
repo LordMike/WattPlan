@@ -878,7 +878,6 @@ async def test_config_flow_persists_usage_built_in_source(
                     {"last_changed": "2026-02-20T00:00:00+00:00", "state": "1.0"},
                     {"last_changed": "2026-03-01T00:00:00+00:00", "state": "2.0"},
                 ],
-                "raw_statistics_rows": [],
             }
         ),
     )
@@ -954,7 +953,7 @@ async def test_built_in_usage_source_shows_sensor_validation_error(
     """Built-in usage mode should reject non-kWh energy sensors."""
 
     class _FakeRecorder:
-        """Recorder stub with empty history/statistics responses."""
+        """Recorder stub with empty history responses."""
 
         def __init__(self) -> None:
             self._calls = 0
@@ -965,7 +964,7 @@ async def test_built_in_usage_source_shows_sensor_validation_error(
 
     hass.config.components.add("recorder")
     monkeypatch.setattr(
-        "custom_components.wattplan.forecast_provider.get_instance",
+        "custom_components.wattplan.rolling_history_cache.get_instance",
         lambda _hass: _FakeRecorder(),
     )
     hass.states.async_set(
