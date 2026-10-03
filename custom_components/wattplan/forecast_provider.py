@@ -505,25 +505,22 @@ class ForecastProvider(SourceProvider):
         local_end_date = end_at.astimezone(local_tz).date()
         for slot_start, slot_value in slot_totals.items():
             if slot_value > max_interval_kwh:
-                replacement = 0.0
                 debug_events.append(
                     {
                         "kind": "slot_observation_clamped",
                         "slot_start": slot_start.isoformat(),
                         "original_value": slot_value,
-                        "replacement_value": replacement,
                         "max_interval_kwh": max_interval_kwh,
                     }
                 )
                 _LOGGER.debug(
-                    "Discarding slot observation for %s at %s: %.3f kWh > %.3f kWh, using %.3f kWh",
+                    "Dropping slot observation for %s at %s: %.3f kWh > %.3f kWh",
                     self._entity_id,
                     slot_start.isoformat(),
                     slot_value,
                     max_interval_kwh,
-                    replacement,
                 )
-                slot_value = replacement
+                continue
             # Key by local time so the pattern stays aligned across DST changes.
             local_start = slot_start.astimezone(local_tz)
             minute_of_day = (local_start.hour * 60) + local_start.minute
