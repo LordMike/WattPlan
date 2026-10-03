@@ -12,7 +12,6 @@ from homeassistant.helpers.entity import DeviceInfo
 from ..const import DOMAIN
 from ..datetime_utils import parse_datetime_like
 
-MAX_EXPOSED_PROJECTED_SAVINGS_PCT = 200.0
 TIMESTAMP_DEVICE_CLASS = SensorDeviceClass.TIMESTAMP
 
 

@@ -40,13 +40,6 @@ outlook-cheaper-grid-prices =
        [2] Elprisen ligger lavere { $range }.
       *[other] En billigere elpris gælder { $range }.
     }
-outlook-grid-price-swing =
-    { $variant ->
-       [0] Elprisen skifter retning omkring kl. { $turn_at }.
-       [1] Prognosen for elprisen vender omkring kl. { $turn_at }.
-       [2] Et skift i elprisen sker omkring kl. { $turn_at }.
-      *[other] Elprisen bevæger sig den modsatte vej efter kl. { $turn_at }.
-    }
 outlook-solar-surplus =
     { $variant ->
        [0] Solproduktionen forventes at overstige det forventede forbrug { $range } og toppe omkring kl. { $peak_at }.
@@ -138,13 +131,6 @@ outlook-battery-full-solo =
        [2] Prognosen viser et fuldt batteri senest kl. { $start }.
       *[other] Et fuldt batteri forventes senest kl. { $start }.
     }
-outlook-target-shortfall =
-    { $variant ->
-       [0] { $subject } forventes kun at nå { $expected } % senest kl. { $start }; målet er { $requested } %.
-       [1] Kl. { $start } forventes { $subject } at være på { $expected } % i stedet for målet på { $requested } %.
-       [2] { $subject } når muligvis kun { $expected } % kl. { $start }, under målet på { $requested } %.
-      *[other] Prognosen for { $subject } er { $expected } % kl. { $start }, under målet på { $requested } %.
-    }
 outlook-target-shortfall-known-solo =
     { $variant ->
        [0] Der forventes kun { $expected } % senest kl. { $start }; målet er { $requested } %.
@@ -158,13 +144,6 @@ outlook-target-shortfall-missing-solo =
        [1] Prognosen efterlader batteriet under målet kl. { $start }.
        [2] Det ønskede opladningsniveau nås muligvis ikke senest kl. { $start }.
       *[other] Batteriet når muligvis ikke målet senest kl. { $start }.
-    }
-outlook-target-reached =
-    { $variant ->
-       [0] { $subject } forventes at nå målet på { $requested } % senest kl. { $start }.
-       [1] { $subject } bør oplades til { $requested } % senest kl. { $start }.
-       [2] { $subject } forventes at være på { $requested } % kl. { $start }.
-      *[other] Målet på { $requested } % for { $subject } forventes nået senest kl. { $start }.
     }
 outlook-target-reached-known-solo =
     { $variant ->
@@ -186,13 +165,6 @@ outlook-comfort-timing =
        [1] { $subject } kører { $range }, mens solen forventes at producere strøm.
        [2] { $subject } er planlagt { $range } for at overlappe den forventede solproduktion.
       *[other] Forventet solproduktion overlapper { $subject } { $range }.
-    }
-outlook-optional-start =
-    { $variant ->
-       [0] Det bedste tidspunkt at starte { $subject } er kl. { $start }.
-       [1] Start { $subject } kl. { $start }.
-       [2] { $subject } anbefales kl. { $start }.
-      *[other] Det foretrukne starttidspunkt for { $subject } er kl. { $start }.
     }
 outlook-grid-export =
     { $variant ->
@@ -228,20 +200,6 @@ outlook-grid-use-decrease =
        [1] Boligen forventes at hente mindre strøm fra elnettet senere.
        [2] Forbruget fra elnettet bør være lavere { $period_text }.
       *[other] Der forventes mindre elforbrug fra nettet senere.
-    }
-outlook-source-problem =
-    { $variant ->
-       [0] Soldata er ikke blevet opdateret i { $elapsed_value } minut.
-       [1] Opdateringer af soldata er forsinket i { $elapsed_value } minut.
-       [2] Der bruges stadig ældre soldata efter { $elapsed_value } minut.
-      *[other] Aktuelle soldata har været utilgængelige i { $elapsed_value } minut.
-    }
-outlook-source-problem-import-price =
-    { $variant ->
-       [0] Data om elprisen er ikke blevet opdateret i { $elapsed_value } minut.
-       [1] Opdateringer af elprisen er forsinket i { $elapsed_value } minut.
-       [2] Ældre data om elprisen bruges stadig efter { $elapsed_value } minut.
-      *[other] Aktuelle data om elprisen har været utilgængelige i { $elapsed_value } minut.
     }
 outlook-plan-refresh-failure =
     { $variant ->
@@ -299,7 +257,6 @@ outlook-quiet =
        [2] Der forventes ikke større ændringer i resten af planen.
       *[other] Den resterende plan forventes at være stabil.
     }
-outlook-unknown = Planopdatering: { $kind }.
 
 outlook-duration = { $unit ->
     [hour] { $value ->

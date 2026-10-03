@@ -6,14 +6,19 @@ from zoneinfo import ZoneInfo
 
 from custom_components.wattplan.plan_outlook import (
     _comfort_facts,
-    _select_facts,
     build_plan_outlook,
     build_plan_outlook_model,
     build_status_plan_outlook,
     render_stored_plan_outlook,
 )
 from custom_components.wattplan.plan_outlook_renderer import render_plan_outlook
+from custom_components.wattplan.plan_outlook_selection import select_best_set
 from custom_components.wattplan.plan_outlook_types import OutlookFact
+
+
+def _select_facts(facts: list[OutlookFact], *, previous: None) -> list[OutlookFact]:
+    """Select facts without history, anchored at the earliest fact start."""
+    return select_best_set(facts, min(fact.start for fact in facts), [])
 
 
 def _request(

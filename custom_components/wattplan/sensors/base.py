@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -60,24 +58,3 @@ class WattPlanCoordinatorSensor(CoordinatorEntity[WattPlanCoordinator], SensorEn
     def snapshot(self) -> CoordinatorSnapshot | None:
         """Return current immutable coordinator snapshot."""
         return self.coordinator.snapshot
-
-
-class StaticValueSensor(WattPlanCoordinatorSensor):
-    """Simple sensor with static native value."""
-
-    _require_snapshot = False
-
-    def __init__(
-        self,
-        config_entry: ConfigEntry,
-        coordinator: WattPlanCoordinator,
-        *,
-        native_value: Any,
-        native_unit_of_measurement: str | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initialize static sensor."""
-        super().__init__(config_entry, coordinator, **kwargs)
-        self._attr_native_value = native_value
-        if native_unit_of_measurement is not None:
-            self._attr_native_unit_of_measurement = native_unit_of_measurement

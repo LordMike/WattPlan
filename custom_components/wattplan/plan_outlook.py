@@ -778,37 +778,6 @@ def _reliability_facts(
     return facts
 
 
-def _select_facts(
-    facts: list[OutlookFact],
-    *,
-    previous: OutlookModel | None,
-    now: datetime | None = None,
-) -> list[OutlookFact]:
-    """Select semantic facts via salience-scored candidate sets."""
-    if not facts:
-        return []
-    history = list(previous.selection_history[-MAX_HISTORY:]) if previous else []
-    if now is None:
-        try:
-            now = min(fact.start for fact in facts)
-        except ValueError:
-            return []
-    return select_best_set(facts, now, history)
-
-
-def _facts_are_compatible(left: OutlookFact, right: OutlookFact) -> bool:
-    """Return whether two facts can form one concise, non-redundant report."""
-    left_group = FACT_GROUPS.get(left.kind)
-    right_group = FACT_GROUPS.get(right.kind)
-    if left_group is not None and left_group == right_group:
-        return False
-    if frozenset((left.kind, right.kind)) in INCOMPATIBLE_FACT_PAIRS:
-        return False
-    if "negative_grid_price" in {left.kind, right.kind}:
-        return {left.kind, right.kind} == {"negative_grid_price", "grid_charge"}
-    return True
-
-
 #: Maximum set-score shortfall for keeping the previous selection.
 #: Reselect only on materially better stories, not input noise.
 STICKINESS_EPSILON = 0.05

@@ -641,18 +641,27 @@ async def test_scheduler_rearms_after_each_run_and_stops_on_unload(
         assert coordinator.last_attempt_at > first_attempt_at
         assert coordinator.next_refresh_at is not None
 
-        await coordinator.async_set_runtime_flags(
-            planning_enabled=False, action_emission_enabled=False
-        )
-        assert coordinator.next_refresh_at is None
-        await coordinator.async_set_runtime_flags(
-            planning_enabled=True, action_emission_enabled=True
-        )
-        assert coordinator.next_refresh_at is not None
-
         assert await hass.config_entries.async_unload(entry.entry_id)
         await hass.async_block_till_done()
         assert coordinator.next_refresh_at is None
+
+
+async def test_scheduler_idle_when_planning_and_emission_disabled(
+    hass: HomeAssistant,
+) -> None:
+    """With both stages disabled no slot timer is armed."""
+    entry = _entry(
+        title="Home",
+        subentries_data=[_battery_subentry(subentry_id="battery", name="battery")],
+        options={
+            CONF_PLANNING_ENABLED: False,
+            CONF_ACTION_EMISSION_ENABLED: False,
+        },
+    )
+
+    with patch("custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize):
+        await _setup_entry(hass, entry)
+        assert entry.runtime_data.coordinator.next_refresh_at is None
 
 
 async def test_scheduler_respects_disabled_polling(hass: HomeAssistant) -> None:
@@ -1171,7 +1180,7 @@ async def test_emit_without_snapshot_raises_and_sets_error(
 
     coordinator = entry.runtime_data.coordinator
     assert coordinator.has_error is True
-    assert coordinator.error_attributes()["emit_error_kind"] == "emit_no_snapshot"
+    assert coordinator._emit_error.kind == "emit_no_snapshot"
 
 
 async def test_removed_binary_error_entities_are_not_created(

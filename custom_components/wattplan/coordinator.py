@@ -11,7 +11,6 @@ from typing import Any
 from pydantic import ValidationError
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_NAME
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.event import (
@@ -21,12 +20,7 @@ from homeassistant.helpers.event import (
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
-from .const import (
-    OPTIMIZER_PROFILE_AGGRESSIVE,
-    OPTIMIZER_PROFILE_BALANCED,
-    OPTIMIZER_PROFILE_CONSERVATIVE,
-    DOMAIN,
-)
+from .const import DOMAIN
 from .coordinator_parts import (
     CoordinatorSnapshot,
     CycleTrigger,
@@ -61,11 +55,6 @@ STORAGE_VERSION = 1
 def snapshot_storage_key(entry_id: str) -> str:
     """Return the storage key of one entry's cached snapshot."""
     return f"{DOMAIN}.snapshot.{entry_id}"
-
-
-def _snapshot_schema_id() -> str:
-    """Return schema identity for serialized snapshot cache."""
-    return snapshot_schema_id()
 
 
 SCHEDULE_OFFSET = timedelta(seconds=2)
@@ -264,26 +253,6 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         if self._interval is None or self._last_attempt_at is None:
             return None
         return self._last_attempt_at + (self._interval * 2)
-
-    async def async_set_runtime_flags(
-        self, *, planning_enabled: bool, action_emission_enabled: bool
-    ) -> None:
-        """Update planner and emission flags at runtime."""
-        self._planning_enabled = planning_enabled
-        self._action_emission_enabled = action_emission_enabled
-        self._set_update_interval(
-            self._base_update_interval if self.scheduler_enabled else None
-        )
-        if self.scheduler_enabled:
-            self._async_start_heartbeat()
-        else:
-            self._async_stop_heartbeat()
-
-    def _set_update_interval(self, interval: timedelta | None) -> None:
-        """Set the planning interval and re-arm the scheduler when it is running."""
-        self._interval = interval
-        if self._scheduler_started:
-            self._arm_schedule()
 
     @callback
     def async_start_scheduler(self) -> None:
@@ -885,36 +854,6 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
 
         self._last_heartbeat_health = health
         self.async_update_listeners()
-
-    def error_attributes(self) -> dict[str, Any]:
-        """Return diagnostic state for error entities."""
-        plan_details = self._plan_error.details or {}
-        emit_details = self._emit_error.details or {}
-        return {
-            "has_error": self.has_error,
-            "last_attempt_at": self._last_attempt_at,
-            "last_success_at": self._last_success_at,
-            "expires_at": self.expires_at,
-            "last_duration_ms": self._last_duration_ms,
-            "plan_error_kind": self._plan_error.kind,
-            "plan_error_message": self._plan_error.message,
-            "plan_error_at": self._plan_error.at,
-            "plan_error_source": plan_details.get("source"),
-            "plan_error_available_count": plan_details.get("available_count"),
-            "plan_error_required_count": plan_details.get("required_count"),
-            "source_issues": self._source_status.source_health_diagnostics(),
-            "plan_error_failures": self._plan_error.consecutive_failures,
-            "plan_skipped_locked_count": self._plan_error.skipped_locked_count,
-            "emit_error_kind": self._emit_error.kind,
-            "emit_error_message": self._emit_error.message,
-            "emit_error_at": self._emit_error.at,
-            "emit_error_source": emit_details.get("source"),
-            "emit_error_failures": self._emit_error.consecutive_failures,
-            "emit_skipped_locked_count": self._emit_error.skipped_locked_count,
-            "is_stale": self.is_stale,
-            "planning_enabled": self._planning_enabled,
-            "action_emission_enabled": self._action_emission_enabled,
-        }
 
     def restore_payload(self) -> dict[str, Any] | None:
         """Return serialized coordinator state suitable for restore."""

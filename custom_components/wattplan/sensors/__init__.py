@@ -4,8 +4,6 @@ from .actions import ActionSensor, BatteryTargetSocSensor, NextActionSensor
 from .diagnostics import (
     OptionalTimestampSensor,
     PlanDetailsSensor,
-    ProjectionSensor,
-    ProjectionValueTransform,
     UsageForecastSensor,
 )
 from .runtime import LastRunDurationSensor, LastRunSensor, NextRunSensor
@@ -22,8 +20,6 @@ __all__ = [
     "OptionalTimestampSensor",
     "PlanOutlookSensor",
     "PlanDetailsSensor",
-    "ProjectionSensor",
-    "ProjectionValueTransform",
     "SourceStatusSensor",
     "StatusMessageSensor",
     "StatusSensor",

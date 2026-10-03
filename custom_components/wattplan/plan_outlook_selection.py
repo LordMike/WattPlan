@@ -22,7 +22,7 @@ import math
 from dataclasses import dataclass, field, fields
 from datetime import UTC, datetime
 from itertools import combinations
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
 
 # ---------------------------------------------------------------------------
@@ -78,14 +78,6 @@ _FALLBACK_FACT_GROUPS = {
 _FALLBACK_INCOMPATIBLE = {
     frozenset(("solar_surplus", "grid_export")),
 }
-
-
-@runtime_checkable
-class _FactLike(Protocol):
-    fact_id: str
-    kind: str
-    start: datetime
-    end: datetime
 
 
 def _compat_tables() -> tuple[dict[str, str], set[frozenset[str]]]:

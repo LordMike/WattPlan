@@ -15,13 +15,9 @@ from .const import (
     CONF_HOURS_TO_PLAN,
     CONF_OPTIONS_COUNT,
     CONF_SLOT_MINUTES,
-    CONF_SOURCE_EXPORT_PRICE,
     CONF_SOURCE_MODE,
-    CONF_SOURCE_IMPORT_PRICE,
-    CONF_SOURCE_PV,
     CONF_SOURCE_USAGE,
     CONF_SOURCES,
-    DOMAIN,
     SOURCE_MODE_BUILT_IN,
     SOURCE_MODE_NOT_USED,
     SUBENTRY_TYPE_BATTERY,
@@ -76,13 +72,6 @@ def _entry_slug(config_entry: ConfigEntry) -> str:
 def _subentry_display_name(subentry: Any) -> str:
     """Return configured subentry display name, falling back to title."""
     return str(subentry.data.get(CONF_NAME, subentry.title))
-
-
-def _duration_label(*, minutes: int) -> str:
-    """Return a compact duration label for user-facing sensor names."""
-    if minutes % 60 == 0:
-        return f"{minutes // 60}h"
-    return f"{minutes}m"
 
 
 def _entry_sensor_name(

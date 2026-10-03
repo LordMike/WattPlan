@@ -35,13 +35,6 @@ outlook-cheaper-grid-prices = { $variant ->
     [2] Grid prices sit lower { $range }.
    *[other] Cheaper grid prices run { $range }.
 }
-outlook-grid-price-swing =
-    { $variant ->
-       [0] Grid prices change direction around { $turn_at }.
-       [1] The grid-price forecast turns around { $turn_at }.
-       [2] A grid-price shift occurs near { $turn_at }.
-      *[other] Grid prices move the other way after { $turn_at }.
-    }
 outlook-solar-surplus = { $variant ->
     [0] Solar generation is forecast to exceed expected use { $range }, peaking around { $peak_at }.
     [1] More solar power than expected use is forecast { $range }, with a peak near { $peak_at }.
@@ -132,13 +125,6 @@ outlook-battery-full-solo =
        [2] The forecast shows a full battery by { $start }.
       *[other] A full battery is forecast by { $start }.
     }
-outlook-target-shortfall =
-    { $variant ->
-       [0] { $subject } is expected to reach { $expected }% by { $start }, below the { $requested }% target.
-       [1] By { $start }, { $subject } is forecast at { $expected }% instead of the { $requested }% target.
-       [2] { $subject } may reach only { $expected }% by { $start }; the target is { $requested }%.
-      *[other] The forecast for { $subject } is { $expected }% at { $start }, below the { $requested }% target.
-    }
 outlook-target-shortfall-known-solo =
     { $variant ->
        [0] Only { $expected }% is expected by { $start }, below the { $requested }% target.
@@ -152,13 +138,6 @@ outlook-target-shortfall-missing-solo =
        [1] The forecast leaves the battery below its target at { $start }.
        [2] The requested charge level may be missed by { $start }.
       *[other] The battery may miss its target by { $start }.
-    }
-outlook-target-reached =
-    { $variant ->
-       [0] { $subject } is expected to reach the { $requested }% target by { $start }.
-       [1] { $subject } should charge to { $requested }% by { $start }.
-       [2] { $subject } is forecast to be at { $requested }% by { $start }.
-      *[other] The { $requested }% target for { $subject } is expected by { $start }.
     }
 outlook-target-reached-known-solo =
     { $variant ->
@@ -180,13 +159,6 @@ outlook-comfort-timing =
        [1] { $subject } runs { $range } during expected solar generation.
        [2] { $subject } is planned { $range } to overlap with forecast solar power.
       *[other] Expected solar generation overlaps { $subject } { $range }.
-    }
-outlook-optional-start =
-    { $variant ->
-       [0] The best time to start { $subject } is { $start }.
-       [1] Start { $subject } at { $start }.
-       [2] { $start } is recommended for { $subject }.
-      *[other] The preferred start for { $subject } is { $start }.
     }
 outlook-grid-export =
     { $variant ->
@@ -222,20 +194,6 @@ outlook-grid-use-decrease =
        [1] The home is forecast to draw less electricity from the grid later.
        [2] Grid electricity use should be lower later { $period_text }.
       *[other] Less grid use is expected later.
-    }
-outlook-source-problem =
-    { $variant ->
-       [0] Solar data has not updated for { $elapsed_value } minutes.
-       [1] Solar updates have been delayed for { $elapsed_value } minutes.
-       [2] An earlier solar forecast is in use after { $elapsed_value } minutes.
-      *[other] Current solar data has been unavailable for { $elapsed_value } minutes.
-    }
-outlook-source-problem-import-price =
-    { $variant ->
-       [0] Import price data has not updated for { $elapsed_value } minutes.
-       [1] Import price updates have been delayed for { $elapsed_value } minutes.
-       [2] Older import price data is in use after { $elapsed_value } minutes.
-      *[other] Current import price data has been unavailable for { $elapsed_value } minutes.
     }
 outlook-plan-refresh-failure =
     { $variant ->
@@ -293,7 +251,6 @@ outlook-quiet =
        [2] Nothing significant is expected to change in the rest of the plan.
       *[other] The remaining plan is expected to stay stable.
     }
-outlook-unknown = Plan update: { $kind }.
 
 outlook-duration = { $unit ->
     [hour] { $value ->

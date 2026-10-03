@@ -8,7 +8,6 @@ from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE
 
-from ..const import DOMAIN
 from ..historical_cost.models import (
     HistoricalMetric,
     HistoricalSensorDescription,

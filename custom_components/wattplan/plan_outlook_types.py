@@ -90,19 +90,6 @@ class OutlookFact:
 
 
 @dataclass(frozen=True, slots=True)
-class FactCandidate:
-    """Scored candidate wrapping a fact with salience components."""
-
-    fact: OutlookFact
-    novelty: float = 0.0
-    repetition: float = 0.0
-    timeliness: float = 0.0
-    coverage: float = 0.0
-    salience: float = 0.0
-    reasons: dict[str, str] | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class OutlookStatement:
     """One grouped outlook statement linking related facts."""
 

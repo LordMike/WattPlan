@@ -69,7 +69,7 @@ from custom_components.wattplan.coordinator import (
     STORAGE_VERSION,
     CycleTrigger,
     WattPlanCoordinator,
-    _snapshot_schema_id,
+    snapshot_schema_id,
 )
 from custom_components.wattplan.coordinator_logic.source_status import SourceStatusManager
 from custom_components.wattplan.coordinator_parts import (
@@ -2383,7 +2383,7 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
     )
     await store.async_save(
         {
-            "schema_id": _snapshot_schema_id(),
+            "schema_id": snapshot_schema_id(),
             "config_fingerprint": config_fingerprint(entry),
             "snapshot": {
                 "created_at": plan_start.isoformat(),
@@ -2587,7 +2587,7 @@ async def _setup_with_cached_snapshot(
     )
     await store.async_save(
         {
-            "schema_id": _snapshot_schema_id(),
+            "schema_id": snapshot_schema_id(),
             "config_fingerprint": (
                 config_fingerprint(entry) if fingerprint is _MATCHING else fingerprint
             ),

@@ -6,7 +6,6 @@ from homeassistant.const import MATCH_ALL
 
 from custom_components.wattplan.sensors.diagnostics import (
     PlanDetailsSensor,
-    ProjectionSensor,
     UsageForecastSensor,
 )
 from custom_components.wattplan.sensors.outlook import PlanOutlookSensor
@@ -23,13 +22,6 @@ def test_outlook_per_update_attributes_are_unrecorded() -> None:
     assert {"fact_details", "statements", "covered_start", "covered_end"} <= unrecorded
     # The prose itself stays recorded so history shows what was advised.
     assert not {"headline", "line_1", "line_2", "text"} & unrecorded
-
-
-def test_projection_series_are_unrecorded() -> None:
-    """Per-slot projection series are excluded while totals stay recorded."""
-    unrecorded = ProjectionSensor._unrecorded_attributes
-    assert {"values", "baseline_cost_values"} <= unrecorded
-    assert "total" not in unrecorded
 
 
 def test_plan_details_still_excludes_everything() -> None:
