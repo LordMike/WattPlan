@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from datetime import UTC, datetime, timedelta
 from typing import Any, Callable
@@ -64,6 +65,15 @@ from ..historical_on_off_provider import HistoricalOnOffProvider
 from ..source_pipeline import build_source_value_provider
 from ..source_types import SourceProvider, SourceProviderError, SourceWindow
 from ..target_runtime import clear_expired_battery_targets, get_active_battery_target
+
+_LOGGER = logging.getLogger(__name__)
+
+# Readings beyond capacity by more than this fraction more likely mean a
+# misconfigured sensor than rounding noise, so the battery is skipped instead.
+SOC_OVER_CAPACITY_TOLERANCE = 0.10
+# Clamping below this many kWh is rounding noise and is not worth a warning.
+SOC_CLAMP_LOG_THRESHOLD_KWH = 0.05
+_ENERGY_UNIT_TO_KWH = {"kwh": 1.0, "wh": 0.001, "mwh": 1000.0}
 
 PROFILE_SETTINGS = {
     "aggressive": {
@@ -672,9 +682,38 @@ class PlanningRequestBuilder:
             return None
         if not math.isfinite(numeric_value):
             return None
-        if state.attributes.get("unit_of_measurement") == "%":
+        unit = str(state.attributes.get("unit_of_measurement") or "kWh")
+        if unit == "%":
             return max(0.0, min(capacity_kwh, (numeric_value / 100.0) * capacity_kwh))
-        return numeric_value
+        factor = _ENERGY_UNIT_TO_KWH.get(unit.strip().lower())
+        if factor is None:
+            _LOGGER.warning(
+                "Battery SoC sensor %s has unsupported unit %r; skipping battery",
+                entity_id,
+                unit,
+            )
+            return None
+        value_kwh = numeric_value * factor
+        if value_kwh > capacity_kwh * (1.0 + SOC_OVER_CAPACITY_TOLERANCE):
+            _LOGGER.warning(
+                "Battery SoC sensor %s reads %.3f kWh, far above the configured "
+                "capacity of %.3f kWh; skipping battery",
+                entity_id,
+                value_kwh,
+                capacity_kwh,
+            )
+            return None
+        clamped = max(0.0, min(capacity_kwh, value_kwh))
+        if abs(clamped - value_kwh) > SOC_CLAMP_LOG_THRESHOLD_KWH:
+            _LOGGER.warning(
+                "Battery SoC sensor %s reads %.3f kWh; clamped to %.3f kWh "
+                "(capacity %.3f kWh)",
+                entity_id,
+                value_kwh,
+                clamped,
+                capacity_kwh,
+            )
+        return clamped
 
     def _target_timeslot_from_timestamp(
         self,
