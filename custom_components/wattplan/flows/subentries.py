@@ -15,6 +15,7 @@ from homeassistant.const import CONF_NAME
 import voluptuous as vol
 
 from ..const import (
+    CONF_ROLLING_WINDOW_HOURS,
     CONF_SLOT_MINUTES,
     SUBENTRY_TYPE_BATTERY,
     SUBENTRY_TYPE_COMFORT,
@@ -62,7 +63,20 @@ def _no_placeholders(entry: ConfigEntry) -> dict[str, str] | None:
 
 
 def _comfort_placeholders(entry: ConfigEntry) -> dict[str, str] | None:
-    return {"slot_minutes": str(entry.data[CONF_SLOT_MINUTES])}
+    # Comfort loads must share one window, so any existing load gives the value
+    # shown by the window-mismatch error.
+    window_hours = next(
+        (
+            f"{float(subentry.data[CONF_ROLLING_WINDOW_HOURS]):g}"
+            for subentry in entry.subentries.values()
+            if subentry.subentry_type == SUBENTRY_TYPE_COMFORT
+        ),
+        "",
+    )
+    return {
+        "slot_minutes": str(entry.data[CONF_SLOT_MINUTES]),
+        "window_hours": window_hours,
+    }
 
 
 _BATTERY_SPEC = _SubentrySpec(

@@ -1372,8 +1372,8 @@
       "optimizer_lookahead_invalid_resolution": "Choose a lookahead that converts to a whole number of slots at the selected resolution and contains at least two slots.",
       "optimizer_lookahead_too_short_for_comfort": "Increase economic lookahead or reduce the minimum-on/minimum-off duration of the configured comfort loads. Each minimum duration must be shorter than the effective lookahead and plan coverage.",
       "planner_reproduction_whole_days": "Retention must be a whole number of days.",
-      "required": "This field is required.",
-      "invalid_energy_sensor": "Select a sensor that reports cumulative energy in kWh.",
+      "required": "Please fill in this field.",
+      "invalid_energy_sensor": "Select an energy sensor in kWh that counts up over time.",
       "energy_provider_none_available": "No loaded Home Assistant Energy solar forecast providers were found.",
       "energy_provider_unavailable": "The selected Energy solar forecast provider is unavailable or returned no forecast data."
     }
@@ -1472,7 +1472,7 @@
       },
       "error": {
         "name_not_unique": "That name is already in use. Please choose a different one.",
-        "name_too_similar": "Another item already has a name that is too similar. Names are compared ignoring case, spaces and punctuation. Please choose a different one.",
+        "name_too_similar": "This name is too close to an existing one. Names that differ only in case, spaces or punctuation count as the same. Please choose a different name.",
         "text_required": "Please enter a value.",
         "text_too_long": "That is too long. Please shorten it.",
         "battery_minimum_exceeds_capacity": "Set the minimum battery energy below the battery capacity.",
@@ -1549,14 +1549,14 @@
       },
       "error": {
         "name_not_unique": "That name is already in use. Please choose a different one.",
-        "name_too_similar": "Another item already has a name that is too similar. Names are compared ignoring case, spaces and punctuation. Please choose a different one.",
+        "name_too_similar": "This name is too close to an existing one. Names that differ only in case, spaces or punctuation count as the same. Please choose a different name.",
         "text_required": "Please enter a value.",
         "text_too_long": "That is too long. Please shorten it.",
         "comfort_target_on_hours_invalid": "Set target on-time to be less than or equal to the window duration.",
         "comfort_duration_exceeds_window": "Set this duration to be less than or equal to the window duration.",
         "comfort_duration_exceeds_lookahead": "Set this duration shorter than the planner's effective economic lookahead and plan coverage, or increase economic lookahead in General settings.",
         "comfort_expected_power_invalid": "Set expected power above 0 kW.",
-        "comfort_rolling_window_mismatch": "All comfort loads must use the same rolling window. Use the window of your existing comfort loads, or change those first."
+        "comfort_rolling_window_mismatch": "All comfort loads must use the same window duration. Set this to {window_hours} hours to match your other comfort loads, or change theirs first."
       },
       "abort": {
         "reconfigure_successful": "Changes saved"
@@ -1617,7 +1617,7 @@
       },
       "error": {
         "name_not_unique": "That name is already in use. Please choose a different one.",
-        "name_too_similar": "Another item already has a name that is too similar. Names are compared ignoring case, spaces and punctuation. Please choose a different one.",
+        "name_too_similar": "This name is too close to an existing one. Names that differ only in case, spaces or punctuation count as the same. Please choose a different name.",
         "text_required": "Please enter a value.",
         "text_too_long": "That is too long. Please shorten it.",
         "energy_kwh_required": "Please enter the energy needed in kWh.",

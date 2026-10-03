@@ -188,6 +188,7 @@ async def test_comfort_loads_must_share_one_rolling_window(
     assert result["errors"] == {
         CONF_ROLLING_WINDOW_HOURS: "comfort_rolling_window_mismatch"
     }
+    assert result["description_placeholders"]["window_hours"] == "24"
 
     result = await _submit(
         hass, entry.entry_id, SUBENTRY_TYPE_COMFORT, _comfort_input("Water", 24)
