@@ -18,13 +18,7 @@ from ..const import (
 )
 from ..historical_cost.tracker import validate_energy_sensor
 from ..source_providers import CONF_WATTPLAN_ENTITY_ID, source_mode, source_providers
-from .common import _normalize_name, _subentry_display_title, _subentry_name
-from .forms import (
-    _validate_battery_data,
-    _validate_comfort_data,
-    _validate_core_lookahead_for_comforts,
-    _validate_optional_data,
-)
+from .forms import _validate_core_lookahead_for_comforts
 from .source_shared import (
     CONF_ACTION_EMISSION_ENABLED,
     CONF_CONFIG_ENTRY_ID,
@@ -63,14 +57,11 @@ from .source_shared import (
     ConfigFlowResult,
     ConfigSubentryFlow,
     OptionsFlowWithReload,
-    _battery_schema,
-    _comfort_schema,
     _core_schema,
     _final_setup_schema,
     _lookahead_hours_from_slots,
     _lookahead_slots_from_hours,
     _normalize_core_input,
-    _optional_schema,
     _SharedSourceFlow,
     _source_mode_schema,
     _source_mode_summary,
@@ -739,7 +730,6 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
     _options: dict[str, Any]
     _historical_suggest_discovered: bool
     _pending_timer_options: dict[str, Any] | None
-    _selected_subentry_id: str | None
     _source_state: SourceFlowState
 
     def __init__(self, config_entry: ConfigEntry) -> None:
@@ -762,7 +752,6 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
         )
         self._historical_suggest_discovered = False
         self._pending_timer_options = None
-        self._selected_subentry_id = None
         self._source_state = SourceFlowState()
 
     async def async_step_init(
@@ -1092,39 +1081,6 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
                 defaults[key] = value
         return defaults
 
-    async def async_step_battery_entities(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Show battery edit/remove actions."""
-        if not self._subentries_by_type(SUBENTRY_TYPE_BATTERY):
-            return self.async_abort(reason="nothing_configured")
-        return self.async_show_menu(
-            step_id="battery_entities",
-            menu_options=["battery_edit_select", "battery_remove_select", "init"],
-        )
-
-    async def async_step_comfort_entities(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Show comfort edit/remove actions."""
-        if not self._subentries_by_type(SUBENTRY_TYPE_COMFORT):
-            return self.async_abort(reason="nothing_configured")
-        return self.async_show_menu(
-            step_id="comfort_entities",
-            menu_options=["comfort_edit_select", "comfort_remove_select", "init"],
-        )
-
-    async def async_step_optional_entities(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Show optional edit/remove actions."""
-        if not self._subentries_by_type(SUBENTRY_TYPE_OPTIONAL):
-            return self.async_abort(reason="nothing_configured")
-        return self.async_show_menu(
-            step_id="optional_entities",
-            menu_options=["optional_edit_select", "optional_remove_select", "init"],
-        )
-
     async def async_step_source_price(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -1388,230 +1344,3 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
         self._data[CONF_SOURCES] = sources
         self.hass.config_entries.async_update_entry(self.config_entry, data=self._data)
         return await self.async_step_init()
-
-    async def async_step_battery_edit_select(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Select battery subentry to edit."""
-        return await self._async_select_item(
-            SUBENTRY_TYPE_BATTERY,
-            "battery_edit_select",
-            self.async_step_battery_edit,
-            user_input,
-        )
-
-    async def async_step_comfort_edit_select(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Select comfort subentry to edit."""
-        return await self._async_select_item(
-            SUBENTRY_TYPE_COMFORT,
-            "comfort_edit_select",
-            self.async_step_comfort_edit,
-            user_input,
-        )
-
-    async def async_step_optional_edit_select(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Select optional subentry to edit."""
-        return await self._async_select_item(
-            SUBENTRY_TYPE_OPTIONAL,
-            "optional_edit_select",
-            self.async_step_optional_edit,
-            user_input,
-        )
-
-    async def _async_select_item(
-        self,
-        subentry_type: str,
-        step_id: str,
-        next_step,
-        user_input: dict[str, Any] | None,
-    ) -> ConfigFlowResult:
-        """Select a subentry from a configured subentry type."""
-        items = self._subentries_by_type(subentry_type)
-        if not items:
-            return self.async_abort(reason="nothing_configured")
-        if user_input is not None:
-            self._selected_subentry_id = user_input["item_id"]
-            return await next_step()
-        return self.async_show_form(
-            step_id=step_id,
-            data_schema=vol.Schema(
-                {
-                    vol.Required("item_id"): selector.SelectSelector(
-                        selector.SelectSelectorConfig(
-                            options=[
-                                selector.SelectOptionDict(
-                                    value=item.subentry_id,
-                                    label=item.title,
-                                )
-                                for item in items
-                            ],
-                            mode=selector.SelectSelectorMode.DROPDOWN,
-                        )
-                    )
-                }
-            ),
-        )
-
-    async def async_step_battery_edit(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Edit selected battery."""
-        return await self._async_edit_subentry(
-            SUBENTRY_TYPE_BATTERY,
-            "battery_edit",
-            _battery_schema,
-            _validate_battery_data,
-            user_input,
-        )
-
-    async def async_step_comfort_edit(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Edit selected comfort subentry."""
-        return await self._async_edit_subentry(
-            SUBENTRY_TYPE_COMFORT,
-            "comfort_edit",
-            _comfort_schema,
-            _validate_comfort_data,
-            user_input,
-        )
-
-    async def async_step_optional_edit(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Edit selected optional subentry."""
-        return await self._async_edit_subentry(
-            SUBENTRY_TYPE_OPTIONAL,
-            "optional_edit",
-            _optional_schema,
-            _validate_optional_data,
-            user_input,
-        )
-
-    async def _async_edit_subentry(
-        self,
-        subentry_type: str,
-        step_id: str,
-        schema_factory,
-        validate_method,
-        user_input: dict[str, Any] | None,
-    ) -> ConfigFlowResult:
-        """Edit one selected subentry."""
-        if self._selected_subentry_id is None:
-            return self.async_abort(reason="nothing_configured")
-        subentry = self.config_entry.subentries[self._selected_subentry_id]
-        errors: dict[str, str] = {}
-        defaults = dict(subentry.data)
-
-        if user_input is not None:
-            defaults = user_input
-            if self._name_in_use(user_input[CONF_NAME], exclude_subentry_id=subentry.subentry_id):
-                errors["base"] = "name_not_unique"
-            else:
-                errors.update(validate_method(user_input))
-            if not errors:
-                self.hass.config_entries.async_update_subentry(
-                    self.config_entry,
-                    subentry,
-                    data=user_input,
-                    title=_subentry_display_title(subentry_type, user_input),
-                    unique_id=f"{subentry_type}:{_normalize_name(user_input[CONF_NAME])}",
-                )
-                return await self.async_step_init()
-
-        return self.async_show_form(
-            step_id=step_id,
-            data_schema=self.add_suggested_values_to_schema(schema_factory(), defaults),
-            errors=errors,
-            description_placeholders=(
-                {"slot_minutes": str(self._data[CONF_SLOT_MINUTES])}
-                if subentry_type == SUBENTRY_TYPE_COMFORT
-                else None
-            ),
-        )
-
-    async def async_step_battery_remove_select(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Select battery subentry to remove."""
-        return await self._async_remove_item(
-            SUBENTRY_TYPE_BATTERY,
-            "battery_remove_select",
-            user_input,
-        )
-
-    async def async_step_comfort_remove_select(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Select comfort subentry to remove."""
-        return await self._async_remove_item(
-            SUBENTRY_TYPE_COMFORT,
-            "comfort_remove_select",
-            user_input,
-        )
-
-    async def async_step_optional_remove_select(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Select optional subentry to remove."""
-        return await self._async_remove_item(
-            SUBENTRY_TYPE_OPTIONAL,
-            "optional_remove_select",
-            user_input,
-        )
-
-    async def _async_remove_item(
-        self, subentry_type: str, step_id: str, user_input: dict[str, Any] | None
-    ) -> ConfigFlowResult:
-        """Remove subentry from selected type."""
-        items = self._subentries_by_type(subentry_type)
-        if not items:
-            return self.async_abort(reason="nothing_configured")
-        if user_input is not None:
-            self.hass.config_entries.async_remove_subentry(
-                self.config_entry,
-                user_input["item_id"],
-            )
-            return await self.async_step_init()
-
-        return self.async_show_form(
-            step_id=step_id,
-            data_schema=vol.Schema(
-                {
-                    vol.Required("item_id"): selector.SelectSelector(
-                        selector.SelectSelectorConfig(
-                            options=[
-                                selector.SelectOptionDict(
-                                    value=item.subentry_id,
-                                    label=item.title,
-                                )
-                                for item in items
-                            ],
-                            mode=selector.SelectSelectorMode.DROPDOWN,
-                        )
-                    )
-                }
-            ),
-        )
-
-    def _subentries_by_type(self, subentry_type: str) -> list[Any]:
-        """Return subentries filtered by type."""
-        return [
-            subentry
-            for subentry in self.config_entry.subentries.values()
-            if subentry.subentry_type == subentry_type
-        ]
-
-    def _name_in_use(self, name: str, *, exclude_subentry_id: str | None = None) -> bool:
-        """Return if a subentry title is already in use."""
-        wanted = name.casefold()
-        for subentry in self.config_entry.subentries.values():
-            if subentry.subentry_id == exclude_subentry_id:
-                continue
-            if _subentry_name(subentry).casefold() == wanted:
-                return True
-        return False
