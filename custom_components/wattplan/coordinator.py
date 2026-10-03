@@ -88,6 +88,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         record_planner_reproductions: bool = False,
         planner_reproduction_retention_days: int = 14,
         integration_version: str = "unknown",
+        config_fingerprint: str | None = None,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
@@ -140,7 +141,9 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             entry_id=entry_id,
             schema_id=self._snapshot_schema_id,
             logger=_LOGGER,
+            config_fingerprint=config_fingerprint,
         )
+        self._config_fingerprint = config_fingerprint
         self._projection = PlannerProjectionBuilder(
             hass, entry_id=entry_id, outlook_languages=outlook_languages
         )
@@ -941,16 +944,36 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         return True
 
     async def async_restore_snapshot(self) -> bool:
-        """Restore cached snapshot from storage for this config entry."""
+        """Restore the cached plan when it is still valid for this configuration.
+
+        A cached snapshot is trusted only when it was produced from the same
+        configuration (fingerprint) and its plan still covers the current time.
+        Anything else is discarded so the caller plans from scratch. A trusted
+        snapshot is immediately usable; a fresh plan replaces it later.
+        """
         if (restored := await self._persistence.async_restore_snapshot()) is None:
+            return False
+        if (
+            self._config_fingerprint is None
+            or restored.config_fingerprint != self._config_fingerprint
+            or not SourceStatusManager.snapshot_covers_now(restored.snapshot)
+        ):
+            _LOGGER.debug(
+                "Discarding cached snapshot that is expired or from another "
+                "configuration (entry_id=%s)",
+                self._entry_id,
+            )
+            await self._snapshot_store.async_remove()
             return False
         self._snapshot = restored.snapshot
         self.data = self._snapshot
-        self._action_recommendations_validated = False
+        self._action_recommendations_validated = True
         self._last_success_at = restored.last_success_at
         self._last_duration_ms = restored.last_duration_ms
         self._last_run_timings = restored.last_run_timings
-        self._source_status.apply_restored_snapshot(restored.snapshot)
+        self._source_status.apply_restored_snapshot(
+            restored.snapshot, validated=True
+        )
         self._last_attempt_at = datetime.now(tz=UTC)
         self.async_update_listeners()
         return True

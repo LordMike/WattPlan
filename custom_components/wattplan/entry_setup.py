@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 from functools import partial
@@ -38,6 +40,20 @@ DATA_ENTRY_COUNT = "entry_count"
 DATA_SERVICE_REGISTERED = "service_registered"
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def config_fingerprint(entry: WattPlanConfigEntry) -> str:
+    """Return a stable hash of everything the plan is computed from."""
+    payload = {
+        "data": dict(entry.data),
+        "options": dict(entry.options),
+        "subentries": {
+            subentry_id: [subentry.subentry_type, dict(subentry.data)]
+            for subentry_id, subentry in entry.subentries.items()
+        },
+    }
+    encoded = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode()).hexdigest()
 
 
 async def async_try_initial_plan(entry: WattPlanConfigEntry) -> None:
@@ -90,6 +106,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) -> 
         hass,
         entry_id=entry.entry_id,
         config_entry=entry,
+        config_fingerprint=config_fingerprint(entry),
         update_interval=timedelta(minutes=int(entry.data[CONF_SLOT_MINUTES])),
         planning_enabled=bool(entry.options.get(CONF_PLANNING_ENABLED, True)),
         action_emission_enabled=bool(entry.options.get(CONF_ACTION_EMISSION_ENABLED, True)),
@@ -141,7 +158,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) -> 
     entry.async_on_unload(entry.add_update_listener(async_update_listener))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     coordinator.async_start_scheduler()
-    if not had_snapshot:
+    if had_snapshot:
+        # The restored plan keeps the sensors available; replace it with fresh
+        # data in the background so slow sources cannot delay setup.
+        entry.async_create_background_task(
+            hass, async_try_initial_plan(entry), f"{DOMAIN} initial plan"
+        )
+    else:
         await async_try_initial_plan(entry)
     return True
 

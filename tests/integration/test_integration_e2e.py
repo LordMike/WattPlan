@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from datetime import timedelta
 from typing import Any
 from unittest.mock import patch
@@ -107,7 +108,7 @@ def _fake_optimize(_params: object) -> dict[str, object]:
         "reused_steps": 0,
         "entities": [],
         "optional_entity_options": [],
-        "state": "state-token",
+        "state": base64.b64encode(b'{"v":1}').decode(),
     })
 
 

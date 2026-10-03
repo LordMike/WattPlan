@@ -20,6 +20,7 @@ class RestoredCoordinatorState:
     last_success_at: Any
     last_duration_ms: int | None
     last_run_timings: list[TimingEntry] | None
+    config_fingerprint: str | None = None
 
 
 class CoordinatorSnapshotStore:
@@ -32,8 +33,10 @@ class CoordinatorSnapshotStore:
         entry_id: str,
         schema_id: str,
         logger: logging.Logger,
+        config_fingerprint: str | None = None,
     ) -> None:
         self._store = store
+        self._config_fingerprint = config_fingerprint
         self._entry_id = entry_id
         self._schema_id = schema_id
         self._logger = logger
@@ -51,6 +54,7 @@ class CoordinatorSnapshotStore:
             return None
         return {
             "schema_id": self._schema_id,
+            "config_fingerprint": self._config_fingerprint,
             "snapshot": snapshot.to_dict(),
             "last_success_at": (
                 last_success_at.isoformat() if last_success_at is not None else None
@@ -92,6 +96,11 @@ class CoordinatorSnapshotStore:
             last_success_at=parse_snapshot_datetime(payload.get("last_success_at")),
             last_duration_ms=last_duration_ms,
             last_run_timings=self._deserialize_timings(payload.get("last_run_timings")),
+            config_fingerprint=(
+                fingerprint
+                if isinstance(fingerprint := payload.get("config_fingerprint"), str)
+                else None
+            ),
         )
 
     async def async_restore_snapshot(self) -> RestoredCoordinatorState | None:

@@ -28,7 +28,7 @@ It also exposes attributes such as:
 
 `plan_created_at` is when the active snapshot was created. On the overall status sensor, `expires_at` is the end of the current usable plan coverage from the optimizer horizon. `scheduler_stale` is specifically the scheduler-heartbeat check, while `is_stale` remains the aggregate compatibility signal and can also indicate expired plan coverage.
 
-Restored diagnostics remain visible after startup, but `action_recommendations_validated` remains false and recommendation entities remain unavailable until a new planning call succeeds. Planning or emission failures do not validate a restored plan. A previously successful plan from the same runtime session can still be retained across a later planning failure until its coverage expires.
+A snapshot restored at startup with an unchanged configuration and unexpired coverage is trusted (`action_recommendations_validated` is true, reason code `restored_plan_in_use`) until a background plan replaces it; any other cached snapshot is discarded at startup. A previously successful plan from the same runtime session can still be retained across a later planning failure until its coverage expires.
 
 ### `ok`
 

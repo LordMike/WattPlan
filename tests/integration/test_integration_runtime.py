@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta, tzinfo
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from custom_components.wattplan.const import (
     ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
@@ -90,6 +90,7 @@ from custom_components.wattplan.historical_cost.models import (
     SlotRecord,
 )
 from custom_components.wattplan.historical_cost.store import HistoricalCostStore
+from custom_components.wattplan.entry_setup import config_fingerprint
 from custom_components.wattplan.historical_cost.tracker import HistoricalCostTracker
 from custom_components.wattplan.source_fixup import SourceHealthKind, SourceHealthState
 from tests.plan_invariants import assert_plan_invariants
@@ -2294,13 +2295,14 @@ async def test_battery_next_action_sensor_exposes_timestamp_and_state(
 
 @pytest.mark.usefixtures("frozen_clock")
 async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
-    """Keep restored diagnostics but suppress actions until a fresh plan succeeds."""
+    """Restore a still-valid cached plan so sensors are available before the first plan."""
     now = datetime.now(tz=UTC)
     plan_start = now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
     plan_end = plan_start + timedelta(hours=4)
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Home",
+        minor_version=2,
         data={
             CONF_NAME: "Home",
             CONF_SLOT_MINUTES: 60,
@@ -2382,6 +2384,7 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
     await store.async_save(
         {
             "schema_id": _snapshot_schema_id(),
+            "config_fingerprint": config_fingerprint(entry),
             "snapshot": {
                 "created_at": plan_start.isoformat(),
                 "planner_status": "planned",
@@ -2428,43 +2431,31 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
         }
     )
 
-    with patch(
-        "homeassistant.helpers.entity.Entity.entity_registry_enabled_default",
-        return_value=True,
+    with (
+        patch(
+            "homeassistant.helpers.entity.Entity.entity_registry_enabled_default",
+            return_value=True,
+        ),
+        patch.object(
+            WattPlanCoordinator, "async_plan", new_callable=AsyncMock
+        ) as background_plan,
     ):
         assert await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
+        await hass.async_block_till_done(wait_background_tasks=True)
 
+    # Setup did not wait on a plan, but one still ran afterwards to refresh the cache.
+    background_plan.assert_awaited_once_with(trigger=CycleTrigger.SERVICE)
     _assert_valid_state(hass, "sensor.home_status")
     _assert_valid_state(hass, "sensor.home_last_run_duration")
     status = hass.states.get("sensor.home_status")
     assert status is not None
-    assert status.state == "degraded"
-    assert status.attributes["reason_codes"] == [
-        "restored_plan_awaiting_validation"
-    ]
     assert status.attributes["scheduler_stale"] is False
-    assert status.attributes["action_recommendations_validated"] is False
+    assert status.attributes["action_recommendations_validated"] is True
     assert status.attributes["has_usable_plan"] is True
-    restored_outlook = hass.states.get("sensor.home_plan_outlook_en")
-    assert restored_outlook is not None
-    assert restored_outlook.state.startswith("restored_unvalidated_medium_")
-    assert "restored_unvalidated:plan" in restored_outlook.attributes[
-        "selected_facts"
-    ]
-    assert hass.states.get("sensor.home_battery_action").state == STATE_UNAVAILABLE
-    assert hass.states.get("sensor.home_comfort_action").state == STATE_UNAVAILABLE
-    assert (
-        hass.states.get("sensor.home_optional_next_start_option").state
-        == STATE_UNAVAILABLE
-    )
-
-    battery_next = hass.states.get("sensor.home_battery_next_action")
-    assert battery_next is not None
-    assert battery_next.state == STATE_UNAVAILABLE
-    comfort_next = hass.states.get("sensor.home_comfort_next_action")
-    assert comfort_next is not None
-    assert comfort_next.state == STATE_UNAVAILABLE
+    assert status.attributes["reason_codes"] == ["restored_plan_in_use"]
+    assert hass.states.get("sensor.home_battery_action").state == "preserve"
+    assert hass.states.get("sensor.home_comfort_action").state == "off"
+    _assert_valid_state(hass, "sensor.home_optional_next_start_option")
 
     duration_state = hass.states.get("sensor.home_last_run_duration")
     assert duration_state is not None
@@ -2505,7 +2496,10 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
         assert "plan_expired:plan" in expired_outlook.attributes["selected_facts"]
         _assert_valid_state(hass, "sensor.home_last_run_duration")
 
-    coordinator.async_update_listeners()
+    # Re-restoring the payload directly (no fingerprint check) is diagnostic-only.
+    payload = coordinator.restore_payload()
+    assert payload is not None
+    assert coordinator.async_restore_payload(payload)
     await hass.async_block_till_done()
     with pytest.raises(ServiceValidationError, match="fresh successful plan"):
         await coordinator.async_emit(trigger=CycleTrigger.SERVICE)
@@ -2551,6 +2545,117 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
         hass.states.get("sensor.home_optional_next_start_option").state
         == STATE_UNAVAILABLE
     )
+
+
+_MATCHING = object()
+
+
+async def _setup_with_cached_snapshot(
+    hass: HomeAssistant,
+    *,
+    span_hours_ago: int,
+    fingerprint: str | None | object,
+) -> tuple[MockConfigEntry, AsyncMock, Store]:
+    """Set up an entry whose cached snapshot covers a chosen window."""
+    now = datetime.now(tz=UTC)
+    span_end = now.replace(minute=0, second=0, microsecond=0) - timedelta(
+        hours=span_hours_ago
+    )
+    span_start = span_end - timedelta(hours=4)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home",
+        minor_version=2,
+        data={
+            CONF_NAME: "Home",
+            CONF_SLOT_MINUTES: 60,
+            CONF_HOURS_TO_PLAN: 4,
+            CONF_SOURCES: {
+                CONF_SOURCE_IMPORT_PRICE: {
+                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                    CONF_TEMPLATE: "{{ [0.2, 0.25, 0.3, 0.35] }}",
+                },
+                CONF_SOURCE_USAGE: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
+                CONF_SOURCE_PV: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
+            },
+        },
+        options={CONF_PLANNING_ENABLED: False, CONF_ACTION_EMISSION_ENABLED: False},
+    )
+    entry.add_to_hass(hass)
+    store = Store[dict[str, object]](
+        hass, STORAGE_VERSION, f"{DOMAIN}.snapshot.{entry.entry_id}", private=True
+    )
+    await store.async_save(
+        {
+            "schema_id": _snapshot_schema_id(),
+            "config_fingerprint": (
+                config_fingerprint(entry) if fingerprint is _MATCHING else fingerprint
+            ),
+            "snapshot": {
+                "created_at": span_start.isoformat(),
+                "planner_status": "planned",
+                "planner_message": "Restored plan",
+                "diagnostics": {
+                    "optimizer": {
+                        "span_start": span_start.isoformat(),
+                        "span_end": span_end.isoformat(),
+                    },
+                },
+                "action_schedules": {},
+            },
+            "last_success_at": span_start.isoformat(),
+            "last_duration_ms": 1,
+            "last_run_timings": None,
+        }
+    )
+    with patch.object(
+        WattPlanCoordinator, "async_plan", new_callable=AsyncMock
+    ) as plan:
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done(wait_background_tasks=True)
+    return entry, plan, store
+
+
+async def test_valid_cached_snapshot_is_restored_and_replanned_in_background(
+    hass: HomeAssistant,
+) -> None:
+    """A matching, still-covering snapshot is trusted and a plan follows in the background."""
+    entry, plan, _store = await _setup_with_cached_snapshot(
+        hass, span_hours_ago=-2, fingerprint=_MATCHING
+    )
+    coordinator = entry.runtime_data.coordinator
+    assert coordinator.snapshot is not None
+    assert coordinator.action_recommendations_validated is True
+    plan.assert_awaited_once_with(trigger=CycleTrigger.SERVICE)
+
+
+async def test_expired_cached_snapshot_is_discarded_and_replanned(
+    hass: HomeAssistant,
+) -> None:
+    """A snapshot whose plan no longer covers now is dropped and a plan runs."""
+    entry, plan, store = await _setup_with_cached_snapshot(
+        hass, span_hours_ago=1, fingerprint=_MATCHING
+    )
+    coordinator = entry.runtime_data.coordinator
+    assert coordinator.snapshot is None
+    assert coordinator.action_recommendations_validated is False
+    assert await store.async_load() is None
+    plan.assert_awaited_once_with(trigger=CycleTrigger.SERVICE)
+
+
+@pytest.mark.parametrize("fingerprint", ["different-config", None])
+async def test_cached_snapshot_from_other_config_is_discarded(
+    hass: HomeAssistant, fingerprint: str | None
+) -> None:
+    """A snapshot from changed config, or an old one without fingerprint, is dropped."""
+    entry, plan, store = await _setup_with_cached_snapshot(
+        hass, span_hours_ago=-2, fingerprint=fingerprint
+    )
+    coordinator = entry.runtime_data.coordinator
+    assert coordinator.snapshot is None
+    assert coordinator.action_recommendations_validated is False
+    assert await store.async_load() is None
+    plan.assert_awaited_once_with(trigger=CycleTrigger.SERVICE)
 
 
 async def test_successful_plan_persists_completed_last_run(

@@ -95,7 +95,8 @@ The repository is structured so the integration can be released as a normal HACS
 ## Runtime Model
 The main runtime center is the coordinator:
 - `config_flow.py`: Collects source configuration and planner settings.
-- `coordinator.py`: Builds planner input, runs planning, tracks stage errors, and updates runtime entities.
+- `coordinator.py`: Builds planner input, runs planning, tracks stage errors, and updates runtime entities. It owns its scheduler: one `async_track_point_in_utc_time` timer aimed at the next slot boundary, re-armed after every run and cancelled on shutdown. It does not rely on `DataUpdateCoordinator`'s own refresh timer.
+- `entry_setup.py`: Starts the scheduler after platform setup. On startup the cached snapshot is restored only if it was stored with the same configuration fingerprint (hash of entry data, options, and subentries) and its plan still covers the current time; otherwise it is discarded and the first plan is awaited during setup. A restored snapshot is trusted immediately and replaced by a plan that runs as a background task right after setup.
 - `binary_sensor.py` / `sensor.py`: Expose planning state, diagnostics, and error scopes.
 - `target_runtime.py` / `target_persistence.py`: Hold user battery targets from `wattplan.set_target` and persist them in a small per-entry store (`wattplan.targets.<entry_id>`), restored on setup. Expired targets and targets for removed batteries are dropped.
 - `source_pipeline.py`, `source_provider.py`, `source_fixup.py`: Resolve raw source data and normalize it into planner-ready values.
@@ -198,7 +199,7 @@ flowchart LR
   Plan --> A
 ```
 
-The coordinator snapshot retains complete time-indexed battery and comfort action schedules separately from the optional plan-detail diagnostic sensors. Action emission selects the slot covering the current time. A plan successfully calculated in the current runtime session continues to advance after a later planning failure, but a snapshot restored after restart is diagnostic-only until a fresh planning run succeeds. Restored battery, comfort, next-action, and optional-start recommendations cannot emit during that validation gap. The plan becomes unusable at the end of its recorded coverage; WattPlan then publishes failed health and makes plan-dependent actions unavailable instead of inventing a fallback action. Scheduler-heartbeat staleness is exposed separately from this action-validation state.
+The coordinator snapshot retains complete time-indexed battery and comfort action schedules separately from the optional plan-detail diagnostic sensors. Action emission selects the slot covering the current time. A plan successfully calculated in the current runtime session continues to advance after a later planning failure, but a snapshot restored without a matching configuration fingerprint is diagnostic-only until a fresh planning run succeeds; at startup such snapshots are discarded instead. A snapshot restored at startup with a matching fingerprint that still covers the current time is trusted immediately, and a background plan refreshes it. The plan becomes unusable at the end of its recorded coverage; WattPlan then publishes failed health and makes plan-dependent actions unavailable instead of inventing a fallback action. Scheduler-heartbeat staleness is exposed separately from this action-validation state.
 
 When troubleshooting recording is enabled, each accepted plan is additionally
 appended off the event loop to one JSONL file per HA local date and config

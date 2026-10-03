@@ -311,11 +311,33 @@ class SourceStatusManager:
             "plan_created_at": None,
         }
 
-    def apply_restored_snapshot(self, snapshot: CoordinatorSnapshot) -> None:
-        """Set top-level status after restoring a cached snapshot."""
+    def apply_restored_snapshot(
+        self, snapshot: CoordinatorSnapshot, *, validated: bool = False
+    ) -> None:
+        """Set top-level status after restoring a cached snapshot.
+
+        A validated snapshot matches the current configuration and still covers
+        the current time, so its actions are trusted until a fresh plan lands.
+        """
         planner_status = str(snapshot.planner_status)
         restored_status = planner_status if planner_status in {"ok", "degraded"} else "ok"
         plan_expires_at = self._snapshot_plan_expires_at(snapshot)
+        if validated:
+            self._overall_status = {
+                "status": restored_status,
+                "reason_codes": ["restored_plan_in_use"],
+                "reason_summary": (
+                    "Using the plan restored from the previous session until a "
+                    "fresh plan completes"
+                ),
+                "affected_sources": [],
+                "critical_sources_failed": [],
+                "is_stale": False,
+                "has_usable_plan": True,
+                "expires_at": plan_expires_at.isoformat() if plan_expires_at else None,
+                "plan_created_at": snapshot.created_at.isoformat(),
+            }
+            return
         self._overall_status = {
             "status": "degraded" if restored_status == "ok" else restored_status,
             "reason_codes": ["restored_plan_awaiting_validation"],
@@ -471,6 +493,12 @@ class SourceStatusManager:
         if source_key == CONF_SOURCE_USAGE:
             return source_config.get(CONF_SOURCE_MODE) != SOURCE_MODE_NOT_USED
         return False
+
+    @classmethod
+    def snapshot_covers_now(cls, snapshot: CoordinatorSnapshot) -> bool:
+        """Return whether the snapshot's plan still covers the current time."""
+        expires_at = cls._snapshot_plan_expires_at(snapshot)
+        return expires_at is not None and datetime.now(tz=UTC) < expires_at
 
     @staticmethod
     def _snapshot_plan_expires_at(snapshot: CoordinatorSnapshot | None) -> datetime | None:
