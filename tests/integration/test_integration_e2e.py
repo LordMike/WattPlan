@@ -262,10 +262,12 @@ def _entry(
     slot_minutes: int = 60,
     hours_to_plan: int = 4,
     minor_version: int = 2,
+    pref_disable_polling: bool = False,
 ) -> MockConfigEntry:
     """Build a mock WattPlan config entry."""
     return MockConfigEntry(
         domain=DOMAIN,
+        pref_disable_polling=pref_disable_polling,
         title=title,
         data={
             CONF_NAME: title,
@@ -651,6 +653,23 @@ async def test_scheduler_rearms_after_each_run_and_stops_on_unload(
         assert await hass.config_entries.async_unload(entry.entry_id)
         await hass.async_block_till_done()
         assert coordinator.next_refresh_at is None
+
+
+async def test_scheduler_respects_disabled_polling(hass: HomeAssistant) -> None:
+    """The entry's disable-polling preference stops scheduled planning."""
+    entry = _entry(
+        title="Home",
+        subentries_data=[_battery_subentry(subentry_id="battery", name="battery")],
+        options={
+            CONF_PLANNING_ENABLED: True,
+            CONF_ACTION_EMISSION_ENABLED: True,
+        },
+        pref_disable_polling=True,
+    )
+
+    with patch("custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize):
+        await _setup_entry(hass, entry)
+        assert entry.runtime_data.coordinator.next_refresh_at is None
 
 
 @pytest.mark.parametrize(

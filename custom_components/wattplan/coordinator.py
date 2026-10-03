@@ -305,6 +305,8 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         self._cancel_schedule()
         if self._interval is None:
             return
+        if self.config_entry is not None and self.config_entry.pref_disable_polling:
+            return
         refresh_at = self._aligned_refresh_time(
             datetime.now(tz=UTC), interval=self._interval
         )
