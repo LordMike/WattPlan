@@ -169,7 +169,6 @@ class ForecastProvider(SourceProvider):
         start_at = self._as_utc(window.start_at)
         slot_delta = timedelta(minutes=window.slot_minutes)
         history_start = start_at - timedelta(days=self._lookback_days)
-        max_interval_kwh = MAX_IMPLIED_POWER_KW * (window.slot_minutes / 60.0)
         debug_events: list[dict[str, Any]] = []
 
         try:
@@ -208,8 +207,6 @@ class ForecastProvider(SourceProvider):
             end_at=start_at,
             slot_delta=slot_delta,
             slot_minutes=window.slot_minutes,
-            max_interval_kwh=max_interval_kwh,
-            debug_events=debug_events,
         )
 
         all_values = [value for values in by_slot.values() for value, _weekday, _age in values]
@@ -413,6 +410,7 @@ class ForecastProvider(SourceProvider):
             duration_hours = (changed_at - segment_start).total_seconds() / 3600.0
             if duration_hours <= 0:
                 continue
+            # Segments never overlap, so this also bounds every slot total.
             if (delta / duration_hours) > MAX_IMPLIED_POWER_KW:
                 _LOGGER.debug(
                     "Discarding recorder segment for %s from %s to %s: %.3f kWh over %.3f h implies %.3f kW",
@@ -435,8 +433,6 @@ class ForecastProvider(SourceProvider):
         end_at: datetime,
         slot_delta: timedelta,
         slot_minutes: int,
-        max_interval_kwh: float,
-        debug_events: list[dict[str, Any]],
     ) -> dict[int, list[tuple[float, int, int]]]:
         """Build historical observations keyed by time-of-day slot."""
         by_slot: dict[int, list[tuple[float, int, int]]] = {}
@@ -475,23 +471,6 @@ class ForecastProvider(SourceProvider):
         local_tz = dt_util.get_default_time_zone()
         local_end_date = end_at.astimezone(local_tz).date()
         for slot_start, slot_value in slot_totals.items():
-            if slot_value > max_interval_kwh:
-                debug_events.append(
-                    {
-                        "kind": "slot_observation_clamped",
-                        "slot_start": slot_start.isoformat(),
-                        "original_value": slot_value,
-                        "max_interval_kwh": max_interval_kwh,
-                    }
-                )
-                _LOGGER.debug(
-                    "Dropping slot observation for %s at %s: %.3f kWh > %.3f kWh",
-                    self._entity_id,
-                    slot_start.isoformat(),
-                    slot_value,
-                    max_interval_kwh,
-                )
-                continue
             # Key by local time so the pattern stays aligned across DST changes.
             local_start = slot_start.astimezone(local_tz)
             minute_of_day = (local_start.hour * 60) + local_start.minute

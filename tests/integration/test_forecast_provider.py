@@ -330,48 +330,6 @@ async def test_forecast_ignores_small_meter_decrease(
     assert values[0] == pytest.approx(1.0)
 
 
-async def test_slot_observation_above_power_limit_is_dropped_not_zeroed(
-    hass: HomeAssistant,
-) -> None:
-    """A slot total above the power limit must not drag the average down.
-
-    Overlapping samples are not reachable through the public history path, so
-    the slot builder is exercised directly with crafted samples.
-    """
-    provider = ForecastProvider(hass, entity_id="sensor.house_load_kwh")
-
-    def hour(day: int) -> tuple[datetime, datetime]:
-        return (
-            datetime(2026, 1, day, 10, 0, tzinfo=UTC),
-            datetime(2026, 1, day, 11, 0, tzinfo=UTC),
-        )
-
-    samples = [(*hour(10), 1.0), (*hour(11), 1.0)]
-    # Two overlapping segments that each stay under the limit but sum above it.
-    samples += [(*hour(12), 40.0), (*hour(12), 40.0)]
-    debug_events: list[dict[str, Any]] = []
-
-    by_slot = provider._build_slot_observations(
-        samples=samples,
-        history_start=datetime(2026, 1, 10, 0, 0, tzinfo=UTC),
-        end_at=datetime(2026, 1, 13, 0, 0, tzinfo=UTC),
-        slot_delta=timedelta(hours=1),
-        slot_minutes=60,
-        max_interval_kwh=50.0,
-        debug_events=debug_events,
-    )
-
-    # Slot index depends on the local timezone, so look at the only populated one.
-    assert len(by_slot) == 1
-    observations = next(iter(by_slot.values()))
-    assert [value for value, _, _ in observations] == pytest.approx([1.0, 1.0])
-    assert [event["kind"] for event in debug_events] == ["slot_observation_clamped"]
-    assert "replacement_value" not in debug_events[0]
-    assert provider._weighted_average(
-        observations=observations, target_weekday=0, fallback=0.0
-    ) == pytest.approx(1.0)
-
-
 async def test_forecast_spreads_sparse_meter_delta_over_elapsed_time(
     hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
 ) -> None:
