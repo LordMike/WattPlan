@@ -30,6 +30,9 @@ MIN_GRID_CHARGE_SLOT_FRACTION = 0.5
 AVG_PRICE_SENTINEL = 1000.0
 PRESERVE_PROBE_MIN_KWH = 0.01
 PRESERVE_OBJECTIVE_TOLERANCE = 1e-7
+# HiGHS stops a MILP once the relative gap is below this value (its default,
+# set explicitly because the preserve comparison depends on it).
+MIP_REL_GAP = 1e-4
 MIP_START_MIN_LOOKAHEAD_SLOTS = 40
 COMFORT_PLACEMENT_MAX_CANDIDATES_PER_ENTITY = 16
 COMFORT_PLACEMENT_MAX_TOTAL_CANDIDATES = 48
@@ -640,6 +643,7 @@ def _solve_lp(
 
     highs = highspy.Highs()
     highs.setOptionValue("output_flag", False)
+    highs.setOptionValue("mip_rel_gap", MIP_REL_GAP)
     if time_limit_seconds is not None:
         highs.setOptionValue("time_limit", float(time_limit_seconds))
     highs.passModel(lp)
@@ -655,6 +659,7 @@ def _solve_lp(
         if mip_start_status != highspy.HighsStatus.kOk:
             highs = highspy.Highs()
             highs.setOptionValue("output_flag", False)
+            highs.setOptionValue("mip_rel_gap", MIP_REL_GAP)
             if time_limit_seconds is not None:
                 highs.setOptionValue("time_limit", float(time_limit_seconds))
             highs.passModel(lp)
@@ -1214,6 +1219,7 @@ def _solve_mpc_step(
         "charge_grid": charge_grid_cmd,
         "charge_pv": charge_pv_cmd,
         "discharge": discharge_cmd,
+        "grid_export_first": float(x[grid_export.start]),
         "objective_value": float(result.objective_value),
     }
     if return_plan:
@@ -1272,6 +1278,26 @@ def _preserve_without_probe(entity, level, charge_grid, discharge):
     if _battery_preserve_probe_kwh(entity, level) <= action_deadband:
         return False
     return None
+
+
+def _battery_energy_unused_in_plan(entity, battery_index, solve_result, import_price):
+    """Return whether discharging now provably cannot be worse than importing.
+
+    The primary plan neither charges this battery now nor discharges it later,
+    so energy taken out now changes no planned action. Serving the extra probe
+    load from the battery then replaces an import with a discharge that costs
+    only the throughput charge, which is cheaper whenever the throughput charge
+    does not exceed the import price. Targets and mode-switch costs can make the
+    discharge costlier in ways this check does not model, so they opt out.
+    """
+    if entity.target is not None or float(entity.mode_switch_cost) > 0.0:
+        return False
+    if float(entity.throughput_cost_per_kwh) > import_price:
+        return False
+    if float(solve_result["charge"][battery_index]) > EPSILON:
+        return False
+    later_discharge = solve_result["plan_discharge"][battery_index, 1:]
+    return not np.any(later_discharge > EPSILON)
 
 
 def _coarse_replay_step(
@@ -1359,11 +1385,14 @@ def _slot_modeled_load_kwh(
 
 
 def _objective_is_worse(counterfactual_objective, base_objective) -> bool:
-    tolerance = max(
-        PRESERVE_OBJECTIVE_TOLERANCE,
-        abs(float(base_objective)) * 1e-9,
+    # Both objectives come from MILP solves that may stop MIP_REL_GAP away from
+    # the optimum, so smaller differences are solver noise, not a decision.
+    counterfactual = float(counterfactual_objective)
+    base = float(base_objective)
+    tolerance = PRESERVE_OBJECTIVE_TOLERANCE + MIP_REL_GAP * (
+        abs(base) + abs(counterfactual)
     )
-    return float(counterfactual_objective) > float(base_objective) + tolerance
+    return counterfactual > base + tolerance
 
 
 def _apply_controls_step(
@@ -1900,7 +1929,7 @@ def _run_mpc(
                 mip_start_shift=(
                     t - primary_mip_start_t if primary_mip_start_t is not None else 1
                 ),
-                return_plan=block_slots > 1,
+                return_plan=block_slots > 1 or infer_battery_preserve_policy,
             )
             if solve_result is None:
                 raise RuntimeError("MPC solve failed for MILP model")
@@ -1937,6 +1966,15 @@ def _run_mpc(
                         battery_preserve[b, t] = decided
                         continue
 
+                    if _battery_energy_unused_in_plan(
+                        entity,
+                        b,
+                        solve_result,
+                        import_price=float(prices[t]),
+                    ):
+                        battery_preserve[b, t] = False
+                        continue
+
                     probe_kwh = _battery_preserve_probe_kwh(
                         entity, float(battery_levels[b, t])
                     )
@@ -1948,10 +1986,17 @@ def _run_mpc(
                     # importing and preserving it for later value.
                     counterfactual_usage_h = usage_h.copy()
                     counterfactual_usage_h[0] += pv_surplus + probe_kwh
+                    # The baseline keeps the primary plan and imports whatever
+                    # the extra load cannot take from the surplus it exported;
+                    # surplus the plan stored in a battery is not repriced.
+                    exported_surplus = min(
+                        pv_surplus, float(solve_result["grid_export_first"])
+                    )
                     preserve_baseline_objective = (
                         float(solve_result["objective_value"])
-                        + float(grid_export_prices[t]) * pv_surplus
-                        + float(prices[t]) * probe_kwh
+                        + float(grid_export_prices[t]) * exported_surplus
+                        + float(prices[t])
+                        * (pv_surplus - exported_surplus + probe_kwh)
                     )
                     counterfactual = _solve_mpc_step(
                         base_timeslot=t,

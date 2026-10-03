@@ -252,6 +252,19 @@ from eligible full primary solves that will feed the next adjacent solve; prefix
 solves, short-horizon solves, no-deadband solves, and preserve probes avoid
 building unused hint dictionaries.
 
+The `preserve` policy is inferred per idle battery and slot by a counterfactual
+solve: an extra load (the slot's PV surplus plus a small probe amount) is added
+and the first-slot discharge is forced. The battery is flagged `preserve` when
+that costs more than keeping the primary plan and importing the extra energy.
+The baseline only reprices surplus the plan actually exported; surplus the plan
+stored in a battery is not repriced. Both objectives come from MILPs solved to
+HiGHS's relative gap (`MIP_REL_GAP`, 1e-4), so differences within that gap are
+treated as noise. The probe is skipped when the outcome is provable from the
+primary plan: the battery is not charged now, is never discharged later in the
+horizon, has no target or mode-switch cost, and its throughput cost does not
+exceed the import price. Warm-starting the probes was measured slower and is not
+used.
+
 MILP constraints are assembled as sparse rows and passed to HiGHS in a
 column-wise sparse matrix. The solver backend still accepts dense rows for
 focused tests, but the MPC path never allocates a dense rows-by-variables model.

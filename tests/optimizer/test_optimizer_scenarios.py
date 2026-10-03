@@ -3676,3 +3676,85 @@ def test_prefer_pv_surplus_charging_sinks_surplus_into_battery():
     assert baseline["entities"][0]["schedule"][0]["level"] == pytest.approx(0.0)
     assert pv_sink["entities"][0]["schedule"][0]["state"] == "self_consume"
     assert pv_sink["entities"][0]["schedule"][0]["level"] == pytest.approx(1.0)
+
+
+def test_preserve_baseline_does_not_assume_stored_pv_surplus_was_exported():
+    """The plan stores slot-0 PV surplus; serving a probe load must not be priced as lost export."""
+    payload = {
+        "grid_import_price_per_kwh": [0.10, 0.08, 0.08, 0.08],
+        "grid_export_price_per_kwh": [0.05] * 4,
+        "solar_input_kwh": [1.5, 0.0, 0.0, 0.0],
+        "usage_kwh": [1.0, 1.0, 0.0, 0.0],
+        "battery_entities": [
+            {
+                "name": "battery",
+                "initial_kwh": 0.5,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 1.0,
+                "charge_curve_kwh": [1.0],
+                "discharge_curve_kwh": [1.0],
+                "can_charge_from": 2,
+            }
+        ],
+        "comfort_entities": [],
+    }
+
+    schedule = _run_optimizer(payload)["entities"][0]["schedule"]
+
+    # Charging from PV beats exporting at 0.05 because the energy displaces
+    # 0.08 imports. A small extra load is still cheaper to serve from the
+    # battery than from a 0.10 import, so the battery is not held back.
+    assert schedule[0]["state"] != "preserve"
+
+
+def test_preserve_objective_tolerance_scales_with_the_solver_gap():
+    base = 100.0
+    noise = optimizer.MIP_REL_GAP * base
+    assert not optimizer._objective_is_worse(base + noise, base)
+    assert optimizer._objective_is_worse(base * (1 + 10 * optimizer.MIP_REL_GAP), base)
+    assert optimizer._objective_is_worse(1e-3, 0.0)
+
+
+def _unused_battery_payload():
+    return {
+        "grid_import_price_per_kwh": [0.30] * 4,
+        "grid_export_price_per_kwh": [0.0] * 4,
+        "solar_input_kwh": [0.0] * 4,
+        "usage_kwh": [0.0] * 4,
+        "battery_entities": [
+            {
+                "name": "battery",
+                "initial_kwh": 1.0,
+                "minimum_kwh": 0.0,
+                "capacity_kwh": 1.0,
+                "charge_curve_kwh": [0.0],
+                "discharge_curve_kwh": [1.0],
+                "can_charge_from": 0,
+            }
+        ],
+        "comfort_entities": [],
+    }
+
+
+def test_preserve_probe_is_skipped_when_the_plan_never_uses_the_battery(monkeypatch):
+    probes = []
+    original = optimizer._solve_mpc_step
+
+    def capture(**kwargs):
+        if kwargs.get("forced_discharge_first") is not None:
+            probes.append(kwargs["base_timeslot"])
+        return original(**kwargs)
+
+    monkeypatch.setattr(optimizer, "_solve_mpc_step", capture)
+    skipped = _run_optimizer(_unused_battery_payload())
+    assert probes == []
+
+    # Running the probes anyway must reach the same preserve decisions.
+    monkeypatch.setattr(
+        optimizer, "_battery_energy_unused_in_plan", lambda *args, **kwargs: False
+    )
+    probed = _run_optimizer(_unused_battery_payload())
+    assert probes
+    states = [point["state"] for point in skipped["entities"][0]["schedule"]]
+    assert states == [point["state"] for point in probed["entities"][0]["schedule"]]
+    assert "preserve" not in states
