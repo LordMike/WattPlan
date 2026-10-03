@@ -35,3 +35,19 @@ def test_build_hacs_zip_uses_hacs_archive_layout(tmp_path) -> None:
     assert all("utilities/" not in name for name in names)
     assert all("__pycache__/" not in name for name in names)
     assert all(not name.endswith((".pyc", ".pyo")) for name in names)
+
+
+def test_build_hacs_zip_excludes_test_files(tmp_path) -> None:
+    build_hacs_zip = _load_build_script()
+    output_path = tmp_path / "wattplan-test.zip"
+
+    build_hacs_zip._build_zip(output_path)
+
+    with zipfile.ZipFile(output_path) as archive:
+        names = archive.namelist()
+
+    assert not [
+        name
+        for name in names
+        if Path(name).name.startswith("test_") or Path(name).name == "conftest.py"
+    ]

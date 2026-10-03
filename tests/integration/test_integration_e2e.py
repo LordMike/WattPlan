@@ -65,7 +65,7 @@ from custom_components.wattplan.const import (
     SUBENTRY_TYPE_OPTIONAL,
 )
 from custom_components.wattplan.coordinator import PlanningStageError
-from custom_components.wattplan.test_plan_invariants import assert_plan_invariants
+from tests.plan_invariants import assert_plan_invariants
 from tests.common import MockConfigEntry, async_fire_time_changed
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")

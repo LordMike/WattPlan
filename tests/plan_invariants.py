@@ -1,35 +1,39 @@
-"""Shared plan invariants used by the test suite."""
+"""Shared plan invariants used by the test suite.
+
+The helper fails loudly on malformed results: a plan without an ``entities``
+list, or a battery without a well-formed ``schedule``, is a test failure
+rather than something to skip.
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
+BATTERY_STATES = frozenset({"preserve", "self_consume", "grid_charge"})
+
 
 def assert_plan_invariants(result: dict[str, Any]) -> dict[str, Any]:
     """Assert invariants that should hold for every produced plan result."""
+    assert isinstance(result, dict), f"plan result must be a dict, got {type(result)}"
     entities = result.get("entities")
-    if not isinstance(entities, list):
-        return result
+    assert isinstance(entities, list), "plan result must contain an entities list"
 
-    for entity in entities:
-        if not isinstance(entity, dict):
-            continue
+    for position, entity in enumerate(entities):
+        assert isinstance(entity, dict), f"entities[{position}] must be a dict"
         if entity.get("type") != "battery":
             continue
 
+        name = entity.get("name")
         schedule = entity.get("schedule")
-        if not isinstance(schedule, list):
-            continue
+        assert isinstance(schedule, list), f"battery {name} must have a schedule list"
 
         for index, point in enumerate(schedule):
-            if not isinstance(point, dict):
-                continue
-
-            state = str(point.get("state", "self_consume"))
-            assert state in {
-                "preserve",
-                "self_consume",
-                "grid_charge",
-            }, f"battery {entity.get('name')} schedule[{index}] has invalid state={state}"
+            assert isinstance(
+                point, dict
+            ), f"battery {name} schedule[{index}] must be a dict"
+            state = point.get("state", "self_consume")
+            assert (
+                state in BATTERY_STATES
+            ), f"battery {name} schedule[{index}] has invalid state={state}"
 
     return result

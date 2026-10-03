@@ -92,7 +92,7 @@ from custom_components.wattplan.historical_cost.models import (
 from custom_components.wattplan.historical_cost.store import HistoricalCostStore
 from custom_components.wattplan.historical_cost.tracker import HistoricalCostTracker
 from custom_components.wattplan.source_fixup import SourceHealthKind, SourceHealthState
-from custom_components.wattplan.test_plan_invariants import assert_plan_invariants
+from tests.plan_invariants import assert_plan_invariants
 import pytest
 
 from homeassistant import config_entries
