@@ -83,7 +83,7 @@ PV is optional.
 ## Payload Formats
 Entity, service, and template providers must resolve to a list in one of two shapes:
 
-- **Timestamped objects**, for example `[{"start": "2026-01-01T00:00:00+01:00", "value": 0.31}, ...]`. The timestamp and value keys are configurable (auto detect fills them in). Each object starts an interval that normally lasts until the next object (see [Normalization](#normalization), step 4). Timestamps without a timezone are treated as UTC.
+- **Timestamped objects**, for example `[{"start": "2026-01-01T00:00:00+01:00", "value": 0.31}, ...]`. The timestamp and value keys are configurable (auto detect fills them in). Each object starts an interval that normally lasts until the next object (see [Normalization](#normalization), step 4). Timestamps without a timezone are read in Home Assistant's configured time zone (as in most HA sensors that expose local time), not UTC.
 - **Unlabelled numbers**, for example `[0.31, 0.29, ...]`. Index 0 is always the **current slot**, index 1 the next slot, and so on. A shorter list covers only the first slots. A longer list must be an exact multiple of the horizon length; its values are then spread evenly over each slot, so a list with two values per slot is read as half-slot intervals. Prefer timestamped objects whenever the source has timestamps, because a numeric list cannot express when its data actually starts.
 
 Templates must return a native list, not a JSON string.

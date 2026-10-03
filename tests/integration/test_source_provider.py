@@ -1130,3 +1130,26 @@ async def test_energy_provider_rejects_nonfinite_wh_conversion(
 
     assert err.value.code == "source_parse"
     assert err.value.details["provider_reason"] == "nonfinite_value"
+
+
+async def test_naive_timestamps_are_read_in_home_assistant_time_zone(
+    hass: HomeAssistant,
+) -> None:
+    """Timestamps without an offset are local time, not UTC."""
+    await hass.config.async_set_time_zone("Europe/Copenhagen")
+    payload = [
+        {"start": "2026-01-01T01:00:00", "value": 1.0},
+        {"start": "2026-01-01T01:15:00", "value": 2.0},
+        {"start": "2026-01-01T01:30:00", "value": 3.0},
+        {"start": "2026-01-01T01:45:00", "value": 4.0},
+    ]
+    provider = TemplateAdapterSourceProvider(
+        hass,
+        source_name="price",
+        source_config=_template_config(payload),
+    )
+
+    values = await provider.async_values(_window())
+
+    # 01:00 local in January is 00:00 UTC, the start of the window.
+    assert values == [1.0, 2.0, 3.0, 4.0]

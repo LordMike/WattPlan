@@ -128,7 +128,7 @@ from ..const import (
     VALUE_UNIT_KW,
     VALUE_UNIT_KWH,
 )
-from ..datetime_utils import parse_datetime_like
+from ..datetime_utils import as_utc_assuming_local, parse_datetime_like
 from ..forecast_provider import ForecastProvider
 from ..source_config import (
     async_prepare_entity_source_input,
@@ -453,9 +453,7 @@ def _summarize_payload_coverage(
             if point_dt is None:
                 continue
             point_dt = floor_to_slot(
-                point_dt.astimezone(UTC)
-                if point_dt.tzinfo
-                else point_dt.replace(tzinfo=UTC),
+                as_utc_assuming_local(point_dt),
                 slot_minutes,
             )
             timestamps.append(point_dt)

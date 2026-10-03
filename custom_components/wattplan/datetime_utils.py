@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from typing import Any
+
+from homeassistant.util import dt as dt_util
 
 
 def parse_datetime_like(value: Any) -> datetime | None:
@@ -18,6 +20,17 @@ def parse_datetime_like(value: Any) -> datetime | None:
         return datetime.fromisoformat(value)
     except ValueError:
         return None
+
+
+def as_utc_assuming_local(value: datetime) -> datetime:
+    """Return value in UTC; naive values are read in Home Assistant's time zone.
+
+    Use this for external source data. Internally produced timestamps are
+    already aware and unaffected.
+    """
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=dt_util.get_default_time_zone())
+    return value.astimezone(UTC)
 
 
 def typical_step(timestamps: list[datetime]) -> timedelta | None:

@@ -46,7 +46,7 @@ from ..const import (
     VALUE_UNIT_KW,
     VALUE_UNIT_KWH,
 )
-from ..datetime_utils import parse_datetime_like, typical_step
+from ..datetime_utils import as_utc_assuming_local, parse_datetime_like, typical_step
 from ..forecast_provider import ForecastProvider
 from ..source_types import SourceProvider, SourceProviderError, SourceWindow
 from .config import CONF_WATTPLAN_ENTITY_ID, source_mode, source_providers
@@ -654,10 +654,8 @@ class TemplateAdapterSourceProvider(SourceProvider):
         )
 
     def _as_utc(self, value: datetime) -> datetime:
-        """Normalize datetime to UTC, assuming UTC for naive values."""
-        if value.tzinfo is None:
-            return value.replace(tzinfo=UTC)
-        return value.astimezone(UTC)
+        """Normalize datetime to UTC, reading naive values in the HA time zone."""
+        return as_utc_assuming_local(value)
 
     def _nearest_grid_index(
         self, point_start: datetime, start_at: datetime, grid: timedelta

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import asyncio
-from datetime import UTC, datetime
+from datetime import datetime
 from itertools import pairwise
 import math
 from typing import Any
@@ -17,7 +17,7 @@ from homeassistant.helpers.template import Template
 import voluptuous as vol
 
 from ..adapter_auto import resolve_nested_value
-from ..datetime_utils import parse_datetime_like, typical_step
+from ..datetime_utils import as_utc_assuming_local, parse_datetime_like, typical_step
 from ..const import (
     ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
     ADAPTER_TYPE_ATTRIBUTE_VALUES,
@@ -313,8 +313,7 @@ class EnergySolarForecastPayloadProvider(BasePayloadProvider):
                         "provider_reason": "nonfinite_value",
                     },
                 )
-            if start_dt.tzinfo is None:
-                start_dt = start_dt.replace(tzinfo=UTC)
+            start_dt = as_utc_assuming_local(start_dt)
             rows.append((start_dt, numeric_value))
 
         return [
