@@ -721,15 +721,59 @@ def _entity_fingerprint(
     return hashlib.sha256(raw).hexdigest()
 
 
+def _rebuild_comfort_history(initial, comfort_on):
+    """Replay ``comfort_on`` over the initial history: shape (n, T+1, window-1)."""
+    initial = np.asarray(initial, dtype=np.int32)
+    comfort_on = np.asarray(comfort_on, dtype=np.int32)
+    num_comfort, window = initial.shape
+    steps = comfort_on.shape[1]
+    if window == 0:
+        return np.zeros((num_comfort, steps + 1, 0), dtype=np.int32)
+    combined = np.concatenate((initial, comfort_on), axis=1)
+    return np.lib.stride_tricks.sliding_window_view(combined, window, axis=1)
+
+
 def encode_state_blob(state_obj):
+    """Encode a state object; comfort_history is stored as its recomputable seed.
+
+    ``comfort_history`` (comforts x T+1 x window-1) is fully determined by its
+    first row and ``comfort_on``, so only that first row is persisted. If the
+    replay would not reproduce the history exactly, the full array is kept.
+    """
+    history = state_obj.get("comfort_history")
+    if history is not None and "comfort_on" in state_obj:
+        array = np.asarray(history, dtype=np.int32)
+        on = np.asarray(state_obj["comfort_on"], dtype=np.float64)
+        if (
+            array.ndim == 3
+            and array.shape[0] > 0
+            and on.ndim == 2
+            and array.shape[:2] == (on.shape[0], on.shape[1] + 1)
+            and np.all((on == 0) | (on == 1))
+            and np.array_equal(
+                _rebuild_comfort_history(array[:, 0, :], on), array
+            )
+        ):
+            state_obj = dict(state_obj)
+            del state_obj["comfort_history"]
+            state_obj["comfort_history_initial"] = array[:, 0, :].tolist()
     raw = json.dumps(state_obj, separators=(",", ":"), sort_keys=True).encode("utf-8")
     return base64.urlsafe_b64encode(raw).decode("ascii")
 
 
 def decode_state_blob(state_blob):
-    """Return the JSON object inside a state blob."""
+    """Return the JSON object inside a state blob, with comfort_history rebuilt."""
     raw = base64.urlsafe_b64decode(str(state_blob).encode("ascii"))
-    return json.loads(raw.decode("utf-8"))
+    obj = json.loads(raw.decode("utf-8"))
+    initial = obj.pop("comfort_history_initial", None)
+    if initial is not None and "comfort_history" not in obj:
+        try:
+            obj["comfort_history"] = _rebuild_comfort_history(
+                initial, obj["comfort_on"]
+            ).tolist()
+        except (KeyError, ValueError, TypeError) as exc:
+            raise ValueError("state.comfort_history_initial is invalid") from exc
+    return obj
 
 
 def _parse_state_blob(state_blob, decoded=None):

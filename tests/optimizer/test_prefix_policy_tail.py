@@ -1,10 +1,8 @@
-import base64
-import json
-
 import numpy as np
 import pytest
 
 from custom_components.wattplan.optimizer import mpc_power_optimizer as optimizer
+from custom_components.wattplan.optimizer.models import decode_state_blob
 
 
 def _payload(*, usage=None, batteries=None, comfort=None, deadband=0.0):
@@ -215,7 +213,7 @@ def test_tail_uses_deterministic_comfort_instead_of_stale_replay(monkeypatch):
 
     schedule = result["entities"][0]["schedule"]
     assert [point["enabled"] for point in schedule[6:9]] == [True, True, True]
-    state = json.loads(base64.urlsafe_b64decode(result["state"]).decode("utf-8"))
+    state = decode_state_blob(result["state"])
     assert state["comfort_history"][0][9] == [1, 1, 1]
 
 
