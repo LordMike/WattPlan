@@ -950,6 +950,10 @@ async def _async_source_summary(
                     slot_minutes=slot_minutes,
                     available_count=raw_available_count,
                 )
+        except vol.Invalid:
+            # Config validation errors (for example a built-in entity that is not
+            # an energy sensor) are reported by the validated pass below.
+            pass
 
         try:
             available_count = await _async_validate_source_values(
@@ -976,6 +980,9 @@ async def _async_source_summary(
                     slot_minutes=slot_minutes,
                     available_count=available_count,
                 )
+        except vol.Invalid as err:
+            error_key = err.error_message
+            is_valid = False
 
     history_warning = False
     review_text_key = "review_ready"

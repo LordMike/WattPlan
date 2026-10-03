@@ -47,7 +47,6 @@ from custom_components.wattplan.const import (
     SOURCE_MODE_TEMPLATE,
 )
 import pytest
-import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntryState
@@ -957,14 +956,16 @@ async def test_built_in_usage_source_shows_sensor_validation_error(
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_BUILT_IN}
     )
-    with pytest.raises(vol.Invalid, match="built_in_requires_energy_kwh"):
-        await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                "entity_id": "sensor.bad_load_source",
-                CONF_HISTORY_DAYS: 14,
-            },
-        )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            "entity_id": "sensor.bad_load_source",
+            CONF_HISTORY_DAYS: 14,
+        },
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "source_review"
+    assert result["errors"] == {"base": "built_in_requires_energy_kwh"}
 
 
 async def test_config_flow_persists_pv_energy_provider_source(
