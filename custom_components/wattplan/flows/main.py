@@ -127,9 +127,10 @@ def _historical_costs_settings_schema(defaults: dict[str, Any]) -> vol.Schema:
     """Build the historical cost settings schema."""
 
     def optional_entity(field: str) -> vol.Optional:
-        default = defaults.get(field)
-        if default:
-            return vol.Optional(field, default=default)
+        # Suggested values prefill the form without re-applying on empty input.
+        suggested = defaults.get(field)
+        if suggested:
+            return vol.Optional(field, description={"suggested_value": suggested})
         return vol.Optional(field)
 
     return vol.Schema(

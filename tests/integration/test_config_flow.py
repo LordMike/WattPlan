@@ -104,6 +104,13 @@ def _schema_default(result: dict[str, Any], field: str) -> Any:
     return marker.default()
 
 
+def _schema_suggested(result: dict[str, Any], field: str) -> Any:
+    """Extract a suggested value from a flow form schema."""
+    schema = result["data_schema"].schema
+    marker = next(key for key in schema if getattr(key, "schema", None) == field)
+    return (marker.description or {}).get("suggested_value")
+
+
 def _serialized_schema_field(result: dict[str, Any], field: str) -> dict[str, Any]:
     """Return a serialized schema field from a flow form."""
     return next(
@@ -759,12 +766,12 @@ async def test_historical_costs_prefills_discovered_source_meters(
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "historical_costs_settings"
     assert (
-        _schema_default(result, CONF_HISTORICAL_USAGE_SENSOR)
+        _schema_suggested(result, CONF_HISTORICAL_USAGE_SENSOR)
         == "sensor.house_usage_total"
     )
-    assert _schema_default(result, CONF_HISTORICAL_PV_SENSOR) == "sensor.pv_energy_total"
-    assert _schema_default(result, CONF_HISTORICAL_GRID_IMPORT_SENSOR) is None
-    assert _schema_default(result, CONF_HISTORICAL_GRID_EXPORT_SENSOR) is None
+    assert _schema_suggested(result, CONF_HISTORICAL_PV_SENSOR) == "sensor.pv_energy_total"
+    assert _schema_suggested(result, CONF_HISTORICAL_GRID_IMPORT_SENSOR) is None
+    assert _schema_suggested(result, CONF_HISTORICAL_GRID_EXPORT_SENSOR) is None
     assert "default" not in _serialized_schema_field(
         result, CONF_HISTORICAL_GRID_IMPORT_SENSOR
     )
@@ -822,7 +829,7 @@ async def test_historical_costs_prefills_energy_provider_owned_meter(
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "historical_costs_settings"
     assert (
-        _schema_default(result, CONF_HISTORICAL_PV_SENSOR)
+        _schema_suggested(result, CONF_HISTORICAL_PV_SENSOR)
         == "sensor.solar_energy_total"
     )
 
@@ -870,7 +877,56 @@ async def test_historical_costs_does_not_prefill_existing_blank_option(
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "historical_costs_settings"
+    assert _schema_suggested(result, CONF_HISTORICAL_PV_SENSOR) is None
+
+
+async def test_historical_costs_optional_sensors_can_be_cleared(
+    hass: HomeAssistant, mock_setup_entry: AsyncMock
+) -> None:
+    """Emptying an optional historical sensor must remove the stored value."""
+    entry = await _create_basic_entry(hass)
+    for entity_id in (
+        "sensor.grid_import_total",
+        "sensor.usage_total",
+        "sensor.grid_export_total",
+        "sensor.pv_total",
+    ):
+        _set_energy_sensor(hass, entity_id)
+    hass.config_entries.async_update_entry(
+        entry,
+        options={
+            **entry.options,
+            CONF_HISTORICAL_COST_TRACKING_ENABLED: True,
+            CONF_HISTORICAL_GRID_IMPORT_SENSOR: "sensor.grid_import_total",
+            CONF_HISTORICAL_GRID_EXPORT_SENSOR: "sensor.grid_export_total",
+            CONF_HISTORICAL_USAGE_SENSOR: "sensor.usage_total",
+            CONF_HISTORICAL_PV_SENSOR: "sensor.pv_total",
+        },
+    )
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "historical_costs"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_HISTORICAL_COST_TRACKING_ENABLED: True}
+    )
+    assert _schema_suggested(result, CONF_HISTORICAL_PV_SENSOR) == "sensor.pv_total"
     assert _schema_default(result, CONF_HISTORICAL_PV_SENSOR) is None
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_HISTORICAL_GRID_IMPORT_SENSOR: "sensor.grid_import_total",
+            CONF_HISTORICAL_USAGE_SENSOR: "sensor.usage_total",
+            CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION: True,
+        },
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    updated = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated is not None
+    assert updated.options[CONF_HISTORICAL_GRID_EXPORT_SENSOR] is None
+    assert updated.options[CONF_HISTORICAL_PV_SENSOR] is None
 
 
 async def test_options_planner_timers_both_enabled_saves_without_warning(
