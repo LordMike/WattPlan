@@ -430,6 +430,11 @@ class ForecastProvider(SourceProvider):
             # becomes one usage segment spanning from the previous reading to
             # the current reading.
             delta = value - previous_value
+            if delta == 0:
+                # Recorder history only stores changes, so an unchanged value is
+                # the synthetic start-time row Home Assistant adds at each
+                # fetch boundary. Keep the segment open until the real change.
+                continue
             previous_value = value
             segment_start = previous_changed
             previous_changed = changed_at

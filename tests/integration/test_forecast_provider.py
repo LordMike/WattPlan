@@ -538,6 +538,76 @@ async def test_forecast_fetches_incrementally_from_cache_end(
     ]
 
 
+class _BoundaryRowRecorder:
+    """Recorder stub mimicking HA's include_start_time_state boundary row."""
+
+    def __init__(self, entity_id: str, states: list[SimpleNamespace]) -> None:
+        """Store the full real state history."""
+        self._entity_id = entity_id
+        self._states = states
+        self.calls = 0
+
+    async def async_add_executor_job(self, job: Any) -> dict[str, list[Any]]:
+        """Answer history queries; statistics queries return nothing."""
+        self.calls += 1
+        if job.func.__name__ != "state_changes_during_period":
+            return {}
+        start, end = job.args[1], job.args[2]
+        before = [s for s in self._states if s.last_changed <= start]
+        rows = [s for s in self._states if start < s.last_changed <= end]
+        if before:
+            # Like HA: last state at/before start, last_changed rewritten to start.
+            rows.insert(
+                0, SimpleNamespace(state=before[-1].state, last_changed=start)
+            )
+        return {self._entity_id: rows}
+
+
+async def test_forecast_warm_cache_matches_cold_cache_with_boundary_rows(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repeated start-time rows from incremental fetches must not skew intervals."""
+    hass.config.components.add("recorder")
+    entity_id = "sensor.house_load_kwh"
+    hass.states.async_set(entity_id, "100.0", _VALID_LOAD_ATTRS)
+
+    base = datetime(2026, 1, 1, 0, 0, tzinfo=UTC)
+    states = [
+        SimpleNamespace(state=str(100.0 + hour), last_changed=base + timedelta(hours=hour))
+        for hour in range(72)
+    ]
+    recorder = _BoundaryRowRecorder(entity_id, states)
+    monkeypatch.setattr(cache_module, "get_instance", lambda _hass: recorder)
+    monkeypatch.setattr(provider_module, "get_instance", lambda _hass: recorder)
+
+    def _provider() -> ForecastProvider:
+        return ForecastProvider(
+            hass,
+            entity_id=entity_id,
+            lookback_days=2,
+            same_weekday_weight=1.0,
+            other_weekday_weight=1.0,
+            recency_decay=0.0,
+        )
+
+    def _window(start_at: datetime) -> SourceWindow:
+        return SourceWindow(start_at=start_at, slot_minutes=15, slots=96)
+
+    warm = _provider()
+    start_at = base + timedelta(days=2)
+    for tick in range(17):
+        warm_values = await warm.async_values(
+            _window(start_at + timedelta(minutes=15 * tick))
+        )
+    final_start = start_at + timedelta(minutes=15 * 16)
+    cold_values = await _provider().async_values(_window(final_start))
+
+    # The warm period covers the first hours of the day, so a full-day forecast
+    # exercises the time-of-day slots that the repeated boundary rows touched.
+    assert cold_values == pytest.approx([0.25] * 96)
+    assert warm_values == pytest.approx(cold_values)
+
+
 async def test_forecast_restarts_full_fetch_when_window_moves_past_cache(
     hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
 ) -> None:
