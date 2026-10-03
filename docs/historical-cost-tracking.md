@@ -22,7 +22,7 @@ Required historical meters:
 | Grid export | No | Measures exported energy. If not configured, export is treated as zero. |
 | PV production | No | Measures solar production for reference scenarios. If not configured, PV is treated as zero. |
 
-Use sensors with a steadily increasing `kWh` total, usually with Home Assistant device class `energy` and state class `total` or `total_increasing`. Do not use instant `kW` power sensors, current battery level sensors, or forecast-only sensors as historical meters.
+Use sensors with a steadily increasing `kWh` total, which in Home Assistant means device class `energy` and state class `total` or `total_increasing`. The settings form only offers `energy` sensors and, when you submit, checks that the selected entity is a `sensor` whose device class (if it has one) is `energy` and whose unit (if it has one) is `kWh`. It does not check the state class, so a sensor with the wrong or no state class is accepted but can produce wrong numbers; WattPlan's auto-suggestion only proposes sensors that have state class `total` or `total_increasing`. Do not use instant `kW` power sensors, current battery level sensors, or forecast-only sensors as historical meters.
 
 Historical tracking also needs prices for each completed slot. WattPlan keeps the normalized import/export prices from successful planner runs and falls back to live price source reads when needed. When the export price source was unavailable during a planner run, the zeros the planner substitutes are not kept as prices; the slot then uses a live export price read, or is marked as missing an export price, rather than booking zero export revenue.
 
@@ -35,7 +35,7 @@ Historical cost sensors are period-to-date totals, not last-slot snapshots.
 | `today` | Accumulated from local midnight through the latest completed slot. |
 | `this_month` | Accumulated from the first day of the local month through the latest completed slot. |
 
-At a period rollover (local midnight, or the first of the month) the new period reads `0.0` until its first slot completes; the sensors do not go unavailable. A period is unavailable only when tracking began after it ended or when every slot it contains is missing a required input.
+At a period rollover (local midnight, or the first of the month) the new period reads `0.0` until its first slot completes; the sensors do not go unavailable. A period is unavailable only when tracking began after it ended, when every slot it contains is missing a required input, or when the sensor's scenario (for example the self-consumption simulation) is turned off.
 
 WattPlan only processes completed slots. If the setup uses 15-minute slots, the values update after a full 15-minute interval has finished. Missing inputs, meter resets, missing prices, and skipped slots are not spread across multiple prices. Each sensor counts a slot as missing only when an input required for that metric is unavailable: actual cost needs grid import/export and both applicable prices; grid-only cost needs usage and import price; simple self-consumption needs usage, PV, simulated grid flows, both prices, and trusted reference continuity. Savings use only slots where both actual and the selected reference cost are valid.
 

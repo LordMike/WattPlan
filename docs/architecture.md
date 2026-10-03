@@ -83,23 +83,47 @@ WattPlan is a single repository with two tightly related concerns:
 The repository is structured so the integration can be released as a normal HACS artifact while the optimizer stays co-located and versioned with the integration.
 
 ## Layout
-- `custom_components/wattplan/`
-  - Home Assistant entry points, config flow, coordinator, entities, source handling, repairs
-- `custom_components/wattplan/optimizer/`
-  - Pure Python optimization models and solver code
-- `tests/integration/`
-  - Home Assistant integration tests
-- `tests/optimizer/`
-  - Optimizer-only tests that do not need Home Assistant runtime state
+All paths are under `custom_components/wattplan/` unless noted.
+
+- Entry points and wiring
+  - `__init__.py`, `entry_setup.py`: setup and unload of a config entry (service registration, coordinator, platforms, scheduler start, snapshot restore). `runtime.py` holds the per-entry runtime data.
+  - `config_flow.py` (thin entry) and `flows/`: config, options and subentry flows (`main.py`, `subentries.py`, `source_shared.py`, `forms.py`, `common.py`, `state.py`).
+  - `repairs.py`, `source_issues.py`, `source_health_presenter.py`: Repairs issues and shared source-health presentation.
+  - `services.py`, `services.yaml`: the `wattplan.*` services.
+- Coordinator
+  - `coordinator.py`: `WattPlanCoordinator`, the runtime center (see Runtime Model).
+  - `coordinator_logic/`: planning request assembly (`planning.py`), projection of optimizer output into the snapshot (`projection.py`), source status and health (`source_status.py`), snapshot persistence (`persistence.py`).
+  - `coordinator_parts/`: snapshot model and support state types.
+- Source acquisition
+  - `source_config/`: canonical source configuration models, presets and provider construction.
+  - `source_providers/`: raw payload providers, discovery/auto-detect, and the normalizing providers (`providers.py`, including `MergedSourceProvider`). `source_provider.py` and `source_pipeline.py` are thin facades over these.
+  - `source_fixup.py`: fixup profiles, tail extension and stale reuse around a provider. `source_types.py` has the shared provider types.
+  - `forecast_provider.py` (built-in usage forecast), `historical_on_off_provider.py` (comfort runtime history), `rolling_history_cache.py`, `adapter_auto.py`.
+- Entities
+  - `sensor.py` plus `sensors/` (status, runtime, actions, outlook, diagnostics, historical sensors) and `sensor_specs.py`.
+  - `button.py`: the two diagnostic buttons.
+- Plan Outlook
+  - `plan_outlook.py`, `plan_outlook_selection.py`, `plan_outlook_types.py`, `plan_outlook_renderer.py`, `outlook_languages.py`, and the Fluent catalogues in `locales/`.
+- Other state
+  - `target_runtime.py`, `target_persistence.py`: battery targets.
+  - `historical_cost/`: cost tracker, store, models and reference simulations.
+  - `planner_history.py`: optional JSONL planner reproductions.
+  - `datetime_utils.py`, `utilities/`: shared helpers.
+- `optimizer/`
+  - Pure Python optimization models and solver code, free of `homeassistant` imports.
+- Repository level
+  - `tests/integration/`: Home Assistant integration tests.
+  - `tests/optimizer/`: optimizer-only tests that do not need Home Assistant runtime state.
 
 ## Runtime Model
 The main runtime center is the coordinator:
-- `config_flow.py`: Collects source configuration and planner settings.
-- `coordinator.py`: Builds planner input, runs planning, tracks stage errors, and updates runtime entities. It owns its scheduler: one `async_track_point_in_utc_time` timer aimed at the next slot boundary, re-armed after every run and cancelled on shutdown. It does not rely on `DataUpdateCoordinator`'s own refresh timer.
-- `entry_setup.py`: Starts the scheduler after platform setup. On startup the cached snapshot is restored only if it was stored with the same configuration fingerprint (hash of entry data, options, and subentries) and its plan still covers the current time; otherwise it is discarded and the first plan is awaited during setup. A restored snapshot is trusted immediately and replaced by a plan that runs as a background task right after setup.
-- `binary_sensor.py` / `sensor.py`: Expose planning state, diagnostics, and error scopes.
+- `entry_setup.py`: Creates the coordinator, loads the persisted battery targets, starts the optional historical tracker, forwards the `sensor` and `button` platforms, then starts the scheduler. On startup the cached snapshot is restored only if it was stored with the same configuration fingerprint (hash of entry data, options, and subentries) and its plan still covers the current time; otherwise it is discarded and the first plan is awaited during setup. A restored snapshot is trusted immediately and replaced by a plan that runs as a background task right after setup.
+- `coordinator.py`: Builds planner input, runs planning, tracks stage errors, and updates runtime entities. It subclasses `DataUpdateCoordinator` for listener handling but owns its scheduler: one `async_track_point_in_utc_time` timer aimed at the next slot boundary, re-armed after every run and cancelled on shutdown. It does not use the base class's refresh timer (`update_interval` is not set while the scheduler is enabled). A separate heartbeat drives the `scheduler_stale` status attribute.
+- `config_flow.py` / `flows/`: Collect source configuration and planner settings.
+- `sensor.py` / `sensors/` and `button.py`: Expose planning state, diagnostics, error scopes, actions and the manual run/refresh buttons.
+- `services.py`: Registers the `wattplan.*` services once for all entries.
 - `target_runtime.py` / `target_persistence.py`: Hold user battery targets from `wattplan.set_target` and persist them in a small per-entry store (`wattplan.targets.<entry_id>`), restored on setup. Expired targets and targets for removed batteries are dropped.
-- `source_pipeline.py`, `source_provider.py`, `source_fixup.py`: Resolve raw source data and normalize it into planner-ready values.
+- `source_config/`, `source_providers/`, `source_fixup.py`: Resolve raw source data and normalize it into planner-ready values.
 
 ## Data Acquisition
 WattPlan acquires four planner input series:
@@ -121,8 +145,8 @@ The acquisition pipeline for each source is:
 3. Align timestamps to the slot grid (or a whole fraction of a slot for finer sources), exactly or to the nearest grid point, and resolve duplicate timestamps with the aggregation mode in provider order.
 4. Turn points into intervals capped at the source's typical spacing, then map them onto slots: prices (per kWh) repeat across the slots they cover and aggregate when several fall in one slot; usage and PV energy is split proportionally and summed. Usage/PV values given as average kW are converted to kWh first.
 5. Optionally repair gaps by resampling and fill edges, then require one finite value per slot.
-6. Optionally extend the tail with the value from 24 hours earlier when the source uses an extend-style fixup path.
-7. Optionally reuse the last successful normalized window for a limited time when a refresh fails. Only fully finite windows can update this cache.
+6. Validate that every value is finite. If the source fails or is short, the fixup layer recovers in this order. With an extend-style fixup profile, it first re-reads the source for the part it does cover and extends the missing tail by repeating the value from 24 hours earlier (needs at least one full day of data).
+7. Otherwise it reuses the last successful normalized window, shifted to the current start, for as long as that window still covers the requested start (the extend profile can also extend its tail the same way). Only fully finite windows can update this cache.
 
 `docs/source-data.md` describes these rules from the user's side.
 

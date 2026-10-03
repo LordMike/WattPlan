@@ -31,11 +31,17 @@ These exist once per WattPlan setup:
 
 Plan Outlook uses the Home Assistant system language by default. Additional
 languages can be selected from the integration's advanced options; the system
-language is always included. Unsupported selections fall back to English. Every
+language is included when a renderer exists for it (currently English and Danish; locale tags such as `da-DK` resolve to their base language). Unsupported languages are ignored, and if nothing supported remains the setup falls back to English. Every
 enabled language is exposed as its own always-suffixed entity; there is no
 unsuffixed Plan Outlook entity.
 
-Large or constantly changing attributes are excluded from the Home Assistant Recorder so history stays small: the plan details attributes (all of them), the usage forecast's `forecast` series, the per-slot series on the projection sensors (`values` and the `*_cost_values` lists), and the Plan Outlook's `fact_details`, `statements` and coverage timestamps (`covered_start`, `covered_end`, `plan_created_at`, `valid_until`). The attributes remain available on the live state.
+Large or constantly changing attributes are excluded from the Home Assistant Recorder so history stays small. The exclusions are defined per entity class (`_unrecorded_attributes`):
+
+- Plan details and plan details (hourly): every attribute.
+- Usage forecast: `forecast`, `time_key` and `value_key`.
+- Plan Outlook: `fact_details`, `statements` and the coverage timestamps (`covered_start`, `covered_end`, `plan_created_at`, `valid_until`).
+
+Other sensors, including the status, action and historical cost sensors, record all their attributes. The excluded attributes remain available on the live state.
 
 When `sensor.<setup_slug>_status` is `failed`, plan-dependent entities such as action sensors, plan details, and usage forecast become unavailable rather than continuing to expose stale plan data.
 
@@ -44,6 +50,29 @@ The overall status sensor is the canonical view of plan and scheduler health. It
 After a restart or reload, WattPlan restores the cached snapshot only when the configuration is unchanged and the plan still covers the current time; its recommendation entities are then available immediately (status reason `restored_plan_in_use`) and a fresh plan runs in the background right after setup. An expired snapshot, or one stored under a different configuration, is discarded and the first plan runs during setup. Later planning failures may continue advancing through the plan in use until its `expires_at` time.
 
 Per-source status sensors explain input health. Their `expires_at` attribute describes the source data or fallback coverage for that source, not the whole plan. Stale fallback data from a source can make the overall status `degraded` while the plan is still usable; an expired overall plan is `failed`.
+
+## Diagnostic Buttons
+
+These buttons exist once per WattPlan setup and are in the Home Assistant diagnostic category. They do the same work as the services of the same name:
+
+| Entity | Purpose |
+| --- | --- |
+| `button.<setup_slug>_run_optimize_now` | Runs a new planning (optimize) cycle immediately, like `wattplan.run_optimize_now`. |
+| `button.<setup_slug>_refresh_sensors` | Re-emits the current plan's actions to the action sensors without re-planning, like `wattplan.refresh_sensors`. |
+
+## Historical Cost Entities
+
+These exist once per setup, only when historical cost tracking is enabled. They report period-to-date totals in the Home Assistant currency; see [Historical Cost Tracking](historical-cost-tracking.md) for how to read them.
+
+| Entity | Enabled by default |
+| --- | --- |
+| `sensor.<setup_slug>_historical_actual_cost_today` / `_this_month` | Today only |
+| `sensor.<setup_slug>_historical_grid_only_cost_today` / `_this_month` | Today only |
+| `sensor.<setup_slug>_historical_self_consumption_cost_today` / `_this_month` | Today only |
+| `sensor.<setup_slug>_historical_savings_vs_grid_only_today` / `_this_month` | Today only |
+| `sensor.<setup_slug>_historical_savings_vs_self_consumption_today` / `_this_month` | Today only |
+
+That is ten sensors: five metrics for each of `today` and `this_month`. The self-consumption entities are unavailable when the self-consumption simulation is turned off in the historical cost settings.
 
 ## Battery Entities
 
@@ -118,6 +147,8 @@ Fields:
   - Required deadline as a Home Assistant datetime. Must be in the future.
 - `entry_id`
   - Optional filter for a single WattPlan setup.
+- `run_optimize`
+  - Optional, default `true`. Run a planning cycle right after setting the target so it takes effect without waiting for the next scheduled cycle.
 
 Example:
 
@@ -143,6 +174,8 @@ Fields:
   - Optional WattPlan device selection.
 - `entry_id`
   - Optional filter for a single WattPlan setup.
+- `run_optimize`
+  - Optional, default `true`. Run a planning cycle right after clearing the target.
 
 Example:
 
