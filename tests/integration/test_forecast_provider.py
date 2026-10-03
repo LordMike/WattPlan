@@ -511,7 +511,7 @@ async def test_forecast_warm_cache_matches_cold_cache_with_boundary_rows(
     base = datetime(2026, 1, 1, 0, 0, tzinfo=UTC)
     states = [
         SimpleNamespace(state=str(100.0 + hour), last_changed=base + timedelta(hours=hour))
-        for hour in range(72)
+        for hour in range(120)
     ]
     recorder = _BoundaryRowRecorder(entity_id, states)
     monkeypatch.setattr(cache_module, "get_instance", lambda _hass: recorder)
@@ -531,15 +531,20 @@ async def test_forecast_warm_cache_matches_cold_cache_with_boundary_rows(
 
     warm = _provider()
     start_at = base + timedelta(days=2)
-    for tick in range(17):
+    # The pattern is rebuilt at most hourly, so tick every 75 minutes: each tick
+    # refetches, and the fetch boundaries rotate through the quarter hours
+    # instead of always landing on a meter change. The last tick (25 hours in)
+    # is hour-aligned so the cold comparison is not skewed by its own boundary row.
+    ticks = 21
+    for tick in range(ticks):
         warm_values = await warm.async_values(
-            _window(start_at + timedelta(minutes=15 * tick))
+            _window(start_at + timedelta(minutes=75 * tick))
         )
-    final_start = start_at + timedelta(minutes=15 * 16)
+    final_start = start_at + timedelta(minutes=75 * (ticks - 1))
     cold_values = await _provider().async_values(_window(final_start))
 
-    # The warm period covers the first hours of the day, so a full-day forecast
-    # exercises the time-of-day slots that the repeated boundary rows touched.
+    # The warm period covers a full day, so a full-day forecast exercises every
+    # time-of-day slot that the repeated boundary rows touched.
     assert cold_values == pytest.approx([0.25] * 96)
     assert warm_values == pytest.approx(cold_values)
 
@@ -647,3 +652,78 @@ async def test_forecast_load_pattern_follows_local_time_across_dst(
     )
 
     assert values == pytest.approx([5.0, 1.0])
+
+
+async def _hourly_meter_provider(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> tuple[ForecastProvider, _BoundaryRowRecorder]:
+    """Return a provider over a steady 1 kWh per hour meter in Copenhagen time."""
+    await hass.config.async_set_time_zone("Europe/Copenhagen")
+    hass.config.components.add("recorder")
+    entity_id = "sensor.house_load_kwh"
+    hass.states.async_set(entity_id, "100.0", _VALID_LOAD_ATTRS)
+    base = datetime(2026, 1, 1, 0, 0, tzinfo=UTC)
+    states = [
+        SimpleNamespace(state=str(100.0 + hour), last_changed=base + timedelta(hours=hour))
+        for hour in range(120)
+    ]
+    recorder = _BoundaryRowRecorder(entity_id, states)
+    monkeypatch.setattr(cache_module, "get_instance", lambda _hass: recorder)
+    return ForecastProvider(hass, entity_id=entity_id, lookback_days=2), recorder
+
+
+async def test_forecast_reuses_load_pattern_within_the_hour(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The load pattern is only rebuilt hourly, on slot changes and for diagnostics."""
+    provider, recorder = await _hourly_meter_provider(hass, monkeypatch)
+    start_at = datetime(2026, 1, 3, 10, 0, tzinfo=UTC)
+
+    def _window(offset_minutes: int, slot_minutes: int = 60) -> SourceWindow:
+        return SourceWindow(
+            start_at=start_at + timedelta(minutes=offset_minutes),
+            slot_minutes=slot_minutes,
+            slots=3,
+        )
+
+    first = await provider.async_values(_window(0))
+    assert first == pytest.approx([1.0] * 3)
+    assert recorder.calls == 1
+
+    # Within the hour: no recorder query, same pattern.
+    assert await provider.async_values(_window(15)) == pytest.approx(first)
+    assert await provider.async_values(_window(59)) == pytest.approx(first)
+    assert recorder.calls == 1
+
+    # Exactly one hour later the pattern is rebuilt.
+    await provider.async_values(_window(60))
+    assert recorder.calls == 2
+
+    # A different slot size cannot use the stored pattern.
+    assert await provider.async_values(_window(75, 30)) == pytest.approx([0.5] * 3)
+    assert recorder.calls == 3
+
+    # Diagnostics always query recorder history.
+    await provider.async_debug_payload(_window(80, 30))
+    assert recorder.calls == 4
+
+
+async def test_forecast_rebuilds_load_pattern_when_local_day_rolls_over(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Observation ages are per local day, so a new local day needs a new pattern."""
+    provider, recorder = await _hourly_meter_provider(hass, monkeypatch)
+    # 22:30 UTC is 23:30 in Copenhagen; 23:15 UTC is 00:15 the next local day.
+    await provider.async_values(
+        SourceWindow(
+            start_at=datetime(2026, 1, 3, 22, 30, tzinfo=UTC), slot_minutes=60, slots=1
+        )
+    )
+    assert recorder.calls == 1
+
+    await provider.async_values(
+        SourceWindow(
+            start_at=datetime(2026, 1, 3, 23, 15, tzinfo=UTC), slot_minutes=60, slots=1
+        )
+    )
+    assert recorder.calls == 2

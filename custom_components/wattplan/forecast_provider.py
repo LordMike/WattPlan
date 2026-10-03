@@ -17,6 +17,17 @@ from .source_types import SourceProvider, SourceProviderError, SourceWindow
 
 _LOGGER = logging.getLogger(__name__)
 MAX_IMPLIED_POWER_KW = 50.0
+_PATTERN_MAX_AGE = timedelta(hours=1)
+
+
+@dataclass(slots=True)
+class _LoadPattern:
+    """Time-of-day load observations built from recorder history."""
+
+    computed_at: datetime
+    slot_minutes: int
+    by_slot: dict[int, list[tuple[float, int, int]]]
+    fallback: float
 
 
 @dataclass(slots=True)
@@ -33,7 +44,11 @@ class _ForecastRun:
 
 
 class ForecastProvider(SourceProvider):
-    """Provide quick weekday-weighted load forecasts from recorder history."""
+    """Provide quick weekday-weighted load forecasts from recorder history.
+
+    The load pattern is rebuilt from recorder history at most once per hour,
+    when the slot size changes, or when the local day rolls over.
+    """
 
     def __init__(
         self,
@@ -69,23 +84,51 @@ class ForecastProvider(SourceProvider):
         self._other_weekday_weight = other_weekday_weight
         self._recency_decay = max(0.0, recency_decay)
         self._history_cache = RollingHistoryCache(hass, entity_id)
+        self._pattern: _LoadPattern | None = None
 
     async def async_forecast(self, window: SourceWindow) -> list[float]:
         """Return exactly `window.slots` forecast values."""
         return await self.async_values(window)
 
     async def async_values(self, window: SourceWindow) -> list[float]:
-        """Return exactly `window.slots` forecast values."""
+        """Return exactly `window.slots` forecast values.
+
+        Reuses the stored load pattern while it is less than an hour old.
+        """
+        self._validate_window(window)
+        start_at = self._as_utc(window.start_at)
+        pattern = self._pattern
+        if pattern is not None and self._pattern_is_current(pattern, window, start_at):
+            return self._forecast_values(window, start_at, pattern, [])
         run = await self._async_run(window)
         return run.values
 
     async def async_debug_payload(self, window: SourceWindow) -> dict[str, Any]:
-        """Return raw and normalized forecast data for debugging."""
+        """Return raw and normalized forecast data for debugging.
+
+        Always rebuilds the load pattern from recorder history.
+        """
         run = await self._async_run(window)
         return self._debug_payload(window, run)
 
-    async def _async_run(self, window: SourceWindow) -> _ForecastRun:
-        """Compute forecast values from recorder state history."""
+    def _pattern_is_current(
+        self, pattern: _LoadPattern, window: SourceWindow, start_at: datetime
+    ) -> bool:
+        """Return whether a stored pattern can serve this window."""
+        if pattern.slot_minutes != window.slot_minutes:
+            return False
+        if not timedelta(0) <= start_at - pattern.computed_at < _PATTERN_MAX_AGE:
+            return False
+        # Observation ages are relative to the local date the pattern was built
+        # on, so rebuild once the local day rolls over.
+        local_tz = dt_util.get_default_time_zone()
+        return (
+            start_at.astimezone(local_tz).date()
+            == pattern.computed_at.astimezone(local_tz).date()
+        )
+
+    def _validate_window(self, window: SourceWindow) -> Any:
+        """Validate the window and source entity; return the entity state."""
         if window.slot_minutes <= 0:
             raise SourceProviderError(
                 "source_validation",
@@ -118,7 +161,11 @@ class ForecastProvider(SourceProvider):
                     "built_in_reason": "recorder_missing",
                 },
             )
+        return state
 
+    async def _async_run(self, window: SourceWindow) -> _ForecastRun:
+        """Rebuild the load pattern from recorder history and forecast from it."""
+        state = self._validate_window(window)
         start_at = self._as_utc(window.start_at)
         slot_delta = timedelta(minutes=window.slot_minutes)
         history_start = start_at - timedelta(days=self._lookback_days)
@@ -174,7 +221,34 @@ class ForecastProvider(SourceProvider):
                 details={"entity_id": self._entity_id},
             )
 
-        fallback = sum(all_values) / len(all_values)
+        pattern = _LoadPattern(
+            computed_at=start_at,
+            slot_minutes=window.slot_minutes,
+            by_slot=by_slot,
+            fallback=sum(all_values) / len(all_values),
+        )
+        self._pattern = pattern
+        return _ForecastRun(
+            start_at=start_at,
+            state=state,
+            states=states,
+            samples=samples,
+            by_slot=by_slot,
+            debug_events=debug_events,
+            values=self._forecast_values(window, start_at, pattern, debug_events),
+        )
+
+    def _forecast_values(
+        self,
+        window: SourceWindow,
+        start_at: datetime,
+        pattern: _LoadPattern,
+        debug_events: list[dict[str, Any]],
+    ) -> list[float]:
+        """Evaluate the load pattern for every slot in the window."""
+        slot_delta = timedelta(minutes=window.slot_minutes)
+        max_interval_kwh = MAX_IMPLIED_POWER_KW * (window.slot_minutes / 60.0)
+        fallback = pattern.fallback
         local_tz = dt_util.get_default_time_zone()
         values: list[float] = []
         for slot_index in range(window.slots):
@@ -182,7 +256,7 @@ class ForecastProvider(SourceProvider):
             local_at = at.astimezone(local_tz)
             minute_of_day = (local_at.hour * 60) + local_at.minute
             day_slot = minute_of_day // window.slot_minutes
-            observations = by_slot.get(day_slot, [])
+            observations = pattern.by_slot.get(day_slot, [])
             # Forecast each future interval by comparing it with the same
             # time-of-day intervals in history, then weight same weekday higher
             # than other weekdays.
@@ -212,16 +286,7 @@ class ForecastProvider(SourceProvider):
                 )
                 forecast_value = replacement
             values.append(forecast_value)
-
-        return _ForecastRun(
-            start_at=start_at,
-            state=state,
-            states=states,
-            samples=samples,
-            by_slot=by_slot,
-            debug_events=debug_events,
-            values=values,
-        )
+        return values
 
     def _recorder_error(self, err: Exception) -> SourceProviderError:
         """Wrap a recorder failure as a source fetch error."""
