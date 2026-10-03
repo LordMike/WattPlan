@@ -57,7 +57,7 @@ from homeassistant.data_entry_flow import FlowResultType
 
 from tests.common import MockConfigEntry
 
-pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
+pytestmark = pytest.mark.usefixtures("enable_custom_integrations", "frozen_clock")
 
 SECTION_SOURCE_MANUAL = "manual"
 

@@ -2292,6 +2292,7 @@ async def test_battery_next_action_sensor_exposes_timestamp_and_state(
     assert "timestamp" in next_action.attributes
 
 
+@pytest.mark.usefixtures("frozen_clock")
 async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
     """Keep restored diagnostics but suppress actions until a fresh plan succeeds."""
     now = datetime.now(tz=UTC)
@@ -3172,6 +3173,7 @@ async def test_plan_details_timings_omit_unconfigured_sources(
     assert "Plan details payload build" in tasks
 
 
+@pytest.mark.usefixtures("frozen_clock")
 async def test_plan_details_timings_keep_merged_source_as_single_source_entry(
     hass: HomeAssistant,
 ) -> None:
@@ -3260,6 +3262,7 @@ async def test_plan_details_timings_keep_merged_source_as_single_source_entry(
     assert all("provider" not in task for task in tasks)
 
 
+@pytest.mark.usefixtures("frozen_clock")
 async def test_battery_target_changes_plan_and_expires_after_deadline(
     hass: HomeAssistant,
 ) -> None:

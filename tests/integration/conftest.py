@@ -15,3 +15,10 @@ def mock_setup_entry() -> Generator[AsyncMock]:
         "custom_components.wattplan.async_unload_entry", return_value=True
     ):
         yield mock_setup_entry
+
+
+@pytest.fixture
+def frozen_clock(freezer):
+    """Freeze the clock mid-hour so hour-aligned test data cannot straddle a boundary."""
+    freezer.move_to("2026-06-15 12:30:00+00:00")
+    return freezer

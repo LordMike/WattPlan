@@ -71,7 +71,7 @@ from custom_components.wattplan.const import (
 from custom_components.wattplan.source_providers import CONF_WATTPLAN_ENTITY_ID
 from tests.common import MockConfigEntry
 
-pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
+pytestmark = pytest.mark.usefixtures("enable_custom_integrations", "frozen_clock")
 
 SECTION_BATTERY_ADVANCED = "advanced"
 CONF_ACCEPT_SOURCE_SUMMARY = "accept_source_summary"

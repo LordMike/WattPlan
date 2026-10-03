@@ -31,7 +31,7 @@ from custom_components.wattplan.const import (
 )
 from tests.common import MockConfigEntry
 
-pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
+pytestmark = pytest.mark.usefixtures("enable_custom_integrations", "frozen_clock")
 
 
 async def test_scheduled_and_manual_plans_are_exported_by_local_date(
