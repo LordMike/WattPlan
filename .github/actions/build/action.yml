@@ -28,7 +28,7 @@ runs:
 
     - name: Run tests
       shell: bash
-      run: pytest
+      run: pytest --cov --cov-report=term
 
     - name: Build HACS release artifact
       if: env.CI_PUBLISH_TARGET == 'release'

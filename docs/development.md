@@ -57,6 +57,14 @@ at it:
 WATTPLAN_TEST_VENV=/path/to/venv ./scripts/run_tests.sh
 ```
 
+Coverage is opt-in and does not affect the default run. CI runs
+`pytest --cov`, which fails below the floor set in `pyproject.toml`
+(`[tool.coverage.report] fail_under`); locally:
+
+```bash
+./scripts/run_tests.sh --cov --cov-report=term-missing
+```
+
 Run only optimizer tests:
 
 ```bash

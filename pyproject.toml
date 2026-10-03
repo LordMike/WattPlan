@@ -36,3 +36,13 @@ namespaces = true
 
 [tool.setuptools.package-data]
 "custom_components.wattplan" = ["*.json", "*.yaml", "*.png", "translations/*.json", "locales/**/*.ftl"]
+
+# Coverage is opt-in: run `pytest --cov` (CI does). The default pytest
+# invocation does not require pytest-cov.
+[tool.coverage.run]
+source = ["custom_components.wattplan"]
+
+[tool.coverage.report]
+# Measured 86% when this floor was set; keep it a few points below.
+fail_under = 83
+skip_empty = true
