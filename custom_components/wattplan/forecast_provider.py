@@ -389,18 +389,22 @@ class ForecastProvider(SourceProvider):
             # Recorder history is also assumed cumulative. Each positive delta
             # becomes one usage segment spanning from the previous reading to
             # the current reading.
-            delta = value - previous_value
-            if delta == 0:
+            if value == previous_value:
                 # Recorder history only stores changes, so an unchanged value is
                 # the synthetic start-time row Home Assistant adds at each
                 # fetch boundary. Keep the segment open until the real change.
                 continue
+            delta = value - previous_value
+            if delta < 0:
+                # Mirror Home Assistant's `total_increasing` rule: a drop of more
+                # than 10% is a meter reset, and the new reading is the energy
+                # used since the reset. A smaller decrease is meter noise or a
+                # correction and, like a negative reading, adds no consumption.
+                delta = value if 0 <= value < previous_value * 0.9 else 0.0
             previous_value = value
             segment_start = previous_changed
             previous_changed = changed_at
-            # Treat negative deltas as meter resets. We skip the reset jump itself
-            # and continue from the new baseline on the next sample.
-            if not math.isfinite(delta) or delta < 0:
+            if not math.isfinite(delta) or delta <= 0:
                 continue
             if segment_start == unknown_start_at:
                 continue

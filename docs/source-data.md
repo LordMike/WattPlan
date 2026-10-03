@@ -69,6 +69,8 @@ Usage is optional.
 
 **Built-in forecast refresh:** The built-in forecast rebuilds its load pattern from recorder history at most once per hour (and when the slot size changes or the local day rolls over), so new meter readings influence the forecast with up to an hour's delay.
 
+**Built-in forecast and meter resets:** A drop of more than 10% in the meter value is treated as a reset, and the new reading counts as consumption since the reset (as Home Assistant does for `total_increasing`); smaller decreases are ignored.
+
 ### PV
 PV is optional.
 

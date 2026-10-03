@@ -47,7 +47,10 @@ class _FakeRecorder:
 async def test_forecast_weekday_weighting_prefers_same_weekday(
     hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Same-weekday interval deltas should be weighted higher than other weekdays."""
+    """Same-weekday interval deltas should be weighted higher than other weekdays.
+
+    The meter resets to zero each day, which adds no consumption of its own.
+    """
     hass.config.components.add("recorder")
     entity_id = "sensor.house_load_kwh"
     hass.states.async_set(entity_id, "3.1", _VALID_LOAD_ATTRS)
@@ -64,45 +67,45 @@ async def test_forecast_weekday_weighting_prefers_same_weekday(
             ),
             # Tuesday one week earlier.
             SimpleNamespace(
-                state="2.0", last_changed=datetime(2026, 1, 6, 0, 0, tzinfo=UTC)
+                state="0.0", last_changed=datetime(2026, 1, 6, 0, 0, tzinfo=UTC)
             ),
             SimpleNamespace(
-                state="4.0", last_changed=datetime(2026, 1, 6, 1, 0, tzinfo=UTC)
+                state="2.0", last_changed=datetime(2026, 1, 6, 1, 0, tzinfo=UTC)
             ),
             # Wednesday one week earlier.
             SimpleNamespace(
-                state="2.0", last_changed=datetime(2026, 1, 7, 0, 0, tzinfo=UTC)
+                state="0.0", last_changed=datetime(2026, 1, 7, 0, 0, tzinfo=UTC)
             ),
             SimpleNamespace(
-                state="4.0", last_changed=datetime(2026, 1, 7, 1, 0, tzinfo=UTC)
+                state="2.0", last_changed=datetime(2026, 1, 7, 1, 0, tzinfo=UTC)
             ),
             # Thursday one week earlier.
             SimpleNamespace(
-                state="2.0", last_changed=datetime(2026, 1, 8, 0, 0, tzinfo=UTC)
+                state="0.0", last_changed=datetime(2026, 1, 8, 0, 0, tzinfo=UTC)
             ),
             SimpleNamespace(
-                state="4.0", last_changed=datetime(2026, 1, 8, 1, 0, tzinfo=UTC)
+                state="2.0", last_changed=datetime(2026, 1, 8, 1, 0, tzinfo=UTC)
             ),
             # Friday one week earlier.
             SimpleNamespace(
-                state="2.0", last_changed=datetime(2026, 1, 9, 0, 0, tzinfo=UTC)
+                state="0.0", last_changed=datetime(2026, 1, 9, 0, 0, tzinfo=UTC)
             ),
             SimpleNamespace(
-                state="4.0", last_changed=datetime(2026, 1, 9, 1, 0, tzinfo=UTC)
+                state="2.0", last_changed=datetime(2026, 1, 9, 1, 0, tzinfo=UTC)
             ),
             # Saturday one week earlier.
             SimpleNamespace(
-                state="2.0", last_changed=datetime(2026, 1, 10, 0, 0, tzinfo=UTC)
+                state="0.0", last_changed=datetime(2026, 1, 10, 0, 0, tzinfo=UTC)
             ),
             SimpleNamespace(
-                state="4.0", last_changed=datetime(2026, 1, 10, 1, 0, tzinfo=UTC)
+                state="2.0", last_changed=datetime(2026, 1, 10, 1, 0, tzinfo=UTC)
             ),
             # Sunday one week earlier.
             SimpleNamespace(
-                state="2.0", last_changed=datetime(2026, 1, 11, 0, 0, tzinfo=UTC)
+                state="0.0", last_changed=datetime(2026, 1, 11, 0, 0, tzinfo=UTC)
             ),
             SimpleNamespace(
-                state="4.0", last_changed=datetime(2026, 1, 11, 1, 0, tzinfo=UTC)
+                state="2.0", last_changed=datetime(2026, 1, 11, 1, 0, tzinfo=UTC)
             ),
         ]
     }
@@ -252,7 +255,7 @@ async def test_forecast_uses_meter_deltas_not_raw_totals(
 async def test_forecast_handles_meter_reset(
     hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Negative deltas from a meter reset should be skipped cleanly."""
+    """The first reading after a meter reset counts as consumption since the reset."""
     hass.config.components.add("recorder")
     entity_id = "sensor.house_load_kwh"
     hass.states.async_set(entity_id, "5.0", _VALID_LOAD_ATTRS)
@@ -285,7 +288,46 @@ async def test_forecast_handles_meter_reset(
         )
     )
 
-    assert values == pytest.approx([1.0, 1.0])
+    # Hour 1->2 is the reset (101 -> 3): the 3.0 reading is the consumption since
+    # the reset, so the slots at 02:00 and 03:00 see 3.0 and 1.0.
+    assert values == pytest.approx([3.0, 1.0])
+
+
+async def test_forecast_ignores_small_meter_decrease(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A decrease of less than 10% is meter noise and adds no consumption."""
+    hass.config.components.add("recorder")
+    entity_id = "sensor.house_load_kwh"
+    hass.states.async_set(entity_id, "5.0", _VALID_LOAD_ATTRS)
+    recorder = _FakeRecorder(
+        history_response={
+            entity_id: [
+                SimpleNamespace(
+                    state="100.0", last_changed=datetime(2026, 1, 11, 0, 0, tzinfo=UTC)
+                ),
+                SimpleNamespace(
+                    state="99.5", last_changed=datetime(2026, 1, 11, 1, 0, tzinfo=UTC)
+                ),
+                SimpleNamespace(
+                    state="100.5", last_changed=datetime(2026, 1, 11, 2, 0, tzinfo=UTC)
+                ),
+            ]
+        },
+    )
+    monkeypatch.setattr(cache_module, "get_instance", lambda _hass: recorder)
+
+    provider = ForecastProvider(hass, entity_id=entity_id, recency_decay=0.0)
+    values = await provider.async_values(
+        SourceWindow(
+            start_at=datetime(2026, 1, 12, 1, 0, tzinfo=UTC),
+            slot_minutes=60,
+            slots=2,
+        )
+    )
+
+    # Only the 99.5 -> 100.5 hour counts; the decrease itself adds nothing.
+    assert values[0] == pytest.approx(1.0)
 
 
 async def test_slot_observation_above_power_limit_is_dropped_not_zeroed(
