@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import partial
 import logging
@@ -12,12 +13,28 @@ from typing import Any
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.statistics import statistics_during_period
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 from .rolling_history_cache import RollingHistoryCache
 from .source_types import SourceProvider, SourceProviderError, SourceWindow
 
 _LOGGER = logging.getLogger(__name__)
 MAX_IMPLIED_POWER_KW = 50.0
+
+
+@dataclass(slots=True)
+class _ForecastRun:
+    """Intermediate results of one forecast computation."""
+
+    start_at: datetime
+    state: Any
+    states: list[Any]
+    long_term_rows: list[Any]
+    state_samples: list[tuple[datetime, datetime, float]]
+    samples: list[tuple[datetime, datetime, float]]
+    by_slot: dict[int, list[tuple[float, int, int]]]
+    debug_events: list[dict[str, Any]]
+    values: list[float]
 
 
 class ForecastProvider(SourceProvider):
@@ -64,11 +81,23 @@ class ForecastProvider(SourceProvider):
 
     async def async_values(self, window: SourceWindow) -> list[float]:
         """Return exactly `window.slots` forecast values."""
-        debug = await self.async_debug_payload(window)
-        return [float(value) for value in debug["forecast_values"]]
+        run = await self._async_run(window, include_statistics=False)
+        return run.values
 
     async def async_debug_payload(self, window: SourceWindow) -> dict[str, Any]:
         """Return raw and normalized forecast data for debugging."""
+        run = await self._async_run(window, include_statistics=True)
+        return self._debug_payload(window, run)
+
+    async def _async_run(
+        self, window: SourceWindow, *, include_statistics: bool
+    ) -> _ForecastRun:
+        """Compute forecast values from recorder history.
+
+        Long-term statistics are only a fallback for sparse recorder history, so
+        they are fetched only when state history gave no usable samples or when
+        the caller wants them for diagnostics.
+        """
         if window.slot_minutes <= 0:
             raise SourceProviderError(
                 "source_validation",
@@ -113,36 +142,33 @@ class ForecastProvider(SourceProvider):
                 window_start=history_start,
                 now=start_at,
             )
-            long_term_data = await get_instance(self._hass).async_add_executor_job(
-                partial(
-                    statistics_during_period,
-                    self._hass,
-                    history_start,
-                    start_at,
-                    {self._entity_id},
-                    "hour",
-                    None,
-                    {"sum"},
-                )
-            )
         except Exception as err:  # noqa: BLE001
-            raise SourceProviderError(
-                "source_fetch",
-                f"Recorder query failed for `{self._entity_id}`: {err}",
-                details={
-                    "entity_id": self._entity_id,
-                    "built_in_reason": "recorder_error",
-                },
-            ) from err
+            raise self._recorder_error(err) from err
+        state_samples = self._delta_state_samples(states)
+        long_term_rows: list[Any] = []
+        if include_statistics or not state_samples:
+            try:
+                long_term_data = await get_instance(self._hass).async_add_executor_job(
+                    partial(
+                        statistics_during_period,
+                        self._hass,
+                        history_start,
+                        start_at,
+                        {self._entity_id},
+                        "hour",
+                        None,
+                        {"sum"},
+                    )
+                )
+            except Exception as err:  # noqa: BLE001
+                raise self._recorder_error(err) from err
+            long_term_rows = long_term_data.get(self._entity_id, [])
 
         # Both recorder state history and long-term statistics are treated as
         # cumulative meter readings. The first normalization step is therefore
         # to convert them into usage segments: `(segment_start, segment_end,
         # energy_delta_kwh)`.
-        state_samples = self._delta_state_samples(states)
-        statistics_samples = self._delta_statistics_samples(
-            long_term_data.get(self._entity_id, [])
-        )
+        statistics_samples = self._delta_statistics_samples(long_term_rows)
         # Recorder history and long-term statistics often describe the same
         # underlying energy usage at different granularities. Do not merge them,
         # or the same consumption can be counted twice. Prefer recorder history
@@ -188,10 +214,12 @@ class ForecastProvider(SourceProvider):
             )
 
         fallback = sum(all_values) / len(all_values)
+        local_tz = dt_util.get_default_time_zone()
         values: list[float] = []
         for slot_index in range(window.slots):
             at = start_at + (slot_delta * slot_index)
-            minute_of_day = (at.hour * 60) + at.minute
+            local_at = at.astimezone(local_tz)
+            minute_of_day = (local_at.hour * 60) + local_at.minute
             day_slot = minute_of_day // window.slot_minutes
             observations = by_slot.get(day_slot, [])
             # Forecast each future interval by comparing it with the same
@@ -199,7 +227,7 @@ class ForecastProvider(SourceProvider):
             # than other weekdays.
             forecast_value = self._weighted_average(
                 observations=observations,
-                target_weekday=at.weekday(),
+                target_weekday=local_at.weekday(),
                 fallback=values[-1] if values else fallback,
             )
             if forecast_value > max_interval_kwh:
@@ -224,6 +252,41 @@ class ForecastProvider(SourceProvider):
                 forecast_value = replacement
             values.append(forecast_value)
 
+        return _ForecastRun(
+            start_at=start_at,
+            state=state,
+            states=states,
+            long_term_rows=long_term_rows,
+            state_samples=state_samples,
+            samples=samples,
+            by_slot=by_slot,
+            debug_events=debug_events,
+            values=values,
+        )
+
+    def _recorder_error(self, err: Exception) -> SourceProviderError:
+        """Wrap a recorder failure as a source fetch error."""
+        return SourceProviderError(
+            "source_fetch",
+            f"Recorder query failed for `{self._entity_id}`: {err}",
+            details={
+                "entity_id": self._entity_id,
+                "built_in_reason": "recorder_error",
+            },
+        )
+
+    def _debug_payload(
+        self, window: SourceWindow, run: _ForecastRun
+    ) -> dict[str, Any]:
+        """Build the diagnostics payload from one forecast run."""
+        start_at = run.start_at
+        state = run.state
+        states = run.states
+        samples = run.samples
+        state_samples = run.state_samples
+        by_slot = run.by_slot
+        debug_events = run.debug_events
+        values = run.values
         return {
             "entity_id": self._entity_id,
             "window": {
@@ -257,7 +320,7 @@ class ForecastProvider(SourceProvider):
                     "sum": row.get("sum"),
                     "mean": row.get("mean"),
                 }
-                for row in long_term_data.get(self._entity_id, [])
+                for row in run.long_term_rows
             ],
             "normalized_segments": [
                 {
@@ -434,6 +497,8 @@ class ForecastProvider(SourceProvider):
                     )
                 slot_start += slot_delta
 
+        local_tz = dt_util.get_default_time_zone()
+        local_end_date = end_at.astimezone(local_tz).date()
         for slot_start, slot_value in slot_totals.items():
             if slot_value > max_interval_kwh:
                 replacement = 0.0
@@ -455,11 +520,13 @@ class ForecastProvider(SourceProvider):
                     replacement,
                 )
                 slot_value = replacement
-            minute_of_day = (slot_start.hour * 60) + slot_start.minute
+            # Key by local time so the pattern stays aligned across DST changes.
+            local_start = slot_start.astimezone(local_tz)
+            minute_of_day = (local_start.hour * 60) + local_start.minute
             day_slot = minute_of_day // slot_minutes
-            age_days = (end_at.date() - slot_start.date()).days
+            age_days = (local_end_date - local_start.date()).days
             by_slot.setdefault(day_slot, []).append(
-                (slot_value, slot_start.weekday(), age_days)
+                (slot_value, local_start.weekday(), age_days)
             )
 
         return by_slot

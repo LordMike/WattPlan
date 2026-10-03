@@ -38,15 +38,17 @@ class _FakeRecorder:
         )
         self._statistics_response = statistics_response or {}
         self.calls = 0
+        self.statistics_calls = 0
         self.fetch_starts: list[datetime] = []
 
     async def async_add_executor_job(self, _job: Any) -> dict[str, list[Any]]:
         """Return queued recorder response."""
         self.calls += 1
-        if self.calls % 2 == 1:
-            self.fetch_starts.append(_job.args[1])
-            return self._history_responses.pop(0)
-        return self._statistics_response
+        if _job.func is provider_module.statistics_during_period:
+            self.statistics_calls += 1
+            return self._statistics_response
+        self.fetch_starts.append(_job.args[1])
+        return self._history_responses.pop(0)
 
 
 async def test_forecast_weekday_weighting_prefers_same_weekday(
@@ -493,3 +495,82 @@ async def test_forecast_restarts_full_fetch_when_window_moves_past_cache(
         datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
         datetime(2026, 1, 21, 0, 0, tzinfo=UTC),
     ]
+
+
+def _hourly_meter_states(
+    start: datetime, hours: int, *, spike_hour_utc: int
+) -> list[SimpleNamespace]:
+    """Return hourly cumulative readings using 5 kWh in one UTC hour a day."""
+    total = 0.0
+    states: list[SimpleNamespace] = []
+    for hour in range(hours + 1):
+        at = start + timedelta(hours=hour)
+        if hour:
+            total += 5.0 if (at - timedelta(hours=1)).hour == spike_hour_utc else 1.0
+        states.append(SimpleNamespace(state=str(total), last_changed=at))
+    return states
+
+
+async def test_forecast_load_pattern_follows_local_time_across_dst(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """History from before a DST change must land on the same local hour."""
+    await hass.config.async_set_time_zone("Europe/Copenhagen")
+    hass.config.components.add("recorder")
+    entity_id = "sensor.house_load_kwh"
+    hass.states.async_set(entity_id, "3.1", _VALID_LOAD_ATTRS)
+    # Peak usage at 08:00 local. Before the change on 2026-10-25 that is
+    # 06:00 UTC (CEST); afterwards it is 07:00 UTC (CET).
+    recorder = _FakeRecorder(
+        history_response={
+            entity_id: _hourly_meter_states(
+                datetime(2026, 10, 20, 0, 0, tzinfo=UTC), 48, spike_hour_utc=6
+            )
+        }
+    )
+    monkeypatch.setattr(cache_module, "get_instance", lambda _hass: recorder)
+    monkeypatch.setattr(provider_module, "get_instance", lambda _hass: recorder)
+
+    provider = ForecastProvider(hass, entity_id=entity_id, lookback_days=14)
+    values = await provider.async_values(
+        SourceWindow(
+            start_at=datetime(2026, 10, 27, 7, 0, tzinfo=UTC),  # 08:00 CET
+            slot_minutes=60,
+            slots=2,
+        )
+    )
+
+    assert values == pytest.approx([5.0, 1.0])
+
+
+async def test_forecast_fetches_statistics_only_when_needed(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Long-term statistics are a fallback and are not queried needlessly."""
+    hass.config.components.add("recorder")
+    entity_id = "sensor.house_load_kwh"
+    hass.states.async_set(entity_id, "3.1", _VALID_LOAD_ATTRS)
+    recorder = _FakeRecorder(
+        history_responses=[
+            {
+                entity_id: _hourly_meter_states(
+                    datetime(2026, 1, 11, 0, 0, tzinfo=UTC), 6, spike_hour_utc=99
+                )
+            }
+        ]
+        * 2,
+    )
+    monkeypatch.setattr(cache_module, "get_instance", lambda _hass: recorder)
+    monkeypatch.setattr(provider_module, "get_instance", lambda _hass: recorder)
+    window = SourceWindow(
+        start_at=datetime(2026, 1, 12, 1, 0, tzinfo=UTC), slot_minutes=60, slots=1
+    )
+    provider = ForecastProvider(hass, entity_id=entity_id)
+
+    await provider.async_values(window)
+    assert recorder.statistics_calls == 0
+
+    payload = await provider.async_debug_payload(window)
+    assert recorder.statistics_calls == 1
+    assert payload["selected_sample_source"] == "recorder_history"
+    assert payload["forecast_values"]

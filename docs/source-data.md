@@ -65,6 +65,8 @@ Usage is optional.
 3. Service Adapter
 4. Template
 
+**Built-in forecast and time zones:** The built-in forecast groups history by local time of day and local weekday (Home Assistant's configured time zone), so history from before a daylight saving change still lines up with the same wall-clock hour. Planner slots themselves sit on a UTC-aligned grid. In time zones with a :30 or :45 offset (for example India or Nepal), 30 and 60 minute slots therefore do not start on local hour boundaries, and hourly tariff changes fall inside a slot. Use 15 minute slots there for exact alignment.
+
 ### PV
 PV is optional.
 
