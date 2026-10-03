@@ -19,11 +19,22 @@ class RollingHistoryCache:
         self._entity_id = entity_id
         self._entries: list[Any] = []
         self._cache_end: datetime | None = None
+        self._cold_fetch_start: datetime | None = None
+
+    @property
+    def cold_fetch_start(self) -> datetime | None:
+        """Return the start of the most recent cold fetch, in UTC.
+
+        The entry stamped at this time is Home Assistant's start-time row, whose
+        real change time is unknown.
+        """
+        return self._cold_fetch_start
 
     async def async_fetch(self, *, window_start: datetime, now: datetime) -> list[Any]:
         """Return cached recorder states for one rolling window."""
         if self._cache_end is None or self._cache_end < window_start:
             fetch_start = window_start
+            self._cold_fetch_start = self._as_utc(window_start)
             self._entries = []
         else:
             fetch_start = self._cache_end
@@ -80,6 +91,11 @@ class RollingHistoryCache:
             raise ValueError(
                 f"Recorder entry for `{self._entity_id}` is missing last_changed"
             )
-        if changed.tzinfo is None:
-            return changed.replace(tzinfo=UTC)
-        return changed.astimezone(UTC)
+        return self._as_utc(changed)
+
+    @staticmethod
+    def _as_utc(value: datetime) -> datetime:
+        """Normalize datetimes to timezone-aware UTC."""
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)

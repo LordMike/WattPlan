@@ -533,9 +533,8 @@ async def test_forecast_warm_cache_matches_cold_cache_with_boundary_rows(
     start_at = base + timedelta(days=2)
     # The pattern is rebuilt at most hourly, so tick every 75 minutes: each tick
     # refetches, and the fetch boundaries rotate through the quarter hours
-    # instead of always landing on a meter change. The last tick (25 hours in)
-    # is hour-aligned so the cold comparison is not skewed by its own boundary row.
-    ticks = 21
+    # instead of always landing on a meter change.
+    ticks = 22
     for tick in range(ticks):
         warm_values = await warm.async_values(
             _window(start_at + timedelta(minutes=75 * tick))
@@ -547,6 +546,43 @@ async def test_forecast_warm_cache_matches_cold_cache_with_boundary_rows(
     # time-of-day slot that the repeated boundary rows touched.
     assert cold_values == pytest.approx([0.25] * 96)
     assert warm_values == pytest.approx(cold_values)
+
+
+async def test_forecast_skips_first_segment_after_cold_fetch(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The start-time row of a cold fetch must not shorten the first segment."""
+    hass.config.components.add("recorder")
+    entity_id = "sensor.house_load_kwh"
+    hass.states.async_set(entity_id, "100.0", _VALID_LOAD_ATTRS)
+
+    base = datetime(2026, 1, 1, 0, 0, tzinfo=UTC)
+    states = [
+        SimpleNamespace(state=str(100.0 + hour), last_changed=base + timedelta(hours=hour))
+        for hour in range(120)
+    ]
+    recorder = _BoundaryRowRecorder(entity_id, states)
+    monkeypatch.setattr(cache_module, "get_instance", lambda _hass: recorder)
+
+    provider = ForecastProvider(
+        hass,
+        entity_id=entity_id,
+        lookback_days=2,
+        same_weekday_weight=1.0,
+        other_weekday_weight=1.0,
+        recency_decay=0.0,
+    )
+    # The lookback starts at hh:45, so the first real meter change is 15 minutes
+    # in and the interval before it began at an unknown time.
+    values = await provider.async_values(
+        SourceWindow(
+            start_at=datetime(2026, 1, 3, 0, 45, tzinfo=UTC),
+            slot_minutes=15,
+            slots=96,
+        )
+    )
+
+    assert values == pytest.approx([0.25] * 96)
 
 
 async def test_forecast_restarts_full_fetch_when_window_moves_past_cache(

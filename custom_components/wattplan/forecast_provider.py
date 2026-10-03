@@ -181,7 +181,9 @@ class ForecastProvider(SourceProvider):
             raise self._recorder_error(err) from err
         # Recorder states are treated as cumulative meter readings and converted
         # into usage segments: `(segment_start, segment_end, energy_delta_kwh)`.
-        samples = self._delta_state_samples(states)
+        samples = self._delta_state_samples(
+            states, unknown_start_at=self._history_cache.cold_fetch_start
+        )
         if not samples:
             raise SourceProviderError(
                 "source_parse",
@@ -357,9 +359,13 @@ class ForecastProvider(SourceProvider):
         }
 
     def _delta_state_samples(
-        self, states: list[Any]
+        self, states: list[Any], *, unknown_start_at: datetime | None = None
     ) -> list[tuple[datetime, datetime, float]]:
-        """Extract interval usage segments from cumulative recorder states."""
+        """Extract interval usage segments from cumulative recorder states.
+
+        A segment starting at `unknown_start_at` is skipped: that is Home
+        Assistant's start-time row, so the real start of the interval is unknown.
+        """
         samples: list[tuple[datetime, datetime, float]] = []
         previous_value: float | None = None
         previous_changed: datetime | None = None
@@ -395,6 +401,8 @@ class ForecastProvider(SourceProvider):
             # Treat negative deltas as meter resets. We skip the reset jump itself
             # and continue from the new baseline on the next sample.
             if not math.isfinite(delta) or delta < 0:
+                continue
+            if segment_start == unknown_start_at:
                 continue
             if changed_at <= segment_start:
                 continue
