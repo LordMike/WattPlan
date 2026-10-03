@@ -3,8 +3,6 @@
 import numpy as np
 import pytest
 
-pytest.importorskip("highspy")
-
 from custom_components.wattplan.optimizer import OptimizationParams
 from custom_components.wattplan.optimizer import mpc_power_optimizer as core
 from custom_components.wattplan.optimizer.models import BatteryEntity

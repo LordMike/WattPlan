@@ -2,10 +2,9 @@
 
 from datetime import UTC, datetime
 
+import highspy
 import numpy as np
 import pytest
-
-highspy = pytest.importorskip("highspy")
 
 from custom_components.wattplan.optimizer import (
     OptimizationParams,

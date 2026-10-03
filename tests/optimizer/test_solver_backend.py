@@ -1,7 +1,6 @@
+import highspy
 import numpy as np
 import pytest
-
-highspy = pytest.importorskip("highspy")
 
 from custom_components.wattplan.optimizer import mpc_power_optimizer as optimizer
 

@@ -5,11 +5,8 @@ import random
 import pytest
 from pydantic import ValidationError
 
-pytest.importorskip("numpy")
-pytest.importorskip("pydantic")
-
 from custom_components.wattplan.optimizer import mpc_power_optimizer as optimizer
-from custom_components.wattplan.test_plan_invariants import assert_plan_invariants
+from tests.plan_invariants import assert_plan_invariants
 
 
 def _run_optimizer(input_payload):

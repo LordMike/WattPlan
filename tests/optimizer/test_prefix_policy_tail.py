@@ -4,8 +4,6 @@ import json
 import numpy as np
 import pytest
 
-pytest.importorskip("highspy")
-
 from custom_components.wattplan.optimizer import mpc_power_optimizer as optimizer
 
 
