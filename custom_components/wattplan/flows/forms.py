@@ -7,7 +7,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
 
-from .common import _subentry_name
+from .common import _normalize_name, _subentry_name
 from ..const import (
     CONF_AVAILABILITY_SOURCE,
     CONF_CAPACITY_KWH,
@@ -42,25 +42,25 @@ from .source_shared import (
 )
 
 
-def _subentry_name_in_use(entry: ConfigEntry, name: str) -> bool:
-    """Return True if the name is already used by a subentry."""
-    wanted = name.casefold()
-    return any(
-        _subentry_name(subentry).casefold() == wanted
-        for subentry in entry.subentries.values()
-    )
+def _subentry_name_error(
+    entry: ConfigEntry, name: str, exclude_subentry_id: str | None = None
+) -> str | None:
+    """Return the error key if the name collides with another subentry.
 
-
-def _subentry_name_in_use_excluding(
-    entry: ConfigEntry, name: str, exclude_subentry_id: str
-) -> bool:
-    """Return True if the name is used by another subentry."""
+    Names are compared case-insensitively and, because the subentry unique_id is
+    built from the normalised name, also by that normalised form.
+    """
     wanted = name.casefold()
-    return any(
-        subentry.subentry_id != exclude_subentry_id
-        and _subentry_name(subentry).casefold() == wanted
-        for subentry in entry.subentries.values()
-    )
+    wanted_id = _normalize_name(name)
+    similar = False
+    for subentry in entry.subentries.values():
+        if subentry.subentry_id == exclude_subentry_id:
+            continue
+        existing = _subentry_name(subentry)
+        if existing.casefold() == wanted:
+            return "name_not_unique"
+        similar = similar or _normalize_name(existing) == wanted_id
+    return "name_too_similar" if similar else None
 
 
 def _validate_battery_data(data: dict[str, Any]) -> dict[str, str]:
@@ -90,11 +90,16 @@ def _normalize_battery_input(user_input: dict[str, Any]) -> dict[str, Any]:
 
 
 def _battery_form_defaults(data: dict[str, Any]) -> dict[str, Any]:
-    """Return battery defaults shaped for the form schema."""
+    """Return battery defaults shaped for the form schema.
+
+    Accepts stored (flat) data as well as raw form input, where the efficiencies
+    are nested under the advanced section.
+    """
     defaults = dict(data)
+    advanced = defaults.get(SECTION_BATTERY_ADVANCED) or {}
     defaults[SECTION_BATTERY_ADVANCED] = {
-        CONF_CHARGE_EFFICIENCY: defaults.get(CONF_CHARGE_EFFICIENCY, 0.9),
-        CONF_DISCHARGE_EFFICIENCY: defaults.get(CONF_DISCHARGE_EFFICIENCY, 0.9),
+        field: advanced.get(field, defaults.get(field, 0.9))
+        for field in (CONF_CHARGE_EFFICIENCY, CONF_DISCHARGE_EFFICIENCY)
     }
     return defaults
 
@@ -105,7 +110,10 @@ def _comfort_duration_slots(minutes: int, slot_minutes: int) -> int:
 
 
 def _validate_comfort_data(
-    data: dict[str, Any], *, entry: ConfigEntry | None = None
+    data: dict[str, Any],
+    *,
+    entry: ConfigEntry | None = None,
+    exclude_subentry_id: str | None = None,
 ) -> dict[str, str]:
     """Validate comfort values for better UX."""
     errors: dict[str, str] = {}
@@ -125,6 +133,14 @@ def _validate_comfort_data(
     if float(data[CONF_EXPECTED_POWER_KW]) <= 0:
         errors[CONF_EXPECTED_POWER_KW] = "comfort_expected_power_invalid"
     if entry is not None:
+        # The planner requires one shared rolling window for all comfort loads.
+        if any(
+            float(other.data[CONF_ROLLING_WINDOW_HOURS]) != rolling_window_hours
+            for other in entry.subentries.values()
+            if other.subentry_type == SUBENTRY_TYPE_COMFORT
+            and other.subentry_id != exclude_subentry_id
+        ):
+            errors[CONF_ROLLING_WINDOW_HOURS] = "comfort_rolling_window_mismatch"
         slot_minutes = int(entry.data[CONF_SLOT_MINUTES])
         plan_slots = int(entry.data[CONF_HOURS_TO_PLAN]) * 60 // slot_minutes
         lookahead_slots = int(

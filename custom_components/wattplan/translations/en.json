@@ -1484,6 +1484,7 @@
       },
       "error": {
         "name_not_unique": "That name is already in use. Please choose a different one.",
+        "name_too_similar": "Another item already has a name that is too similar. Names are compared ignoring case, spaces and punctuation. Please choose a different one.",
         "text_required": "Please enter a value.",
         "text_too_long": "That is too long. Please shorten it.",
         "battery_minimum_exceeds_capacity": "Set the minimum battery energy below the battery capacity.",
@@ -1560,12 +1561,14 @@
       },
       "error": {
         "name_not_unique": "That name is already in use. Please choose a different one.",
+        "name_too_similar": "Another item already has a name that is too similar. Names are compared ignoring case, spaces and punctuation. Please choose a different one.",
         "text_required": "Please enter a value.",
         "text_too_long": "That is too long. Please shorten it.",
         "comfort_target_on_hours_invalid": "Set target on-time to be less than or equal to the window duration.",
         "comfort_duration_exceeds_window": "Set this duration to be less than or equal to the window duration.",
         "comfort_duration_exceeds_lookahead": "Set this duration shorter than the planner's effective economic lookahead and plan coverage, or increase economic lookahead in General settings.",
-        "comfort_expected_power_invalid": "Set expected power above 0 kW."
+        "comfort_expected_power_invalid": "Set expected power above 0 kW.",
+        "comfort_rolling_window_mismatch": "All comfort loads must use the same rolling window. Use the window of your existing comfort loads, or change those first."
       },
       "abort": {
         "reconfigure_successful": "Changes saved"
@@ -1626,6 +1629,7 @@
       },
       "error": {
         "name_not_unique": "That name is already in use. Please choose a different one.",
+        "name_too_similar": "Another item already has a name that is too similar. Names are compared ignoring case, spaces and punctuation. Please choose a different one.",
         "text_required": "Please enter a value.",
         "text_too_long": "That is too long. Please shorten it.",
         "energy_kwh_required": "Please enter the energy needed in kWh.",

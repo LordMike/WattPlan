@@ -55,20 +55,21 @@ ERROR_SCOPES: dict[str, list[tuple[str, list[str] | None]]] = {
     ],
     "battery": [
         ("source_shared", ["_validate_text_field"]),
-        ("forms", ["_validate_battery_data"]),
-        ("subentries", ["BatterySubentryFlowHandler"]),
+        ("forms", ["_validate_battery_data", "_subentry_name_error"]),
     ],
     "comfort": [
         ("source_shared", ["_validate_text_field"]),
-        ("forms", ["_validate_comfort_data"]),
-        ("subentries", ["ComfortSubentryFlowHandler"]),
+        ("forms", ["_validate_comfort_data", "_subentry_name_error"]),
     ],
     "optional": [
         ("source_shared", ["_validate_text_field"]),
-        ("forms", ["_validate_optional_data"]),
-        ("subentries", ["OptionalSubentryFlowHandler"]),
+        ("forms", ["_validate_optional_data", "_subentry_name_error"]),
     ],
 }
+
+
+# Helpers whose return values are error keys.
+KEY_RETURNING_FUNCTIONS = {"_invalid_key_from_source_error", "_subentry_name_error"}
 
 
 def _reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -151,11 +152,16 @@ def _referenced_keys(
                     errors.add(node.exc.args[0].value)
                 elif (
                     isinstance(root, ast.FunctionDef | ast.AsyncFunctionDef)
-                    and root.name == "_invalid_key_from_source_error"
+                    and root.name in KEY_RETURNING_FUNCTIONS
                     and isinstance(node, ast.Return)
-                    and isinstance(node.value, ast.Constant)
+                    and node.value is not None
                 ):
-                    errors.add(node.value.value)
+                    errors |= {
+                        const.value
+                        for const in ast.walk(node.value)
+                        if isinstance(const, ast.Constant)
+                        and isinstance(const.value, str)
+                    }
     return errors, reasons
 
 

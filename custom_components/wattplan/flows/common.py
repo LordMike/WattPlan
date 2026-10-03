@@ -24,8 +24,8 @@ from ..const import (
 
 
 def _normalize_name(value: str) -> str:
-    """Create a stable id from a name."""
-    return re.sub(r"[^a-z0-9]+", "_", value.casefold()).strip("_") or "item"
+    """Create a stable id from a name, keeping non-ASCII letters distinct."""
+    return re.sub(r"[\W_]+", "_", value.casefold()).strip("_") or "item"
 
 
 def _format_number(value: float) -> str:
