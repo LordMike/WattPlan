@@ -188,14 +188,11 @@ def test_strings_json_matches_english_translation() -> None:
     assert _load(STRINGS_PATH) == _load(TRANSLATIONS_DIR / "en.json")
 
 
-@pytest.mark.parametrize(
-    "path",
-    sorted(p for p in TRANSLATIONS_DIR.glob("*.json") if p.name != "en.json"),
-    ids=lambda p: p.name,
-)
-def test_other_translations_have_same_key_structure(path: Path) -> None:
+def test_other_translations_have_same_key_structure() -> None:
     """Every translation file must define exactly the English key structure."""
-    assert _structure(_load(path)) == _structure(_load(STRINGS_PATH))
+    expected = _structure(_load(STRINGS_PATH))
+    for path in TRANSLATIONS_DIR.glob("*.json"):
+        assert _structure(_load(path)) == expected, path.name
 
 
 @pytest.mark.parametrize("flow_name", list(FLOWS))
