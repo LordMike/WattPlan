@@ -32,6 +32,7 @@ from custom_components.wattplan.const import (
     FIXUP_PROFILE_EXTEND,
     RESAMPLE_MODE_FORWARD_FILL,
     RESAMPLE_MODE_LINEAR,
+    SOURCE_MODE_BUILT_IN,
     SOURCE_MODE_ENERGY_PROVIDER,
     SOURCE_MODE_ENTITY_ADAPTER,
     SOURCE_MODE_SERVICE_ADAPTER,
@@ -44,6 +45,7 @@ from custom_components.wattplan.source_provider import (
     async_auto_detect_entity_adapter,
     async_auto_detect_service_adapter,
 )
+from custom_components.wattplan.source_providers import CONF_WATTPLAN_ENTITY_ID
 from custom_components.wattplan.source_types import SourceProviderError, SourceWindow
 import pytest
 
@@ -532,6 +534,54 @@ async def test_merged_provider_tolerates_one_empty_entity_provider(
     assert len(values) == 96
     assert values[:4] == [1.0, 2.0, 3.0, 4.0]
     assert "produced 0 usable points" in caplog.text
+
+
+async def test_merged_provider_reuses_built_in_forecaster(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A merged source should keep one load forecaster per built-in entry."""
+    created: list[str] = []
+
+    class _FakeForecastProvider:
+        def __init__(self, hass: HomeAssistant, *, entity_id: str, lookback_days: int) -> None:
+            created.append(entity_id)
+
+        async def async_values(self, window: SourceWindow) -> list[float]:
+            return [1.0] * window.slots
+
+    monkeypatch.setattr(
+        "custom_components.wattplan.source_providers.providers.ForecastProvider",
+        _FakeForecastProvider,
+    )
+    provider = build_source_base_provider(
+        hass,
+        source_key="usage",
+        source_config={
+            CONF_SOURCE_MODE: SOURCE_MODE_BUILT_IN,
+            CONF_PROVIDERS: [
+                {
+                    CONF_SOURCE_MODE: SOURCE_MODE_BUILT_IN,
+                    CONF_WATTPLAN_ENTITY_ID: "sensor.house_usage_total",
+                },
+                _template_config(
+                    [
+                        {"start": "2026-01-01T00:00:00+00:00", "value": 2.0},
+                        {"start": "2026-01-01T00:15:00+00:00", "value": 2.0},
+                        {"start": "2026-01-01T00:30:00+00:00", "value": 2.0},
+                    ]
+                ),
+            ],
+        },
+        allow_partial_failures=True,
+    )
+
+    for start in (
+        datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+        datetime(2026, 1, 1, 0, 15, tzinfo=UTC),
+    ):
+        await provider.async_values(SourceWindow(start_at=start, slot_minutes=15, slots=2))
+
+    assert created == ["sensor.house_usage_total"]
 
 
 async def test_entity_adapter_accepts_native_datetime_attribute_values(

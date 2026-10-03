@@ -730,6 +730,17 @@ class MergedSourceProvider(TemplateAdapterSourceProvider):
         self._providers = source_providers(source_config)
         self._validate_built_in_entity = validate_built_in_entity
         self._allow_partial_failures = allow_partial_failures
+        self._built_in_providers: dict[tuple[str, int], ForecastProvider] = {}
+
+    def _built_in_provider(self, entity_id: str, lookback_days: int) -> ForecastProvider:
+        """Return the long-lived forecaster for one built-in entry."""
+        key = (entity_id, lookback_days)
+        if (provider := self._built_in_providers.get(key)) is None:
+            provider = ForecastProvider(
+                self._hass, entity_id=entity_id, lookback_days=lookback_days
+            )
+            self._built_in_providers[key] = provider
+        return provider
 
     async def async_fetch_payload(self) -> Any:
         """Return one merged list from all wrapped providers."""
@@ -806,10 +817,8 @@ class MergedSourceProvider(TemplateAdapterSourceProvider):
             entity_id = str(provider_config[CONF_WATTPLAN_ENTITY_ID])
             if self._validate_built_in_entity is not None:
                 self._validate_built_in_entity(entity_id)
-            provider = ForecastProvider(
-                self._hass,
-                entity_id=entity_id,
-                lookback_days=int(provider_config.get(CONF_HISTORY_DAYS, 14)),
+            provider = self._built_in_provider(
+                entity_id, int(provider_config.get(CONF_HISTORY_DAYS, 14))
             )
             values = await provider.async_values(window)
             slot_delta = timedelta(minutes=window.slot_minutes)
