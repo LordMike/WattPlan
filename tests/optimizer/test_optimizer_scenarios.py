@@ -753,7 +753,6 @@ def _assert_common_result_shape(
 ):
     assert isinstance(result, dict)
     assert result["execution_time"] > 0
-    assert result["generations"] > 1
     assert math.isfinite(float(result["fitness"]))
     assert math.isfinite(float(result["avg_price"]))
     assert isinstance(result["overconstrained"], bool)

@@ -37,7 +37,6 @@ def _reasons(levels, target_mode="exact"):
         battery_entities=[_battery(target_mode)],
         comfort_entities=[],
         battery_levels=np.asarray([levels], dtype=np.float64),
-        comfort_levels=np.zeros((0, steps + 1)),
         battery_charge=np.zeros((1, steps)),
         battery_discharge=discharge,
         battery_states=np.zeros((1, steps), dtype=np.int32),

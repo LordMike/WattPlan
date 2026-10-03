@@ -1398,8 +1398,6 @@ def _objective_is_worse(counterfactual_objective, base_objective) -> bool:
 def _apply_controls_step(
     t,
     controls,
-    prices,
-    grid_export_prices,
     solar_input,
     usage,
     battery_entities,
@@ -1407,7 +1405,6 @@ def _apply_controls_step(
     battery_levels,
     comfort_levels,
     comfort_off_streaks,
-    total_steps,
     enforce_action_deadband=True,
 ):
     num_battery = len(battery_entities)
@@ -2091,8 +2088,6 @@ def _run_mpc(
         ) = _apply_controls_step(
             t=t,
             controls=controls,
-            prices=prices,
-            grid_export_prices=grid_export_prices,
             solar_input=solar_input,
             usage=usage,
             battery_entities=battery_entities,
@@ -2100,7 +2095,6 @@ def _run_mpc(
             battery_levels=battery_levels[:, t],
             comfort_levels=comfort_levels[:, t],
             comfort_off_streaks=comfort_off_streaks[:, t],
-            total_steps=total_steps,
             enforce_action_deadband=not replay_policy_tail,
         )
         battery_charge[:, t] = battery_charge_grid[:, t] + battery_charge_pv[:, t]
@@ -2176,7 +2170,6 @@ def _score_schedule(
     battery_entities,
     comfort_entities,
     battery_levels,
-    comfort_levels,
     battery_charge,
     battery_discharge,
     battery_states,
@@ -2522,7 +2515,6 @@ def _score_result(
         battery_entities=battery_entities,
         comfort_entities=comfort_entities,
         battery_levels=result["battery_levels"],
-        comfort_levels=result["comfort_levels"],
         battery_charge=result["battery_charge"],
         battery_discharge=result["battery_discharge"],
         battery_states=result["battery_states"],
@@ -3155,7 +3147,6 @@ def optimize_internal(
 
     response = {
         "execution_time": execution_time,
-        "generations": int(total_steps),
         "fitness": float(fitness),
         "avg_price": float(avg_price),
         "projections": {

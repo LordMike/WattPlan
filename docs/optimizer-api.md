@@ -42,8 +42,8 @@ result = optimize(params)
 |---|---|---:|---|---|---|
 | `grid_import_price_per_kwh` | `list[float]` | Yes | - | Length `4..672`, finite values | Horizon driver (timeslot count). |
 | `grid_export_price_per_kwh` | `list[float]` | No | `[]` -> all zeros | Empty or must match `len(grid_import_price_per_kwh)`, finite values | Per-timeslot grid export price. Zero means exported surplus has no monetary value. |
-| `solar_input_kwh` | `list[float]` | Yes* | `[]` | Must match `len(grid_import_price_per_kwh)`, finite, `>= 0` | Per-timeslot PV forecast (kWh per timeslot). |
-| `usage_kwh` | `list[float]` | Yes* | `[]` | Must match `len(grid_import_price_per_kwh)`, finite, `>= 0` | Per-timeslot base load forecast (kWh per timeslot). |
+| `solar_input_kwh` | `list[float]` | Yes | - | Must match `len(grid_import_price_per_kwh)`, finite, `>= 0` | Per-timeslot PV forecast (kWh per timeslot). |
+| `usage_kwh` | `list[float]` | Yes | - | Must match `len(grid_import_price_per_kwh)`, finite, `>= 0` | Per-timeslot base load forecast (kWh per timeslot). |
 | `rolling_window_slots` | `int` | No | `24` | `>= 1` | Slot count used for comfort rolling-window ON accounting. |
 | `lookahead_slots` | `int` | No | `22` | `2..672` | Maximum future slots considered when selecting each current action. Direct API callers that omit it retain the historical 22-slot behavior. The full supplied horizon is still returned. |
 | `throughput_cost_per_kwh` | `float` | No | `0.0` | Finite, `>= 0` | Heuristic objective weight per kWh of charge/discharge throughput. It discourages cycling but is not a monetary battery-wear estimate. |
@@ -58,7 +58,7 @@ result = optimize(params)
 | `plan_start` | timezone-aware `datetime` or ISO datetime string | No | `None` | Must include a timezone; normalized to UTC | Start of forecast slot zero. Enables clock-aligned prefix refresh. The integration supplies its aligned source-window start. |
 | `slot_minutes` | `int` | No | `15` | `1..1440` | Slot duration used to align timed requests and carry commitments. |
 
-\* For direct optimizer API use, `solar_input_kwh` and `usage_kwh` must still match the length of `grid_import_price_per_kwh` when supplied. The Home Assistant integration can synthesize or omit these sources before calling the optimizer.
+`solar_input_kwh` and `usage_kwh` are required in practice: the model defaults them to empty lists, but validation rejects any length other than `len(grid_import_price_per_kwh)`, so omitting them fails validation. Direct callers pass an all-zero list to model "no PV" or "no base load". The Home Assistant integration synthesizes these series from its configured sources before calling the optimizer.
 
 **Additional Global Constraints:**
 - Unknown fields are rejected (`extra="forbid"`).
@@ -70,15 +70,15 @@ result = optimize(params)
 |---|---|---:|---|---|---|
 | `name` | `str` | Yes | - | Non-empty | Unique globally. |
 | `initial_kwh` | `float` | Yes | - | Finite, `0..capacity_kwh` | Initial state of charge (kWh). |
-| `target` | `BatteryTargetParams \| None` | No | `null` | If set: `timeslot < horizon` | Optional deadline target constraint. |
-| `minimum_kwh` | `float` | Yes | - | Finite, `0..capacity_kwh` | Minimum desired state (kWh). Soft floor: a battery that starts below it is planned to recover as fast as its limits allow and the plan reports `battery_min_unmet`. |
+| `target` | `BatteryEntityParams.TargetParams \| None` | No | `null` | If set: `timeslot < horizon` | Optional deadline target constraint. |
+| `minimum_kwh` | `float` | Yes | - | Finite, `0..capacity_kwh` | Minimum desired state (kWh). Soft floor: the solve penalizes, rather than forbids, ending a slot below it. A battery that starts below it is planned to recover as fast as its limits allow, and the plan reports `battery_min_unmet` for as long as the planned SoC stays below the floor. |
 | `capacity_kwh` | `float` | Yes | - | Finite, `> 0` | Storage capacity (kWh). |
 | `charge_curve_kwh` | `list[float]` | Yes | - | Non-empty, finite, `>= 0` | Chargeable energy per slot by SoC curve (kWh per slot). |
 | `discharge_curve_kwh` | `list[float]` | Yes | - | Non-empty, finite, `>= 0` | Dischargeable energy per slot by SoC curve (kWh per slot). |
 | `charge_efficiency` | `float` | No | `1.0` | Finite, `(0, 1]` | Fraction of charged energy that increases SoC. |
 | `discharge_efficiency` | `float` | No | `1.0` | Finite, `(0, 1]` | Fraction of discharged SoC energy delivered to load. |
 | `prefer_pv_surplus_charging` | `bool` | No | `false` | - | Internal/deferred hint for routing PV surplus into this battery. This is not exposed as a battery action state and should not be used as a user-facing control contract. |
-| `can_charge_from` | `int` | No | `2` | `0`, `1`, `2`, `3` | Allowed charging-ingress flags (`1=GRID`, `2=PV`, `3=GRID|PV`; `0` means charging disabled). |
+| `can_charge_from` | `int` | No | `2` | `0`, `1`, `2`, `3` | Allowed charging-ingress flags (`1=GRID`, `2=PV`, `3`=both; `0` means charging disabled). |
 
 **Curve Unit Note:**
 - `charge_curve_kwh` and `discharge_curve_kwh` are **kWh per slot**, not kW.
@@ -91,7 +91,7 @@ result = optimize(params)
   - A `target` becomes a constraint only once its deadline falls inside the lookahead window. A target further away is invisible to the solve until it enters the window, and by then a large or slow-to-reach SoC may no longer be reachable; the plan then reports `battery_target_unmet`. Use a `lookahead_slots` large enough to cover the time needed to reach the target, or set the target earlier.
   - Energy left in a battery at the end of the lookahead (or the horizon) has no terminal value, so the plan does not hold charge for value beyond what it can see.
 
-### Battery Target Model (`BatteryTargetParams`)
+### Battery Target Model (`BatteryEntityParams.TargetParams`)
 | Field | Type | Required | Default | Constraints | Notes |
 |---|---|---:|---|---|---|
 | `timeslot` | `int` | Yes | - | `>= 0`, `< horizon` | Deadline timeslot, interpreted as **by end of timeslot**. |
@@ -120,10 +120,10 @@ Optional entities provide advisory start-time suggestions and do not change the 
 | Field | Type | Required | Default | Constraints | Notes |
 |---|---|---:|---|---|---|
 | `name` | `str` | Yes | - | Non-empty | Unique globally. |
-| `duration_timeslots` | `int` | Yes | - | Duration of this optional run. |
+| `duration_timeslots` | `int` | Yes | - | `> 0`, `<= horizon` | Duration of this optional run. |
 | `start_after_timeslot` | `int` | No | `0` | `>= 0`, `< start_before_timeslot` | Earliest allowed start (inclusive). |
-| `start_before_timeslot` | `int` | Yes | - | Latest boundary (exclusive). |
-| `energy_kwh` | `float \| list[float]` | Yes | - | Finite, `>= 0`; list non-empty and `len <= duration_timeslots` | Scalar is spread uniformly. List is spread step-wise to full duration. |
+| `start_before_timeslot` | `int` | Yes | - | `>= 1`, `> start_after_timeslot` | Latest boundary (exclusive). The latest start is `start_before_timeslot - duration_timeslots`. |
+| `energy_kwh` | `float \| list[float]` | Yes | - | Finite, `>= 0`; list non-empty and `len <= duration_timeslots` | A scalar is the **total** energy of the run, spread uniformly over `duration_timeslots`. A list is a **per-slot** energy profile, not a total: if shorter than the duration it is stretched step-wise (each entry covers a proportional block of slots and keeps its per-slot value), so the run's total energy is not preserved. For example `[0.4, 1.2]` over four slots draws `0.4, 0.4, 1.2, 1.2` kWh (3.2 kWh in all). |
 | `options` | `int` | No | `3` | `> 0`, feasible within window/gap rules | Exact number of options returned. |
 | `min_option_gap_timeslots` | `int` | No | `0` | `>= 0` | Minimum spacing between suggested starts. |
 | `allow_overlapping_options` | `bool` | No | `false` | - | If false, effective spacing is at least `duration_timeslots`. |
@@ -133,7 +133,7 @@ Optional entities provide advisory start-time suggestions and do not change the 
 ## Opaque State Contract
 `state` is an opaque base64 blob returned by one solve and accepted in the next.
 - You should store and pass it back as-is.
-- Do not parse or mutate it in client code.
+- Do not parse or mutate it in client code. Internally, trajectory data that can be recomputed (the per-slot comfort history) is stored only as its starting row and rebuilt on decode, which keeps the blob small; blobs from earlier versions that stored the full history still decode.
 - With `plan_start`, the optimizer normally computes a full plan, then refreshes the first eight battery actions on each of the next three consecutive slot advances. The fourth advance computes a new full plan. At 15-minute resolution this is full at 00:00, prefix refresh at 00:15/00:30/00:45, and full at 01:00. The configured economic lookahead is unchanged for every fresh decision; an eight-slot refresh does not mean an eight-slot lookahead.
 - Every response still covers the complete forecast. The reused battery tail is applied to current forecast load/PV and newly calculated SOC. Comfort is regenerated from current rolling history and minimum-on/off commitments, then bounded placement may improve its timing before it is fixed as demand. Battery policies are retained even when physical limits produce zero flow.
 - A same-slot refresh uses a zero shift and does not advance the cadence clock. Skipped, reversed, unaligned, or differently sized windows, changed resolution/configuration, and incompatible state cause a full plan. Optional recommendation changes do not invalidate the battery/comfort cadence. Target compatibility uses the absolute end-of-slot deadline.
@@ -228,9 +228,8 @@ Prefix refresh changes how often future battery decisions are optimized, not the
 | Field | Type | Meaning |
 |---|---|---|
 | `execution_time` | `float` | Solve wall time in seconds. |
-| `generations` | `int` | Number of solved timeslots (same as horizon length). |
-| `fitness` | `float` | Objective score for final schedule. |
-| `avg_price` | `float` | Average effective import price. |
+| `fitness` | `float` | Internal objective score of the final schedule: net tariff cost plus constraint-violation and switching penalties. Lower is better; intended for diagnostics and comparison between plans of the same request, not as a monetary figure. |
+| `avg_price` | `float` | Net tariff cost of the schedule (import cost minus export revenue) divided by grid-imported kWh. Export revenue lowers it, so it can be negative. A sentinel of `1000.0` is returned when the schedule imports no energy. |
 | `projections` | `dict` | Projected cost/savings metrics for this schedule. |
 | `overconstrained` | `bool` | Whether soft constraint violations were detected. |
 | `suboptimal` | `bool` | `true` when one or more soft targets/limits were unmet. |
@@ -294,7 +293,7 @@ If `infer_battery_preserve_policy` is disabled, the `battery_preserve` boolean a
 
 ### `suboptimal_reasons` Keys
 Current machine-readable keys include:
-- `battery_min_unmet`: At least one battery dropped below its configured `minimum_kwh` in the solved schedule.
+- `battery_min_unmet`: At least one battery ends a slot below its configured `minimum_kwh` in the solved schedule. The minimum is a soft floor, so this is reported, not a solve failure, when a battery starts below its minimum and cannot recover within the first slot(s), or when other constraints force it under.
 - `battery_target_unmet`: A battery `target` constraint (`at_least`/`at_most`/`exact`) was not met at its target timeslot.
 - `comfort_target_unmet`: A comfort entity did not achieve its required ON slots within the rolling window.
 - `comfort_history_unavailable`: Ordered pre-forecast history was unavailable. The optimizer used only aggregate credit guaranteed for every possible ordering, so it does not claim history-dependent comfort validity.
