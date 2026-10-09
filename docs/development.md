@@ -51,6 +51,13 @@ collection, variants and reports. Tests use independent hand-calculated physics
 cases and explicitly synthetic datasets; real recordings are needed to assess
 real-world coverage.
 
+Before a complete real recording is available, generate a reproducible full day
+with `python scripts/generate_simulation_data.py /tmp/wattplan-synthetic`.
+Run the same simulator against that directory. These records explicitly label
+synthetic forecasts/actuals and never fill gaps in real recordings implicitly.
+See [Implementing planners](planner-implementations.md) for independent module
+factories, common conformance tests and the parallel development boundary.
+
 Run the full suite from the repo after setup:
 
 ```bash

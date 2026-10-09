@@ -3,7 +3,7 @@ import time
 
 import numpy as np
 
-from .simulation.physics import (
+from .physics import (
     MIN_GRID_CHARGE_SLOT_FRACTION,
     battery_power_limits,
     grid_charge_headroom_sufficient,

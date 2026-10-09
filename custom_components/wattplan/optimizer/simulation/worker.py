@@ -1,18 +1,16 @@
 """Isolated planner calls with a killable whole-call timeout."""
 
-import importlib
 import json
 import multiprocessing
 import time
 import traceback
 
 from ..models import OptimizationParams
+from ..planners.registry import create_planner
 
 
 def _serve(connection, factory_path: str, options: dict) -> None:
     try:
-        module, name = factory_path.split(":", 1)
-        factory = getattr(importlib.import_module(module), name)
         planner = None
         while True:
             message = connection.recv()
@@ -20,7 +18,7 @@ def _serve(connection, factory_path: str, options: dict) -> None:
                 break
             payload, reset = message
             if reset or planner is None:
-                planner = factory(**options)
+                planner = create_planner(factory_path, options)
             params = OptimizationParams(**payload)
             wall, cpu = time.perf_counter(), time.process_time()
             result = planner(params)

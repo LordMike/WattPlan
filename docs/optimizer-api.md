@@ -2,8 +2,10 @@
 
 This document describes the direct Python API for the optimizer packaged inside this repository.
 
-Offline interchangeable planners use this API through a `module:factory` adapter.
-See [Planner simulator](simulator.md) for its contract and causal execution.
+Offline interchangeable planners use this API through built-in names or a
+`module:factory` adapter. See [Implementing planners](planner-implementations.md)
+for the shared battery contract, evaluator, capabilities and state ownership,
+and [Planner simulator](simulator.md) for causal execution.
 Production planner selection is unchanged.
 
 - **Package:** `custom_components.wattplan.optimizer`

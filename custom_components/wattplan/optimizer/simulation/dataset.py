@@ -484,6 +484,10 @@ def load_dataset(directory: str | Path, *, setup_id: str | None = None) -> Datas
     if any(not r.get("setup_id") for r in records) and len(identities) > 1:
         raise ValueError("Legacy records cannot be attributed among multiple setups")
     records = [r for r in records if r.get("setup_id", setup_id) == setup_id]
+    if any(r.get("synthetic") for r in records):
+        warnings.append(
+            "Contains explicitly synthetic inputs or actuals; this is not an unmodified historical backtest."
+        )
     currencies = {r["currency"] for r in records if r.get("currency")}
     zones = {r["timezone"] for r in records if r.get("timezone")}
     if len(currencies) > 1 or len(zones) > 1:

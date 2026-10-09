@@ -1,6 +1,5 @@
 """Causal closed-loop execution against recorded, completed actual intervals."""
 
-import math
 from bisect import bisect_right
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -8,10 +7,11 @@ from datetime import timedelta
 from typing import Any, Protocol
 
 from ..models import OptimizationParams
+from ..planners.contract import validate_battery_result as validate_result
+from ..planners.registry import resolve_factory
 from .adapters import DEFAULT_PLANNER
 from .dataset import Dataset, canonical
-from .physics import (
-    POLICIES,
+from ..physics import (
     battery_power_limits,
     grid_charge_headroom_sufficient,
     transition,
@@ -46,55 +46,13 @@ class Variant:
             raise ValueError(
                 "Variants may override planning preferences, not physical equipment, targets, or input series"
             )
-        if not isinstance(self.planner, str) or self.planner.count(":") != 1:
-            raise ValueError("Planner must be module:factory")
+        resolve_factory(self.planner)
         canonical(self.settings)
         canonical(self.options)
 
 
 class Planner(Protocol):
     def call(self, payload: dict, *, reset: bool, timeout: float) -> dict: ...
-
-
-def validate_result(result: dict, params: OptimizationParams) -> dict[str, list[dict]]:
-    """Validate executable actions independently of planner-projected levels."""
-    if not isinstance(result, dict) or not isinstance(result.get("entities"), list):
-        raise ValueError("Planner output needs an entities list")
-    schedules = {}
-    expected = {b.name: b for b in params.battery_entities}
-    for entity in result["entities"]:
-        if not isinstance(entity, dict) or entity.get("type") != "battery":
-            raise ValueError("Unexpected executable entity in battery-only simulation")
-        name = entity.get("name")
-        if name not in expected or name in schedules:
-            raise ValueError("Missing, duplicate, or unknown battery output")
-        schedule = entity.get("schedule")
-        if not isinstance(schedule, list) or len(schedule) != len(params.usage_kwh):
-            raise ValueError("Battery schedule must cover the recorded horizon")
-        for action in schedule:
-            if not isinstance(action, dict) or action.get("state") not in POLICIES:
-                raise ValueError("Unknown battery action")
-            if (
-                action["state"] == "grid_charge"
-                and not expected[name].can_charge_from & 1
-            ):
-                raise ValueError("Grid-charge action is forbidden for this battery")
-            level = action.get("level")
-            if (
-                not isinstance(level, (int, float))
-                or isinstance(level, bool)
-                or not math.isfinite(level)
-            ):
-                raise ValueError("Nonfinite or missing projected battery level")
-        schedules[name] = schedule
-    if set(schedules) != set(expected):
-        raise ValueError("Planner did not return all configured batteries")
-    state = result.get("state")
-    if state is not None:
-        # Keep the existing API's opaque-state validation rather than accepting
-        # a foreign variant's blob or interpreting it in the simulator.
-        OptimizationParams(**{**params.model_dump(), "state": state})
-    return schedules
 
 
 def simulate(dataset: Dataset, variant: Variant, planner: Planner) -> dict[str, Any]:

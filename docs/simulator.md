@@ -113,15 +113,15 @@ Example configuration:
 }
 ```
 
-An importable `module:factory` receives `options` as keyword arguments and returns
-a callable accepting the existing `OptimizationParams` and returning the existing
-result dictionary. This is trusted local Python code. Return every requested
-battery exactly once by name, with a complete schedule of `self_consume`,
-`preserve`, or `grid_charge` states and finite projected levels. Optional
-suggestions in `optional_entity_options` remain advisory. The existing validated
-opaque `state` passes only between calls of the same run. Private factory state
-is recreated at segment boundaries. No production algorithm selector or planner
-API redesign is introduced.
+Use `highs`, `self-consumption`, or an importable `module:factory`. A factory
+receives `options` as keyword arguments and returns a callable accepting the
+existing `OptimizationParams`. This is trusted local Python code. The shared
+battery contract requires complete named schedules and finite projected levels.
+Capabilities and ignored preferences are explicit, and state is namespaced to
+the implementation/options/version. Optional recommendations remain advisory.
+Private factory state is recreated at equipment segment boundaries. Production
+HA selection remains unchanged. See [Implementing planners](planner-implementations.md)
+for the contract, shared forecast evaluator, search budgets and synthetic data generator.
 
 Allowed `settings`: `lookahead_slots`, `rolling_window_slots`,
 `throughput_cost_per_kwh`, `action_deadband_kwh`, `mode_switch_cost`,

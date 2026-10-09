@@ -45,6 +45,12 @@ def _provenance() -> dict:
             (ROOT / "custom_components/wattplan/optimizer").rglob("*.py")
         )
     }
+    packages = {}
+    for name in ("numpy", "pydantic", "highspy"):
+        try:
+            packages[name] = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            packages[name] = None
     return {
         "python": sys.version,
         "platform": platform.platform(),
@@ -52,9 +58,7 @@ def _provenance() -> dict:
         "git_revision": git("rev-parse", "HEAD"),
         "git_status": git("status", "--porcelain"),
         "source_hashes": hashes,
-        "packages": {
-            name: metadata.version(name) for name in ("numpy", "pydantic", "highspy")
-        },
+        "packages": packages,
     }
 
 
@@ -68,7 +72,7 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--config",
         type=Path,
-        help='JSON: {"variants": [{"name": ..., "planner": "module:factory", "settings": {}, "options": {}}]}',
+        help='JSON variants: planner is highs, self-consumption, or module:factory; settings and options are objects',
     )
     parser.add_argument(
         "--output",

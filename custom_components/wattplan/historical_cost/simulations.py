@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 
-from ..optimizer.simulation.physics import transition
+from ..optimizer.physics import transition
 
 
 @dataclass(frozen=True, slots=True)
