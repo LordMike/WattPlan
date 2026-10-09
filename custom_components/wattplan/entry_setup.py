@@ -128,9 +128,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) -> 
             hass,
             entry,
             slot_minutes=int(entry.data[CONF_SLOT_MINUTES]),
+            actuals_recorder=coordinator.planner_history.async_record_actuals if record_plans else None,
         )
         entry.runtime_data.historical_tracker = tracker
         await tracker.async_start()
+        coordinator.planner_history.set_actuals_provider(tracker.store.export_actuals)
 
         @callback
         def _async_flush_history_on_stop(_event: Event) -> None:

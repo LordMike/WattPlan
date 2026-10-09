@@ -6,7 +6,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 import logging
 import math
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.config_entries import ConfigEntry
@@ -40,6 +40,7 @@ from ..const import (
 from ..source_pipeline import build_source_value_provider
 from ..source_types import SourceProvider, SourceProviderError, SourceWindow
 from .energy_balance import energy_balance_delta
+from .actuals import export_actual
 from .models import (
     FLAG_GAP,
     FLAG_METER_RESET,
@@ -78,6 +79,7 @@ class HistoricalCostTracker:
         entry: ConfigEntry,
         *,
         slot_minutes: int,
+        actuals_recorder: Callable[[datetime, list[dict[str, Any]]], Awaitable[None]] | None = None,
     ) -> None:
         """Initialize the tracker."""
         self.hass = hass
@@ -95,6 +97,34 @@ class HistoricalCostTracker:
         self._listeners: set[HistoricalUpdateListener] = set()
         self._process_lock = asyncio.Lock()
         self._closed = False
+        self._actuals_recorder = actuals_recorder
+
+    async def _async_record_actuals(self, now: datetime, records: list[SlotRecord]) -> None:
+        if self._actuals_recorder is None:
+            return
+        try:
+            await self._actuals_recorder(now, [
+                export_actual(record, self.slot_minutes, self._meter_config())
+                for record in records
+            ])
+        except Exception:
+            _LOGGER.exception("Could not record completed WattPlan actuals")
+
+    def _tariff_provenance(self, slot_start: datetime) -> dict[str, Any]:
+        sources = self.entry.data.get(CONF_SOURCES)
+        sources = sources if isinstance(sources, dict) else {}
+        result = {}
+        for kind, key in (("import", CONF_SOURCE_IMPORT_PRICE), ("export", CONF_SOURCE_EXPORT_PRICE)):
+            config = sources.get(key)
+            mode = config.get(CONF_SOURCE_MODE) if isinstance(config, dict) else None
+            if kind == "export" and mode in {None, SOURCE_MODE_NOT_USED}:
+                origin = "disabled_zero"
+            elif self.store.cached_price(slot_start, kind) is not None:
+                origin = "retained_planner_price"
+            else:
+                origin = "completed_interval_provider"
+            result[kind] = {"mode": mode, "origin": origin}
+        return result
 
     async def async_start(self) -> None:
         """Load state, seed cursors, and start scheduling."""
@@ -267,14 +297,14 @@ class HistoricalCostTracker:
             self.store.invalidate_simulation(
                 at=next_slot, reason="skipped_slot_boundary"
             )
-            self.store.append_slots(
-                self._gap_records(next_slot, completed_slot, now, FLAG_GAP)
-            )
+            gaps = self._gap_records(next_slot, completed_slot, now, FLAG_GAP)
+            self.store.append_slots(gaps)
             await self._async_seed(
                 now,
                 processed_slot=completed_slot,
                 simulation_reason="reinitialized_after_skipped_slots",
             )
+            await self._async_record_actuals(now, gaps)
             self._notify()
             return
 
@@ -310,6 +340,11 @@ class HistoricalCostTracker:
 
         record = SlotRecord(
             start=completed_slot,
+            actuals_metadata={
+                "source_roles": self._meter_config(), "partial": seeded_cursor,
+                "slot_minutes": self.slot_minutes, "currency": self.hass.config.currency,
+                "tariff_sources": self._tariff_provenance(completed_slot),
+            },
             energy_balance_discrepancy=discrepancy,
             import_price=import_price,
             export_price=export_price,
@@ -344,6 +379,8 @@ class HistoricalCostTracker:
                 completed_slot + self._interval,
                 reason="reinitialized_after_untrusted_slot",
             )
+        # Complete the meter cursor transaction before yielding to disk I/O.
+        await self._async_record_actuals(now, [record])
         self._notify()
 
     async def async_refresh(self, now: datetime | None = None) -> None:
@@ -430,6 +467,9 @@ class HistoricalCostTracker:
             records.append(
                 SlotRecord(
                     start=slot_start,
+                    actuals_metadata={"slot_minutes": self.slot_minutes,
+                                      "currency": self.hass.config.currency,
+                                      "source_roles": self._meter_config()},
                     import_price=None,
                     export_price=None,
                     grid_import=None,
@@ -573,8 +613,6 @@ class HistoricalCostTracker:
 
     async def _async_export_price(self, slot_start: datetime) -> float | None:
         """Return export price, defaulting disabled export value to zero."""
-        if not self._meter_config().get("grid_export"):
-            return 0.0
         sources = self.entry.data.get(CONF_SOURCES, {})
         source_config = (
             sources.get(CONF_SOURCE_EXPORT_PRICE, {}) if isinstance(sources, dict) else {}

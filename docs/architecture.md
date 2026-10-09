@@ -114,9 +114,17 @@ All paths are under `custom_components/wattplan/` unless noted.
     Signed slot differences are retained alongside cost facts and exposed as
     slot-average W and daily Wh, without optimizer or cost corrections.
   - `planner_history.py`: optional JSONL planner reproductions.
+    Version 2 retains input-capture times and completed actuals. The historical
+    tracker appends actuals independently of planner success; interval start
+    dates determine files. Exports enrich legacy files from retained history
+    without querying Recorder or changing forecasts.
   - `datetime_utils.py`, `utilities/`: shared helpers.
 - `optimizer/`
   - Pure Python optimization models and solver code, free of `homeassistant` imports.
+  - `simulation/`: dataset validation, isolated planner adapters, causal execution
+    and reports. Shared physics supports policy replay and historical simulation
+    (which retains sequential discharge). Production request/response models
+    remain unchanged. See [Planner simulator](simulator.md).
 - Repository level
   - `tests/integration/`: Home Assistant integration tests.
   - `tests/optimizer/`: optimizer-only tests that do not need Home Assistant runtime state.

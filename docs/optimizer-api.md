@@ -2,6 +2,10 @@
 
 This document describes the direct Python API for the optimizer packaged inside this repository.
 
+Offline interchangeable planners use this API through a `module:factory` adapter.
+See [Planner simulator](simulator.md) for its contract and causal execution.
+Production planner selection is unchanged.
+
 - **Package:** `custom_components.wattplan.optimizer`
 - **Primary Module:** `custom_components.wattplan.optimizer.mpc_power_optimizer`
 - **Primary Function:** `optimize(params: OptimizationParams) -> dict`

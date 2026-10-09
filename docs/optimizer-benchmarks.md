@@ -1,5 +1,11 @@
 # Optimizer Benchmark Findings
 
+Battery-only serial trajectories now execute through the [planner simulator](simulator.md),
+using declared synthetic actuals from benchmark fixtures. Subsequent SoC comes
+from physical execution, not predicted schedule levels. Comfort trajectories
+retain their specialized harness because historical comfort simulation is outside
+v1 scope. Captured input fixtures are shared in `tests/optimizer/live_scenarios.py`.
+
 ## Session 2 No-Battery Bypass
 
 Revision `f8638c035335671bb6268a6ba3c437d2a43c8e0e` bypasses HiGHS when

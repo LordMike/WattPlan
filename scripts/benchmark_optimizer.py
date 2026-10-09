@@ -29,6 +29,8 @@ if str(REPO_ROOT) not in sys.path:
 
 from custom_components.wattplan.optimizer import OptimizationParams, optimize
 from custom_components.wattplan.optimizer import mpc_power_optimizer as core
+from custom_components.wattplan.optimizer.simulation.engine import Variant, simulate
+from custom_components.wattplan.optimizer.simulation.scenarios import shift_request, synthetic_dataset
 _cases_spec = importlib.util.spec_from_file_location(
     "wattplan_benchmark_cases",
     HARNESS_ROOT / "tests" / "optimizer" / "benchmark_cases.py",
@@ -39,7 +41,7 @@ _cases = importlib.util.module_from_spec(_cases_spec)
 _cases_spec.loader.exec_module(_cases)
 CASE_METADATA = _cases.CASE_METADATA
 build_case = _cases.build_case
-from tests.optimizer.test_optimizer_scenarios import (
+from tests.optimizer.live_scenarios import (
     _live_exported_deye_low_pv_low_soc_payload,
     _live_grid_export_benchmark_payload,
 )
@@ -556,52 +558,40 @@ def _paired_full(payload, repeats):
     }
 
 
-def _shifted(payload, tick, state, previous):
-    result = copy.deepcopy(payload)
-    result["plan_start"] = payload["plan_start"] + timedelta(
-        minutes=int(payload.get("slot_minutes", 15)) * tick
-    )
-    result["state"] = state
-    for key in (
-        "grid_import_price_per_kwh",
-        "grid_export_price_per_kwh",
-        "solar_input_kwh",
-        "usage_kwh",
-    ):
-        values = result[key]
-        result[key] = values[tick:] + values[:tick]
-    battery_results = {
-        entity["name"]: entity
-        for entity in previous["entities"]
-        if entity["type"] == "battery"
-    }
-    for battery in result["battery_entities"]:
-        battery["initial_kwh"] = battery_results[battery["name"]]["schedule"][0][
-            "level"
-        ]
-        target = battery.get("target")
-        if target is not None:
-            timeslot = int(target["timeslot"]) - tick
-            if timeslot < 0:
-                battery.pop("target")
-            else:
-                target["timeslot"] = timeslot
-    optional_entities = []
-    for entity in result.get("optional_entities", []):
-        entity["start_after_timeslot"] = max(
-            int(entity.get("start_after_timeslot", 0)) - tick, 0
-        )
-        entity["start_before_timeslot"] = int(entity["start_before_timeslot"]) - tick
-        if entity["start_before_timeslot"] - int(
-            entity["duration_timeslots"]
-        ) < entity["start_after_timeslot"]:
-            continue
-        optional_entities.append(entity)
-    result["optional_entities"] = optional_entities
-    return result
+def _shifted(payload, tick, state, levels):
+    return shift_request(payload, tick, state=state, soc=levels)
+
+
+def _battery_serial_trajectory(payload, *, disable_mip_starts=False):
+    """Use the simulator for battery outcomes; benchmark fixtures define actuals."""
+    rows = []
+
+    class InstrumentedPlanner:
+        def call(self, current, *, reset, timeout):
+            with _SolverRecorder() as recorder:
+                result, timing = _run(current, force_full=False, disable_mip_starts=disable_mip_starts)
+            rows.append({
+                "tick": len(rows), "cadence": result["cadence"]["mode"],
+                "cadence_reason": result["cadence"]["reason"],
+                "seconds": timing["end_to_end_seconds"], "timing": timing,
+                "solver": recorder.summary(), "primary_solves": result["successful_solves"],
+                "projected_cost": result["projections"]["projected_cost"],
+                "quality": _result_quality(current, result),
+                "comfort_placement": _placement_report(result),
+            })
+            return {"result": result, "wall_seconds": timing["end_to_end_seconds"], "cpu_seconds": 0.0}
+
+    report = simulate(synthetic_dataset(payload, 5), Variant("benchmark"), InstrumentedPlanner())
+    if report["status"] != "complete":
+        raise RuntimeError(report["failure"])
+    for row, interval in zip(rows, report["intervals"], strict=True):
+        row["simulated"] = interval
+    return rows
 
 
 def _serial_trajectory(payload, *, disable_mip_starts=False):
+    if not payload.get("comfort_entities"):
+        return _battery_serial_trajectory(payload, disable_mip_starts=disable_mip_starts)
     rows = []
     state = None
     previous = None
@@ -615,7 +605,10 @@ def _serial_trajectory(payload, *, disable_mip_starts=False):
     }
     for tick in range(5):
         current = copy.deepcopy(payload) if tick == 0 else _shifted(
-            payload, tick, state, previous
+            payload, tick, state, {
+                entity["name"]: entity["schedule"][0]["level"]
+                for entity in previous["entities"] if entity["type"] == "battery"
+            }
         )
         if tick:
             for entity in current.get("comfort_entities", []):

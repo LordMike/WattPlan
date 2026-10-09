@@ -82,7 +82,10 @@ async def test_scheduled_and_manual_plans_are_exported_by_local_date(
     assert response["max_available_date"] == local_date.isoformat()
     records = [json.loads(line) for line in response["data"].splitlines()]
     assert len(records) >= 2
-    assert all(record["schema_version"] == 1 for record in records)
+    assert all(record["schema_version"] == 2 for record in records)
+    assert all(record["setup_id"] == entry.entry_id for record in records)
+    assert all(record["input_captured_at"] <= record["created_at"] for record in records)
+    assert all(record["actuals_status"] == "tracking_disabled" for record in records)
     assert all("result" in record and "optimizer_params" in record["request"] for record in records)
 
     for selector in (

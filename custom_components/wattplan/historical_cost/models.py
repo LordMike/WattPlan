@@ -42,6 +42,7 @@ DAY_ARRAY_KEYS: tuple[str, ...] = (
     "self_consumption_grid_export",
     "self_consumption_segment_id",
     "flags",
+    "actuals_metadata",
 )
 
 
@@ -82,6 +83,7 @@ class SlotRecord:
     self_consumption_grid_export: float | None = None
     self_consumption_segment_id: str | None = None
     energy_balance_discrepancy: float | None = None
+    actuals_metadata: dict[str, Any] | None = None
 
 
 def default_store_payload(

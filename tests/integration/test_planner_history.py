@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import json
 from types import SimpleNamespace
 
@@ -90,16 +90,62 @@ async def test_recovers_interrupted_append_and_does_not_publish_partial_line(tmp
     after = await history.async_read_date(created.date())
     assert after["incomplete_tail"] is False
     assert len(after["data"].splitlines()) == 2
-    assert all(json.loads(line)["schema_version"] == 1 for line in after["data"].splitlines())
+    assert all(json.loads(line)["schema_version"] == 2 for line in after["data"].splitlines())
 
 
-async def test_recording_disabled_or_disk_error_never_breaks_plan(tmp_path, caplog):
+async def test_recording_disabled_never_writes(tmp_path):
     """Recording is strictly opt-in and errors cannot invalidate optimization."""
     created = datetime(2026, 9, 29, tzinfo=UTC)
     disabled = _history(tmp_path, enabled=False)
     await disabled.async_record(created, _request(created), {"entities": []})
     assert not (tmp_path / "wattplan_reproductions").exists()
 
+
+async def test_actuals_after_midnight_are_exported_with_preceding_day_without_a_plan(tmp_path):
+    history = _history(tmp_path, retention_days=2)
+    # Europe/Copenhagen midnight in September is 22:00 UTC.
+    completed = datetime(2026, 9, 22, 22, 0, 5, tzinfo=UTC)
+    interval = {"start": "2026-09-22T21:45:00+00:00", "end": "2026-09-22T22:00:00+00:00",
+                "usage_kwh": .5, "pv_kwh": .1, "import_price": 2, "export_price": .5,
+                "quality": [], "source_roles": {"usage": "sensor.load", "pv": "sensor.pv"}}
+    await history.async_record_actuals(completed, [interval])
+    old_day = await history.async_read_date(datetime(2026, 9, 22).date())
+    record = json.loads(old_day["data"])
+    assert record["record_type"] == "actuals"
+    assert record["actuals"] == [interval]
+    assert record["setup_id"] == "test-entry"
+    assert (await history.async_read_date(datetime(2026, 9, 23).date()))["data"] == ""
+    disabled = _history(tmp_path / "disabled", enabled=False)
+    await disabled.async_record_actuals(completed, [interval])
+    assert not (tmp_path / "disabled").exists()
+
+
+async def test_old_exports_are_enriched_without_rewriting_the_archive(tmp_path):
+    history = _history(tmp_path)
+    start = datetime(2026, 9, 22, 10, tzinfo=UTC)
+    root = tmp_path / "wattplan_reproductions" / "test-entry"
+    root.mkdir(parents=True)
+    path = root / "2026-09-22.jsonl"
+    original = json.dumps({"schema_version": 1, "created_at": start.isoformat(),
+                           "request": {"optimizer_params": {"usage_kwh": [2] * 4}}, "result": {}}) + "\n"
+    path.write_text(original)
+    interval = {"start": start.isoformat(), "end": (start + timedelta(minutes=15)).isoformat(),
+                "usage_kwh": .5, "pv_kwh": None, "quality": ["missing_pv_kwh"]}
+    history.set_actuals_provider(lambda _start, _end: [interval])
+    response = await history.async_read_date(start.date())
+    records = [json.loads(line) for line in response["data"].splitlines()]
+    assert records[0]["request"]["optimizer_params"]["usage_kwh"] == [2] * 4
+    assert records[1]["actuals"] == [interval]
+    assert path.read_text() == original
+    assert (await history.async_read_date(start.date())) == response
+    # Existing updates win over enrichment and are never duplicated.
+    await history.async_record_actuals(start + timedelta(minutes=15), [interval])
+    response = await history.async_read_date(start.date())
+    assert len(response["data"].splitlines()) == 2
+
+
+async def test_disk_error_never_breaks_plan_or_actuals(tmp_path, caplog):
+    created = datetime(2026, 9, 29, tzinfo=UTC)
     enabled = _history(tmp_path)
 
     def fail_write(_date, _record):
@@ -108,6 +154,8 @@ async def test_recording_disabled_or_disk_error_never_breaks_plan(tmp_path, capl
     enabled._append_and_prune = fail_write
     await enabled.async_record(created, _request(created), {"entities": []})
     assert "Could not record WattPlan planner reproduction" in caplog.text
+    await enabled.async_record_actuals(created, [{"start": created.isoformat()}])
+    assert "Could not record WattPlan completed actuals" in caplog.text
     bad_result = _history(tmp_path)
     await bad_result.async_record(created, _request(created), {"bad": object()})
     assert not (tmp_path / "wattplan_reproductions").exists()

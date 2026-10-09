@@ -366,6 +366,22 @@ class HistoricalCostStore:
         """Append one slot fact record to retained history."""
         self.append_slots([record])
 
+    def export_actuals(self, start: datetime, end: datetime) -> list[dict[str, Any]]:
+        """Copy retained actuals for reproduction export on the HA event loop."""
+        from .actuals import export_actual
+
+        result = []
+        for record in self._records_between(start, end):
+            # New records retain their own cadence/currency across option reloads.
+            # Legacy intervals can only use the store's original granularity.
+            minutes = (record.actuals_metadata or {}).get("slot_minutes", self.data["slot_minutes"])
+            if record.start + timedelta(minutes=minutes) <= end:
+                actual = export_actual(record, minutes, self.data.get("meter_config"))
+                if actual["currency"] is None:
+                    actual["currency"] = self.data.get("currency")
+                result.append(actual)
+        return result
+
     def append_slots(self, records: Iterable[SlotRecord]) -> None:
         """Append slot fact records in order and schedule a single save."""
         days = self.data.setdefault("days", {})
@@ -376,6 +392,10 @@ class HistoricalCostStore:
             day_payload = days.setdefault(local_day, empty_day_payload())
             for key in DAY_ARRAY_KEYS:
                 day_payload.setdefault(key, [])
+            metadata = day_payload["actuals_metadata"]
+            while len(metadata) < len(day_payload["starts"]):
+                metadata.append(None)
+            metadata.append(record.actuals_metadata)
             # Older days have no diagnostic values; never shift new values
             # into earlier slots when extending one of those days.
             balance = day_payload["energy_balance_discrepancy"]
@@ -672,6 +692,12 @@ class HistoricalCostStore:
                 day_payload, "self_consumption_segment_id", index
             ),
             flags=flags,
+            actuals_metadata=(
+                day_payload["actuals_metadata"][index]
+                if index < len(day_payload.get("actuals_metadata", []))
+                and isinstance(day_payload["actuals_metadata"][index], dict)
+                else None
+            ),
         )
         return _sanitize_record(record, persisted_payload=day_payload, index=index)
 
@@ -903,6 +929,7 @@ def _sanitize_record(
         start=record.start,
         flags=flags,
         self_consumption_segment_id=record.self_consumption_segment_id,
+        actuals_metadata=record.actuals_metadata,
         **values,
     )
 

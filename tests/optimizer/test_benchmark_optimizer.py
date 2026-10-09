@@ -46,27 +46,9 @@ def _payload():
     }
 
 
-def _previous_result():
-    return {
-        "entities": [
-            {"name": "heater", "type": "comfort", "schedule": []},
-            {
-                "name": "second",
-                "type": "battery",
-                "schedule": [{"level": 2.5}],
-            },
-            {
-                "name": "first",
-                "type": "battery",
-                "schedule": [{"level": 1.5}],
-            },
-        ]
-    }
-
-
 def test_shifted_trajectory_uses_slot_duration_applied_soc_and_absolute_target():
     payload = _payload()
-    shifted = benchmark._shifted(payload, 1, "opaque-state", _previous_result())
+    shifted = benchmark._shifted(payload, 1, "opaque-state", {"first": 1.5, "second": 2.5})
 
     assert shifted["plan_start"] == payload["plan_start"] + timedelta(minutes=30)
     assert shifted["state"] == "opaque-state"
@@ -80,7 +62,7 @@ def test_shifted_trajectory_uses_slot_duration_applied_soc_and_absolute_target()
 
 
 def test_shifted_trajectory_drops_expired_target():
-    shifted = benchmark._shifted(_payload(), 3, "opaque-state", _previous_result())
+    shifted = benchmark._shifted(_payload(), 3, "opaque-state", {"first": 1.5, "second": 2.5})
 
     assert "target" not in shifted["battery_entities"][0]
     assert shifted["optional_entities"] == []

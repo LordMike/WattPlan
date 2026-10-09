@@ -3,6 +3,13 @@ import time
 
 import numpy as np
 
+from .simulation.physics import (
+    MIN_GRID_CHARGE_SLOT_FRACTION,
+    battery_power_limits,
+    grid_charge_headroom_sufficient,
+    transition,
+)
+
 from .comfort_placement import (
     ComfortPlacementInput,
     ComfortPlacementResult,
@@ -26,7 +33,6 @@ except ImportError:
 _LOGGER = logging.getLogger(__name__)
 
 EPSILON = 1e-6
-MIN_GRID_CHARGE_SLOT_FRACTION = 0.5
 AVG_PRICE_SENTINEL = 1000.0
 PRESERVE_PROBE_MIN_KWH = 0.01
 PRESERVE_OBJECTIVE_TOLERANCE = 1e-7
@@ -77,21 +83,8 @@ def piecewise_value_interpolated(level_array, curve):
     return v1 + ratio * (v2 - v1)
 
 
-def _piecewise_scalar(level, curve):
-    return float(piecewise_value_interpolated(np.array([level]), curve)[0])
-
-
 def _battery_power_limits(entity, level):
-    if len(entity.charge_curve_kwh) == 1 and len(entity.discharge_curve_kwh) == 1:
-        return max(0.0, float(entity.charge_curve_kwh[0])), max(
-            0.0, float(entity.discharge_curve_kwh[0])
-        )
-
-    capacity = max(float(entity.capacity_kwh), EPSILON)
-    soc = np.clip((float(level) / capacity) * 100.0, 0.0, 100.0)
-    charge_limit = max(0.0, _piecewise_scalar(soc, entity.charge_curve_kwh))
-    discharge_limit = max(0.0, _piecewise_scalar(soc, entity.discharge_curve_kwh))
-    return charge_limit, discharge_limit
+    return battery_power_limits(entity, level)
 
 
 def _battery_target_bounds_kwh(entity):
@@ -1245,16 +1238,8 @@ def _battery_available_discharge_kwh(entity: BatteryEntity, level: float) -> flo
     return max(float(level) - float(entity.minimum_kwh), 0.0) * discharge_eff
 
 
-def _grid_charge_headroom_sufficient(
-    entity: BatteryEntity, level: float, charge_limit: float
-) -> bool:
-    """Return whether a capacity-limited ON slot can fill at least half a slot."""
-    if charge_limit <= EPSILON:
-        return False
-    available_input = max(float(entity.capacity_kwh) - level, 0.0) / float(
-        entity.charge_efficiency
-    )
-    return available_input + EPSILON >= MIN_GRID_CHARGE_SLOT_FRACTION * charge_limit
+def _grid_charge_headroom_sufficient(entity, level, charge_limit):
+    return grid_charge_headroom_sufficient(entity, level, charge_limit)
 
 
 def _battery_preserve_probe_kwh(entity: BatteryEntity, level: float) -> float:
@@ -2351,92 +2336,18 @@ def _replay_policy_cost(
     for t in range(first_step, total_steps):
         if trace is not None:
             trace.append((battery_levels.copy(), total_cost))
-        battery_levels_before_pv = battery_levels.copy()
-        total_usage = float(usage[t])
+        total_usage = float(usage[t]) + float(optional_usage[t])
         for i, entity in enumerate(comfort_entities):
             if comfort_enabled[i, t] == 1:
                 total_usage += float(entity.power_usage_kwh)
-        total_usage += float(optional_usage[t])
-
-        remaining_deficit = max(total_usage - float(solar_input[t]), 0.0)
-        remaining_surplus = max(float(solar_input[t]) - total_usage, 0.0)
-        charge_limits = np.zeros(len(battery_entities), dtype=np.float64)
-        pv_charge = np.zeros(len(battery_entities), dtype=np.float64)
-
-        # Preserve the runtime's stable input-order allocation of finite PV.
-        for i, entity in enumerate(battery_entities):
-            charge_limit, _ = _battery_power_limits(entity, battery_levels[i])
-            charge_limits[i] = charge_limit
-            _, can_charge_from_pv = _charge_ingress_permissions(entity)
-            if not can_charge_from_pv or remaining_surplus <= EPSILON:
-                continue
-            capacity_input = max(
-                float(entity.capacity_kwh) - battery_levels[i], 0.0
-            ) / float(entity.charge_efficiency)
-            pv_charge[i] = min(charge_limit, capacity_input, remaining_surplus)
-            battery_levels[i] += pv_charge[i] * float(entity.charge_efficiency)
-            battery_levels[i] = min(
-                battery_levels[i], float(entity.capacity_kwh)
-            )
-            remaining_surplus -= pv_charge[i]
-
-        discharge_requests = np.zeros(len(battery_entities), dtype=np.float64)
-        if remaining_deficit > EPSILON:
-            for i, entity in enumerate(battery_entities):
-                if battery_modes[i][t] != "self_consume":
-                    continue
-                _, discharge_limit = _battery_power_limits(entity, battery_levels[i])
-                available = (
-                    max(battery_levels[i] - float(entity.minimum_kwh), 0.0)
-                    * float(entity.discharge_efficiency)
-                )
-                discharge_requests[i] = min(discharge_limit, available)
-
-            requested_discharge = float(np.sum(discharge_requests))
-            if requested_discharge > EPSILON:
-                # Share a limited deficit proportionally across eligible batteries.
-                scale = min(1.0, remaining_deficit / requested_discharge)
-                discharge = discharge_requests * scale
-                remaining_deficit = max(
-                    remaining_deficit - float(np.sum(discharge)), 0.0
-                )
-                for i, entity in enumerate(battery_entities):
-                    if discharge[i] <= 0.0:
-                        continue
-                    battery_levels[i] -= discharge[i] / float(
-                        entity.discharge_efficiency
-                    )
-                    battery_levels[i] = max(
-                        battery_levels[i], float(entity.minimum_kwh)
-                    )
-
-        grid_charge = 0.0
-        for i, entity in enumerate(battery_entities):
-            if battery_modes[i][t] != "grid_charge":
-                continue
-            can_charge_from_grid, _ = _charge_ingress_permissions(entity)
-            if not can_charge_from_grid:
-                continue
-            if not _grid_charge_headroom_sufficient(
-                entity, float(battery_levels_before_pv[i]), charge_limits[i]
-            ):
-                continue
-            capacity_input = max(
-                float(entity.capacity_kwh) - battery_levels[i], 0.0
-            ) / float(entity.charge_efficiency)
-            charge_input = min(
-                max(charge_limits[i] - pv_charge[i], 0.0),
-                capacity_input,
-            )
-            battery_levels[i] += charge_input * float(entity.charge_efficiency)
-            battery_levels[i] = min(
-                battery_levels[i], float(entity.capacity_kwh)
-            )
-            grid_charge += charge_input
-
+        step = transition(
+            battery_entities, battery_levels, [modes[t] for modes in battery_modes],
+            usage=total_usage, pv=float(solar_input[t]),
+        )
+        battery_levels = np.asarray(step.levels, dtype=np.float64)
         total_cost += (
-            float(grid_import_prices[t]) * (remaining_deficit + grid_charge)
-            - float(grid_export_prices[t]) * remaining_surplus
+            float(grid_import_prices[t]) * step.grid_import
+            - float(grid_export_prices[t]) * step.grid_export
         )
 
     return float(total_cost)

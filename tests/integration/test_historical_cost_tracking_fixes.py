@@ -24,6 +24,7 @@ from custom_components.wattplan.const import (
     CONF_HISTORICAL_USAGE_SENSOR,
     CONF_HOURS_TO_PLAN,
     CONF_PLANNING_ENABLED,
+    CONF_RECORD_PLANNER_REPRODUCTIONS,
     CONF_SLOT_MINUTES,
     CONF_SOURCE_EXPORT_PRICE,
     CONF_SOURCE_IMPORT_PRICE,
@@ -161,7 +162,7 @@ def _set_meter(hass: HomeAssistant, entity_id: str, value: float | str) -> None:
     )
 
 
-async def _setup_tracker(hass: HomeAssistant, freezer, start: datetime):
+async def _setup_tracker(hass: HomeAssistant, freezer, start: datetime, *, record_plans=False):
     """Set up a 15-minute tracker with import/usage meters and a fixed price."""
     freezer.move_to(start)
     entry = MockConfigEntry(
@@ -180,6 +181,7 @@ async def _setup_tracker(hass: HomeAssistant, freezer, start: datetime):
         },
         options={
             CONF_PLANNING_ENABLED: False,
+            CONF_RECORD_PLANNER_REPRODUCTIONS: record_plans,
             CONF_ACTION_EMISSION_ENABLED: False,
             CONF_HISTORICAL_COST_TRACKING_ENABLED: True,
             CONF_HISTORICAL_GRID_IMPORT_SENSOR: "sensor.grid_import_total",

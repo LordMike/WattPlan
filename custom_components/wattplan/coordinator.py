@@ -639,6 +639,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             # its opaque state. Pydantic's JSON mode preserves the full numeric
             # precision while serializing dates and nested asset settings.
             request["_recorded_optimizer_params"] = params.model_dump(mode="json")
+            request["_input_captured_at"] = datetime.now(tz=UTC).isoformat()
             timer.mark("Reproduction params recording")
 
         # Each MILP solve has its own HiGHS time limit; this bounds the whole
