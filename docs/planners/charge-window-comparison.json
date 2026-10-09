@@ -1,0 +1,1 @@
+{"variants":[{"name":"charge-window-96","planner":"custom_components.wattplan.optimizer.planners.charge_window:factory","options":{"max_evaluations":96,"window_candidates":3}}]}
