@@ -1,0 +1,36 @@
+{
+  "variants": [
+    {
+      "name": "genetic-fast",
+      "planner": "custom_components.wattplan.optimizer.planners.genetic:factory",
+      "options": {
+        "max_evaluations": 16,
+        "population_size": 6,
+        "generations": 8,
+        "elite_count": 2,
+        "tournament_size": 3,
+        "mutation_rate": 0.9,
+        "crossover_rate": 0.8,
+        "guidance_slots": 24,
+        "seed": 0,
+        "max_seconds": null
+      }
+    },
+    {
+      "name": "genetic-standard",
+      "planner": "custom_components.wattplan.optimizer.planners.genetic:factory",
+      "options": {
+        "max_evaluations": 48,
+        "population_size": 8,
+        "generations": 8,
+        "elite_count": 2,
+        "tournament_size": 3,
+        "mutation_rate": 0.9,
+        "crossover_rate": 0.8,
+        "guidance_slots": 144,
+        "seed": 0,
+        "max_seconds": null
+      }
+    }
+  ]
+}
