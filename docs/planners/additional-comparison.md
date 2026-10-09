@@ -54,35 +54,53 @@ planner wall/CPU sum the timed calls only. p95 is the nearest-rank per-call wall
 statistic. These WSL workstation timings are samples, not statistical guarantees
 or measurements on the Home Assistant server.
 
+Completed runs below are sorted by net cost, with replay time breaking ties.
+`Earlier` rows add the comparable prior HiGHS, greedy and local-search runs;
+`Latest` rows use the final benchmark above. Repeated configurations use
+their latest result here; the original measurements remain in the historical
+ledger. Timeouts are unscored and listed separately below.
+
 ## Genuine archived forecasts
 
-| Profile | Net DKK | Replay wall s | Planner CPU s | Planner wall s | Call p95 s | End kWh | Self / preserve / grid cycles |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| Self-consumption | 72.314373 | 2.451 | 0.218 | 0.201 | 0.001618 | 1.0 | 192 / 0 / 0 |
-| Beam 2 | 65.608359 | 4.908 | 2.837 | 2.575 | 0.017200 | 1.0 | 94 / 88 / 10 |
-| Beam 16 | 65.149669 | 20.730 | 19.519 | 18.215 | 0.111407 | 1.0 | 93 / 88 / 11 |
-| DP fast | 65.877327 | 11.263 | 8.878 | 8.065 | 0.053741 | 1.0 | 125 / 56 / 11 |
-| DP strong | 64.801996 | 28.808 | 28.457 | 26.344 | 0.160177 | 1.0 | 122 / 55 / 15 |
-| Charge window 96 | 69.967282 | 17.728 | 16.644 | 15.431 | 0.103227 | 1.0 | 129 / 45 / 18 |
-| Genetic fast | 68.981421 | 7.013 | 4.931 | 4.531 | 0.033509 | 1.0 | 160 / 14 / 18 |
-| Genetic standard | 67.979279 | 13.963 | 12.277 | 11.324 | 0.091903 | 1.0 | 95 / 74 / 23 |
-| CEM 48 | 71.746226 | 11.882 | 10.258 | 9.528 | 0.057433 | 1.0 | 161 / 25 / 6 |
+| Profile | Net DKK | Replay wall s | Planner CPU s | Planner wall s | Call p95 s | End kWh | Self / preserve / grid cycles | Run |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| DP strong | 64.801996 | 28.808 | 28.457 | 26.344 | 0.160177 | 1.0 | 122 / 55 / 15 | Latest |
+| Beam 16 | 65.149669 | 20.730 | 19.519 | 18.215 | 0.111407 | 1.0 | 93 / 88 / 11 | Latest |
+| Beam 2 | 65.608359 | 4.908 | 2.837 | 2.575 | 0.017200 | 1.0 | 94 / 88 / 10 | Latest |
+| DP fast | 65.877327 | 11.263 | 8.878 | 8.065 | 0.053741 | 1.0 | 125 / 56 / 11 | Latest |
+| Genetic standard | 67.979279 | 13.963 | 12.277 | 11.324 | 0.091903 | 1.0 | 95 / 74 / 23 | Latest |
+| HiGHS 4h / 16 slots | 68.444444 | 89.313 | 151.865 | 86.266 | 1.196113 | 1.0 | 98 / 82 / 12 | Earlier |
+| Genetic fast | 68.981421 | 7.013 | 4.931 | 4.531 | 0.033509 | 1.0 | 160 / 14 / 18 | Latest |
+| Local 96 | 69.677497 | 22.138 | 20.998 | 19.692 | 0.128076 | 1.0 | 150 / 30 / 12 | Earlier |
+| Charge window 96 | 69.967282 | 17.728 | 16.644 | 15.431 | 0.103227 | 1.0 | 129 / 45 / 18 | Latest |
+| HiGHS 2h / 8 slots | 71.695776 | 61.403 | 102.509 | 58.397 | 0.772593 | 1.0 | 41 / 149 / 2 | Earlier |
+| CEM 48 | 71.746226 | 11.882 | 10.258 | 9.528 | 0.057433 | 1.0 | 161 / 25 / 6 | Latest |
+| Self-consumption | 72.314373 | 2.451 | 0.218 | 0.201 | 0.001618 | 1.0 | 192 / 0 / 0 | Latest |
+| Local 3 | 72.314373 | 2.861 | 0.601 | 0.560 | 0.003786 | 1.0 | 192 / 0 / 0 | Earlier |
+| Greedy 8 | 72.314373 | 3.689 | 1.310 | 1.232 | 0.008456 | 1.0 | 192 / 0 / 0 | Earlier |
+| Greedy 256 | 72.702428 | 42.565 | 43.000 | 40.114 | 0.266826 | 1.0 | 190 / 0 / 2 | Earlier |
 
 ## Fabricated causal usage/PV forecasts
 
-| Profile | Net DKK | Replay wall s | Planner CPU s | Planner wall s | Call p95 s | End kWh | Self / preserve / grid cycles |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| Self-consumption | 72.314373 | 2.473 | 0.210 | 0.193 | 0.001288 | 1.0 | 192 / 0 / 0 |
-| Beam 2 | 69.315129 | 4.867 | 2.737 | 2.514 | 0.016147 | 1.0 | 117 / 65 / 10 |
-| Beam 16 | 68.701992 | 19.715 | 18.418 | 17.091 | 0.109283 | 1.0 | 125 / 57 / 10 |
-| DP fast | 68.821431 | 10.364 | 8.533 | 7.834 | 0.050517 | 1.0 | 152 / 30 / 10 |
-| DP strong | 67.733586 | 28.039 | 27.562 | 25.468 | 0.164472 | 1.0 | 138 / 39 / 15 |
-| Charge window 96 | 70.655554 | 17.569 | 16.279 | 15.136 | 0.098335 | 1.0 | 139 / 49 / 4 |
-| Genetic fast | 69.476598 | 7.064 | 4.589 | 4.212 | 0.030246 | 1.0 | 146 / 33 / 13 |
-| Genetic standard | 69.111255 | 13.507 | 12.047 | 11.094 | 0.085057 | 1.0 | 74 / 114 / 4 |
-| CEM 48 | 71.751245 | 12.388 | 10.577 | 9.849 | 0.064545 | 1.0 | 169 / 21 / 2 |
+| Profile | Net DKK | Replay wall s | Planner CPU s | Planner wall s | Call p95 s | End kWh | Self / preserve / grid cycles | Run |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| DP strong | 67.733586 | 28.039 | 27.562 | 25.468 | 0.164472 | 1.0 | 138 / 39 / 15 | Latest |
+| Beam 16 | 68.701992 | 19.715 | 18.418 | 17.091 | 0.109283 | 1.0 | 125 / 57 / 10 | Latest |
+| DP fast | 68.821431 | 10.364 | 8.533 | 7.834 | 0.050517 | 1.0 | 152 / 30 / 10 | Latest |
+| Genetic standard | 69.111255 | 13.507 | 12.047 | 11.094 | 0.085057 | 1.0 | 74 / 114 / 4 | Latest |
+| Beam 2 | 69.315129 | 4.867 | 2.737 | 2.514 | 0.016147 | 1.0 | 117 / 65 / 10 | Latest |
+| HiGHS 4h / 16 slots | 69.467963 | 95.913 | 162.384 | 93.241 | 1.260167 | 1.0 | 67 / 118 / 7 | Earlier |
+| Genetic fast | 69.476598 | 7.064 | 4.589 | 4.212 | 0.030246 | 1.0 | 146 / 33 / 13 | Latest |
+| Charge window 96 | 70.655554 | 17.569 | 16.279 | 15.136 | 0.098335 | 1.0 | 139 / 49 / 4 | Latest |
+| HiGHS 2h / 8 slots | 71.525105 | 55.463 | 94.392 | 52.680 | 0.673903 | 1.0 | 48 / 141 / 3 | Earlier |
+| CEM 48 | 71.751245 | 12.388 | 10.577 | 9.849 | 0.064545 | 1.0 | 169 / 21 / 2 | Latest |
+| Self-consumption | 72.314373 | 2.473 | 0.210 | 0.193 | 0.001288 | 1.0 | 192 / 0 / 0 | Latest |
+| Local 3 | 72.314373 | 3.041 | 0.657 | 0.617 | 0.004357 | 1.0 | 192 / 0 / 0 | Earlier |
+| Greedy 8 | 72.314373 | 3.770 | 1.488 | 1.400 | 0.010178 | 1.0 | 192 / 0 / 0 | Earlier |
+| Local 96 | 73.444378 | 20.213 | 19.123 | 17.780 | 0.104623 | 1.0 | 176 / 11 / 5 | Earlier |
 
-All **18/18 runs completed all 192 cycles** under the cap. Every action-count
+All **18/18 latest benchmark runs completed all 192 cycles** under the cap.
+The added earlier rows also completed the full range. Every action-count
 triplet sums to 192. Counts select the policy at each planning cycle's start,
 using the interval whose start equals `cycle.at`; raw split-interval row counts
 are not slot counts. Selected modes do not guarantee physical flow. Separately,
