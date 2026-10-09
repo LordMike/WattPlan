@@ -18,6 +18,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from custom_components.wattplan.optimizer.simulation.adapters import BASELINE_PLANNER
+from custom_components.wattplan.optimizer.planners.presets import PRESETS
+from custom_components.wattplan.optimizer.planners.registry import BUILTINS
 from custom_components.wattplan.optimizer.simulation.dataset import (
     canonical,
     input_files,
@@ -71,13 +73,24 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "input",
-        help="Quoted JSON/JSONL file glob, individual file, or recursive directory",
+        nargs="*",
+        help="One or more JSON/JSONL files, quoted globs, or recursive directories",
     )
     parser.add_argument("--setup-id")
-    parser.add_argument(
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument(
         "--config",
         type=Path,
         help="JSON variants: planner is a built-in name or module:factory; settings and options are objects",
+    )
+    selection.add_argument(
+        "--planners", nargs="+", choices=sorted(PRESETS.keys() | BUILTINS.keys() | {"all"}),
+        metavar="PRESET",
+        help="Preset IDs or built-in algorithms; 'all' runs every published preset",
+    )
+    parser.add_argument(
+        "--list-planners", action="store_true",
+        help="List available presets and algorithm names, then exit without inputs",
     )
     parser.add_argument(
         "--output",
@@ -90,26 +103,39 @@ def main(argv=None) -> int:
         choices=("previous", "next"),
         help="Explicitly copy one deficient slot from its immediate neighbor",
     )
-    parser.add_argument("--repeats", type=int, default=1)
+    parser.add_argument(
+        "--repeats", "--rounds", type=int, default=1,
+        help="Complete replays per selected configuration (default: 1)",
+    )
     args = parser.parse_args(argv)
+    if args.list_planners:
+        for name, preset in PRESETS.items():
+            print(f"{name}: {preset.label}")
+        print("Algorithm defaults: " + ", ".join(BUILTINS))
+        print("all: every published preset above")
+        return 0
+    if not args.input:
+        parser.error("at least one input file, glob, or directory is required")
+    if args.planners and "all" in args.planners and len(args.planners) != 1:
+        parser.error("use --planners all by itself")
     if args.repeats < 1:
         parser.error("--repeats must be positive")
     if not args.validate_only and args.output is None:
         parser.error("--output is required for execution")
     try:
         selected = input_files(args.input)
-        input_path = Path(args.input)
         if args.output and (
             any(p.is_relative_to(args.output.resolve()) for p in selected)
-            or (
-                input_path.is_dir()
-                and args.output.resolve().is_relative_to(input_path.resolve())
+            or any(
+                Path(source).is_dir()
+                and args.output.resolve().is_relative_to(Path(source).resolve())
+                for source in args.input
             )
         ):
             raise ValueError("Input and output folders must be separate")
         if args.output and args.output.exists() and any(args.output.iterdir()):
             raise ValueError("Output directory must be empty")
-        dataset = load_dataset(args.input, setup_id=args.setup_id)
+        dataset = load_dataset(selected, setup_id=args.setup_id)
         inferred_range = dataset.range_info()
         dataset.validate_coverage(args.patch_one_slot)
         if args.config:
@@ -117,6 +143,13 @@ def main(argv=None) -> int:
             if set(config) != {"variants"}:
                 raise ValueError("Config must contain only variants")
             variants = [Variant(**item) for item in config["variants"]]
+        elif args.planners:
+            names = list(PRESETS) if args.planners == ["all"] else args.planners
+            variants = [
+                Variant(name, PRESETS[name].planner, options=dict(PRESETS[name].options))
+                if name in PRESETS else Variant(name, name)
+                for name in names
+            ]
         else:
             variants = [Variant("highs"), Variant("self-consumption", BASELINE_PLANNER)]
         if not variants or len({v.name for v in variants}) != len(variants):
@@ -153,6 +186,7 @@ def main(argv=None) -> int:
                 json.dumps(
                     {
                         "setup_id": dataset.setup_id,
+                        "configuration": [asdict(v) for v in variants],
                         "coverage": coverage,
                         "warnings": dataset.warnings,
                     },

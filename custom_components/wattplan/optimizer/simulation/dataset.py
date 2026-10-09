@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 from bisect import bisect_right
+from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
@@ -401,27 +402,33 @@ class Dataset:
         return info
 
 
-def input_files(source: str | Path) -> list[Path]:
-    """Expand one quoted glob, a file, or the compatible recursive directory."""
-    path = Path(source)
-    candidates = (
-        path.rglob("*")
-        if path.is_dir()
-        else (Path(p) for p in glob.glob(str(source), recursive=True))
-    )
-    files = sorted(
-        {
+def input_files(source: str | Path | Sequence[str | Path]) -> list[Path]:
+    """Expand files, quoted globs and recursive directories, deduplicating paths."""
+    sources = [source] if isinstance(source, (str, Path)) else source
+    files = set()
+    for item in sources:
+        path = Path(item)
+        candidates = (
+            path.rglob("*")
+            if path.is_dir()
+            else (Path(p) for p in glob.glob(str(item), recursive=True))
+        )
+        matches = {
             p.resolve()
             for p in candidates
             if p.is_file() and p.suffix.lower() in {".json", ".jsonl"}
         }
-    )
+        if not matches:
+            raise ValueError(f"No JSON/JSONL input files matched: {item}")
+        files.update(matches)
     if not files:
-        raise ValueError(f"No JSON/JSONL input files matched: {source}")
-    return files
+        raise ValueError("No JSON/JSONL input files supplied")
+    return sorted(files)
 
 
-def load_dataset(directory: str | Path, *, setup_id: str | None = None) -> Dataset:
+def load_dataset(
+    directory: str | Path | Sequence[str | Path], *, setup_id: str | None = None
+) -> Dataset:
     """Read daily JSONL, individual snapshots, or saved service response JSON.
 
     Duplicate downloads are accepted; conflicting facts or decisions fail closed.
@@ -455,6 +462,10 @@ def load_dataset(directory: str | Path, *, setup_id: str | None = None) -> Datas
         else:
             items = [json.loads(raw)]
         for item in items:
+            if isinstance(item, dict) and "service_response" in item:
+                item = item["service_response"]
+                if not isinstance(item, dict) or not isinstance(item.get("data"), str):
+                    raise ValueError("Expected a planner reproduction service response")
             if isinstance(item, dict) and isinstance(item.get("data"), str):
                 if item.get("date"):
                     dates.append(date.fromisoformat(item["date"]))

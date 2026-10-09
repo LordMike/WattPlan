@@ -1,220 +1,256 @@
-# Planner simulator
+# Compare planners with the simulator
 
-The offline simulator executes interchangeable planners against recorded household
-load, PV energy and tariffs, including multiple batteries. It does not call Home
-Assistant or source providers during replay. Use the prepared Linux/WSL environment
-in [development.md](development.md): importing the integration package needs that
-environment, although `optimizer/simulation/` contains no Home Assistant imports.
+The simulator answers: **how would these planners have operated my batteries
+using the forecasts WattPlan actually had?** It replays exported planning inputs
+against measured household consumption, solar production, and tariffs. It runs
+locally and does not control devices or contact Home Assistant during replay.
 
-## Collect inputs and actuals
+## 1. Enable recording in Home Assistant
 
-Enable **Record planner reproductions to disk** and **Historical cost tracking**.
-Configure cumulative household usage and PV meters. Grid import/export meters are
-optional for simulation. Keep the site's import/export tariff sources configured.
-The usage meter must represent household demand excluding battery charging;
-net grid consumption cannot substitute for that physical boundary.
+Open **Settings → Devices & services → WattPlan → Configure** for your setup.
 
-Copy daily files from
-`<HA config>/wattplan_reproductions/<entry ID>/YYYY-MM-DD.jsonl`, or save complete
-`wattplan.export_planner_reproductions` responses as `.json` files, into one input
-directory. Duplicate downloads are accepted; conflicting decisions, overlapping
-actuals and conflicting actuals are rejected. Use `--setup-id` to select among
-multiple identified setups. Legacy records cannot be disambiguated among multiple
-setups. Keep configuration/report JSON outside this directory: all its `.json`
-and `.jsonl` files are treated as reproduction data.
+1. Under **Troubleshooting**, enable **Record planner reproductions to disk**.
+   Keep the default 14-day retention, or enough days for your collection period
+   plus the download day. One-day retention cannot keep yesterday after midnight.
+2. Under **Historical costs**, enable **historical cost tracking** and configure
+   the [cumulative energy meters](historical-cost-tracking.md#setup-requirements).
+   Replay needs measured usage and PV energy, plus import and export tariffs.
+   Household usage must exclude battery charging. Grid import is required by the
+   historical tracking setup, although replay calculates its own grid flows.
+3. Keep scheduled planning enabled at every configured slot, and keep the price
+   sources and meters available throughout collection.
 
-The export service appends available retained actuals to older reproduction data
-without rewriting archived files. No copied `.storage` file or new Recorder
-export service is needed. History retention still limits this enrichment.
-Actuals are recorded independently when the tracker completes an interval,
-including when planning is disabled or fails. The final interval of a day belongs
-to its **local start date**; export that day after its last interval completes.
-Use at least two days of recording retention to retain that interval after midnight.
+Recording captures forecasts; historical tracking supplies what actually happened.
+Both are needed. Enabling recording does not recover earlier plans. Replay rejects
+unknown PV actuals, including an omitted PV meter; it does not infer zero production
+from a missing sensor.
 
-An absent PV meter is unknown, even when historical cost sensors treated it as
-zero. Missing usage/PV/prices, meter resets, multi-slot deltas, gaps and the first
-partially sampled interval cause validation to fail. Older history lacks interval-specific
-provenance and partial-slot detection; reports disclose this. Older zero export
-tariffs recorded without an export meter cannot establish a counterfactual tariff
-and become missing. New tracking retains configured export tariffs independently
-of an export meter. An explicitly disabled export tariff has zero monetary value.
-New intervals retain their original duration and currency across configuration
-changes. Mixed currencies are rejected; older intervals use the history store's
-recorded granularity and carry the legacy provenance warning.
+Historical replay currently supports batteries only. Exports containing configured
+comfort loads are rejected because their consumption under a different schedule
+is unknown. Optional suggestions are not executed; measured household demand
+already includes the appliances that actually ran.
 
-## Run
+## 2. Wait for a complete day
 
-Activate the development venv, then:
+Collect **at least one complete local calendar day**. Enable the settings before
+that day starts, let WattPlan run through it, and export after the last interval
+has completed and been recorded. Starting partway through today generally means
+waiting **about 24–48 hours**, until just after tomorrow ends. Allow another
+planning interval after midnight for the final records to become available.
 
-```bash
-python scripts/simulate_planner.py /path/to/snapshots --validate-only
-python scripts/simulate_planner.py '/path/to/snapshots/2026-09-*.jsonl' --validate-only
-python scripts/simulate_planner.py '/path/to/snapshots/*.jsonl' \
-  --patch-one-slot previous --output /path/to/repaired-report
-python scripts/simulate_planner.py /path/to/snapshots --output /path/to/report
-python scripts/simulate_planner.py /path/to/snapshots \
-  --config /path/to/variants.json --repeats 3 --output /path/to/comparison
+For example, enable recording on Monday afternoon, collect Tuesday, and download
+Tuesday's export on Wednesday after midnight. With 15-minute slots, a normal day
+contains 96 planning slots. Daylight-saving transitions can make it 23 or 25 hours.
+
+Several complete days show more price and weather conditions. Compare them
+separately or select consecutive days together. The first partially recorded day
+and the current unfinished day fail whole-day validation. Waiting longer does not
+fill gaps caused by missing plans or unavailable meters.
+
+## 3. Download the exports
+
+Call `wattplan.export_planner_reproductions` once per local date. In Home Assistant's
+**Developer tools → Actions**, the request looks like this:
+
+```yaml
+action: wattplan.export_planner_reproductions
+data:
+  date: "2026-10-08"
 ```
 
-By default this compares the current HiGHS planner with self-consumption. Output
-must be a new or empty directory separate from input. Validation reports usable
-windows and the inferred range without invoking planners. Quote globs so the CLI
-receives one pattern; individual files and recursive directories are also accepted.
-No match is an error.
-Exit codes: `0` successful run/validation with complete coverage; `1` failed planner
-run; `2` invalid input/configuration, including any coverage gap. Failure diagnostics
-retain the inferred range and selected file hashes when the range can be inferred.
+Replace the date with a completed day you recorded. With multiple WattPlan setups,
+also supply `entry_id`, `name`, or a WattPlan `entity_id` for the intended setup.
+Save the complete service response as JSON, or its decoded `data` string as JSONL.
+Do not save the displayed YAML as a `.json` file.
 
-Daily `YYYY-MM-DD` filenames and saved export response `date` fields select whole
-local calendar days, using the records' timezone. The range spans the earliest to
-latest selected date, including absent days between them, and is end-exclusive.
-DST days therefore contain 23 or 25 hours where applicable. Undated snapshots use
-the union of actual interval bounds and recorded plan slots, **not** future forecast
-horizons. Reports include UTC range timestamps, hours, slot count, inference basis,
-raw recorded bounds and executed seconds. An absent endpoint in an undated snapshot
-cannot be inferred without a dated file or response.
+For a direct download from a Linux/WSL shell, run this from your local WattPlan
+repository. Set `ha_url` to your instance's address and enter a long-lived access
+token created in your Home Assistant profile:
 
-Every intended slot needs a recorded planning input and complete usable actual
-coverage. Missing planning cycles fail even when an older schedule could continue.
-Multiple replans within a slot are allowed. Input capture must occur within its
-plan slot; normal capture offsets and legacy completion times remain causal.
-The initial capture delay is reported separately from intended range duration;
-the simulator does not backdate the first action. Forecast cadence must be uniform
-and aligned to the range. Actual intervals may subdivide slots but must be continuous;
-partial boundary coverage fails. Exact duplicates are accepted, conflicts/overlaps fail.
+```bash
+mkdir -p .tmp/simulator/exports
+ha_url='http://homeassistant.local:8123'
+export_date='2026-10-08'
+read -rsp 'Home Assistant access token: ' ha_token
+curl --fail-with-body --silent --show-error \
+  -H "Authorization: Bearer $ha_token" \
+  -H 'Content-Type: application/json' \
+  --data "{\"date\":\"$export_date\"}" \
+  "$ha_url/api/services/wattplan/export_planner_reproductions?return_response" \
+  --output ".tmp/simulator/exports/$export_date.json"
+unset ha_token
+```
 
-`--patch-one-slot previous` or `next` explicitly repairs **exactly one deficient
-slot total**, using its immediately adjacent unpatched slot. A deficiency may affect
-actuals, the planner input, or both in that same slot. Multiple, consecutive, larger,
-unaligned or partial holes fail. Actual repair requires one usable whole neighboring
-interval, copies load/PV/tariffs, and clears measured grid flows. Planner repair
-requires exactly one adjacent recorded input, copies its forecast arrays unchanged,
-shifts capture/plan timestamps by one slot and rebases target deadlines and optional
-load windows; expired deadlines/windows are removed. Equipment/cadence boundaries
-cannot be crossed. Rebased active deadlines/windows must fit the copied forecast
-horizon; otherwise repair is rejected rather than moving or dropping active intent.
-Inputs captured outside their plan slot are reported as skipped and cannot override
-a repaired cycle. Decisions before the selected range provide no initial state;
-only the first in-range input seeds SoC.
-These are synthetic copied inputs, not measured facts. Exact
-source/destination timestamps, direction and repair kind appear in coverage, JSON
-and HTML; actual interval rows retain repair provenance. Original files are untouched.
+Add a setup selector to the JSON payload when needed, for example
+`{"date":"2026-10-08","name":"Home"}`. Saved REST responses, including the
+`service_response` wrapper, work directly. The request uses Home Assistant's
+documented [service response API](https://developers.home-assistant.io/docs/api/rest/).
+Check that the download succeeded before running the simulator.
 
-Example configuration:
+Alternatively, copy daily files directly from
+`<HA config>/wattplan_reproductions/<entry ID>/YYYY-MM-DD.jsonl` into your exports
+folder. Service exports can enrich older recordings with retained actuals, so
+prefer them if copied files lack measurements. Keep household recordings private;
+`.tmp/` is ignored by Git.
+
+## 4. Prepare and validate locally
+
+Use a local checkout of WattPlan and the Python environment described in
+[development setup](development.md#setup). On Windows, use WSL. Activate that
+environment with `source "$venv/bin/activate"`, then run commands from the
+repository root. You do not need a running local Home Assistant.
+
+Keep exports and reports in separate folders:
+
+```text
+.tmp/simulator/
+  exports/
+    2026-10-08.json
+    2026-10-09.json
+  comparison-1/          ← created by the simulator
+```
+
+Validate the exports before running planners:
+
+```bash
+python scripts/simulate_planner.py .tmp/simulator/exports --validate-only
+```
+
+Validation prints the inferred date range, coverage, warnings, and selected
+configurations. Every intended slot needs a recorded planning input and complete
+usable actuals. Dated exports select **whole local days**; multiple dates select
+the full range between them, including missing days. Exact duplicate downloads
+are accepted; conflicting values are rejected.
+
+Directories are read recursively. Keep configuration and report JSON outside the
+exports folder: all `.json` and `.jsonl` files there are treated as recordings.
+
+## 5. Select planners and run comparisons
+
+List the available presets:
+
+```bash
+python scripts/simulate_planner.py --list-planners
+```
+
+Compare selected presets, with three complete rounds each:
+
+```bash
+python scripts/simulate_planner.py .tmp/simulator/exports \
+  --planners highs-16 beam-16 dynamic-programming-strong self-consumption \
+  --rounds 3 --output .tmp/simulator/comparison-1
+```
+
+Or run every published preset:
+
+```bash
+python scripts/simulate_planner.py .tmp/simulator/exports \
+  --planners all --rounds 1 --output .tmp/simulator/all-presets-1
+```
+
+`all` means every named configuration in [the planner guide](optimizer-profiles.md),
+including each HiGHS lookahead. Bare algorithms such as `beam-search` use factory
+defaults; `beam-16` selects the fixed preset available in HA. `highs` uses recorded
+HiGHS settings, while `highs-16` fixes its lookahead to 16 slots. Without
+`--planners` or `--config`, the comparison is HiGHS versus self-consumption,
+regardless of which planner originally recorded the data.
+
+One round replays the entire selected time range once per configuration, starting
+each from the same observed battery levels. Rounds do not append days or carry
+battery state between runs. Repeats help compare timing; fixed-seed planners
+normally produce identical schedules from identical inputs. Four configurations
+with three rounds produce 12 runs.
+
+Select individual exports or quoted patterns instead of a whole folder:
+
+```bash
+python scripts/simulate_planner.py \
+  .tmp/simulator/exports/2026-10-08.json .tmp/simulator/exports/2026-10-09.json \
+  --planners greedy-256 cem-48 --rounds 2 --output .tmp/simulator/comparison-2
+
+python scripts/simulate_planner.py '.tmp/simulator/exports/*.json' --validate-only
+```
+
+Put input paths before options. Unmatched paths/patterns are errors even if other
+inputs match; overlapping paths are deduplicated. Output must be a new or empty
+directory. Choose a new output name when rerunning a comparison.
+
+| Argument | Meaning |
+| --- | --- |
+| Input paths | One or more export files, quoted globs, or recursive directories. |
+| `--planners NAME ...` | Presets or built-in algorithms; `all` selects all presets. |
+| `--list-planners` | List choices without loading exports or running planners. |
+| `--rounds N` / `--repeats N` | Complete replays per configuration; default 1, positive values only. |
+| `--output PATH` | New or empty report directory; required except for validation/listing. |
+| `--validate-only` | Check data and show configurations without executing them. |
+| `--setup-id ID` | Select one setup when files contain several identified setups. |
+| `--config FILE` | Advanced JSON variants; cannot be combined with `--planners`. |
+| `--patch-one-slot previous\|next` | Explicitly copy one deficient slot from its neighbor. |
+
+## 6. Read the results
+
+Open `report.html`. Compare net electricity cost **alongside final stored energy,
+target misses, and run status**. A plan that costs less because it empties the
+battery is not necessarily better. Costs exclude battery wear and assign no extra
+monetary credit to energy left at the end.
+
+The output also contains `summary.json`, full `NN-run.json` records, and
+`NN-cycles.csv` / `NN-intervals.csv` files. These include effective configurations,
+input hashes, coverage, battery resets, timings, and failure details.
+
+Runs are sequential, reversing configuration order on alternate rounds. Each
+configuration in each round has a **120-second limit for the entire replay**,
+including all planning cycles and worker startup. Longer recordings do not get
+more time. Timeouts and invalid results leave unscored failed runs; later runs
+still execute. Start with one full day and one round to assess runtime.
+
+The simulator preserves recorded forecasts, executes actions against actual
+energy, and feeds simulated battery levels into the next decision. It does not
+reset to historical battery levels each slot. Equipment changes start new
+segments and are reported as resets. Replay does not reconstruct inverter delays
+or power peaks within a slot; results remain modeled outcomes.
+
+## Troubleshooting coverage
+
+| Problem | What to check |
+| --- | --- |
+| Empty export | Was recording enabled on that date, and is it within retention? |
+| Missing start/end of day | Export a fully recorded past day after its last interval completes. |
+| Missing planning cycles | Confirm scheduled planning ran successfully every slot. |
+| Invalid actuals | Check tracking, usage/PV meters, tariffs, and counter resets. |
+| Multiple setups | Export one setup or select its ID with `--setup-id`. |
+| Comfort-load error | Historical replay does not support configured comfort loads. |
+| Input/output conflict | Keep reports and configurations outside the exports folder. |
+
+For one missing slot, `--patch-one-slot previous` or `next` can copy its adjacent
+valid slot. This approximation is disclosed in reports and leaves exports
+unchanged. It cannot repair multiple missing slots, partial coverage, or
+equipment/cadence boundaries. Prefer a complete day of measured data.
+
+Exit codes: `0` successful validation or complete runs; `1` a failed planner run;
+`2` invalid inputs/configuration, including coverage gaps.
+
+## Advanced configurations
+
+Use JSON for settings beyond published presets:
 
 ```json
 {
   "variants": [
-    {"name": "current"},
-    {"name": "short-lookahead", "settings": {"lookahead_slots": 12}},
-    {"name": "candidate", "planner": "my_experiment:make_planner",
-     "options": {"search_budget": 100}}
+    {"name": "reference", "planner": "self-consumption"},
+    {"name": "custom-highs", "planner": "highs", "options": {"lookahead_slots": 12}}
   ]
 }
 ```
 
-Use `highs`, `self-consumption`, `greedy`, `local-search`, `beam-search`,
-`dynamic-programming`, `charge-window`, `genetic`, `cross-entropy`, or an
-importable `module:factory`. See the [planner guide](optimizer-profiles.md) for
-the algorithms' strengths and limitations. A factory
-receives `options` as keyword arguments and returns a callable accepting the
-existing `OptimizationParams`. This is trusted local Python code. The shared
-battery contract requires complete named schedules and finite projected levels.
-Capabilities and ignored preferences are explicit, and state is namespaced to
-the implementation/options/version. Optional recommendations remain advisory.
-Private factory state is recreated at equipment segment boundaries. Production
-HA selection is controlled separately through General settings. See
-[Planner factories](optimizer-api.md#planner-factories) for the extension interface.
+```bash
+python scripts/simulate_planner.py .tmp/simulator/exports \
+  --config .tmp/simulator/variants.json --rounds 2 \
+  --output .tmp/simulator/custom-comparison
+```
 
-Allowed `settings`: `lookahead_slots`, `rolling_window_slots`,
-`throughput_cost_per_kwh`, `action_deadband_kwh`, `mode_switch_cost`,
-`solver_time_limit_seconds`, `infer_battery_preserve_policy`. Battery equipment,
-targets, actuals, forecasts and slot duration remain common to variants.
-
-## Execution semantics
-
-The recorded input-capture timestamp determines each decision event. Legacy
-records use completion time conservatively and produce a warning. Forecast slot
-indices still use `plan_start`. Initial physical state is observed once per
-segment; subsequent requests receive simulated SoC and their own planner state.
-The simulator never resynchronizes to later observed or predicted battery levels.
-
-For example, a forecast of 2 kWh followed by actual consumption of 0.5 kWh executes
-only 0.5 kWh of demand. The next request still receives its recorded forecast;
-only its starting SoC/state reflect simulated execution.
-
-Actions continue until replaced or expired within the validated continuous range.
-Execution splits at decision, action and measurement boundaries, spreading
-measured energy uniformly within its interval. Peaks, curtailment, inverter delays
-and subinterval meter timing are not reconstructed. Curves are sampled at each
-execution step's SoC and scaled to its duration. Full-slot grid-charge headroom
-eligibility is latched at each new action, so splitting an action does not turn
-it off early. PV follows battery order; discharge is proportional among eligible
-batteries. Limits, capacity, reserve, ingress permissions and efficiencies apply.
-Starting below reserve does not manufacture energy.
-
-The site has one grid direction per execution interval. After all permitted PV
-charging, any remaining PV surplus is exported and prevents grid charging.
-Simply netting simultaneous flows would wrongly let a GRID-only battery consume
-PV. When other eligible batteries absorb all surplus, grid charging can proceed.
-Different batteries may charge and discharge together, but discharge serves only
-household/comfort demand, never another battery's charging load.
-
-Historical self-consumption shares this kernel while retaining its sequential
-discharge allocation. Continuous MILP control application retains its separate
-deadband/control semantics and shares limit/headroom primitives.
-
-Coverage segments are common to variants. Missing actuals, missing planning cycles
-and expired plan coverage reject the dataset before any planner runs. Changed equipment
-starts a new segment from observed SoC. Resets are reported. Configured comfort
-entities are rejected because their counterfactual consumption is unknown.
-Household load includes the appliances that actually ran. V1 also does not execute
-optional suggestions.
-
-Variants run sequentially in separate processes. Repeats default to one and
-alternate variant order. **One complete replay of one planner configuration has
-a 120-second wall-clock budget.** Each variant/repeat gets a fresh budget. All
-cycles share that deadline: a 24-hour/96-cycle replay and a 48-hour/192-cycle
-replay each get 120 seconds in total. The budget does not scale with data length,
-slot duration or lookahead, and does not apply to the batch of all variants.
-
-The deadline starts immediately before worker construction and includes startup,
-request/result transfer, model validation, every internal solver call, simulated
-physics, and outcome aggregation. Each worker call receives only the remaining
-run time. Solver-specific budgets cannot extend the run deadline. Initial input
-loading/coverage validation and final report writing are outside this budget, as
-is process cleanup after completion. Synchronous process creation and simulation
-steps are checked immediately after they return; blocked planner communication
-is interrupted by killing its worker when the remaining budget expires. Bounded
-process/thread cleanup can follow the cutoff.
-
-An exhausted run is failed with no scored totals; later variants/repeats continue.
-Partial rows, run-scope timeout diagnostics, the failed timestamp, completed replay
-cycles and completed planner calls remain for diagnosis. JSON and HTML report
-the configured limit and observed run wall time. Exceptions and invalid output
-also invalidate the entire run. Per-call wall/CPU timings still cover completed
-planner calls, excluding startup and input validation; `run_wall_seconds` covers
-the replay budget's wider scope (and failure cleanup when needed). Compute
-latency is not an actuator delay. This simulator budget does not change the
-production Home Assistant integration's timeout.
-
-## Reports
-
-- `report.html`: portable outcome tables and cost/stored-energy plots.
-- `summary.json`: coverage, resets, totals, latency summaries, comparisons, settings,
-  run order, input/source hashes, revision/worktree state and package versions.
-  Keep custom planner source separately: optimizer hashes do not cover external modules.
-- `NN-run.json`: full cycles, executed intervals and segment boundaries.
-- `NN-cycles.csv`, `NN-intervals.csv`: machine-readable diagnostics and outcomes.
-
-Outcomes include import/export kWh, signed import cost/export revenue/net cost,
-AC-side charge/discharge/throughput, losses, covered target-deadline misses and
-initial/final SoC for each segment. Targets outside coverage are not assessed.
-Preference weights are not actual electricity costs or wear estimates. No
-terminal stored-energy price is invented: compare costs **together with final
-SoC**, resets and coverage. Lower cost with less stored energy is not proof of a
-better plan.
-
-Battery-only serial benchmarks and selected battery outcome tests use this
-simulator. Their fixture actuals are explicitly synthetic. Direct solver/API,
-prefix reuse, comfort and provider tests retain their separate responsibilities.
+Names must be unique. `options` configure the factory; `settings` override shared
+preferences such as `throughput_cost_per_kwh` or `mode_switch_cost`. Variants cannot
+change equipment, targets, forecasts, actuals, or slot duration. Custom
+`module:factory` planners execute trusted local Python code; see
+[Planner factories](optimizer-api.md#planner-factories) for the interface.

@@ -821,6 +821,135 @@ def test_glob_selection_and_no_match(tmp_path):
         load_dataset(str(tmp_path / "missing-*.jsonl"))
 
 
+def test_multiple_input_sources_deduplicate_paths_but_reject_any_missing_source(tmp_path):
+    from custom_components.wattplan.optimizer.simulation.dataset import input_files
+
+    first = tmp_path / "first.jsonl"
+    second = tmp_path / "second.json"
+    records = _records(dataset())
+    first.write_text("\n".join(json.dumps(r) for r in records[:-1]))
+    second.write_text(json.dumps(records[-1]))
+    sources = [first, str(tmp_path / "*.json"), tmp_path]
+    loaded = load_dataset(sources)
+    loaded.validate_coverage()
+    assert len(loaded.events) == 2
+    assert len(loaded.actuals) == 2
+    assert [item["path"] for item in loaded.files] == [str(first), str(second)]
+    with pytest.raises(ValueError, match="No JSON/JSONL input files matched"):
+        input_files([first, tmp_path / "missing*.json"])
+    with pytest.raises(ValueError, match="No JSON/JSONL input files supplied"):
+        input_files([])
+
+
+def test_rest_export_preserves_date_and_incomplete_tail_metadata(tmp_path):
+    exported = tmp_path / "download.json"
+    exported.write_text(json.dumps({
+        "changed_states": [],
+        "service_response": {
+            "date": START.date().isoformat(),
+            "data": "\n".join(json.dumps(r) for r in _records(dataset())),
+            "incomplete_tail": True,
+        },
+    }))
+    loaded = load_dataset(exported)
+    assert loaded.range_info()["hours"] == 24
+    assert any("incomplete trailing record" in warning for warning in loaded.warnings)
+    # A REST wrapper must not hide the missing part of an exported calendar day.
+    with pytest.raises(ValueError):
+        loaded.validate_coverage()
+
+
+@pytest.mark.parametrize("response", [None, [], {}, {"data": 42}])
+def test_rest_export_rejects_invalid_service_response(tmp_path, response):
+    exported = tmp_path / "download.json"
+    exported.write_text(json.dumps({"changed_states": [], "service_response": response}))
+    with pytest.raises(ValueError, match="planner reproduction service response"):
+        load_dataset(exported)
+
+
+def test_cli_lists_and_validates_all_presets_without_running_planners(tmp_path, capsys, monkeypatch):
+    from scripts import simulate_planner
+    from custom_components.wattplan.optimizer.planners.presets import PRESETS
+
+    def unexpected_worker(*args, **kwargs):
+        pytest.fail("Listing and validation must not start a planner")
+
+    monkeypatch.setattr(simulate_planner, "PlannerWorker", unexpected_worker)
+    assert simulate_planner.main(["--list-planners"]) == 0
+    listing = capsys.readouterr().out
+    assert all(f"{name}:" in listing for name in PRESETS)
+    inputs = tmp_path / "inputs.jsonl"
+    inputs.write_text("\n".join(json.dumps(r) for r in _records(dataset())))
+    assert simulate_planner.main([str(inputs), "--planners", "all", "--validate-only"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["configuration"] == [
+        {"name": name, "planner": preset.planner, "settings": {}, "options": preset.options}
+        for name, preset in PRESETS.items()
+    ]
+    assert simulate_planner.main([
+        str(inputs), "--planners", "beam-search", "highs-24", "--validate-only",
+    ]) == 0
+    configuration = json.loads(capsys.readouterr().out)["configuration"]
+    assert configuration[0] == {
+        "name": "beam-search", "planner": "beam-search", "settings": {}, "options": {},
+    }
+    assert configuration[1]["options"] == {"lookahead_slots": 24}
+
+
+def test_cli_runs_selected_presets_and_rounds_from_multiple_rest_exports(tmp_path):
+    from scripts.simulate_planner import main
+
+    records = _records(dataset())
+    inputs = []
+    for index, subset in enumerate((records[:-1], records[-1:])):
+        path = tmp_path / f"export-{index}.json"
+        path.write_text(json.dumps({"changed_states": [], "service_response": {
+            "data": "\n".join(json.dumps(r) for r in subset),
+        }}))
+        inputs.append(str(path))
+    output = tmp_path / "reports"
+    assert main([
+        *inputs, "--planners", "local-search-3", "self-consumption",
+        "--rounds", "2", "--output", str(output),
+    ]) == 0
+    summary = json.loads((output / "summary.json").read_text())
+    assert summary["run_order"] == [
+        "local-search-3 / repeat 1", "self-consumption / repeat 1",
+        "self-consumption / repeat 2", "local-search-3 / repeat 2",
+    ]
+    assert summary["configuration"][0]["options"] == {"max_evaluations": 3, "seed": 0}
+    assert len(summary["files"]) == 2
+    assert summary["coverage"]["covered_seconds"] == 7200
+    assert all(run["status"] == "complete" for run in summary["runs"])
+
+
+@pytest.mark.parametrize("args", [
+    [], ["--validate-only"], ["input.json", "--planners", "unknown"],
+    ["input.json", "--planners", "all", "highs", "--validate-only"],
+    ["input.json", "--planners", "highs", "--config", "config.json", "--validate-only"],
+    ["input.json", "--rounds", "0", "--validate-only"],
+])
+def test_cli_rejects_invalid_selection_arguments(args):
+    from scripts.simulate_planner import main
+
+    with pytest.raises(SystemExit) as raised:
+        main(args)
+    assert raised.value.code == 2
+
+
+def test_cli_duplicate_planners_and_output_inside_any_input_are_rejected(tmp_path, capsys):
+    from scripts.simulate_planner import main
+
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    path = inputs / "day.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in _records(dataset())))
+    assert main([str(path), "--planners", "highs", "highs", "--validate-only"]) == 2
+    assert "uniquely named" in capsys.readouterr().err
+    assert main([str(path), str(inputs), "--output", str(inputs / "reports")]) == 2
+    assert "folders must be separate" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize("direction", ["previous", "next"])
 @pytest.mark.parametrize("missing", ["actual", "plan", "both"])
 def test_explicit_one_slot_repair_keeps_provenance(direction, missing):

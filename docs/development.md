@@ -46,8 +46,11 @@ symlink is required for these in-repo tests.
 
 For offline planner evaluation, activate the development environment and run
 `python scripts/simulate_planner.py /path/to/snapshots --validate-only`, then use
-`--output /path/to/report` to execute. See [Planner simulator](simulator.md) for
-collection, variants and reports. Tests use independent hand-calculated physics
+`--planners highs-16 self-consumption --rounds 3 --output /path/to/report` to
+execute. `--list-planners` lists presets; `--planners all` compares every preset.
+Input arguments accept multiple export files, globs, or directories. See the
+[simulator walkthrough](simulator.md) for collection, downloads, variants, and
+reports. Tests use independent hand-calculated physics
 cases and explicitly synthetic datasets; real recordings are needed to assess
 real-world coverage.
 

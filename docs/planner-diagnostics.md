@@ -4,6 +4,10 @@ WattPlan can retain the exact inputs and result of each successful planning run,
 plus completed measured intervals, in append-only JSONL files. This is intended for investigations and
 does not use Home Assistant Recorder's attribute storage.
 
+To compare planners using these recordings, follow the
+[simulator walkthrough](simulator.md). It covers the additional historical meters,
+how long to record, downloading daily exports, and selecting planners and rounds.
+
 ## Turn on recording
 
 Open `Settings` -> `Devices & services` -> `WattPlan` -> `Configure` ->
