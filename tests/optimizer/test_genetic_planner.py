@@ -1,15 +1,12 @@
 """Genetic search budgets, structured seeds, physical agreement and diversity."""
 
-from copy import deepcopy
 
 import pytest
 
 from custom_components.wattplan.optimizer.models import OptimizationParams
 from custom_components.wattplan.optimizer.planners.evaluation import evaluate_schedule
 from custom_components.wattplan.optimizer.planners.genetic import factory
-from tests.optimizer.planner_conformance import assert_conforms, conformance_params
-
-PATH = "custom_components.wattplan.optimizer.planners.genetic:factory"
+from tests.optimizer.planner_conformance import conformance_params
 
 
 def request(*, prices=(0.1, 1), usage=(0, 1), initial=0, target=None, horizon=None):
@@ -26,13 +23,6 @@ def request(*, prices=(0.1, 1), usage=(0, 1), initial=0, target=None, horizon=No
 
 def policies(result):
     return [[a["state"] for a in e["schedule"]] for e in result["entities"]]
-
-
-@pytest.mark.parametrize("params", conformance_params())
-def test_shared_conformance(params):
-    result = assert_conforms(PATH, params, {"max_evaluations": 48})
-    assert result["state"] is None
-    assert result["diagnostics"]["evaluations"] <= 48
 
 
 @pytest.mark.parametrize("options", [
@@ -87,23 +77,6 @@ def test_unreachable_target_inclusive_deadline():
     check = result["diagnostics"]["evaluation"]["target_checks"][0]
     assert check["soc_kwh"] == 1
     assert check["miss_kwh"] == 1
-
-
-@pytest.mark.parametrize("count", [1, 2, 7, 48])
-def test_all_full_evaluations_are_counted(monkeypatch, count):
-    import custom_components.wattplan.optimizer.planners.genetic as module
-    calls = []
-    original = module.evaluate_schedule
-
-    def recorded(params, candidate):
-        calls.append(deepcopy(candidate))
-        return original(params, candidate)
-
-    monkeypatch.setattr(module, "evaluate_schedule", recorded)
-    result = factory(max_evaluations=count)(request())
-    assert len(calls) == result["diagnostics"]["evaluations"] <= count
-    assert result["diagnostics"]["unique_evaluated"] == len(calls)
-    assert result["diagnostics"]["evaluation"]["score"] <= result["diagnostics"]["baseline_score"]
 
 
 def test_tiny_deadline_has_complete_counted_baseline():
@@ -176,7 +149,6 @@ def test_empty_batteries_do_not_try_to_fill_population():
     assert result["diagnostics"]["termination_reason"] == "no_batteries"
 
 
-
 def test_efficiency_tolerance_target_and_observed_reserve_shortfall():
     params = request(prices=(10, 10), usage=(0, 0), initial=0.1,
                      target={"timeslot": 1, "soc_kwh": 2, "mode": "exact", "tolerance_kwh": 0.11})
@@ -235,45 +207,6 @@ def test_published_presets_meet_immediate_expensive_target(preset, mode):
     result = run_preset(params, preset)
     assert policies(result)[0][0] == "grid_charge"
     assert result["diagnostics"]["evaluation"]["target_checks"][0]["miss_kwh"] == 0.0
-    assert not result["suboptimal"]
-
-
-@pytest.mark.parametrize("registry", [False, True])
-def test_comfort_optional_and_full_reporting_via_factory_and_registry(registry):
-    from custom_components.wattplan.optimizer.comfort_placement import check_comfort_schedule
-    from custom_components.wattplan.optimizer.models import ComfortEntityParams, OptionalEntityParams
-    from custom_components.wattplan.optimizer.planners import create_planner
-    from custom_components.wattplan.optimizer.planners.comfort import prepare_comfort
-
-    params = request(prices=(0.2,) * 8, usage=(0.5,) * 8, initial=2)
-    params.rolling_window_slots = 4
-    params.comfort_entities = [ComfortEntityParams(
-        name="heater", target_on_slots_per_rolling_window=1,
-        max_consecutive_off_slots=3, power_usage_kwh=0.5,
-        is_on_now=False, off_streak_slots_now=2, on_history=[True, False, False],
-    )]
-    params.optional_entities = [OptionalEntityParams(
-        name="washer", duration_timeslots=1, energy_kwh=0.5,
-        start_before_timeslot=8, options=3,
-    )]
-    before = params.model_dump()
-    planner = create_planner("genetic", {"max_evaluations": 16}) if registry else factory(max_evaluations=16)
-    result = planner(params)
-    assert params.model_dump() == before
-    assert planner.capabilities.comfort
-    assert planner.capabilities.optional_loads == "supported"
-    assert "rolling_window_slots" not in result["diagnostics"]["ignored_preferences"]
-    prepared = prepare_comfort(params)
-    comfort = next(entity for entity in result["entities"] if entity["type"] == "comfort")
-    enabled = tuple(slot["enabled"] for slot in comfort["schedule"])
-    assert not check_comfort_schedule(prepared.inputs[0], enabled)
-    assert len(result["optional_entity_options"][0]["options"]) == 3
-    assert len(result["projections"]["per_slot"]) == 8
-    assert result["projections"]["baseline_cost"] == pytest.approx(0.8)
-    for flow, on in zip(result["energy_flows"]["per_slot"], enabled, strict=True):
-        assert flow["base_load_kwh"] == 0.5
-        assert flow["comfort_load_kwh"] == 0.5 * on
-    assert result["execution_time"] >= result["diagnostics"]["reporting"]["reporting_seconds"]
     assert not result["suboptimal"]
 
 

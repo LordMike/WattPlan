@@ -1,11 +1,16 @@
 """Independent user-visible acceptance tests across every published preset."""
 
 import json
+import importlib
 
 import pytest
 
 from custom_components.wattplan.optimizer.models import OptimizationParams
 from custom_components.wattplan.optimizer.planners.presets import PRESETS, run_preset
+from custom_components.wattplan.optimizer.planners.registry import BUILTINS, create_planner
+from custom_components.wattplan.optimizer.planners.comfort import prepare_comfort
+from custom_components.wattplan.optimizer.planners.evaluation import evaluate_schedule
+from tests.optimizer.planner_conformance import battery_policies
 
 
 def request(*, battery=True, comfort=True, optional=True):
@@ -36,14 +41,9 @@ def request(*, battery=True, comfort=True, optional=True):
     )
 
 
-@pytest.mark.parametrize("preset", PRESETS)
-def test_all_presets_have_complete_outputs_and_account_for_comfort(preset):
-    params = request()
-    before = params.model_dump(mode="json")
-    result = run_preset(params, preset)
-    assert params.model_dump(mode="json") == before
+def assert_live_result(params, result):
+    """Public outputs must be internally consistent regardless of entry point."""
     json.dumps(result, allow_nan=False)
-    assert result["diagnostics"]["planner"]["preset"] == preset
     assert result["execution_time"] >= 0
     assert isinstance(result["suboptimal"], bool)
     assert isinstance(result["suboptimal_reasons"], list)
@@ -52,8 +52,8 @@ def test_all_presets_have_complete_outputs_and_account_for_comfort(preset):
     heater = next(item for item in result["entities"] if item["name"] == "heater")
     enabled = [item["enabled"] for item in heater["schedule"]]
     history = [True, False, False] + enabled
+    # In this fixture, one ON slot per four slots also enforces max-off == 3.
     assert all(sum(history[slot:slot + 4]) >= 1 for slot in range(8))
-    assert all(any(history[slot:slot + 4]) for slot in range(8))
     costs = []
     for slot, flow in enumerate(result["energy_flows"]["per_slot"]):
         assert flow["base_load_kwh"] == pytest.approx(params.usage_kwh[slot])
@@ -64,6 +64,15 @@ def test_all_presets_have_complete_outputs_and_account_for_comfort(preset):
         costs.append(flow["grid_import_kwh"] * params.grid_import_price_per_kwh[slot]
                      - flow["grid_export_kwh"] * params.grid_export_price_per_kwh[slot])
     projection = result["projections"]
+    baseline = sum(
+        max(usage - pv, 0) * buy - max(pv - usage, 0) * sell
+        for usage, pv, buy, sell in zip(
+            params.usage_kwh, params.solar_input_kwh,
+            params.grid_import_price_per_kwh, params.grid_export_price_per_kwh,
+            strict=True,
+        )
+    )
+    assert projection["baseline_cost"] == pytest.approx(baseline)
     assert projection["projected_cost"] == pytest.approx(sum(costs))
     assert [slot["projected_cost"] for slot in projection["per_slot"]] == pytest.approx(costs)
     assert projection["projected_savings_cost"] == pytest.approx(
@@ -72,7 +81,53 @@ def test_all_presets_have_complete_outputs_and_account_for_comfort(preset):
     options = result["optional_entity_options"]
     assert options[0]["name"] == "washer" and len(options[0]["options"]) == 2
     assert options[0]["options"][0]["delta_from_best"] == pytest.approx(0)
+    assert result["state"]
+
+
+@pytest.mark.parametrize("preset", PRESETS)
+def test_all_presets_have_complete_outputs_and_account_for_comfort(preset):
+    params = request()
+    before = params.model_dump(mode="json")
+    result = run_preset(params, preset)
+    assert params.model_dump(mode="json") == before
+    assert result["diagnostics"]["planner"]["preset"] == preset
+    assert_live_result(params, result)
     assert not result["suboptimal"], result["suboptimal_reasons"]
+
+
+@pytest.mark.parametrize("name", BUILTINS)
+@pytest.mark.parametrize("constrained", [False, True], ids=["healthy", "target-and-reserve"])
+def test_direct_factories_and_registry_have_the_same_live_features(name, constrained):
+    params = request()
+    if constrained:
+        payload = params.model_dump()
+        payload["battery_entities"][0].update(
+            initial_kwh=0.1, minimum_kwh=0.5,
+            target={"timeslot": 3, "soc_kwh": 1.0, "mode": "at_least"},
+        )
+        params = OptimizationParams(**payload)
+    before = params.model_dump(mode="json")
+    module_name, attribute = BUILTINS[name].split(":")
+    direct_planner = getattr(importlib.import_module(module_name), attribute)()
+    assert direct_planner.capabilities.comfort
+    assert direct_planner.capabilities.optional_loads == "supported"
+    assert "rolling_window_slots" not in direct_planner.capabilities.ignored_preferences
+    direct = direct_planner(params)
+    registered = create_planner(name)(params)
+    assert params.model_dump(mode="json") == before
+    for result in (direct, registered):
+        assert_live_result(params, result)
+    for field in ("entities", "projections", "energy_flows", "optional_entity_options",
+                  "suboptimal", "suboptimal_reasons"):
+        assert direct[field] == registered[field]
+    if not constrained or name != "self-consumption":
+        assert not direct["suboptimal"], direct["suboptimal_reasons"]
+    if name != "highs":
+        replay = evaluate_schedule(prepare_comfort(params).params, battery_policies(direct))
+        assert direct["projections"]["projected_cost"] == pytest.approx(replay.tariff_cost)
+        assert direct["diagnostics"]["evaluation"]["score"] == pytest.approx(replay.score)
+        assert direct["execution_time"] >= direct["diagnostics"]["reporting"]["reporting_seconds"]
+        assert "successful_solves" not in direct
 
 
 @pytest.mark.parametrize("preset", PRESETS)

@@ -1,4 +1,4 @@
-"""Reusable battery planner checks; each implementation invokes these itself."""
+"""Common fixtures and assertions for the registry-wide planner test suites."""
 
 import json
 
@@ -10,6 +10,29 @@ from custom_components.wattplan.optimizer.planners import (
     validate_battery_result,
 )
 from custom_components.wattplan.optimizer.planners.evaluation import evaluate_schedule
+
+
+def economic_params(*, prices=(0.1, 1.0), usage=(0, 1), solar=None, initial=0, target=None):
+    """Small hand-checkable tariff/target case, padded to the minimum horizon."""
+    extra = max(0, 4 - len(prices))
+    return OptimizationParams(
+        plan_start="2026-06-15T00:00:00+00:00", slot_minutes=15,
+        grid_import_price_per_kwh=[*prices, *([max(prices)] * extra)],
+        grid_export_price_per_kwh=[0] * (len(prices) + extra),
+        usage_kwh=[*usage, *([0] * extra)],
+        solar_input_kwh=[*(solar or [0] * len(prices)), *([0] * extra)],
+        comfort_entities=[],
+        battery_entities=[{
+            "name": "house", "initial_kwh": initial, "minimum_kwh": 0,
+            "capacity_kwh": 3, "charge_curve_kwh": [1],
+            "discharge_curve_kwh": [1], "can_charge_from": 3, "target": target,
+        }],
+    )
+
+
+def battery_policies(result):
+    return [[slot["state"] for slot in entity["schedule"]]
+            for entity in result["entities"] if entity["type"] == "battery"]
 
 
 def conformance_params() -> list[OptimizationParams]:
@@ -77,4 +100,11 @@ def assert_conforms(factory: str, params: OptimizationParams, options=None) -> d
         assert result["projections"]["projected_cost"] == pytest.approx(
             evaluation.tariff_cost
         )
+        assert result["diagnostics"]["evaluation"]["score"] == pytest.approx(evaluation.score)
+        assert result["diagnostics"]["evaluation"]["terminal_energy_credit"] == 0
+        assert result["state"] is None  # Battery searches do not carry opaque state.
+        for index, battery in enumerate(params.battery_entities):
+            assert [slot["level"] for slot in schedules[battery.name]] == [
+                step.levels[index] for step in evaluation.steps
+            ]
     return result

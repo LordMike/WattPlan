@@ -45,6 +45,12 @@ def test_builtins_conform(factory, params):
     assert_conforms(factory, params)
 
 
+@pytest.mark.parametrize("name", BUILTINS)
+def test_all_factories_reject_unknown_options(name):
+    with pytest.raises(TypeError, match="unexpected keyword"):
+        create_planner(name, {"unknown": 1})
+
+
 def test_state_is_namespaced_and_reset_on_options_or_implementation_change():
     params = conformance_params()[1]
     path = "tests.optimizer.test_planner_contract:state_factory"

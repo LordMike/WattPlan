@@ -1,16 +1,12 @@
 """Window economics, inclusive targets, bounded work and neutral physics."""
 
-from copy import deepcopy
 
 import pytest
 
 from custom_components.wattplan.optimizer.models import OptimizationParams
-from custom_components.wattplan.optimizer.planners import create_planner
 from custom_components.wattplan.optimizer.planners.evaluation import evaluate_schedule
 from custom_components.wattplan.optimizer.planners.charge_window import factory
-from tests.optimizer.planner_conformance import assert_conforms, conformance_params
-
-PATH = "custom_components.wattplan.optimizer.planners.charge_window:factory"
+from tests.optimizer.planner_conformance import conformance_params
 
 
 def request(*, prices=(0.1, 0.1, 0.3, 0.3, 2, 2), usage=(0, 0, 1, 1, 1, 1), initial=0, target=None, solar=None):
@@ -29,13 +25,6 @@ def request(*, prices=(0.1, 0.1, 0.3, 0.3, 2, 2), usage=(0, 0, 1, 1, 1, 1), init
 def policies(result):
     return [[action["state"] for action in entity["schedule"]]
             for entity in result["entities"] if entity["type"] == "battery"]
-
-
-@pytest.mark.parametrize("params", conformance_params())
-def test_shared_conformance(params):
-    result = assert_conforms(PATH, params, {"max_evaluations": 80})
-    assert result["state"] is None
-    assert result["diagnostics"]["evaluations"] <= 80
 
 
 @pytest.mark.parametrize("options", [
@@ -107,60 +96,12 @@ def test_nonlinear_curves_efficiencies_preferences_and_reserve():
     assert replay.score <= evaluate_schedule(params, [["self_consume"] * 4 for _ in params.battery_entities]).score
 
 
-@pytest.mark.parametrize("count", [1, 2, 7, 50])
-def test_every_evaluation_counted_and_final_result_not_replayed(monkeypatch, count):
-    import custom_components.wattplan.optimizer.planners.charge_window as module
-    calls = []
-    original = module.evaluate_schedule
-    def recorded(params, candidate):
-        calls.append(deepcopy(candidate))
-        return original(params, candidate)
-    monkeypatch.setattr(module, "evaluate_schedule", recorded)
-    result = factory(max_evaluations=count)(request())
-    assert len(calls) == result["diagnostics"]["evaluations"] <= count
-    assert result["diagnostics"]["evaluation"]["score"] <= result["diagnostics"]["baseline_score"]
-
-
 def test_tiny_deadline_still_returns_complete_baseline():
     result = factory(max_seconds=1e-12)(request())
     assert result["diagnostics"]["evaluations"] == 1
     assert result["diagnostics"]["termination_reason"] == "search_time_limit"
     assert len(result["entities"][0]["schedule"]) == 6
     assert result["diagnostics"]["limitations"]
-
-
-def test_long_many_battery_requests_bound_work_and_candidate_generation():
-    params = request(prices=(0.1,) * 672, usage=(0,) * 672)
-    payload = params.model_dump()
-    payload["battery_entities"] = [{**payload["battery_entities"][0], "name": f"battery-{i}"} for i in range(16)]
-    result = factory(max_evaluations=10000)(OptimizationParams(**payload))
-    assert result["diagnostics"]["effective_max_evaluations"] == 18
-    assert result["diagnostics"]["evaluations"] <= 18
-    assert result["diagnostics"]["candidate_attempts"] <= 144
-    assert all(len(entity["schedule"]) == 672 for entity in result["entities"])
-
-
-def test_deterministic_stateless_and_input_isolation():
-    params = conformance_params()[2]
-    before = params.model_dump(mode="json")
-    planner = create_planner(PATH, {"max_evaluations": 100})
-    first, second = planner(params), planner(params)
-    assert first["entities"] == second["entities"]
-    assert first["diagnostics"]["evaluation"] == second["diagnostics"]["evaluation"]
-    assert params.model_dump(mode="json") == before
-    changed = request(prices=(4, -1, 2, 1), usage=(1, 0, 1, 0), initial=2,
-                      target={"timeslot": 0, "soc_kwh": 1, "mode": "exact"})
-    result = planner(changed)
-    assert result["diagnostics"]["evaluation"]["score"][0] == 0
-    assert result["projections"]["projected_cost"] == evaluate_schedule(changed, policies(result)).tariff_cost
-    assert any("lookahead_slots" in note for note in result["diagnostics"]["planner"]["notes"])
-
-
-def test_import_never_loads_solver():
-    import subprocess
-    import sys
-    subprocess.run([sys.executable, "-c",
-        "from custom_components.wattplan.optimizer.planners.charge_window import factory; factory(); import sys; assert 'highspy' not in sys.modules; assert 'custom_components.wattplan.optimizer.mpc_power_optimizer' not in sys.modules"], check=True, timeout=30)
 
 
 def test_charging_before_peak_survives_cheaper_windows_after_peak():
@@ -222,34 +163,3 @@ def test_pv_only_reserve_seed_obeys_ingress_and_curves():
     assert "grid_charge" not in policies(actual)[0]
     assert [slot["level"] for slot in actual["entities"][0]["schedule"]] == pytest.approx([0.4, 0.8, 1.2, 1.6])
     assert actual["projections"]["projected_cost"] == 0
-
-
-def test_direct_and_registered_window_planners_include_comfort_and_optional_loads():
-    from custom_components.wattplan.optimizer.planners.comfort import prepare_comfort
-    from tests.optimizer.test_planner_comfort import request as comfort_request
-
-    raw = comfort_request().model_dump()
-    raw["battery_entities"] = request(initial=0.1).model_dump()["battery_entities"]
-    raw["battery_entities"][0].update(
-        minimum_kwh=0.5, target={"timeslot": 3, "soc_kwh": 1.0, "mode": "at_least"}
-    )
-    raw["optional_entities"] = [{
-        "name": "dishwasher", "duration_timeslots": 2,
-        "start_before_timeslot": 8, "energy_kwh": 0.6,
-    }]
-    params = OptimizationParams.model_validate(raw)
-    before = params.model_dump()
-    direct = factory(max_evaluations=96)(params)
-    registered = create_planner("charge-window", {"max_evaluations": 96})(params)
-    assert params.model_dump() == before
-    assert direct["entities"] == registered["entities"]
-    assert direct["projections"] == registered["projections"]
-    assert direct["optional_entity_options"][0]["options"]
-    assert len(direct["projections"]["per_slot"]) == 8
-    assert len(direct["energy_flows"]["per_slot"]) == 8
-    assert direct["execution_time"] > 0
-    assert not direct["suboptimal"]
-    replay = evaluate_schedule(prepare_comfort(params).params, policies(direct))
-    assert direct["projections"]["projected_cost"] == pytest.approx(replay.tariff_cost)
-    assert factory().capabilities.comfort
-    assert factory().capabilities.optional_loads == "supported"

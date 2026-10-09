@@ -37,7 +37,7 @@ realized cost under imperfect forecasts.
 ## Implement one module
 
 Place each algorithm in its own module under `optimizer/planners/`; for example,
-`greedy.py`, `local_search.py`, or `beam_search.py`. Keep tests in
+`greedy.py`, `local_search.py`, or `beam_search.py`. Keep algorithm-specific tests in
 `tests/optimizer/test_<name>_planner.py` and implementation notes in
 `docs/planners/<name>.md`. No shared registry edit is needed. A factory receives
 strict keyword-only options and returns a callable with this interface:
@@ -71,11 +71,16 @@ receives modeled comfort consumption as part of its usage forecast. Both direct
 factory and registry calls therefore support the same live features. The
 simulator still validates a narrower battery-only execution contract.
 
-Use `tests.optimizer.planner_conformance.conformance_params` and `assert_conforms`
-in each implementation's tests. Those cases cover empty equipment, multiple
-batteries, efficiencies, negative prices, PV-only ingress, targets and an initial
-level below reserve. Add algorithm-specific economic/target tests and closed-loop
-simulator runs. Compare outcomes together with terminal SoC and target misses.
+The registry-wide tests in `test_planner_contract.py` already apply
+`tests.optimizer.planner_conformance.assert_conforms` to every built-in planner.
+Those cases cover empty equipment, multiple batteries, efficiencies, negative
+prices, PV-only ingress, targets and an initial level below reserve. Do not copy
+that parametrization into each implementation's file. External factories can use
+the same helper explicitly. Shared live-feature and discrete-search suites cover
+their respective contracts; see [test organization](development.md#testing).
+Keep additional algorithm-specific fixtures, option boundaries and regressions
+that exercise distinct behavior. Use closed-loop simulator runs to compare
+outcomes together with terminal SoC and target misses.
 
 ## Shared objective and physics
 

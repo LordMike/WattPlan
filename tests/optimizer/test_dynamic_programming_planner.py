@@ -40,11 +40,6 @@ def exhaustive_score(params):
     return min(evaluate_schedule(params, candidate).score for candidate in product(*choices))
 
 
-@pytest.mark.parametrize("params", conformance_params())
-def test_shared_conformance(params):
-    assert_conforms(PATH, params)
-
-
 @pytest.mark.parametrize("params", [
     request(),
     request(prices=(-0.3, 0.2, 1.0, 0.0), usage=(0.0, 0.0, 1.0, 0.0)),
@@ -214,37 +209,3 @@ def test_recovery_never_invents_grid_ingress_for_pv_only_battery():
     assert "grid_charge" not in policies(actual)[0]
     assert [slot["level"] for slot in actual["entities"][0]["schedule"]] == pytest.approx([0.4, 0.8, 1.2, 1.6])
     assert actual["projections"]["projected_cost"] == 0.0
-
-
-def test_direct_factory_and_registry_support_comfort_optional_and_ha_contract():
-    from custom_components.wattplan.optimizer.planners import create_planner
-    from custom_components.wattplan.optimizer.planners.comfort import prepare_comfort
-    from tests.optimizer.test_planner_comfort import request as comfort_request
-
-    raw = comfort_request().model_dump()
-    raw["battery_entities"] = request(initial=0.1).model_dump()["battery_entities"]
-    raw["battery_entities"][0].update(
-        minimum_kwh=0.5, target={"timeslot": 3, "soc_kwh": 1.0, "mode": "at_least"}
-    )
-    raw["optional_entities"] = [{
-        "name": "dishwasher", "duration_timeslots": 2,
-        "start_before_timeslot": 8, "energy_kwh": 0.6,
-    }]
-    params = OptimizationParams.model_validate(raw)
-    before = params.model_dump()
-    direct = factory()(params)
-    registered = create_planner("dynamic-programming")(params)
-    assert params.model_dump() == before
-    assert direct["entities"] == registered["entities"]
-    assert direct["projections"] == registered["projections"]
-    assert len(direct["entities"]) == 2
-    assert direct["optional_entity_options"][0]["options"]
-    assert len(direct["energy_flows"]["per_slot"]) == 8
-    assert direct["execution_time"] > 0
-    assert not direct["suboptimal"]
-    modeled = prepare_comfort(params).params
-    evaluation = evaluate_schedule(modeled, policies(direct))
-    assert direct["projections"]["projected_cost"] == pytest.approx(evaluation.tariff_cost)
-    assert direct["diagnostics"]["evaluation"]["score"] == pytest.approx(evaluation.score)
-    assert factory().capabilities.comfort
-    assert factory().capabilities.optional_loads == "supported"

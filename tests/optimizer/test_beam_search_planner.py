@@ -34,11 +34,6 @@ def policies(result):
     return [[a["state"] for a in b["schedule"]] for b in result["entities"]]
 
 
-@pytest.mark.parametrize("params", conformance_params())
-def test_shared_conformance(params):
-    assert_conforms(PATH, params)
-
-
 def test_forecast_guidance_keeps_early_cheap_charge_at_width_one():
     params = request()
     result = factory(beam_width=1)(params)
@@ -140,13 +135,6 @@ def test_invalid_options(option, value):
         factory(**{option: value})
 
 
-def test_unknown_options_rejected():
-    with pytest.raises(TypeError):
-        factory(unknown=1)
-
-
-
-
 def test_nondischargeable_energy_has_no_household_value():
     from custom_components.wattplan.optimizer.planners.beam_search import _Node, _guidance, _rank
     params = request(prices=(0.1, 1.0), usage=(0.0, 1.0))
@@ -220,44 +208,6 @@ def test_arbitrary_prefix_scoring_matches_shared_evaluator_with_reserve_deficit(
         evaluation = evaluate_schedule(prefix, [schedule[:slot + 1]])
         assert _objective(params, node) == pytest.approx(evaluation.objective)
         assert node.levels == pytest.approx(evaluation.steps[-1].levels)
-
-
-def test_direct_factory_full_reporting_comfort_and_optional_recommendations():
-    from custom_components.wattplan.optimizer.comfort_placement import check_comfort_schedule
-    from custom_components.wattplan.optimizer.models import ComfortEntityParams, OptionalEntityParams
-    from custom_components.wattplan.optimizer.planners.comfort import prepare_comfort
-
-    params = request(prices=(0.2,) * 8, usage=(0.5,) * 8, initial=2.0)
-    params.rolling_window_slots = 4
-    params.comfort_entities = [ComfortEntityParams(
-        name="heater", target_on_slots_per_rolling_window=1,
-        max_consecutive_off_slots=3, power_usage_kwh=0.5,
-        is_on_now=False, off_streak_slots_now=2, on_history=[True, False, False],
-    )]
-    params.optional_entities = [OptionalEntityParams(
-        name="washer", duration_timeslots=1, energy_kwh=0.5,
-        start_before_timeslot=8, options=3,
-    )]
-    before = params.model_dump()
-    planner = factory(beam_width=2)
-    result = planner(params)
-    assert planner.capabilities.comfort
-    assert planner.capabilities.optional_loads == "supported"
-    assert "rolling_window_slots" not in result["diagnostics"]["ignored_preferences"]
-    assert params.model_dump() == before
-    prepared = prepare_comfort(params)
-    comfort = next(entity for entity in result["entities"] if entity["type"] == "comfort")
-    enabled = tuple(slot["enabled"] for slot in comfort["schedule"])
-    assert not check_comfort_schedule(prepared.inputs[0], enabled)
-    assert len(result["optional_entity_options"][0]["options"]) == 3
-    assert len(result["projections"]["per_slot"]) == 8
-    assert result["projections"]["baseline_cost"] == pytest.approx(0.8)
-    for flow, on in zip(result["energy_flows"]["per_slot"], enabled, strict=True):
-        assert flow["base_load_kwh"] == 0.5
-        assert flow["comfort_load_kwh"] == 0.5 * on
-    assert result["execution_time"] >= result["diagnostics"]["reporting"]["reporting_seconds"]
-    assert "successful_solves" not in result
-    assert not result["suboptimal"]
 
 
 def test_target_miss_is_visible_in_ha_health():
