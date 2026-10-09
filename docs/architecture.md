@@ -352,4 +352,4 @@ legacy state internally. Shared policy physics lives in `optimizer/physics.py`,
 used by simulation, forecast schedule evaluation, historical accounting and
 production power/headroom helpers. `simulation/physics.py` is a compatibility
 shim. Forecast evaluation never receives replay actuals. See
-[Implementing planners](planner-implementations.md) for extension boundaries.
+[planner factories](optimizer-api.md#planner-factories) for extension boundaries.

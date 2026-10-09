@@ -30,12 +30,9 @@ Loads and shared behavior:
     automatically executed loads. Discrete actions and bounded search can miss
     targets that continuous HiGHS reaches. The frontier is rebuilt each request.
 
-Evidence:
-    The strong preset was cheapest on both October 2026 one-battery HA fixtures.
-    It retained much more house-battery energy in the two-battery synthetic case,
-    making raw cross-planner cost comparisons there unequal. This establishes
-    neither multi-battery superiority nor a universal best preset. See
-    ``docs/planners/dynamic-programming.md`` and ``parity-comparison.md`` there.
+Configuration:
+    Named presets are defined in ``presets.py``. See
+    ``docs/optimizer-profiles.md`` for user-facing choices and limitations.
 """
 
 from dataclasses import dataclass

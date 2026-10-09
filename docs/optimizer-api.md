@@ -3,9 +3,8 @@
 This document describes the direct Python API for the optimizer packaged inside this repository.
 
 Interchangeable planners use this API through built-in names or a
-`module:factory` adapter. See [Implementing planners](planner-implementations.md)
-for the shared battery contract, evaluator, capabilities and state ownership,
-and [Planner simulator](simulator.md) for causal execution.
+`module:factory` adapter. See [Planner factories](#planner-factories) for the
+extension interface and [Planner simulator](simulator.md) for causal execution.
 Home Assistant selects a finite named preset through
 `optimizer.planners.presets.run_preset(params, name)`. The default `highs`
 preset retains existing tuning. `highs-16` and `highs-24` select the same
@@ -16,9 +15,9 @@ to select HiGHS. See [planner presets](optimizer-profiles.md).
 The detailed solver semantics below describe HiGHS unless stated otherwise.
 The policy-search alternatives share the input model and live result fields,
 but use full-horizon discrete battery actions, target-first scoring, and their
-own search budgets. The shared wrapper handles comfort and optional appliances;
-see [comfort](planners/comfort-parity.md) and
-[reporting](planners/reporting-parity.md) for their exact semantics.
+own search budgets. The shared wrapper handles comfort and optional appliances; see
+[shared features and limits](optimizer-profiles.md#shared-features-and-limits)
+for scheduling order and reporting semantics.
 Algorithm-specific diagnostics live under `diagnostics`; HiGHS solve/cadence
 counters are absent from planners that do not perform those operations.
 
@@ -332,3 +331,33 @@ This pre-validation/normalization design ensures the calculation phase operates 
 - `grid import`: Energy bought from the grid.
 - `grid export`: Energy sent back to the grid. Also commonly called `feed-in`, `export`, or `export to grid`.
 - `grid_import_price_per_kwh` / `grid_export_price_per_kwh` are the optimizer terms because they are symmetric and match the physical energy flow direction.
+
+## Planner factories
+
+`optimizer.planners.create_planner(name, options)` accepts a built-in algorithm
+name or an importable `module:factory`. The factory receives keyword options and
+returns a callable taking `OptimizationParams`. It validates options and declares
+`PlannerCapabilities`. See the planner modules' opening docstrings for algorithm
+details; the [user guide](optimizer-profiles.md) describes available presets.
+
+Battery implementations return a complete schedule for every named battery in
+request order, with finite projected levels. Shared policy actions are
+`self_consume`, `preserve`, and `grid_charge`, subject to each battery's permitted
+energy sources. `planners.evaluation.evaluate_schedule` supplies physical replay;
+`build_result` can reuse that evaluation for projections and reporting.
+`planners.shared.wrap_battery_planner` adds comfort scheduling and continuity,
+optional-appliance recommendations, and whole-call timing. The battery search
+receives comfort consumption as part of its demand forecast.
+
+The policy evaluator ranks target misses before its economic score, which
+includes reserve shortfall and cycling/switching preferences. Published costs
+contain only tariffs. This score is not comparable with HiGHS's internal
+objective. Search budgets must count evaluated candidates; algorithms using a
+shorter search horizon must still return complete schedules and disclose ignored
+preferences. Registry-wide tests cover the shared contract; see
+[test organization](development.md#testing) for algorithm-specific regressions.
+
+The registry namespaces returned state by implementation, options, and state
+version. A mismatch resets it. Stateless battery searches return `None`, though
+the comfort wrapper can still retain runtime commitments. Cached plans must be
+checked against current forecasts, equipment, targets, and time before reuse.

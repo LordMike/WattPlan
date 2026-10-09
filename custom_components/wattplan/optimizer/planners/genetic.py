@@ -31,12 +31,9 @@ Loads and shared behavior:
     Shared target-first scoring and reserve penalties guide battery constraints;
     discrete actions and bounded evolution cannot certify feasibility/optimality.
 
-Evidence:
-    Genetic-standard beat genetic-fast on both October 2026 one-battery HA
-    fixtures, but cost more on the synthetic fixture at equal terminal energy.
-    More evaluations or longer guidance therefore do not guarantee better
-    realized outcomes. See ``docs/planners/genetic.md`` and the adjacent
-    ``parity-comparison.md`` for the actual preset measurements.
+Configuration:
+    Named presets are defined in ``presets.py``. See
+    ``docs/optimizer-profiles.md`` for user-facing choices and limitations.
 """
 
 import math

@@ -26,11 +26,9 @@ Loads and ordering:
     battery policies, by incremental cost then start time. Recommendations do not
     turn loads on or jointly schedule them; the first-listed load is not run first.
 
-Evidence:
-    The October 2026 benchmark found this the fastest full replay baseline, but
-    it missed the synthetic battery deadline. Ending at the same final energy as
-    another planner does not erase a missed earlier deadline. See
-    ``docs/planners/self-consumption.md`` and ``parity-comparison.md`` there.
+Configuration:
+    Named presets are defined in ``presets.py``. See
+    ``docs/optimizer-profiles.md`` for user-facing choices and limitations.
 """
 
 from .contract import PlannerCapabilities

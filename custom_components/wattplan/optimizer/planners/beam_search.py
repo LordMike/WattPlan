@@ -31,11 +31,9 @@ Loads and shared behavior:
     provide no feasibility/optimality guarantee. There is no previous battery
     frontier reuse and no native solver dependency.
 
-Evidence:
-    Beam-16 was second cheapest on both October 2026 one-battery HA fixtures;
-    beam-2 was faster but more costly. Those measurements support a useful
-    speed/cost trade-off on that setup, not a general multi-battery ranking.
-    See ``docs/planners/beam_search.md`` and ``parity-comparison.md`` there.
+Configuration:
+    Named presets are defined in ``presets.py``. See
+    ``docs/optimizer-profiles.md`` for user-facing choices and limitations.
 """
 
 from dataclasses import dataclass

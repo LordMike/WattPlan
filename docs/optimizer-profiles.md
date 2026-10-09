@@ -1,106 +1,155 @@
-# WattPlan Planner Presets and Battery Behavior
+# Planners and battery behavior
 
-General settings offers a **Planner preset** and a separate **Battery behavior** setting.
+Choose a **Planner preset** in WattPlan's General settings. A preset selects an
+algorithm and its search effort; **Battery behavior** separately controls how
+readily the planner cycles the battery. The default is **HiGHS — existing
+settings**, which retains your configured lookahead.
 
-## Planner presets
+## Choosing a preset
 
-Each preset selects an algorithm with fixed search settings. Existing setups and new
-setups default to **HiGHS — existing settings**, retaining the previous lookahead
-and battery behavior. Selecting another preset reloads the integration and rejects
-cached plans computed from the previous configuration.
+Presets of the same algorithm share its features. For example, `highs-16` and
+`highs-24` both use HiGHS, with different lookahead lengths. Larger search budgets
+allow more alternatives to be considered, but take more computation and do not
+guarantee greater savings. Forecast accuracy and your equipment also affect the
+result. Switching presets reloads the integration and replaces the previous plan.
 
-| Preset IDs | Search configuration |
+| Planner | Available presets |
 | --- | --- |
-| `highs` | Existing HiGHS settings; configurable lookahead in hours |
-| `highs-8`, `highs-16`, `highs-24` | HiGHS with 8, 16 or 24 lookahead **slots** |
-| `self-consumption` | Baseline battery self-consumption; observes targets without pursuing them |
-| `greedy-8`, `greedy-256` | Greedy search with 8 or 256 evaluations |
-| `local-search-3`, `local-search-96` | Local search with 3 or 96 evaluations |
-| `beam-2`, `beam-16` | Beam search retaining 2 or 16 alternatives |
-| `dynamic-programming-fast`, `dynamic-programming-strong` | Bounded dynamic programming with 8 or 32 retained states |
-| `charge-window-96` | Charge-window search with 96 evaluations |
-| `genetic-fast`, `genetic-standard` | Genetic search with 16 or 48 evaluations |
-| `cem-48` | Cross-entropy search with 48 evaluations |
+| HiGHS | `highs`, `highs-8`, `highs-16`, `highs-24` |
+| Self-consumption | `self-consumption` |
+| Greedy | `greedy-8`, `greedy-256` |
+| Local search | `local-search-3`, `local-search-96` |
+| Beam search | `beam-2`, `beam-16` |
+| Dynamic programming | `dynamic-programming-fast`, `dynamic-programming-strong` |
+| Charge-window search | `charge-window-96` |
+| Genetic search | `genetic-fast`, `genetic-standard` |
+| Cross-entropy search | `cem-48` |
 
-At 15-minute resolution, `highs-16` considers four hours and `highs-24` six
-hours. At 60-minute resolution they consider 16 and 24 hours. The complete
-configured planning horizon is still returned. The editable HiGHS lookahead
-field applies only to the `highs` existing-settings preset. Other algorithms
-have their own fixed guidance horizons and work budgets; increasing the
-HiGHS field does not tune them. Presets trade computation against search
-quality and do not guarantee the cheapest result for every forecast.
+The numbers in HiGHS preset names count **forecast slots**, not hours. At
+15-minute resolution, `highs-16` looks four hours ahead and `highs-24` six hours;
+at hourly resolution they look 16 and 24 hours ahead. WattPlan still returns a
+schedule for the complete planning horizon. The editable HiGHS lookahead setting
+applies only to `highs`. Other presets have fixed search settings.
 
-The catalog is defined in `optimizer/planners/presets.py`. Diagnostics and
-recorded planner reproductions include the preset, underlying algorithm and
-fixed options so comparisons can reproduce the selected configuration.
+### HiGHS
 
-All presets publish comfort schedules, advisory appliance options, projections
-and observed constraint problems. Self-consumption retains passive battery
-behavior; it reports battery target and reserve misses without planning grid
-charging to correct them. Other planners prioritize those requirements within
-their search limits. Discrete policy search can miss an exact target that the
-HiGHS continuous model reaches; an unmet target is reported as such.
+HiGHS models battery charging and discharging together, including variable power
+levels. This offers finer control within its model than planners that search
+only charge, preserve, and self-consumption actions. More batteries and longer
+lookahead can require substantially more computation. A limited solve can miss a
+target or fail to produce a plan, and the inverter's execution of the published
+actions can differ from the modeled power levels.
+
+### Self-consumption
+
+This is the simple, low-computation battery option: store permitted surplus solar
+and use stored energy for household demand above the configured reserve. It does
+not charge from the grid, save energy for expensive hours, or actively pursue
+battery targets. It reports missed targets and reserve shortfalls. Comfort
+scheduling and optional-appliance suggestions remain available.
+
+### Greedy
+
+Greedy searches for straightforward cheap-charge and later-use opportunities,
+addressing battery targets before price improvements. It accepts improvements
+in sequence, so an early choice can prevent a better combination later. Small
+budgets can leave little room for price optimization, especially with several
+batteries.
+
+### Local search
+
+Local search improves a complete schedule by moving individual actions or blocks
+of charging and use. It can refine opportunities that a simple greedy pass
+misses, but can settle on a schedule that needs several coordinated changes to
+improve further. Most changes affect one battery at a time, limiting its ability
+to coordinate several batteries.
+
+### Beam search
+
+Beam search keeps several possible schedules as it advances through the forecast.
+This can preserve an initially costly charging choice that pays off later. It
+fits one or a few batteries more naturally than large groups, where the number
+of joint actions grows quickly. A wider beam retains more alternatives at greater
+computational cost; discarded paths cannot be recovered later.
+
+### Dynamic programming
+
+This planner groups similar battery states to avoid exploring the same kinds of
+schedule repeatedly. It is suited to one or a few batteries; the number of state
+combinations grows with each battery. State grouping and search limits make this
+implementation approximate: they can discard a path needed for a better price
+or a later target. The strong preset searches more extensively than the fast
+preset without guaranteeing a better result.
+
+### Charge-window search
+
+Charge-window search moves and refines blocks of charging, preservation, and
+discharging. Its approach fits broad cheap and expensive periods, but may miss
+scattered opportunities or improvements requiring coordinated changes across
+batteries. With a small search budget, target charging can remain early even
+when a cheaper feasible period exists later.
+
+### Genetic search
+
+Genetic search combines and varies complete candidate schedules. It can explore
+combinations beyond a sequence of small improving changes, but only samples a
+limited part of the possibilities. Longer horizons and more batteries make that
+search harder. The presets use fixed random seeds so identical inputs can be
+compared consistently.
+
+### Cross-entropy search
+
+Cross-entropy search samples schedules and adjusts the likelihood of actions
+found in better candidates. It encourages coherent operating periods, but can
+miss dependencies between actions far apart in time or across batteries. Like
+genetic search, its preset uses a fixed random seed and a bounded search budget.
+
+## Shared features and limits
+
+All presets provide battery schedules, comfort schedules, optional-appliance
+suggestions, cost and energy projections, and warnings about unmet constraints.
+Feature support does not mean identical schedules or equally low costs.
+Optimizing planners try to meet battery targets and recover reserve shortfalls;
+self-consumption only observes them. Search limits and discrete battery actions
+can leave targets unmet, including exact targets that a variable-power model
+could reach. Check the [plan health](error-handling.md) when a deadline matters.
+
+Comfort loads are scheduled to meet their runtime constraints, with a bounded
+search for cheaper placement. The alternative planners fix that comfort demand
+before optimizing batteries; HiGHS can also reconsider its battery plan after
+moving comfort. None performs an unrestricted joint search over all load start
+times and battery actions.
+
+Optional appliances are recommendations, ranked independently by their extra
+electricity cost under the accepted battery plan. Equal-cost starts favor the
+earlier time. The first suggestion is not automatically run, and suggestions for
+different appliances do not reserve capacity against one another. Use your
+[automations](extras.md) to control devices and coordinate competing loads.
+
+Projected cost is grid import cost minus export revenue. It excludes battery
+wear estimates and optional appliances you have not scheduled. A cheaper plan
+may also finish with less stored energy: compare final battery levels and target
+misses alongside cost. The planners do not give leftover energy a separate
+end-of-plan credit, so using energy down to the configured reserve can be the
+cheapest forecast outcome.
 
 ## Battery behavior
 
-These profiles are integration presets. Internally, the optimizer operates on numeric controls such as throughput penalty, action deadband, and mode-switch penalty. The compatible optimizer API retains the historical field names `throughput_cost_per_kwh` and `mode_switch_cost`, but their values are heuristic objective weights, not monetary estimates of battery degradation or switching wear. They influence which plan the optimizer prefers; they are not added to WattPlan's tariff-only projected cost or savings fields. The integration translates the selected profile into those numeric values before calling the optimizer. The action deadband does not throttle grid charging: once selected, `grid_charge` requests the full feasible slot rate.
+| Profile | Intended behavior |
+| --- | --- |
+| Aggressive | Favors price opportunities and accepts more battery activity. |
+| Balanced | The default balance between savings and calmer battery operation. |
+| Conservative | Discourages marginal moves and frequent changes of operating mode. |
 
-The policy-search planners use the deadband to classify charge/idle/discharge
-for switching preferences; they do not suppress small physical flows. HiGHS
-also uses it in its continuous control constraints. The same behavior profile
-therefore expresses similar preferences without promising identical schedules.
-Self-consumption keeps its fixed battery policy regardless of these preferences.
+These are preferences, not guarantees about cycling or battery life. They do
+not change your minimum reserve or replace a charging target. Set the battery's
+minimum energy directly to retain more reserve, and use a
+[battery target](entities-and-services.md) for a required level by a deadline.
+Self-consumption keeps its fixed battery policy regardless of the profile.
 
-## When to use each profile
-
-### Aggressive
-
-Use this when savings are the main goal and you are comfortable with the battery moving more often.
-
-Typical behavior:
-- Takes more charging and discharging opportunities when they look economically useful
-- Is more willing to make smaller battery moves
-- Can produce more active battery schedules
-
-This is usually a good fit when:
-- You want WattPlan to chase price differences more actively
-- Battery wear is a lower concern than short-term economics
-- You prefer the battery to work harder when there is value in doing so
-
-### Balanced
-
-This is the default and should fit most homes.
-
-Typical behavior:
-- Still pursues useful savings opportunities
-- Avoids some of the smaller or twitchier battery moves
-- Keeps behavior calmer without making the battery overly passive
-
-This is usually a good fit when:
-- You want a practical middle ground
-- You care about savings and battery wear
-- You want stable behavior without giving up the main value of planning
-
-### Conservative
-
-Use this when you want the battery to behave more steadily and avoid marginal moves.
-
-Typical behavior:
-- Ignores more small or borderline battery actions
-- Produces calmer plans with less switching
-- Gives up some savings in exchange for less battery activity
-
-This is usually a good fit when:
-- Battery wear matters more than small extra savings
-- You dislike frequent small charge/discharge changes
-- You want simpler, quieter battery behavior
-
-## What profiles do not do
-
-Profiles do not raise the configured battery minimum.
-
-If you want more reserve left in a battery, set that battery's minimum energy directly in the battery configuration. Profiles only control how willing WattPlan is to move battery energy around.
-
-Profiles also do not replace battery targets. If you need a battery, such as an EV, to reach a specific level by a specific time, use a target. A common Home Assistant setup is an automation that sets a weekday morning target and adjusts it for holidays or other patterns.
-
-Projected cost and savings remain estimates of grid import cost minus export revenue under the configured tariffs. They do not claim savings after battery degradation, switching wear, or other ownership costs.
+The planners interpret these preferences according to their control models, so
+the same profile can produce different schedules. Selecting grid charging still
+requests the full feasible slot rate; Conservative is not a charging-power limit.
+Preference penalties are not added to projected electricity cost or savings.
+Use [historical cost tracking](historical-cost-tracking.md) to assess results on
+your own installation.

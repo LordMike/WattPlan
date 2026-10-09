@@ -38,7 +38,7 @@ After installing WattPlan via HACS, configure the following:
 - **PV Source**: Optional. Set up your solar production data source if applicable.
 - **Export Price Source**: Optional. If PV is configured, you can provide a value for exported power. Otherwise WattPlan treats export value as zero.
 - **Optional Loads**: Optional. Configure any additional loads you wish to manage, such as batteries or comfort loads.
-- **Planner Preset**: Choose a named algorithm configuration in General settings. Existing setups keep HiGHS and their current tuning; [planner presets and battery behavior](docs/optimizer-profiles.md) explain the choices.
+- **Planner Preset**: Choose a named algorithm configuration in General settings. Existing setups keep HiGHS and their current settings; [planner presets and battery behavior](docs/optimizer-profiles.md) explain the choices.
 - **Historical Cost Tracking**: Optional and disabled by default. See [Historical Cost Tracking](docs/historical-cost-tracking.md) for setup requirements and how to read the numbers.
 
 ## Tracking Performance
@@ -63,7 +63,7 @@ Use [Historical Cost Tracking](docs/historical-cost-tracking.md) to compare meas
 - [Entities and Services](docs/entities-and-services.md) - Planner, battery, load entities, services, and battery targets
 - [Planner Diagnostics and History](docs/planner-diagnostics.md) - Optional disk-backed plan recording, daily JSONL exports, and local replay
 - [Planner simulator](docs/simulator.md) - Compare planners against recorded actuals and simulated battery state
-- [Planner Presets and Battery Behavior](docs/optimizer-profiles.md) - Algorithm configurations and what Aggressive, Balanced, and Conservative mean
+- [Planners and Battery Behavior](docs/optimizer-profiles.md) - Available planners, their strengths and limits, and battery behavior profiles
 - [Error Handling](docs/error-handling.md) - Health states, degraded operation, and what `ok`, `degraded`, and `failed` mean
 - [Development](docs/development.md) - Local setup with `uv`, local test env caveats, optional symlink workflow, packaging
 - [Architecture](docs/architecture.md) - Code layout, runtime boundaries, planning flow

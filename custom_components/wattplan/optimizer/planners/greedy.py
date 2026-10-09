@@ -30,11 +30,9 @@ Loads and shared behavior:
     Battery modes are discrete, so exact targets can be missed even when a
     continuous solution exists. No previous battery search is reused.
 
-Evidence:
-    On the October 2026 one-battery recorded fixture, greedy-8 tied passive
-    self-consumption and greedy-256 cost more. More search is not a promise of
-    better realized savings. See ``docs/planners/greedy.md`` and the adjacent
-    ``parity-comparison.md`` for the measured trade-offs.
+Configuration:
+    Named presets are defined in ``presets.py``. See
+    ``docs/optimizer-profiles.md`` for user-facing choices and limitations.
 """
 
 from ..physics import EPSILON

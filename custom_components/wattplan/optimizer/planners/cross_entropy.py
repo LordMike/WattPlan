@@ -32,11 +32,9 @@ Loads and shared behavior:
     run first or jointly scheduled. Shared target-first scoring does not overcome
     all discrete-action or search-budget limits. Search restarts every request.
 
-Evidence:
-    The October 2026 cem-48 preset only modestly improved on the passive baseline
-    in the HA fixtures and trailed beam/DP. Earlier tuning showed seed sensitivity
-    rather than a reliable benefit from larger budgets. See
-    ``docs/planners/cross-entropy.md`` and ``parity-comparison.md`` there.
+Configuration:
+    Named presets are defined in ``presets.py``. See
+    ``docs/optimizer-profiles.md`` for user-facing choices and limitations.
 """
 
 import math

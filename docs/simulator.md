@@ -115,17 +115,16 @@ Example configuration:
 
 Use `highs`, `self-consumption`, `greedy`, `local-search`, `beam-search`,
 `dynamic-programming`, `charge-window`, `genetic`, `cross-entropy`, or an
-importable `module:factory`. The [comparison configuration](planners/comparison.json)
-runs all nine defaults; see the [experiment ledger](planners/comparison.md) for
-the earlier five-planner results. A factory
+importable `module:factory`. See the [planner guide](optimizer-profiles.md) for
+the algorithms' strengths and limitations. A factory
 receives `options` as keyword arguments and returns a callable accepting the
 existing `OptimizationParams`. This is trusted local Python code. The shared
 battery contract requires complete named schedules and finite projected levels.
 Capabilities and ignored preferences are explicit, and state is namespaced to
 the implementation/options/version. Optional recommendations remain advisory.
 Private factory state is recreated at equipment segment boundaries. Production
-HA selection remains unchanged. See [Implementing planners](planner-implementations.md)
-for the contract, shared forecast evaluator, search budgets and synthetic data generator.
+HA selection is controlled separately through General settings. See
+[Planner factories](optimizer-api.md#planner-factories) for the extension interface.
 
 Allowed `settings`: `lookahead_slots`, `rolling_window_slots`,
 `throughput_cost_per_kwh`, `action_deadband_kwh`, `mode_switch_cost`,

@@ -30,12 +30,9 @@ Loads and shared behavior:
     Discrete policies can miss continuous exact targets. Battery search starts
     afresh each request; the shared wrapper separately retains comfort continuity.
 
-Evidence:
-    The October 2026 local-search-96 preset improved on self-consumption with
-    recorded forecasts but cost more with causal forecasts. Local-search-3 tied
-    the passive baseline in both HA scenarios. These results do not establish a
-    specialty for one or many batteries. See ``docs/planners/local_search.md``
-    and the adjacent ``parity-comparison.md``.
+Configuration:
+    Named presets are defined in ``presets.py``. See
+    ``docs/optimizer-profiles.md`` for user-facing choices and limitations.
 """
 
 import math

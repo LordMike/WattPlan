@@ -26,13 +26,11 @@ Loads and ordering:
     with earlier starts breaking equal-cost ties. They are neither automatically
     run first nor jointly reserved against other optional appliances.
 
-Configuration and evidence:
-    ``highs`` retains request tuning and legacy state. ``highs-8/16/24`` use this
-    same factory with a fixed number of lookahead slots, not hours. The October
-    2026 parity benchmark found longer variants costly and recorded native solve
-    failures as well as whole-replay timeouts; it did not establish their exact
-    native failure causes. See ``docs/planners/parity-comparison.md`` and
-    ``docs/optimizer-api.md`` for measured results and model semantics.
+Configuration:
+    ``highs`` retains request settings and legacy state. ``highs-8/16/24``
+    use the same factory with fixed lookahead slots, not hours.
+    Named presets are defined in ``presets.py``. See
+    ``docs/optimizer-profiles.md`` for user-facing choices and limitations.
 """
 
 from .contract import PlannerCapabilities

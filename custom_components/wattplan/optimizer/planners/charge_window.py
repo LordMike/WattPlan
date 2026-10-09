@@ -32,11 +32,9 @@ Loads and shared behavior:
     coordinate several optional appliances. Discrete modes do not guarantee
     exact targets or global optimality. Battery search is stateless.
 
-Evidence:
-    The October 2026 charge-window-96 preset improved on passive HA operation but
-    did not beat beam/DP there. Its synthetic cost improved after the parity work
-    at equal terminal energy. See ``docs/planners/charge-window.md`` and the
-    adjacent ``parity-comparison.md``; no many-battery advantage was established.
+Configuration:
+    Named presets are defined in ``presets.py``. See
+    ``docs/optimizer-profiles.md`` for user-facing choices and limitations.
 """
 
 import math

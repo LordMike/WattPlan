@@ -55,8 +55,11 @@ Before a complete real recording is available, generate a reproducible full day
 with `python scripts/generate_simulation_data.py /tmp/wattplan-synthetic`.
 Run the same simulator against that directory. These records explicitly label
 synthetic forecasts/actuals and never fill gaps in real recordings implicitly.
-See [Implementing planners](planner-implementations.md) for independent module
-factories, common conformance tests and the parallel development boundary.
+See the [Optimizer API](optimizer-api.md#planner-factories) for planner factories
+and shared interfaces. Keep algorithm descriptions in their module docstrings
+and user-facing summaries in [Planners and battery behavior](optimizer-profiles.md).
+Store experiment notes, tuning ledgers, and benchmark reports in ignored `.tmp/`
+or outside the repository.
 
 Planner tests separate shared behavior from algorithm-specific regressions:
 
@@ -141,7 +144,7 @@ formatting failures, and uncached per-render catalog reads:
 
 ## Optimizer benchmarks
 
-Session 1 fixtures cover the asset shapes that should remain cheap as planner
+Benchmark fixtures cover the asset shapes that should remain cheap as planner
 behavior evolves:
 
 - `no-assets-no-pv`
@@ -154,11 +157,8 @@ behavior evolves:
 - `comfort-flexible`
 - `comfort-tight`
 
-The fixtures live in `tests/optimizer/benchmark_cases.py`. They are synthetic,
-and `comfort-tight` is explicitly labeled as a synthetic historical substitute
-because repository history contains no recoverable named slow-comfort input.
-The existing `low-pv` and `live-export` scenarios remain the recovered captured
-Home Assistant inputs.
+The fixtures live in `tests/optimizer/benchmark_cases.py`. Most are synthetic;
+`low-pv` and `live-export` use captured Home Assistant inputs.
 
 Measure one full-plan distribution and repeated five-tick prefix trajectories:
 
@@ -166,7 +166,7 @@ Measure one full-plan distribution and repeated five-tick prefix trajectories:
 python scripts/benchmark_optimizer.py --scenario mixed-batteries-pv --slots 96 --lookahead 48 --repeats 3 --serial
 ```
 
-Run the Session 1 matrix sequentially. Do not parallelize these processes; CPU
+Run the benchmark matrix sequentially. Do not parallelize these processes; CPU
 and thermal contention invalidates comparisons:
 
 ```bash
@@ -216,12 +216,7 @@ scenario, full/prefix cadence, and forecast workload.
 
 Production submits MIP starts only when the effective initial lookahead is at
 least 40 slots. Below that boundary, `--compare-mip-starts` intentionally
-compares two cold executions so the benchmark reflects deployed behavior. The
-historical forced warm/cold eligibility matrix and its exact pre-gate revision
-are recorded in the findings document.
-
-See [Optimizer benchmark findings](optimizer-benchmarks.md) for the recorded
-September 2026 measurements and rejected experiments.
+compares two cold executions so the benchmark reflects deployed behavior.
 
 ## Packaging
 
