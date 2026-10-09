@@ -20,6 +20,11 @@ Use new or empty output directories and the prepared Linux/WSL environment.
 See [simulator.md](../simulator.md) for real recordings, strict coverage and
 explicit single-slot repairs. Both datasets below passed without repairs.
 
+The [additional independent comparison](additional-comparison.md) reports the
+frozen dynamic-programming, charge-window, genetic and cross-entropy profiles
+against fresh beam/self-consumption controls on two 48-hour forecast scenarios.
+The historical tables below remain unchanged.
+
 ## Foundation and implementation gates
 
 Shared contracts, capabilities, namespaced state, forecast evaluation, neutral
