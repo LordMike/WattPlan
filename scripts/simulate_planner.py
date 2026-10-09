@@ -72,7 +72,7 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--config",
         type=Path,
-        help='JSON variants: planner is highs, self-consumption, or module:factory; settings and options are objects',
+        help='JSON variants: planner is a built-in name or module:factory; settings and options are objects',
     )
     parser.add_argument(
         "--output",

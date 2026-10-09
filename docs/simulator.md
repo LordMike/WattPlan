@@ -113,7 +113,9 @@ Example configuration:
 }
 ```
 
-Use `highs`, `self-consumption`, or an importable `module:factory`. A factory
+Use `highs`, `self-consumption`, `greedy`, `local-search`, `beam-search`, or an
+importable `module:factory`. The [comparison configuration](planners/comparison.json)
+runs all five; see the [experiment ledger](planners/comparison.md). A factory
 receives `options` as keyword arguments and returns a callable accepting the
 existing `OptimizationParams`. This is trusted local Python code. The shared
 battery contract requires complete named schedules and finite projected levels.

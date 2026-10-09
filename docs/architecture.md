@@ -314,7 +314,8 @@ The opaque state includes bounded clock/configuration metadata, published batter
 That boundary is the main extraction seam if the optimizer is ever split into its own package later.
 
 Offline implementations live in `optimizer/planners/`. A lazy factory boundary
-selects HiGHS, self-consumption, or a separate `module:factory`; HA retains its
+selects HiGHS, self-consumption, greedy, local search, beam search, or a separate
+`module:factory`; HA retains its
 existing `optimize()` entry point. The factory validates capabilities and owns
 the implementation/options/version state envelope while HiGHS retains its
 legacy state internally. Shared policy physics lives in `optimizer/physics.py`,

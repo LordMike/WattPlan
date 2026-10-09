@@ -1,8 +1,9 @@
 # Bounded local-search planner
 
 Factory: `custom_components.wattplan.optimizer.planners.local_search:factory`.
-This is an offline battery policy experiment. Production HiGHS and the planner
-registry are unchanged. There is no native solver dependency or fallback.
+This is an offline battery policy experiment, also available as `local-search`.
+Production planning continues to use HiGHS. There is no native solver dependency
+or fallback.
 
 ## Policy and objective
 
@@ -25,8 +26,9 @@ miss a feasible or better schedule; reporting a target does not guarantee it.
 capability diagnostics. The legacy HiGHS reference uses its own lookahead and
 scalar soft-target objective. Different horizons/objectives confound a direct
 algorithm-only attribution of realized cost differences. Comfort is rejected;
-optional recommendations are explicitly ignored. Throughput, switching and
-physical action deadband preferences participate in the shared evaluation.
+optional recommendations are explicitly ignored. Throughput and switching
+preferences participate in the shared evaluation. The action deadband classifies
+switching; it does not clip physical flows.
 
 Each call starts from current SoC, equipment, forecasts and targets. No request
 is mutated, no actuals enter planning, and state is `None`. There is no cached
@@ -91,15 +93,15 @@ and final SoC **house 0.7 / vehicle 5.0 kWh**. The vehicle deadline reached
 4.879936678869873 kWh. These equal realized outcomes do not mean the full forecast
 policies/objective scores were identical.
 
-| Report / variant | Evaluations minâ€“max / total | CPU total s | Wall total s | CPU / wall p95 s |
+| Report / variant | Evaluations min-max / total | CPU total s | Wall total s | CPU / wall p95 s |
 | --- | ---: | ---: | ---: | ---: |
-| initial: 96, seed 0 | 96â€“96 / 9216 | 8.762104 | 8.327988 | 0.104948 / 0.099758 |
-| initial: 384, seed 0 | 281â€“384 / 32386 | 30.374737 | 28.860494 | 0.369315 / 0.350740 |
-| initial: 768, seed 0 | 281â€“768 / 35902 | 33.268374 | 31.589623 | 0.573112 / 0.544614 |
-| initial: 384, seed 17 | 254â€“384 / 31692 | 29.654485 | 28.170044 | 0.372707 / 0.354355 |
-| final: 24, seed 0 | 24â€“24 / 2304 | 2.131516 | 2.021420 | 0.027380 / 0.025965 |
-| final: default 96, seed 0 | 96â€“96 / 9216 | 8.565920 | 8.133310 | 0.099445 / 0.094521 |
-| final: 96, seed 17 | 96â€“96 / 9216 | 8.557700 | 8.133786 | 0.098971 / 0.094062 |
+| initial: 96, seed 0 | 96-96 / 9216 | 8.762104 | 8.327988 | 0.104948 / 0.099758 |
+| initial: 384, seed 0 | 281-384 / 32386 | 30.374737 | 28.860494 | 0.369315 / 0.350740 |
+| initial: 768, seed 0 | 281-768 / 35902 | 33.268374 | 31.589623 | 0.573112 / 0.544614 |
+| initial: 384, seed 17 | 254-384 / 31692 | 29.654485 | 28.170044 | 0.372707 / 0.354355 |
+| final: 24, seed 0 | 24-24 / 2304 | 2.131516 | 2.021420 | 0.027380 / 0.025965 |
+| final: default 96, seed 0 | 96-96 / 9216 | 8.565920 | 8.133310 | 0.099445 / 0.094521 |
+| final: 96, seed 17 | 96-96 / 9216 | 8.557700 | 8.133786 | 0.098971 / 0.094062 |
 
 Initial code used a 384 default. Raising 96 to 384/768 increased runtime without
 improving realized outcomes here, so the final default is 96. The 24 budget also
@@ -125,7 +127,7 @@ Additional final-default runs:
 | HA seven-cycle smoke / `ha-smoke` | 0.2675115502574735 | 0.1361844893111111 / 0 | 0 | Battery 1.2923681180987658 | 0.684329 / 0.648011 | 0.103549 / 0.098050 | 672 |
 | Full synthetic stress day / `stress-default` | 2.419425778850165 | 20.521347952118703 / 13.556763382296753 | 1 | house 0.7 / vehicle 5.0 | 8.777049 / 8.339921 | 0.111121 / 0.105576 | 9216 |
 
-The HA data uses seven archived forecasts (Oct 8, Copenhagen 10:15â€“12:00),
+The HA data uses seven archived forecasts (Oct 8, Copenhagen 10:15-12:00),
 step-held meter actuals and archived first-slot tariffs, with provenance in
 `../ha-provenance.json`. Both reference planners had zero cost and final Battery
 1.141052018864198 kWh. Local search imported more and ended with more stored

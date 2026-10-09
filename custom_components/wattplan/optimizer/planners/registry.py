@@ -12,6 +12,9 @@ from .contract import PlannerCapabilities
 BUILTINS = {
     "highs": "custom_components.wattplan.optimizer.planners.highs:factory",
     "self-consumption": "custom_components.wattplan.optimizer.planners.self_consumption:factory",
+    "greedy": "custom_components.wattplan.optimizer.planners.greedy:factory",
+    "local-search": "custom_components.wattplan.optimizer.planners.local_search:factory",
+    "beam-search": "custom_components.wattplan.optimizer.planners.beam_search:factory",
 }
 ALIASES = {
     "custom_components.wattplan.optimizer.simulation.adapters:highs_factory": "highs",

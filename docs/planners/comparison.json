@@ -1,0 +1,9 @@
+{
+  "variants": [
+    {"name": "highs", "planner": "highs"},
+    {"name": "self-consumption", "planner": "self-consumption"},
+    {"name": "greedy", "planner": "greedy"},
+    {"name": "local-search", "planner": "local-search"},
+    {"name": "beam-search", "planner": "beam-search"}
+  ]
+}

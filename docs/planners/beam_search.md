@@ -74,8 +74,9 @@ mandatory tail and final evaluation; the simulator independently limits whole ca
 
 The economic preprocessing costs O(horizon * guidance_slots log guidance_slots),
 with target preprocessing O(horizon * batteries * curve_length). Search candidate
-storage is bounded by width times the capped joint count; retained linked prefixes
-cost O(horizon * width). A 672-slot horizon and many batteries remain bounded by
+storage is bounded by width times the capped joint count; each candidate contains
+per-battery state. Retained linked prefixes cost O(horizon * width * batteries).
+A 672-slot horizon and many batteries remain bounded by
 these explicit limits, with work linear in battery count per transition.
 
 The complete supplied horizon is always scored and returned. The separate

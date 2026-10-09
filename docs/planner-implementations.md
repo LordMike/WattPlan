@@ -2,8 +2,10 @@
 
 The production `optimize(OptimizationParams)` entry point continues to use the
 existing HiGHS planner and its legacy state. Experimental selection lives in the
-simulator. `highs` and `self-consumption` are built-in names; any importable
-`module:factory` works without registration. The old `simulation.adapters` factory
+simulator. Built-in names are `highs`, `self-consumption`, `greedy`, `local-search`,
+and `beam-search`; any importable `module:factory` works without registration.
+See the [comparison ledger](planners/comparison.md) and its runnable
+[configuration](planners/comparison.json). The old `simulation.adapters` factory
 paths remain aliases. Solver modules load only when HiGHS is called.
 
 ## Implement one module

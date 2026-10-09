@@ -39,7 +39,9 @@ def state_factory(*, marker=1):
     return plan
 
 
-@pytest.mark.parametrize("factory", ["highs", "self-consumption"])
+@pytest.mark.parametrize(
+    "factory", ["highs", "self-consumption", "greedy", "local-search", "beam-search"]
+)
 @pytest.mark.parametrize("params", conformance_params())
 def test_builtins_conform(factory, params):
     assert_conforms(factory, params)
@@ -195,6 +197,7 @@ def test_synthetic_generator_full_day_is_reproducible_and_not_perfect_forecast(
     assert dataset.events[0].params == original
 
 
-def test_lightweight_planner_import_does_not_load_highs():
-    code = "from custom_components.wattplan.optimizer.planners import create_planner; create_planner('self-consumption'); import sys; assert 'highspy' not in sys.modules; assert 'custom_components.wattplan.optimizer.mpc_power_optimizer' not in sys.modules"
+@pytest.mark.parametrize("factory", ["self-consumption", "greedy", "local-search", "beam-search"])
+def test_lightweight_planner_import_does_not_load_highs(factory):
+    code = f"from custom_components.wattplan.optimizer.planners import create_planner; create_planner({factory!r}); import sys; assert 'highspy' not in sys.modules; assert 'custom_components.wattplan.optimizer.mpc_power_optimizer' not in sys.modules"
     subprocess.run([sys.executable, "-c", code], check=True, timeout=30)
