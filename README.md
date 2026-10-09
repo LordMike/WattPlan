@@ -48,7 +48,7 @@ Use [Historical Cost Tracking](docs/historical-cost-tracking.md) to compare meas
 - Config-flow driven source setup for import price, export price, usage, and PV inputs
 - Battery, comfort-load, and optional-load planning
 - Planned actions are exposed as entities, so you can easily use the results to do automations
-- Optional historical cost tracking for comparing actual cost against simple reference scenarios
+- Optional historical cost tracking for comparing actual cost against simple reference scenarios, with energy balance diagnostics in W and Wh
 - Battery targets can be set and cleared through WattPlan services
 - Local Danish and English Plan Outlook sensors summarize accepted forecasts and planned recommendations without operating devices
 - Plan Outlook wording is rendered locally from checked-in Project Fluent catalogs; unsupported language preferences explicitly fall back to English

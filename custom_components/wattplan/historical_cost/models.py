@@ -18,6 +18,7 @@ SCENARIO_GRID_ONLY = "grid_only"
 SCENARIO_SELF_CONSUMPTION = "self_consumption"
 
 PERIOD_TODAY = "today"
+PERIOD_LAST_SLOT = "last_slot"
 PERIOD_THIS_MONTH = "this_month"
 
 FLAG_GAP = 1
@@ -36,6 +37,7 @@ DAY_ARRAY_KEYS: tuple[str, ...] = (
     "grid_export",
     "usage",
     "pv",
+    "energy_balance_discrepancy",
     "self_consumption_grid_import",
     "self_consumption_grid_export",
     "self_consumption_segment_id",
@@ -47,6 +49,7 @@ class HistoricalMetric(StrEnum):
     """Supported historical entity metric kinds."""
 
     COST = "cost"
+    ENERGY_BALANCE_DISCREPANCY = "energy_balance_discrepancy"
     SAVINGS_VS_GRID_ONLY = "savings_vs_grid_only"
     SAVINGS_VS_SELF_CONSUMPTION = "savings_vs_self_consumption"
 
@@ -78,6 +81,7 @@ class SlotRecord:
     self_consumption_grid_import: float | None = None
     self_consumption_grid_export: float | None = None
     self_consumption_segment_id: str | None = None
+    energy_balance_discrepancy: float | None = None
 
 
 def default_store_payload(

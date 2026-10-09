@@ -6,9 +6,12 @@ from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.const import UnitOfEnergy
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
 from ..const import (
+    CONF_HISTORICAL_BATTERY_CHARGE_SENSOR,
+    CONF_HISTORICAL_BATTERY_DISCHARGE_SENSOR,
     CONF_OUTLOOK_LANGUAGES,
     CONF_PLANNER_REPRODUCTION_RETENTION_DAYS,
     CONF_RECORD_PLANNER_REPRODUCTIONS,
@@ -77,10 +80,18 @@ from .state import SourceFlowState
 ENERGY_STATE_CLASSES = {"total", "total_increasing"}
 
 
-def _historical_energy_selector() -> selector.EntitySelector:
-    """Return selector for cumulative kWh sensors."""
+def _historical_energy_selector(hass: HomeAssistant) -> selector.EntitySelector:
+    """Offer cumulative kWh energy sensors using HA-compatible exclusions."""
+    excluded = [
+        state.entity_id
+        for state in hass.states.async_all("sensor")
+        if state.attributes.get("device_class") == SensorDeviceClass.ENERGY
+        and not validate_energy_sensor(hass, state.entity_id)
+    ]
     return selector.EntitySelector(
-        selector.EntitySelectorConfig(domain=["sensor"], device_class=["energy"])
+        selector.EntitySelectorConfig(
+            domain=["sensor"], device_class=["energy"], exclude_entities=excluded
+        )
     )
 
 
@@ -123,8 +134,11 @@ def _outlook_languages_schema(defaults: dict[str, Any]) -> vol.Schema:
     )
 
 
-def _historical_costs_settings_schema(defaults: dict[str, Any]) -> vol.Schema:
+def _historical_costs_settings_schema(
+    defaults: dict[str, Any], hass: HomeAssistant
+) -> vol.Schema:
     """Build the historical cost settings schema."""
+    energy_selector = _historical_energy_selector(hass)
 
     def optional_entity(field: str) -> vol.Optional:
         # Suggested values prefill the form without re-applying on empty input.
@@ -137,14 +151,16 @@ def _historical_costs_settings_schema(defaults: dict[str, Any]) -> vol.Schema:
         {
             optional_entity(
                 CONF_HISTORICAL_GRID_IMPORT_SENSOR
-            ): _historical_energy_selector(),
+            ): energy_selector,
             optional_entity(
                 CONF_HISTORICAL_GRID_EXPORT_SENSOR
-            ): _historical_energy_selector(),
+            ): energy_selector,
             optional_entity(
                 CONF_HISTORICAL_USAGE_SENSOR
-            ): _historical_energy_selector(),
-            optional_entity(CONF_HISTORICAL_PV_SENSOR): _historical_energy_selector(),
+            ): energy_selector,
+            optional_entity(CONF_HISTORICAL_PV_SENSOR): energy_selector,
+            optional_entity(CONF_HISTORICAL_BATTERY_CHARGE_SENSOR): energy_selector,
+            optional_entity(CONF_HISTORICAL_BATTERY_DISCHARGE_SENSOR): energy_selector,
             vol.Required(
                 CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION,
                 default=bool(
@@ -163,6 +179,8 @@ def _normalize_historical_options(user_input: dict[str, Any]) -> dict[str, Any]:
         CONF_HISTORICAL_GRID_EXPORT_SENSOR,
         CONF_HISTORICAL_USAGE_SENSOR,
         CONF_HISTORICAL_PV_SENSOR,
+        CONF_HISTORICAL_BATTERY_CHARGE_SENSOR,
+        CONF_HISTORICAL_BATTERY_DISCHARGE_SENSOR,
     ):
         if not normalized.get(key):
             normalized[key] = None
@@ -910,6 +928,8 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
                 CONF_HISTORICAL_GRID_EXPORT_SENSOR,
                 CONF_HISTORICAL_USAGE_SENSOR,
                 CONF_HISTORICAL_PV_SENSOR,
+                CONF_HISTORICAL_BATTERY_CHARGE_SENSOR,
+                CONF_HISTORICAL_BATTERY_DISCHARGE_SENSOR,
             ):
                 entity_id = normalized.get(key)
                 if entity_id and not validate_energy_sensor(self.hass, entity_id):
@@ -925,7 +945,7 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
         return self.async_show_form(
             step_id="historical_costs_settings",
             data_schema=self.add_suggested_values_to_schema(
-                _historical_costs_settings_schema(defaults),
+                _historical_costs_settings_schema(defaults, self.hass),
                 user_input or {},
             ),
             errors=errors,

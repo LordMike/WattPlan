@@ -1168,19 +1168,23 @@
       },
       "historical_costs_settings": {
         "title": "Historical cost settings",
-        "description": "Select the cumulative energy sensors WattPlan should sample for completed slots, then choose which reference scenarios to calculate.\n\nNeed help choosing sensors or reading the resulting numbers? [Open historical cost guide](https://github.com/LordMike/WattPlan/blob/main/docs/historical-cost-tracking.md).",
+        "description": "Select cumulative energy counters in kWh, then choose which reference scenarios to calculate. Sensors must have device class energy and state class total or total_increasing. Power sensors (W/kW), Wh totals and battery SoC or remaining capacity are not suitable.\n\nNeed help choosing sensors or reading the resulting numbers? [Open historical cost guide](https://github.com/LordMike/WattPlan/blob/main/docs/historical-cost-tracking.md).",
         "data": {
           "historical_grid_import_sensor": "Grid import cumulative kWh sensor",
           "historical_grid_export_sensor": "Grid export cumulative kWh sensor",
           "historical_usage_sensor": "Usage cumulative kWh sensor",
           "historical_pv_sensor": "PV cumulative kWh sensor",
+          "historical_battery_charge_sensor": "Battery charge cumulative kWh sensor",
+          "historical_battery_discharge_sensor": "Battery discharge cumulative kWh sensor",
           "historical_simulate_self_consumption": "Enable simple self-consumption simulation"
         },
         "data_description": {
-          "historical_grid_import_sensor": "Required when tracking is enabled. Select the total-increasing kWh sensor that measures energy imported from the grid.",
-          "historical_grid_export_sensor": "Optional. Select the total-increasing kWh sensor that measures energy exported to the grid. Leave empty when exported power should be treated as zero.",
-          "historical_usage_sensor": "Required when tracking is enabled. Select the total-increasing kWh sensor that measures total site usage or consumption.",
-          "historical_pv_sensor": "Optional. Select the total-increasing kWh sensor that measures PV production. Leave empty when PV is not part of this setup.",
+          "historical_grid_import_sensor": "Required. Cumulative energy imported from the grid, in kWh. Select an energy counter, not current import power in W or kW.",
+          "historical_grid_export_sensor": "Optional when the setup never exports. Cumulative energy exported to the grid, in kWh. Leaving this empty treats export as zero.",
+          "historical_usage_sensor": "Required. Cumulative household consumption, in kWh, excluding energy used to charge batteries. Select an energy counter, not current load power.",
+          "historical_pv_sensor": "Optional when the setup has no PV. Cumulative measured PV production, in kWh. Select an energy counter, not current PV power or a production forecast.",
+          "historical_battery_charge_sensor": "Cumulative energy entering the batteries, in kWh. Use the combined total for all batteries, not charging power (W/kW), SoC (%) or remaining battery energy. Optional for cost tracking; both battery meters are required for the energy balance diagnostic when a battery is configured.",
+          "historical_battery_discharge_sensor": "Cumulative energy leaving the batteries, in kWh. Use the combined total for all batteries, not discharging power (W/kW), SoC (%) or remaining battery energy. Optional for cost tracking; both battery meters are required for the energy balance diagnostic when a battery is configured.",
           "historical_simulate_self_consumption": "When enabled, WattPlan also calculates a simple self-consumption reference cost where PV serves usage first, PV surplus charges batteries, and batteries discharge before grid import.\n\nThis scenario can be used to compare measured cost against a common PV-first battery strategy with no scheduling or price awareness."
         }
       },
@@ -1373,7 +1377,7 @@
       "optimizer_lookahead_too_short_for_comfort": "Increase economic lookahead or reduce the minimum-on/minimum-off duration of the configured comfort loads. Each minimum duration must be shorter than the effective lookahead and plan coverage.",
       "planner_reproduction_whole_days": "Retention must be a whole number of days.",
       "required": "Please fill in this field.",
-      "invalid_energy_sensor": "Select an energy sensor in kWh that counts up over time.",
+      "invalid_energy_sensor": "Select a cumulative kWh energy sensor with state class total or total_increasing.",
       "energy_provider_none_available": "No loaded Home Assistant Energy solar forecast providers were found.",
       "energy_provider_unavailable": "The selected Energy solar forecast provider is unavailable or returned no forecast data."
     }

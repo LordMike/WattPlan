@@ -26,6 +26,8 @@ from custom_components.wattplan.const import (
     CONF_DURATION_MINUTES,
     CONF_ENERGY_KWH,
     CONF_EXPECTED_POWER_KW,
+    CONF_HISTORICAL_BATTERY_CHARGE_SENSOR,
+    CONF_HISTORICAL_BATTERY_DISCHARGE_SENSOR,
     CONF_HISTORICAL_COST_TRACKING_ENABLED,
     CONF_HISTORICAL_GRID_EXPORT_SENSOR,
     CONF_HISTORICAL_GRID_IMPORT_SENSOR,
@@ -585,6 +587,8 @@ async def test_options_flow_add_core_and_one_of_each_asset(
     }
     assert "historical_simulate_no_battery" not in serialized_fields
     assert CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION in serialized_fields
+    assert CONF_HISTORICAL_BATTERY_CHARGE_SENSOR in serialized_fields
+    assert CONF_HISTORICAL_BATTERY_DISCHARGE_SENSOR in serialized_fields
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         {
@@ -592,6 +596,8 @@ async def test_options_flow_add_core_and_one_of_each_asset(
             CONF_HISTORICAL_GRID_EXPORT_SENSOR: "sensor.grid_export_total",
             CONF_HISTORICAL_USAGE_SENSOR: "sensor.usage_total",
             CONF_HISTORICAL_PV_SENSOR: "sensor.pv_total",
+            CONF_HISTORICAL_BATTERY_CHARGE_SENSOR: "sensor.battery_charge_total",
+            CONF_HISTORICAL_BATTERY_DISCHARGE_SENSOR: "sensor.battery_discharge_total",
             CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION: False,
         },
     )
@@ -608,6 +614,8 @@ async def test_options_flow_add_core_and_one_of_each_asset(
     )
     assert "historical_simulate_no_battery" not in updated.options
     assert updated.options[CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION] is False
+    assert updated.options[CONF_HISTORICAL_BATTERY_CHARGE_SENSOR] == "sensor.battery_charge_total"
+    assert updated.options[CONF_HISTORICAL_BATTERY_DISCHARGE_SENSOR] == "sensor.battery_discharge_total"
     assert CONF_SOURCES in updated.data
 
     result = await hass.config_entries.subentries.async_init(

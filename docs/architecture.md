@@ -107,6 +107,12 @@ All paths are under `custom_components/wattplan/` unless noted.
 - Other state
   - `target_runtime.py`, `target_persistence.py`: battery targets.
   - `historical_cost/`: cost tracker, store, models and reference simulations.
+    Its signed energy balance diagnostic uses the existing slot timer plus
+    optional battery charge/discharge counters, with an independent persisted
+    sampling cursor. Diagnostic coverage and missing prices are independent;
+    diagnostic failures never add cost-tracking flags or alter reference SoC.
+    Signed slot differences are retained alongside cost facts and exposed as
+    slot-average W and daily Wh, without optimizer or cost corrections.
   - `planner_history.py`: optional JSONL planner reproductions.
   - `datetime_utils.py`, `utilities/`: shared helpers.
 - `optimizer/`

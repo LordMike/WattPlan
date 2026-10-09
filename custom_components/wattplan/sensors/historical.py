@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory, UnitOfEnergy, UnitOfPower
 from homeassistant.core import CALLBACK_TYPE
 
 from ..historical_cost.models import (
     HistoricalMetric,
     HistoricalSensorDescription,
+    PERIOD_LAST_SLOT,
     PERIOD_THIS_MONTH,
     PERIOD_TODAY,
     SCENARIO_ACTUAL,
@@ -21,6 +28,22 @@ from ..historical_cost.tracker import HistoricalCostTracker
 from .common import entry_device_info
 
 HISTORICAL_SENSOR_DESCRIPTIONS: tuple[HistoricalSensorDescription, ...] = (
+    HistoricalSensorDescription(
+        key="energy_balance_discrepancy",
+        metric=HistoricalMetric.ENERGY_BALANCE_DISCREPANCY,
+        period=PERIOD_LAST_SLOT,
+        scenario=None,
+        name="Energy Balance Discrepancy",
+        enabled_default=True,
+    ),
+    HistoricalSensorDescription(
+        key="energy_balance_discrepancy_today",
+        metric=HistoricalMetric.ENERGY_BALANCE_DISCREPANCY,
+        period=PERIOD_TODAY,
+        scenario=None,
+        name="Energy Balance Discrepancy Today",
+        enabled_default=True,
+    ),
     HistoricalSensorDescription(
         key="historical_actual_cost_today",
         metric=HistoricalMetric.COST,
@@ -127,6 +150,19 @@ class HistoricalCostSensor(SensorEntity):
         self.internal_integration_suggested_object_id = self._attr_object_id
         self._attr_unique_id = f"{config_entry.entry_id}:historical:{description.key}"
         self._attr_native_unit_of_measurement = tracker.hass.config.currency
+        if description.metric is HistoricalMetric.ENERGY_BALANCE_DISCREPANCY:
+            power = description.period == PERIOD_LAST_SLOT
+            self._attr_entity_category = EntityCategory.DIAGNOSTIC
+            self._attr_device_class = (
+                SensorDeviceClass.POWER if power else SensorDeviceClass.ENERGY
+            )
+            self._attr_native_unit_of_measurement = (
+                UnitOfPower.WATT if power else UnitOfEnergy.WATT_HOUR
+            )
+            self._attr_state_class = (
+                SensorStateClass.MEASUREMENT if power else SensorStateClass.TOTAL
+            )
+            self._attr_suggested_display_precision = 1
         self._attr_entity_registry_enabled_default = description.enabled_default
         self._attr_device_info = entry_device_info(config_entry)
         self._remove_listener: CALLBACK_TYPE | None = None
@@ -155,7 +191,27 @@ class HistoricalCostSensor(SensorEntity):
         """Return the aggregate value."""
         if not self._scenario_enabled():
             return None
-        return self._summary().value
+        value = self._summary().value
+        if (
+            value is not None
+            and self._description.metric is HistoricalMetric.ENERGY_BALANCE_DISCREPANCY
+        ):
+            value *= 1000
+            if self._description.period == PERIOD_LAST_SLOT:
+                value *= 60 / self._tracker.slot_minutes
+        return value
+
+    @property
+    def last_reset(self) -> datetime | None:
+        """Identify the daily reset of the signed energy total for statistics."""
+        if (
+            self._description.metric is HistoricalMetric.ENERGY_BALANCE_DISCREPANCY
+            and self._description.period == PERIOD_TODAY
+        ):
+            summary = self._summary()
+            if summary.value is not None:
+                return datetime.fromisoformat(summary.period_start)
+        return None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -170,6 +226,18 @@ class HistoricalCostSensor(SensorEntity):
             "period_end": summary.period_end,
             "scenario": summary.scenario,
         }
+        if self._description.metric is HistoricalMetric.ENERGY_BALANCE_DISCREPANCY:
+            valid_slots = summary.slots - summary.missing_slots
+            hours = valid_slots * self._tracker.slot_minutes / 60
+            attributes.update(self._tracker.energy_balance_attributes())
+            attributes.update({
+                "valid_slots": valid_slots,
+                "covered_hours": hours,
+                "average_discrepancy_w": (
+                    round(summary.value * 1000 / hours, 1)
+                    if summary.value is not None and hours else None
+                ),
+            })
         if self._is_self_consumption_sensor():
             attributes["reference_segment_ids"] = list(summary.reference_segment_ids)
             attributes["reference_segment_count"] = len(summary.reference_segment_ids)
@@ -185,6 +253,8 @@ class HistoricalCostSensor(SensorEntity):
 
     def _scenario_enabled(self) -> bool:
         description = self._description
+        if description.metric is HistoricalMetric.ENERGY_BALANCE_DISCREPANCY:
+            return not self._tracker.energy_balance_attributes()["missing_battery_meters"]
         if description.metric is HistoricalMetric.SAVINGS_VS_GRID_ONLY:
             return self._tracker.scenario_enabled(SCENARIO_GRID_ONLY)
         if description.metric is HistoricalMetric.SAVINGS_VS_SELF_CONSUMPTION:

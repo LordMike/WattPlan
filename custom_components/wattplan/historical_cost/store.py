@@ -21,6 +21,7 @@ from .models import (
     FLAG_MISSING_METER,
     FLAG_SELF_CONSUMPTION_UNAVAILABLE,
     HistoricalMetric,
+    PERIOD_LAST_SLOT,
     PERIOD_THIS_MONTH,
     PERIOD_TODAY,
     PRICE_CACHE_MARGIN,
@@ -375,6 +376,12 @@ class HistoricalCostStore:
             day_payload = days.setdefault(local_day, empty_day_payload())
             for key in DAY_ARRAY_KEYS:
                 day_payload.setdefault(key, [])
+            # Older days have no diagnostic values; never shift new values
+            # into earlier slots when extending one of those days.
+            balance = day_payload["energy_balance_discrepancy"]
+            while len(balance) < len(day_payload["starts"]):
+                balance.append(None)
+            balance.append(record.energy_balance_discrepancy)
             day_payload["starts"].append(_utc_iso(record.start))
             day_payload["import_price"].append(record.import_price)
             day_payload["export_price"].append(record.export_price)
@@ -492,7 +499,11 @@ class HistoricalCostStore:
         except OverflowError:
             summed = math.inf
         total = round(summed, 4) if values and math.isfinite(summed) else None
-        if total is None and not records and self._tracking_started_before(period_end):
+        if (
+            total is None and not records
+            and metric is not HistoricalMetric.ENERGY_BALANCE_DISCREPANCY
+            and self._tracking_started_before(period_end)
+        ):
             # No slot of this period has completed yet (for example right after
             # midnight or the first of the month); report zero, not unavailable.
             total = 0.0
@@ -530,6 +541,8 @@ class HistoricalCostStore:
         metric: HistoricalMetric,
         scenario: str | None,
     ) -> float | None:
+        if metric is HistoricalMetric.ENERGY_BALANCE_DISCREPANCY:
+            return None if record.flags & FLAG_GAP else record.energy_balance_discrepancy
         if metric is HistoricalMetric.COST:
             if scenario is None:
                 return None
@@ -642,6 +655,9 @@ class HistoricalCostStore:
             grid_export=_optional_float_at(day_payload, "grid_export", index),
             usage=_optional_float_at(day_payload, "usage", index),
             pv=_optional_float_at(day_payload, "pv", index),
+            energy_balance_discrepancy=_optional_float_at(
+                day_payload, "energy_balance_discrepancy", index
+            ),
             self_consumption_grid_import=_optional_float_at(
                 day_payload,
                 "self_consumption_grid_import",
@@ -662,6 +678,14 @@ class HistoricalCostStore:
     def _period_bounds(
         self, period: str, now: datetime
     ) -> tuple[datetime, datetime]:
+        if period == PERIOD_LAST_SLOT:
+            interval = timedelta(minutes=self.slot_minutes)
+            seconds = int(now.astimezone(UTC).timestamp())
+            end = datetime.fromtimestamp(
+                (seconds // (self.slot_minutes * 60)) * self.slot_minutes * 60,
+                tz=UTC,
+            )
+            return end - interval, end
         local_now = dt_util.as_local(now)
         if period == PERIOD_THIS_MONTH:
             local_start = local_now.replace(
@@ -839,6 +863,7 @@ def _sanitize_record(
         "grid_export": _finite_float(record.grid_export),
         "usage": _finite_float(record.usage),
         "pv": _finite_float(record.pv),
+        "energy_balance_discrepancy": _finite_float(record.energy_balance_discrepancy),
         "self_consumption_grid_import": _finite_float(
             record.self_consumption_grid_import
         ),
@@ -885,6 +910,11 @@ def _sanitize_record(
 def _sanitize_day_payload(day_payload: dict[str, Any]) -> None:
     """Sanitize persisted slot arrays without dropping historical records."""
     starts = day_payload["starts"]
+    balance = day_payload["energy_balance_discrepancy"]
+    while len(balance) < len(starts):
+        balance.append(None)
+    for index, raw in enumerate(balance):
+        balance[index] = _finite_float(raw)
     flags = day_payload["flags"]
     while len(flags) < len(starts):
         flags.append(0)

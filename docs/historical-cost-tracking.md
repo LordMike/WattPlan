@@ -21,10 +21,76 @@ Required historical meters:
 | Usage/load | Yes | Measures total household consumption for the reference scenarios. |
 | Grid export | No | Measures exported energy. If not configured, export is treated as zero. |
 | PV production | No | Measures solar production for reference scenarios. If not configured, PV is treated as zero. |
+| Battery charge | Diagnostic only | Total energy entering all batteries. Required together with battery discharge for the energy balance diagnostic on battery setups. |
+| Battery discharge | Diagnostic only | Total energy leaving all batteries. Required together with battery charge for the energy balance diagnostic on battery setups. |
 
-Use sensors with a steadily increasing `kWh` total, which in Home Assistant means device class `energy` and state class `total` or `total_increasing`. The settings form only offers `energy` sensors and, when you submit, checks that the selected entity is a `sensor` whose device class (if it has one) is `energy` and whose unit (if it has one) is `kWh`. It does not check the state class, so a sensor with the wrong or no state class is accepted but can produce wrong numbers; WattPlan's auto-suggestion only proposes sensors that have state class `total` or `total_increasing`. Do not use instant `kW` power sensors, current battery level sensors, or forecast-only sensors as historical meters.
+Use cumulative `kWh` counters with device class `energy` and state class `total` or `total_increasing`. All historical meter selectors filter to energy sensors and exclude currently loaded sensors with another unit or a non-cumulative state class. Form submission validates these same requirements when metadata is available. A temporarily unavailable sensor can still be selected if it retains valid metadata; validation of an entity that has not loaded yet is deferred. The diagnostic checks metadata again when sampling and reports unavailable for invalid inputs. Do not select power sensors in W/kW, energy totals in Wh, battery SoC, remaining battery capacity, or forecast-only values. Sensor metadata cannot establish the physical meaning of a mislabeled source, so select the correct cumulative counter for each direction.
 
 Historical tracking also needs prices for each completed slot. WattPlan keeps the normalized import/export prices from successful planner runs and falls back to live price source reads when needed. When the export price source was unavailable during a planner run, the zeros the planner substitutes are not kept as prices; the slot then uses a live export price read, or is marked as missing an export price, rather than booking zero export revenue.
+
+## Energy Balance Diagnostics
+
+When historical tracking is enabled, WattPlan also creates two diagnostic sensors:
+
+| Sensor | Unit | Meaning |
+| --- | --- | --- |
+| `sensor.<setup_slug>_energy_balance_discrepancy` | W | Signed average discrepancy over the latest completed planner slot, not instantaneous power. |
+| `sensor.<setup_slug>_energy_balance_discrepancy_today` | Wh | Signed sum of valid completed slots since local midnight. |
+
+The balance uses measured cumulative energy differences:
+
+```text
+discrepancy = grid import + PV + battery discharge
+              - grid export - household usage - battery charge
+```
+
+Positive values mean measured supply exceeds accounted consumption or storage.
+Negative values are retained: counter timing differences can create a positive
+difference followed by a negative one. For a 15-minute slot, a 20 Wh difference
+corresponds to 80 W. The daily sensor exposes `average_discrepancy_w`,
+`covered_hours`, `valid_slots`, and `missing_slots` so a partial day's total is
+not mistaken for complete coverage. Both sensors support Home Assistant history
+and long-term statistics; the signed daily total uses an explicit local-day
+reset.
+
+Select the battery meters in **Configure → Historical costs → Settings**.
+Use totals covering all batteries in the setup; WattPlan does not infer
+battery inactivity from SoC. If a battery is configured, both meters are
+required for these diagnostics. Selecting either meter also requires the
+other, even without a WattPlan battery asset. With no batteries and neither
+meter selected, battery flows are zero. These meters do not change cost or
+reference calculations.
+
+Grid export and PV follow the existing historical configuration: an omitted
+meter is treated as zero. Only omit them when those flows are absent. Use a
+household usage meter that excludes battery charging, and account for every
+energy source or storage device in the selected totals.
+
+Diagnostic sampling has its own persisted cursor. It accepts consecutive
+slot-boundary readings within ten seconds of the boundary. A partial initial
+window, skipped or late boundary, missing/non-finite reading, incompatible meter metadata, changed meter
+configuration, or counter reset makes the affected diagnostic unavailable.
+After a missing reading, the recovery window is also omitted rather than
+mixing a multi-slot counter increase with other single-slot readings. Cost
+tracking retains its existing handling of those situations. Missing tariff
+prices do not invalidate an otherwise valid energy balance.
+
+Daily Wh totals include only valid slots. The W sensor becomes unavailable
+when the latest slot is invalid rather than repeating an older good value.
+Daily totals become unavailable when the day has no valid slots. Older stored
+slots have unknown discrepancy; upgrading does not invent historical values.
+
+This reports a **measured energy balance difference**, not proven inverter
+consumption or an estimate of the deliberate grid-import floor. It may include
+conversion losses, AC/DC measurement boundaries, omitted flows, meter bias,
+rounding, and asynchronous counter updates. In particular, battery DC energy
+cannot be compared with AC energy as though conversion were lossless. Usage
+calculated from the same supply meters cannot independently reveal missing
+consumption. Longer observation periods help cancel transient timing errors
+but cannot resolve meter-definition differences.
+
+No discrepancy is applied to forecasts, optimizer inputs, actual cost, or
+reference costs.
 
 ## How The Numbers Update
 

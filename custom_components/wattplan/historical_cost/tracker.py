@@ -19,6 +19,8 @@ from ..const import (
     CONF_CAPACITY_KWH,
     CONF_CHARGE_EFFICIENCY,
     CONF_DISCHARGE_EFFICIENCY,
+    CONF_HISTORICAL_BATTERY_CHARGE_SENSOR,
+    CONF_HISTORICAL_BATTERY_DISCHARGE_SENSOR,
     CONF_HISTORICAL_GRID_EXPORT_SENSOR,
     CONF_HISTORICAL_GRID_IMPORT_SENSOR,
     CONF_HISTORICAL_PV_SENSOR,
@@ -37,6 +39,7 @@ from ..const import (
 )
 from ..source_pipeline import build_source_value_provider
 from ..source_types import SourceProvider, SourceProviderError, SourceWindow
+from .energy_balance import energy_balance_delta
 from .models import (
     FLAG_GAP,
     FLAG_METER_RESET,
@@ -96,6 +99,14 @@ class HistoricalCostTracker:
     async def async_start(self) -> None:
         """Load state, seed cursors, and start scheduling."""
         await self.store.async_load()
+        cursor = self.store.data.get("energy_balance_cursor")
+        if (
+            not isinstance(cursor, dict)
+            or cursor.get("config") != self._energy_balance_config()
+        ):
+            meters, _flags = self._read_meter_values()
+            self._sample_energy_balance(datetime.now(tz=UTC), meters)
+            self.store.mark_dirty()
         if self._meter_config() != self.store.data.get("meter_config"):
             await self._async_seed(
                 datetime.now(tz=UTC), simulation_reason="meter_configuration_changed"
@@ -268,6 +279,9 @@ class HistoricalCostTracker:
             return
 
         current_meters, meter_flags = self._read_meter_values()
+        discrepancy = self._sample_energy_balance(
+            now, current_meters, completed_slot=completed_slot
+        )
         previous_meters = self.store.last_meter_values()
         stale_slots = self.store.meter_stale_slots()
         deltas, delta_flags = self._meter_deltas(
@@ -296,6 +310,7 @@ class HistoricalCostTracker:
 
         record = SlotRecord(
             start=completed_slot,
+            energy_balance_discrepancy=discrepancy,
             import_price=import_price,
             export_price=export_price,
             grid_import=deltas.get("grid_import"),
@@ -374,6 +389,7 @@ class HistoricalCostTracker:
     ) -> None:
         """Seed meter cursors and self-consumption SoC without creating a slot."""
         meters, _flags = self._read_meter_values()
+        self._sample_energy_balance(now, meters)
         seed_slot = processed_slot or self._floor_to_slot(now)
         if self.scenario_enabled("self_consumption"):
             boundary = (
@@ -728,6 +744,93 @@ class HistoricalCostTracker:
             "pv": self._option_entity(CONF_HISTORICAL_PV_SENSOR),
         }
 
+    def _energy_balance_config(self) -> dict[str, Any]:
+        """Describe the independent diagnostic meter boundary."""
+        charge = self._option_entity(CONF_HISTORICAL_BATTERY_CHARGE_SENSOR)
+        discharge = self._option_entity(CONF_HISTORICAL_BATTERY_DISCHARGE_SENSOR)
+        battery_required = bool(charge or discharge) or any(
+            subentry.subentry_type == SUBENTRY_TYPE_BATTERY
+            for subentry in self.entry.subentries.values()
+        )
+        return {
+            **self._meter_config(),
+            "battery_charge": charge,
+            "battery_discharge": discharge,
+            "battery_meters_required": battery_required,
+        }
+
+    def energy_balance_attributes(self) -> dict[str, Any]:
+        """Describe coverage requirements without attributing the discrepancy."""
+        config = self._energy_balance_config()
+        missing = [
+            key for key in ("battery_charge", "battery_discharge")
+            if config["battery_meters_required"] and not config[key]
+        ]
+        return {
+            "meter_entities": {
+                key: value for key, value in config.items()
+                if key != "battery_meters_required"
+            },
+            "missing_battery_meters": missing,
+            "configuration_status": (
+                "battery_meters_missing" if missing else "configured"
+            ),
+            "balance_equation": (
+                "grid_import + pv + battery_discharge"
+                " - grid_export - usage - battery_charge"
+            ),
+        }
+
+    def _sample_energy_balance(
+        self,
+        now: datetime,
+        meters: dict[str, float | None],
+        *,
+        completed_slot: datetime | None = None,
+    ) -> float | None:
+        """Sample a common meter window without changing cost meter cursors.
+
+        Missing/reset counters discard the diagnostic window. In particular,
+        a recovered counter must not contribute a multi-slot delta beside
+        single-slot deltas from the other meters.
+        """
+        config = self._energy_balance_config()
+        current = dict(meters)
+        for key in ("grid_import", "grid_export", "usage", "pv"):
+            entity_id = config[key]
+            if entity_id and not validate_energy_sensor(self.hass, entity_id):
+                current[key] = None
+        for key in ("battery_charge", "battery_discharge"):
+            entity_id = config[key]
+            if entity_id:
+                current[key] = (
+                    self._float_state(entity_id)
+                    if validate_energy_sensor(self.hass, entity_id) else None
+                )
+            else:
+                current[key] = None if config["battery_meters_required"] else 0.0
+        previous = self.store.data.get("energy_balance_cursor")
+        boundary = self._floor_to_slot(now)
+        # Allow the normal five-second sampling offset and small timer jitter.
+        aligned = now - boundary <= SCHEDULE_OFFSET + timedelta(seconds=5)
+        self.store.data["energy_balance_cursor"] = {
+            "config": config,
+            "boundary": boundary.isoformat(),
+            "aligned": aligned,
+            "meters": current,
+        }
+        if (
+            completed_slot is None
+            or not isinstance(previous, dict)
+            or previous.get("config") != config
+            or previous.get("boundary") != completed_slot.isoformat()
+            or previous.get("aligned") is not True
+            or not aligned
+            or not isinstance(previous.get("meters"), dict)
+        ):
+            return None
+        return energy_balance_delta(previous["meters"], current)
+
     def _option_entity(self, key: str) -> str | None:
         value = self.entry.options.get(key)
         if not value:
@@ -771,8 +874,8 @@ def validate_energy_sensor(hass: HomeAssistant, entity_id: str | None) -> bool:
     state = hass.states.get(str(entity_id))
     if state is None:
         return True
-    device_class = state.attributes.get("device_class")
-    if device_class not in {None, SensorDeviceClass.ENERGY, "energy"}:
+    if state.attributes.get("device_class") != SensorDeviceClass.ENERGY:
         return False
-    unit = state.attributes.get("unit_of_measurement")
-    return unit in {None, UnitOfEnergy.KILO_WATT_HOUR, "kWh"}
+    if state.attributes.get("unit_of_measurement") != UnitOfEnergy.KILO_WATT_HOUR:
+        return False
+    return state.attributes.get("state_class") in {"total", "total_increasing"}
