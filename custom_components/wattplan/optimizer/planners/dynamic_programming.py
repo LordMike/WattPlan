@@ -1,4 +1,42 @@
-"""State-aggregated dynamic programming over real executable battery trajectories."""
+"""Approximate dynamic programming with a bounded frontier of battery states.
+
+Implementation and differences:
+    Expand joint policy actions slot by slot and group states by energy bins and
+    previous physical operating modes. Keep one representative per cell, ranked
+    first by target miss and then economic objective; prune the frontier using
+    future-demand value and target bounds. Unlike beam search, nearby energy
+    states can merge. Bins choose representatives only: carried energy and every
+    physical transition remain unrounded. The winning path is fully replayed.
+
+Properties and ordering biases:
+    State merging avoids repeatedly exploring similar energy histories, making
+    this a natural fit for one or a few batteries with manageable joint state
+    dimensions. It is approximate, not an exact Bellman optimality guarantee:
+    merging can discard a slightly fuller state needed for a later deadline,
+    while frontier and action limits can discard other useful paths.
+    Both joint state dimensions and up to 3**B policy combinations grow
+    with battery count. Coordinated actions and single-battery changes precede
+    the remaining combinations; an action cap can favor those patterns and early
+    battery indices. Below-reserve batteries get an initial recovery action.
+    Forecast value is a pruning estimate, not a terminal-energy credit in costs.
+    On budget exhaustion, only one prefix receives a heuristic tail; its replay
+    and shared reporting still run outside the expansion budget.
+
+Loads and shared behavior:
+    ``shared`` schedules comfort first using self-consumption cost estimates.
+    Comfort is then fixed demand for this battery-state recursion. Optional
+    appliances are independently ranked afterward under the accepted policies,
+    with earlier starts breaking cost ties; they are not joint DP decisions or
+    automatically executed loads. Discrete actions and bounded search can miss
+    targets that continuous HiGHS reaches. The frontier is rebuilt each request.
+
+Evidence:
+    The strong preset was cheapest on both October 2026 one-battery HA fixtures.
+    It retained much more house-battery energy in the two-battery synthetic case,
+    making raw cross-planner cost comparisons there unequal. This establishes
+    neither multi-battery superiority nor a universal best preset. See
+    ``docs/planners/dynamic-programming.md`` and ``parity-comparison.md`` there.
+"""
 
 from dataclasses import dataclass
 from itertools import product

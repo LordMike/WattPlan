@@ -1,4 +1,42 @@
-"""Bounded forward search of executable policies, using forecast-only guidance."""
+"""Search battery policies forward in time, retaining a bounded beam of prefixes.
+
+Implementation and differences:
+    Expand joint battery actions one slot at a time using shared physical
+    transitions. Merge only exactly equal energy/previous-mode states, then keep
+    the best ``beam_width`` prefixes according to accrued score plus forecast
+    demand value and optimistic target reachability. Unlike DP, nearby energy
+    levels are not binned together. Surviving complete schedules are independently
+    replayed by the common evaluator before the best one is returned.
+
+Properties and ordering biases:
+    Keeping several prefixes can preserve an initially expensive charging choice
+    that greedy improvement would discard. It is structurally well suited to one
+    or a few batteries, where joint action enumeration is small; with B grid-
+    chargeable batteries the uncapped action count is 3**B per prefix and slot.
+    ``max_joint_actions`` tries coordinated actions and individual battery changes
+    before the Cartesian remainder, so truncation favors those patterns and
+    earlier battery indices. Reserve-recovery actions receive priority.
+    Beam pruning can discard the only feasible or ultimately cheapest path.
+    Guidance pools future demand and cannot perfectly value competing batteries.
+    Once the expansion/time budget expires, a single chosen prefix is completed
+    with heuristic tail actions, rather than searching the remaining slots.
+    Tail completion, final replay and shared reporting still take time afterward.
+
+Loads and shared behavior:
+    ``shared`` fixes comfort consumption before beam expansion, using a bounded
+    self-consumption placement estimate. Optional appliances are independently
+    ranked after the battery plan, by incremental cost then start time; they are
+    advisory and do not participate in the beam's joint action space.
+    Target miss ranks before economic cost, but limited search and discrete modes
+    provide no feasibility/optimality guarantee. There is no previous battery
+    frontier reuse and no native solver dependency.
+
+Evidence:
+    Beam-16 was second cheapest on both October 2026 one-battery HA fixtures;
+    beam-2 was faster but more costly. Those measurements support a useful
+    speed/cost trade-off on that setup, not a general multi-battery ranking.
+    See ``docs/planners/beam_search.md`` and ``parity-comparison.md`` there.
+"""
 
 from dataclasses import dataclass
 from itertools import product

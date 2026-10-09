@@ -1,6 +1,42 @@
-"""Bounded coarse-to-fine search of charge, preserve and release windows.
+"""Search complete battery schedules through coarse-to-fine operating windows.
 
-Original implementation: no native solver or external planner source is used.
+Implementation and differences:
+    Begin with a physically constructed deadline/reserve policy and tariff seeds.
+    Search deadline-anchored intervals, then progressively smaller cheap-charge,
+    preservation and valuable-discharge windows. Paired moves change charge,
+    intervening preservation and later release together, so an empty-battery
+    plateau does not require accepting a worse intermediate schedule. Boundaries
+    of existing runs are also refined. This uses neither a native solver nor an
+    exhaustive list of all possible intervals; every candidate gets full replay.
+
+Properties and ordering biases:
+    A natural fit for broad tariff valleys/peaks and coherent operating runs.
+    Scales reach single slots, but only a bounded set of separated, ranked
+    windows is visited, so fragmented opportunities can be missed. Search moves
+    generally change one battery; joint multi-battery improvements may need
+    intermediate moves that the greedy acceptance rule rejects.
+    The initial target construction charges as soon as needed, not necessarily
+    at the cheapest time. Small budgets can leave that conservative seed intact.
+    Deadline intervals are searched before tariff-only intervals, in battery
+    input order. Tariff refinement rotates battery order between scales and
+    reserves work for finer scales, reducing but not eliminating ordering bias.
+    A slot-battery work cap reduces evaluations on large requests. Optional time
+    limits are cooperative; initial replay and final reporting are mandatory.
+
+Loads and shared behavior:
+    ``shared`` places comfort before this search, using self-consumption replay;
+    comfort start times are not charge-window decision variables. ``evaluation``
+    supplies physics and target-first scoring, and ``reporting`` ranks each
+    optional appliance afterward under the selected policies. Appliance cost
+    ties favor earlier starts, but recommendations neither run loads first nor
+    coordinate several optional appliances. Discrete modes do not guarantee
+    exact targets or global optimality. Battery search is stateless.
+
+Evidence:
+    The October 2026 charge-window-96 preset improved on passive HA operation but
+    did not beat beam/DP there. Its synthetic cost improved after the parity work
+    at equal terminal energy. See ``docs/planners/charge-window.md`` and the
+    adjacent ``parity-comparison.md``; no many-battery advantage was established.
 """
 
 import math

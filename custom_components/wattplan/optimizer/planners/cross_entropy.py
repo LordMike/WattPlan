@@ -1,4 +1,43 @@
-"""Categorical cross-entropy search over complete physical battery schedules."""
+"""Learn categorical policy probabilities with bounded cross-entropy search.
+
+Implementation and differences:
+    Evaluate structured tariff/target seeds, then sample complete battery
+    schedules from per-battery, per-slot action probabilities. Retain elite
+    schedules and blend their action frequencies into the next distribution.
+    A probability floor maintains exploration while forbidden grid charging
+    remains masked out. Unlike the genetic planner, this fits distributions
+    instead of crossing parent chromosomes; unlike local search, it samples
+    complete replacements. Every scored candidate uses shared physical replay.
+
+Properties and ordering biases:
+    Sharing random draws across short temporal blocks encourages coherent runs
+    without forcing every slot in a block to have the same action. Per-slot
+    probabilities are compact, but they do not learn a joint distribution across
+    batteries or arbitrary long-range action dependencies. Elite marginals can
+    therefore lose combinations that only work together; large coupled fleets
+    are not an established strength. Fixed budgets also cover less of a longer
+    battery/horizon schedule, and a slot-battery cap reduces evaluations further.
+    When targets exist, the compulsory first seed is a deadline recipe, with
+    reserve recovery added when needed. Other seeds consume budget before random
+    samples, so very small configurations may perform no distribution updates.
+    Seeds approximate charging needs and can miss feasible targets. A fixed seed
+    reproduces count-limited runs; changing the seed can materially change cost.
+    Cooperative deadlines do not cap initial replay and shared reporting.
+
+Loads and shared behavior:
+    ``shared`` fixes comfort consumption before CEM using bounded placement under
+    self-consumption. Comfort actions are not learned by the distribution.
+    Optional appliances are independently ranked afterward under fixed battery
+    policies, by incremental cost then start. They are advisory, not automatically
+    run first or jointly scheduled. Shared target-first scoring does not overcome
+    all discrete-action or search-budget limits. Search restarts every request.
+
+Evidence:
+    The October 2026 cem-48 preset only modestly improved on the passive baseline
+    in the HA fixtures and trailed beam/DP. Earlier tuning showed seed sensitivity
+    rather than a reliable benefit from larger budgets. See
+    ``docs/planners/cross-entropy.md`` and ``parity-comparison.md`` there.
+"""
 
 import math
 import random

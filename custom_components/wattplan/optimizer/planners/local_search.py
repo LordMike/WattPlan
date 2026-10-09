@@ -1,4 +1,42 @@
-"""Bounded, deterministic policy hill climbing with no native solver dependency."""
+"""Improve complete battery schedules by bounded hill climbing and restarts.
+
+Implementation and differences:
+    Evaluate a deadline/reserve-aware first policy, then structured tariff and
+    target seeds. Refine the best schedule through single-slot changes, block
+    changes and exchanges of two actions. A small number of perturbation restarts
+    can leave a local basin. Unlike greedy's fixed construction passes, this
+    revisits neighborhoods; unlike beam/DP, it always scores complete schedules.
+    Candidate physics and the target-first objective come from ``evaluation``.
+
+Properties and ordering biases:
+    Block and exchange moves can shift an entire charge/use opportunity without
+    requiring every intermediate single-slot edit to improve cost. Nevertheless,
+    ordinary moves accept only improvements, so local minima remain possible.
+    Small budgets may be spent entirely on seeds. Coordinates before battery
+    deadlines are visited ahead of others, then large absolute prices receive
+    priority; a fixed random seed resolves the remaining exploration order.
+    Most refinements touch one battery, so coordinated changes across several
+    batteries can be missed. Long horizons and many batteries increase replay
+    cost and reduce the effective evaluation cap through a slot-battery work
+    limit. Fixed count/seed runs are reproducible; optional time limits are
+    cooperative and do not bound mandatory reporting or the whole invocation.
+
+Loads and shared behavior:
+    ``shared`` places comfort first using self-consumption replay; this search
+    then sees comfort as fixed demand, not as variables in its neighborhood.
+    Optional appliances are priced afterward by ``reporting`` under the selected
+    battery policies. They are independent recommendations, with earlier starts
+    winning cost ties, not an execution order or joint appliance schedule.
+    Discrete policies can miss continuous exact targets. Battery search starts
+    afresh each request; the shared wrapper separately retains comfort continuity.
+
+Evidence:
+    The October 2026 local-search-96 preset improved on self-consumption with
+    recorded forecasts but cost more with causal forecasts. Local-search-3 tied
+    the passive baseline in both HA scenarios. These results do not establish a
+    specialty for one or many batteries. See ``docs/planners/local_search.md``
+    and the adjacent ``parity-comparison.md``.
+"""
 
 import math
 import random

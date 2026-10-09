@@ -1,3 +1,31 @@
+"""Original HiGHS battery MPC engine and native load/reporting orchestration.
+
+``planners.highs`` adapts this implementation to the common planner registry;
+the public ``optimize`` entry point delegates cadence and state reuse to
+``prefix_planner``, which calls ``optimize_internal`` here. This is the native
+solver implementation, not another policy-search preset.
+
+Mixed-integer models coordinate batteries with continuous power variables and
+discrete operating constraints. Receding-horizon decisions, soft battery-target
+penalties, model approximations and per-solve limits distinguish its outcomes
+from the alternatives' full-horizon target-first policy scores. A solved local
+model is not a guarantee of globally optimal realized costs. More batteries and
+longer lookahead can increase native solve work substantially; lack of a usable
+solution raises an error rather than silently substituting another planner.
+
+Comfort has a constraint-driven initial schedule. Bounded placement evaluates
+candidate moves under fixed baseline battery policies and may trigger one
+additional battery replan around the accepted schedule, with validation before
+adoption. This is not unrestricted joint battery/appliance optimization.
+Optional appliances are ranked separately after the accepted plan, under fixed
+policies, by incremental cost then start time. They remain recommendations and
+do not compete with each other in a shared appliance schedule.
+
+The engine also produces native health, cost, flow and continuity state fields.
+See the ``planners.highs`` module introduction for preset properties and measured
+limitations, and ``docs/optimizer-api.md`` for the detailed model contract.
+"""
+
 import logging
 import time
 

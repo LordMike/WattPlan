@@ -1,4 +1,43 @@
-"""Forecast-only generational genetic search over complete inverter schedules."""
+"""Evolve complete battery-policy schedules with a small genetic population.
+
+Implementation and differences:
+    Each chromosome contains every battery's policy in every forecast slot.
+    Start with a reserve-aware baseline, forecast/deadline seeds and simple mode
+    seeds. Tournament selection chooses parents; temporal-window crossover and
+    block, exchange or single-gene mutations create offspring. Elites and the
+    best evaluated chromosome survive. Unlike local hill climbing, the population
+    can retain alternatives and combine schedule sections without every gene
+    change improving the score. There is no native solver or previous population.
+
+Properties and ordering biases:
+    Complete chromosomes can express coordinated multi-battery policies without
+    enumerating every joint action at each slot. This does not make large fleets
+    easy: chromosome length grows with batteries and horizon, each score requires
+    physical replay, and a small fixed population samples very little of that
+    space. Mutations usually edit one battery; crossover can affect several.
+    Early evaluations go to the baseline and structured seeds before offspring,
+    so tiny budgets can amount to seed selection. Seed guidance splits valuable
+    future demand/PV by usable capacity, an approximation for unequal batteries.
+    ``guidance_slots`` limits seed foresight, not scoring or target deadlines.
+    Fixed seed/count budgets are reproducible. Optional time limits are checked
+    between candidates and can be exceeded by construction, replay and reporting.
+
+Loads and shared behavior:
+    ``shared`` places comfort before population search with a self-consumption
+    cost estimate; comfort is not encoded in chromosomes. Optional appliances
+    are independently priced afterward under the accepted battery policies,
+    ordered by incremental cost then start time. They are recommendations, not
+    an appliance execution order or a joint population-level load assignment.
+    Shared target-first scoring and reserve penalties guide battery constraints;
+    discrete actions and bounded evolution cannot certify feasibility/optimality.
+
+Evidence:
+    Genetic-standard beat genetic-fast on both October 2026 one-battery HA
+    fixtures, but cost more on the synthetic fixture at equal terminal energy.
+    More evaluations or longer guidance therefore do not guarantee better
+    realized outcomes. See ``docs/planners/genetic.md`` and the adjacent
+    ``parity-comparison.md`` for the actual preset measurements.
+"""
 
 import math
 import random

@@ -1,4 +1,41 @@
-"""Bounded constructive tariff trades, using only request forecasts."""
+"""Construct a battery schedule through bounded, ordered greedy tariff trades.
+
+Implementation and differences:
+    Start with self-consumption at positive prices and preservation otherwise,
+    adding reserve recovery. Visit battery deadlines, preservation opportunities,
+    cheap charging with a later release, then valuable discharge opportunities.
+    Each candidate is replayed over the full supplied horizon and retained only
+    if its target-miss/economic score improves. A target construction may cross
+    an intermediate plateau, but there is no general backtracking or restart.
+    This is simpler than local search and does not retain beam/DP alternatives.
+
+Properties and ordering biases:
+    A natural fit for simple charge-low/use-high opportunities with a small
+    evaluation budget; this is an algorithmic fit, not a universal cost advantage.
+    ``trade_window_slots`` limits where a bought unit's release is sought, not
+    the scoring horizon. Only the best-priced eligible release is tried for a
+    bundled trade. Arbitrary combinations and more distant opportunities can be
+    missed, and an early accepted trade can obstruct a better later combination.
+    Targets get work before tariff trades. Battery loops use input order and
+    equal-price slots prefer earlier times, so a tight shared budget can favor
+    earlier batteries. Multi-battery physics is evaluated jointly, but most
+    changes affect one battery at a time. This is not a fleet allocation solver.
+
+Loads and shared behavior:
+    The factory is wrapped by ``shared``: comfort is placed before battery search
+    using a self-consumption cost estimate. ``evaluation`` and ``reporting`` own
+    physical replay, target-first scoring, reserve penalties and HA projections.
+    Optional appliances are ranked afterward under fixed policies, independently
+    by cost then start; they are advisory, not a jointly optimized execution queue.
+    Battery modes are discrete, so exact targets can be missed even when a
+    continuous solution exists. No previous battery search is reused.
+
+Evidence:
+    On the October 2026 one-battery recorded fixture, greedy-8 tied passive
+    self-consumption and greedy-256 cost more. More search is not a promise of
+    better realized savings. See ``docs/planners/greedy.md`` and the adjacent
+    ``parity-comparison.md`` for the measured trade-offs.
+"""
 
 from ..physics import EPSILON
 from .budget import SearchBudget
