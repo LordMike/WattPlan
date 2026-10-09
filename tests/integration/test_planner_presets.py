@@ -79,6 +79,9 @@ async def test_every_preset_runs_through_live_coordinator(
     assert diagnostics["planner"] == PRESETS[preset].planner
     assert diagnostics["diagnostics"]["planner"]["preset"] == preset
     assert diagnostics["planner_options"] == PRESETS[preset].options
+    duration = hass.states.get("sensor.home_last_run_duration")
+    assert duration is not None
+    assert duration.attributes["planner_preset"] == preset
 
 
 async def test_changing_preset_reloads_and_drops_incompatible_cached_plan(

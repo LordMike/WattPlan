@@ -2401,6 +2401,7 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
                         }
                     },
                     "optimizer": {
+                        "planner_preset": "highs",
                         "suboptimal": False,
                         "suboptimal_reasons": [],
                         "span_start": plan_start.isoformat(),
@@ -2460,6 +2461,7 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
     duration_state = hass.states.get("sensor.home_last_run_duration")
     assert duration_state is not None
     restored_timings = duration_state.attributes["timings"]
+    assert duration_state.attributes["planner_preset"] == "highs"
     assert isinstance(restored_timings, list)
     assert [entry[0] for entry in restored_timings] == [
         "Import price source fetch",
