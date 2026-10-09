@@ -5,9 +5,12 @@ Original implementation: no native solver or external planner source is used.
 
 import math
 
+from ..physics import EPSILON, transition
 from .budget import SearchBudget
 from .contract import PlannerCapabilities
 from .evaluation import build_result, evaluate_schedule
+from .recovery import reserve_recovery_seed
+from .shared import wrap_battery_planner
 
 
 _MAX_SLOT_BATTERY_EVALUATIONS = 196_608
@@ -15,6 +18,38 @@ _MAX_SLOT_BATTERY_EVALUATIONS = 196_608
 
 def _copy(policies):
     return [row.copy() for row in policies]
+
+
+def _initial_seed(params):
+    """Construct a deadline-aware baseline before spending the first evaluation.
+
+    A single physical pass establishes real charge/discharge progress, respecting
+    curves, ingress, efficiencies and shared demand. Window search still refines
+    it; this construction is not a feasibility or optimality guarantee.
+    """
+    batteries = params.battery_entities
+    rows = [["self_consume"] * len(params.usage_kwh) for _ in batteries]
+    last_deadline = max((b.target.timeslot for b in batteries if b.target), default=-1)
+    levels = [b.initial_kwh for b in batteries]
+    for slot in range(last_deadline + 1):
+        for index, (battery, level) in enumerate(zip(batteries, levels, strict=True)):
+            target = battery.target
+            if target is None or slot > target.timeslot:
+                continue
+            lower = target.soc_kwh - target.tolerance_kwh
+            upper = target.soc_kwh + target.tolerance_kwh
+            if target.mode != "at_most" and level < lower - EPSILON:
+                mode = "grid_charge" if battery.can_charge_from & 1 else "preserve"
+            elif target.mode != "at_least" and level > upper + EPSILON:
+                mode = "self_consume"
+            else:
+                mode = "preserve"
+            rows[index][slot] = mode
+        levels = transition(
+            batteries, levels, [row[slot] for row in rows],
+            usage=params.usage_kwh[slot], pv=params.solar_input_kwh[slot],
+        ).levels
+    return reserve_recovery_seed(params, rows), last_deadline + 1
 
 
 def _windows(prices, usage, pv, width, count):
@@ -104,11 +139,16 @@ def factory(*, max_evaluations=128, max_seconds=None, window_candidates=3):
         # checks. Even an already-expired tiny deadline returns a useful result.
         budget.take()
         budget.max_seconds = max_seconds
-        best = [["self_consume"] * horizon for _ in batteries]
+        best, target_seed_transitions = _initial_seed(params)
         best_eval = evaluate_schedule(params, best)
         baseline_score = best_eval.score
         seen = {tuple(tuple(row) for row in best)}
-        seeds = ["self-consumption"]
+        initial_label = (
+            "target-and-reserve" if target_seed_transitions
+            else "reserve-recovery" if any(b.initial_kwh < b.minimum_kwh - EPSILON for b in batteries)
+            else "self-consumption"
+        )
+        seeds = [initial_label]
         attempts, attempt_limit = 1, limit * 8
         accepted = {"seed": 0, "target": 0, "paired_window": 0, "window": 0, "boundary": 0}
         scales_visited = []
@@ -258,6 +298,8 @@ def factory(*, max_evaluations=128, max_seconds=None, window_candidates=3):
                 "slot_battery_work_limit": _MAX_SLOT_BATTERY_EVALUATIONS,
                 "window_candidates": window_candidates,
                 "seeds_evaluated": seeds,
+                "target_seed_transitions": target_seed_transitions,
+                "seed_construction": "physical target and reserve preparation before counted evaluation",
                 "accepted_changes": accepted,
                 "scales_visited": scales_visited,
                 "baseline_score": list(baseline_score),
@@ -269,4 +311,4 @@ def factory(*, max_evaluations=128, max_seconds=None, window_candidates=3):
         )
 
     plan.capabilities = PlannerCapabilities()
-    return plan
+    return wrap_battery_planner(plan)

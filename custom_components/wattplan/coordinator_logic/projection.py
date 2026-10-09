@@ -156,6 +156,11 @@ class PlannerProjectionBuilder:
             "optionals": optionals,
             "sources": {"usage_forecast": request.get("usage_forecast_points")},
             "optimizer": {
+                "planner_preset": request.get("planner_preset", "highs"),
+                "planner": request.get("planner", "highs"),
+                "planner_options": request.get("planner_options", {}),
+                "diagnostics": result.get("diagnostics", {}),
+                "comfort_placement": result.get("comfort_placement"),
                 "execution_time_s": result.get("execution_time"),
                 "fitness": result.get("fitness"),
                 "avg_price": result.get("avg_price"),

@@ -31,6 +31,7 @@ from .common import (
     _subentry_name,
 )
 from .state import SourceFlowState
+from ..optimizer.planners.presets import DEFAULT_PRESET, PRESETS
 from ..const import (
     ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
     ADAPTER_TYPE_ATTRIBUTE_VALUES,
@@ -81,6 +82,7 @@ from ..const import (
     CONF_OPTIONS_COUNT,
     CONF_PLANNING_ENABLED,
     CONF_OPTIMIZER_PROFILE,
+    CONF_PLANNER_PRESET,
     CONF_PROVIDERS,
     CONF_RESAMPLE_MODE,
     CONF_ROLLING_WINDOW_HOURS,
@@ -1110,7 +1112,19 @@ def _core_schema(
         )
     )
     lookahead_step = int(slot_default) / 60
-    schema: dict[Any, Any] = {}
+    schema: dict[Any, Any] = {
+        vol.Required(
+            CONF_PLANNER_PRESET, default=defaults.get(CONF_PLANNER_PRESET, DEFAULT_PRESET)
+        ): selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=[
+                    selector.SelectOptionDict(value=name, label=preset.label)
+                    for name, preset in PRESETS.items()
+                ],
+                mode=selector.SelectSelectorMode.DROPDOWN,
+            )
+        )
+    }
     profile_field = None
     if include_profile:
         profile_field = (
@@ -1650,6 +1664,12 @@ def _validate_core_data(
             errors,
             max_length=MAX_NAME_LENGTH,
         )
+    preset = data.get(CONF_PLANNER_PRESET, DEFAULT_PRESET)
+    if preset not in PRESETS:
+        errors[CONF_PLANNER_PRESET] = "unknown_planner_preset"
+        return errors
+    if preset != DEFAULT_PRESET:
+        return errors
     slot_minutes = int(data[CONF_SLOT_MINUTES])
     lookahead_hours = float(
         data.get(CONF_OPTIMIZER_LOOKAHEAD_HOURS, DEFAULT_OPTIMIZER_LOOKAHEAD_HOURS)

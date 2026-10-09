@@ -1,0 +1,22 @@
+{
+  "variants": [
+    {"name": "highs", "planner": "highs", "options": {}},
+    {"name": "highs-8", "planner": "highs", "options": {"lookahead_slots": 8}},
+    {"name": "highs-16", "planner": "highs", "options": {"lookahead_slots": 16}},
+    {"name": "highs-24", "planner": "highs", "options": {"lookahead_slots": 24}},
+    {"name": "self-consumption", "planner": "self-consumption", "options": {}},
+    {"name": "greedy-8", "planner": "greedy", "options": {"max_evaluations": 8}},
+    {"name": "greedy-256", "planner": "greedy", "options": {"max_evaluations": 256}},
+    {"name": "local-search-3", "planner": "local-search", "options": {"max_evaluations": 3, "seed": 0}},
+    {"name": "local-search-96", "planner": "local-search", "options": {"max_evaluations": 96, "seed": 0}},
+    {"name": "beam-2", "planner": "beam-search", "options": {"beam_width": 2, "guidance_slots": 24, "guidance_scale": 1, "max_expansions": 30000, "max_joint_actions": 81}},
+    {"name": "beam-16", "planner": "beam-search", "options": {"beam_width": 16, "guidance_slots": 24, "guidance_scale": 1, "max_expansions": 30000, "max_joint_actions": 81}},
+    {"name": "dynamic-programming-fast", "planner": "dynamic-programming", "options": {"soc_step_kwh": 0.1, "max_states": 8, "max_expansions": 6000, "max_joint_actions": 81, "value_horizon_slots": 24}},
+    {"name": "dynamic-programming-strong", "planner": "dynamic-programming", "options": {"soc_step_kwh": 0.25, "max_states": 32, "max_expansions": 20000, "max_joint_actions": 81, "value_horizon_slots": 144}},
+    {"name": "charge-window-96", "planner": "charge-window", "options": {"max_evaluations": 96, "window_candidates": 3}},
+    {"name": "genetic-fast", "planner": "genetic", "options": {"max_evaluations": 16, "population_size": 6, "generations": 8, "elite_count": 2, "tournament_size": 3, "mutation_rate": 0.9, "crossover_rate": 0.8, "guidance_slots": 24, "seed": 0, "max_seconds": null}},
+    {"name": "genetic-standard", "planner": "genetic", "options": {"max_evaluations": 48, "population_size": 8, "generations": 8, "elite_count": 2, "tournament_size": 3, "mutation_rate": 0.9, "crossover_rate": 0.8, "guidance_slots": 144, "seed": 0, "max_seconds": null}},
+    {"name": "cem-48", "planner": "cross-entropy", "options": {"max_evaluations": 48, "population_size": 12, "elite_fraction": 0.25, "smoothing": 0.7, "probability_floor": 0.02, "block_slots": 4, "guidance": 0.85, "seed": 0}},
+    {"name": "highs-32", "planner": "highs", "options": {"lookahead_slots": 32}}
+  ]
+}

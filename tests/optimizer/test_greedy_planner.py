@@ -241,3 +241,97 @@ def test_plain_charge_preserves_at_most_deadline_discharge():
     )
     assert result["diagnostics"]["target_miss_kwh"] == 0
     assert result["projections"]["projected_cost"] == pytest.approx(0.09)
+
+
+@pytest.mark.parametrize("budget", [1, 8, 256])
+def test_first_candidate_recovers_reserve_before_cheaper_future_power(budget):
+    params = request([10, 1, 0, 0], usage=[0] * 4)
+    params.battery_entities[0].minimum_kwh = 2.0
+    result = factory(max_evaluations=budget)(params)
+    assert [slot["state"] for slot in result["entities"][0]["schedule"]][:2] == ["grid_charge", "grid_charge"]
+    assert result["diagnostics"]["evaluations"] <= budget
+    assert result["diagnostics"]["evaluation"]["reserve_recovery_penalty"] == 5000.0
+    assert result["suboptimal_reasons"] == ["battery_min_unmet"]
+
+
+def test_pv_only_recovery_remains_physical_with_single_evaluation():
+    params = request([10, 1, 0, 0], usage=[0] * 4, pv=[0, 1, 0, 0], ingress=2)
+    params.battery_entities[0].minimum_kwh = 1.0
+    result = factory(max_evaluations=1)(params)
+    schedule = result["entities"][0]["schedule"]
+    assert all(slot["state"] != "grid_charge" for slot in schedule)
+    assert [slot["level"] for slot in schedule] == [0.0, 1.0, 1.0, 1.0]
+    assert result["projections"]["projected_cost"] == 0.0
+    assert result["diagnostics"]["evaluations"] == 1
+
+
+@pytest.mark.parametrize("mode", ["at_least", "exact"])
+def test_small_budget_honors_early_target_despite_later_cheaper_charge(mode):
+    params = request([10, 1, 0, 0], usage=[0] * 4,
+                     target={"timeslot": 0, "soc_kwh": 1.0, "mode": mode})
+    result = factory(max_evaluations=8)(params)
+    assert result["entities"][0]["schedule"][0]["state"] == "grid_charge"
+    assert result["diagnostics"]["target_miss_kwh"] == 0.0
+    assert not result["suboptimal"]
+
+
+def test_small_budget_prioritizes_three_charge_target_over_tariff_passes():
+    params = request([10, 9, 8, 0], usage=[0] * 4,
+                     target={"timeslot": 2, "soc_kwh": 3.0, "mode": "exact"})
+    result = factory(max_evaluations=8)(params)
+    assert result["entities"][0]["schedule"][2]["level"] == 3.0
+    assert result["diagnostics"]["target_miss_kwh"] == 0.0
+    assert result["diagnostics"]["evaluations"] <= 8
+
+
+def test_small_budget_honors_upper_target_even_at_negative_price():
+    params = request([-10, -1, 0, 0], usage=[1, 0, 0, 0], level=2,
+                     target={"timeslot": 0, "soc_kwh": 1.0, "mode": "at_most"})
+    result = factory(max_evaluations=8)(params)
+    assert result["entities"][0]["schedule"][0]["state"] == "self_consume"
+    assert result["diagnostics"]["target_miss_kwh"] == 0.0
+
+
+def test_direct_factory_comfort_optional_and_ha_reporting():
+    from custom_components.wattplan.optimizer.comfort_placement import check_comfort_schedule
+    from custom_components.wattplan.optimizer.models import ComfortEntityParams, OptionalEntityParams
+    from custom_components.wattplan.optimizer.planners.comfort import prepare_comfort
+
+    params = request([0.2] * 8, usage=[0.5] * 8, level=2)
+    params.rolling_window_slots = 4
+    params.comfort_entities = [ComfortEntityParams(
+        name="heater", target_on_slots_per_rolling_window=1,
+        max_consecutive_off_slots=3, power_usage_kwh=0.5,
+        is_on_now=False, off_streak_slots_now=2, on_history=[True, False, False],
+    )]
+    params.optional_entities = [OptionalEntityParams(
+        name="washer", duration_timeslots=1, energy_kwh=0.5,
+        start_before_timeslot=8, options=3,
+    )]
+    before = params.model_dump()
+    planner = factory(max_evaluations=8)
+    result = planner(params)
+    assert params.model_dump() == before
+    assert planner.capabilities.comfort
+    assert planner.capabilities.optional_loads == "supported"
+    assert "rolling_window_slots" not in result["diagnostics"]["ignored_preferences"]
+    prepared = prepare_comfort(params)
+    comfort = next(entity for entity in result["entities"] if entity["type"] == "comfort")
+    enabled = tuple(slot["enabled"] for slot in comfort["schedule"])
+    assert not check_comfort_schedule(prepared.inputs[0], enabled)
+    assert len(result["optional_entity_options"][0]["options"]) == 3
+    assert len(result["projections"]["per_slot"]) == 8
+    assert result["projections"]["baseline_cost"] == pytest.approx(0.8)
+    for flow, on in zip(result["energy_flows"]["per_slot"], enabled, strict=True):
+        assert flow["base_load_kwh"] == 0.5
+        assert flow["comfort_load_kwh"] == 0.5 * on
+    assert result["execution_time"] >= result["diagnostics"]["reporting"]["reporting_seconds"]
+    assert not result["suboptimal"]
+
+
+def test_exact_discrete_miss_reports_health_without_infeasibility_claim():
+    params = request([1] * 4, usage=[0] * 4,
+                     target={"timeslot": 0, "soc_kwh": 0.4, "mode": "exact"})
+    result = factory(max_evaluations=8)(params)
+    assert result["suboptimal_reasons"] == ["battery_target_unmet"]
+    assert result["diagnostics"]["evaluation"]["constraint_status"] == "observed_plan_violations_not_infeasibility_proof"

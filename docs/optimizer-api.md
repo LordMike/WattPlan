@@ -2,11 +2,25 @@
 
 This document describes the direct Python API for the optimizer packaged inside this repository.
 
-Offline interchangeable planners use this API through built-in names or a
+Interchangeable planners use this API through built-in names or a
 `module:factory` adapter. See [Implementing planners](planner-implementations.md)
 for the shared battery contract, evaluator, capabilities and state ownership,
 and [Planner simulator](simulator.md) for causal execution.
-Production planner selection is unchanged.
+Home Assistant selects a finite named preset through
+`optimizer.planners.presets.run_preset(params, name)`. The default `highs`
+preset retains existing tuning. `highs-16` and `highs-24` select the same
+HiGHS factory with fixed lookahead **slots**; the remaining preset catalog
+covers every built-in algorithm. Direct `optimize(params)` callers continue
+to select HiGHS. See [planner presets](optimizer-profiles.md).
+
+The detailed solver semantics below describe HiGHS unless stated otherwise.
+The policy-search alternatives share the input model and live result fields,
+but use full-horizon discrete battery actions, target-first scoring, and their
+own search budgets. The shared wrapper handles comfort and optional appliances;
+see [feature parity](planners/parity.md), [comfort](planners/comfort-parity.md),
+and [reporting](planners/reporting-parity.md) for their exact semantics.
+Algorithm-specific diagnostics live under `diagnostics`; HiGHS solve/cadence
+counters are absent from planners that do not perform those operations.
 
 - **Package:** `custom_components.wattplan.optimizer`
 - **Primary Module:** `custom_components.wattplan.optimizer.mpc_power_optimizer`

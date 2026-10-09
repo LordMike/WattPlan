@@ -1,8 +1,9 @@
-# Interchangeable offline planners
+# Interchangeable planners
 
 The production `optimize(OptimizationParams)` entry point continues to use the
-existing HiGHS planner and its legacy state. Experimental selection lives in the
-simulator. Built-in names are `highs`, `self-consumption`, `greedy`, `local-search`,
+existing HiGHS planner and its legacy state. Home Assistant selects named
+[presets](optimizer-profiles.md) through the shared registry; the simulator can
+also configure factories directly. Built-in names are `highs`, `self-consumption`, `greedy`, `local-search`,
 `beam-search`, `dynamic-programming`, `charge-window`, `genetic`, and
 `cross-entropy`; any importable `module:factory` works without registration.
 See the [comparison ledger](planners/comparison.md) and its runnable
@@ -44,6 +45,7 @@ strict keyword-only options and returns a callable with this interface:
 ```python
 from .contract import PlannerCapabilities
 from .evaluation import build_result, evaluate_schedule
+from .shared import wrap_battery_planner
 
 def factory(*, max_evaluations=100):
     # Validate options here, once per worker/physical equipment segment.
@@ -56,16 +58,18 @@ def factory(*, max_evaluations=100):
                             diagnostics={"evaluations": 1,
                                          "termination_reason": "complete"})
     plan.capabilities = PlannerCapabilities()
-    return plan
+    return wrap_battery_planner(plan)
 ```
 
 Policies are **battery-major**, in request battery order, covering the entire
 supplied forecast horizon. Actions are `self_consume`, `preserve`, `grid_charge`.
 Grid charging must be permitted by that battery's ingress mask. Return each
-battery exactly once with finite projected levels. `PlannerResult` is the typed
-battery simulation result; this does not imply qualification for HA's larger
-production response contract (comfort schedules, optional recommendations,
-projections, and other integration fields).
+battery exactly once with finite projected levels. `build_result` adds the shared
+HA reporting and advisory recommendation fields. `wrap_battery_planner` adds
+comfort scheduling/continuity and whole-call timing. The inner battery search
+receives modeled comfort consumption as part of its usage forecast. Both direct
+factory and registry calls therefore support the same live features. The
+simulator still validates a narrower battery-only execution contract.
 
 Use `tests.optimizer.planner_conformance.conformance_params` and `assert_conforms`
 in each implementation's tests. Those cases cover empty equipment, multiple
@@ -81,7 +85,8 @@ through neutral `optimizer/physics.py`. Its score is a tuple to **minimize**:
 1. Sum of battery target misses in kWh, after deadline tolerance and a 1e-6 kWh
    numerical tolerance. Targets apply at the end of their inclusive deadline slot.
 2. Tariff net cost + `throughput_cost_per_kwh * throughput_kwh` +
-   `mode_switch_cost * mode_switches`.
+   `mode_switch_cost * mode_switches` + 5000 times the sum of end-of-slot
+   reserve shortfalls in kWh, matching the original solver's recovery preference.
 
 Throughput is AC charging input plus delivered discharge. Switching counts changes
 in actual charge/idle/discharge behavior, initially idle, using the inclusive
@@ -94,8 +99,11 @@ simulation outcomes, not the numeric objectives across algorithms.
 There is no terminal energy credit, battery energy export, PV curtailment, or
 invented load. Final SoC is reported separately. Physical discharge stops at the
 reserve. An observation already below reserve is preserved and its initial
-shortfall is reported; it does not manufacture energy or acquire a hidden cost.
-Reserve recovery is not an additional target unless the request supplies one.
+shortfall is reported without manufacturing energy. Optimizing planners use an
+immediate reserve-recovery seed or search action and the disclosed shortfall
+penalty. Self-consumption deliberately remains a passive battery baseline.
+Recovery penalties never enter reported tariff cost. See
+[feature parity](planners/parity.md) for the acceptance scope and limitations.
 `build_result` accepts a previously computed `evaluation` to avoid replaying an
 accepted candidate; it must correspond to those exact params and policies.
 
@@ -115,7 +123,11 @@ and declare `rolling_window_slots`, `lookahead_slots`,
 `ignored_preferences` to the implementation's behavior. Ignored input preferences
 appear in diagnostics; normal archived requests do not fail merely because they
 contain legacy solver preferences. Self-consumption records target outcomes but
-declares targets `observed`; it cannot claim to meet them.
+declares targets `observed`; it cannot claim to meet them. These are the defaults
+for a bare battery implementation: the shared wrapper advertises comfort and
+optional support and activates `rolling_window_slots`. HiGHS-specific solve,
+lookahead and preserve-inference preferences remain disclosed as unused by the
+alternatives. Presets provide each algorithm's own fixed search configuration.
 
 `options` configure the implementation; `settings` override allowed shared request
 preferences. Unknown keyword options fail factory signature validation. Reject
@@ -148,6 +160,10 @@ this in an envelope identifying canonical factory path, options, and
 receives its own inner blob on the next cycle. Another implementation, options,
 or state version resets it with a diagnostic reason. Built-in and legacy alias
 paths share identity. Only HiGHS accepts unwrapped legacy state.
+
+The shared comfort wrapper may return state even when its inner battery search
+is stateless. It carries minimum-run commitments separately from battery state
+and checks configuration, aligned time, observed modes and history before reuse.
 
 The envelope proves **ownership, not applicability**. Re-evaluate cached policies
 against current forecasts, SoC, equipment, targets and absolute plan time before

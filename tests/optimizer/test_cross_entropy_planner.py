@@ -45,6 +45,7 @@ def policies(result):
     return [
         [action["state"] for action in entity["schedule"]]
         for entity in result["entities"]
+        if entity["type"] == "battery"
     ]
 
 
@@ -288,3 +289,77 @@ def test_all_reported_levels_equal_replayed_levels_exactly():
             step.levels[index] for step in evaluated.steps
         ]
     assert result["projections"]["projected_cost"] == evaluated.tariff_cost
+
+
+@pytest.mark.parametrize("count", [1, 48])
+@pytest.mark.parametrize("mode,initial,goal,usage", [
+    ("at_least", 0, 1, (0, 0, 0, 0)),
+    ("exact", 0, 1, (0, 0, 0, 0)),
+    ("at_most", 1, 0, (1, 0, 0, 0)),
+    ("exact", 1, 0, (1, 0, 0, 0)),
+    ("at_least", 1, 0.5, (1, 0, 0, 0)),
+])
+def test_target_seed_handles_earliest_expensive_deadline(count, mode, initial, goal, usage):
+    params = request(prices=(10, 0.01, 0.01, 0.01), usage=usage, initial=initial,
+                     target={"timeslot": 0, "soc_kwh": goal, "mode": mode})
+    actual = factory(max_evaluations=count, seed=0)(params)
+    assert actual["diagnostics"]["evaluation"]["score"][0] == 0
+    assert actual["diagnostics"]["evaluations"] <= count
+    assert actual["diagnostics"]["seed_candidates"][0].startswith("target-")
+
+
+@pytest.mark.parametrize("count", [1, 48])
+def test_reserve_recovers_immediately_under_tiny_and_selected_budgets(count):
+    params = request(prices=(10, 0.01, 0.01, 0.01), usage=(0,) * 4)
+    battery = params.battery_entities[0]
+    battery.minimum_kwh = 1.0
+    battery.charge_curve_kwh = [0.4]
+    actual = factory(max_evaluations=count, seed=0)(params)
+    assert policies(actual)[0][:3] == ["grid_charge"] * 3
+    assert [slot["level"] for slot in actual["entities"][0]["schedule"]][:3] == pytest.approx([0.4, 0.8, 1.2])
+    assert actual["projections"]["projected_cost"] < 5
+    assert actual["fitness"] > 1000
+    assert "battery_min_unmet" in actual["problems"]
+    assert actual["diagnostics"]["evaluation"]["score"] == list(evaluate_schedule(params, policies(actual)).score)
+
+
+def test_pv_only_reserve_recovery_respects_mask_and_real_energy():
+    params = request(prices=(10,) * 4, usage=(0,) * 4, solar=(0.4,) * 4)
+    battery = params.battery_entities[0]
+    battery.minimum_kwh = 1.0
+    battery.can_charge_from = 2
+    battery.charge_curve_kwh = [0.4]
+    actual = factory(max_evaluations=1)(params)
+    assert "grid_charge" not in policies(actual)[0]
+    assert [slot["level"] for slot in actual["entities"][0]["schedule"]] == pytest.approx([0.4, 0.8, 1.2, 1.6])
+    assert actual["projections"]["projected_cost"] == 0
+
+
+def test_direct_and_registered_cem_support_comfort_optional_and_ha_reporting():
+    from custom_components.wattplan.optimizer.planners.comfort import prepare_comfort
+    from tests.optimizer.test_planner_comfort import request as comfort_request
+
+    raw = comfort_request().model_dump()
+    raw["battery_entities"] = request(initial=0.1).model_dump()["battery_entities"]
+    raw["battery_entities"][0].update(
+        minimum_kwh=0.5, target={"timeslot": 3, "soc_kwh": 1.0, "mode": "at_least"}
+    )
+    raw["optional_entities"] = [{
+        "name": "dishwasher", "duration_timeslots": 2,
+        "start_before_timeslot": 8, "energy_kwh": 0.6,
+    }]
+    params = OptimizationParams.model_validate(raw)
+    before = params.model_dump()
+    direct = factory(max_evaluations=48, seed=0)(params)
+    registered = create_planner("cross-entropy", {"max_evaluations": 48, "seed": 0})(params)
+    assert params.model_dump() == before
+    assert direct["entities"] == registered["entities"]
+    assert direct["projections"] == registered["projections"]
+    assert direct["optional_entity_options"][0]["options"]
+    assert len(direct["energy_flows"]["per_slot"]) == 8
+    assert direct["execution_time"] > 0
+    assert not direct["suboptimal"]
+    replay = evaluate_schedule(prepare_comfort(params).params, policies(direct))
+    assert direct["projections"]["projected_cost"] == pytest.approx(replay.tariff_cost)
+    assert factory().capabilities.comfort
+    assert factory().capabilities.optional_loads == "supported"

@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
 from ..const import (
+    CONF_PLANNER_PRESET,
     CONF_HISTORICAL_BATTERY_CHARGE_SENSOR,
     CONF_HISTORICAL_BATTERY_DISCHARGE_SENSOR,
     CONF_OUTLOOK_LANGUAGES,
@@ -20,6 +21,7 @@ from ..const import (
     SUPPORTED_OUTLOOK_LANGUAGES,
 )
 from ..historical_cost.tracker import validate_energy_sensor
+from ..optimizer.planners.presets import DEFAULT_PRESET, get_preset
 from ..source_providers import CONF_WATTPLAN_ENTITY_ID, source_mode, source_providers
 from .forms import _validate_core_lookahead_for_comforts
 from .source_shared import (
@@ -384,6 +386,9 @@ class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
             if not errors:
                 normalized = _normalize_core_input(user_input)
                 self._entry_options = {
+                    CONF_PLANNER_PRESET: normalized.pop(
+                        CONF_PLANNER_PRESET, DEFAULT_PRESET
+                    ),
                     CONF_PLANNING_ENABLED: True,
                     CONF_ACTION_EMISSION_ENABLED: True,
                     CONF_OPTIMIZER_PROFILE: str(
@@ -575,6 +580,15 @@ class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
                 options=self._entry_options,
             )
 
+        preset_name = self._entry_options.get(CONF_PLANNER_PRESET, DEFAULT_PRESET)
+        preset = get_preset(preset_name)
+        search_settings = "Fixed by the selected preset"
+        if preset_name == DEFAULT_PRESET:
+            hours = _lookahead_hours_from_slots(
+                self._entry_options[CONF_OPTIMIZER_LOOKAHEAD_SLOTS],
+                int(self._core[CONF_SLOT_MINUTES]),
+            )
+            search_settings = f"HiGHS lookahead: {hours:g} hours"
         return self.async_show_form(
             step_id="setup_complete",
             data_schema=_final_setup_schema(),
@@ -582,12 +596,8 @@ class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
                 "setup_name": str(self._core[CONF_NAME]),
                 "slot_minutes": str(self._core[CONF_SLOT_MINUTES]),
                 "plan_hours": str(self._core[CONF_HOURS_TO_PLAN]),
-                "lookahead_hours": str(
-                    _lookahead_hours_from_slots(
-                        self._entry_options[CONF_OPTIMIZER_LOOKAHEAD_SLOTS],
-                        int(self._core[CONF_SLOT_MINUTES]),
-                    )
-                ),
+                "planner_preset": preset.label,
+                "search_settings": search_settings,
                 "price_source": _source_mode_summary(
                     self._sources.get(CONF_SOURCE_IMPORT_PRICE)
                 ),
@@ -618,6 +628,7 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
         self._options = deepcopy(dict(config_entry.options))
         self._options.setdefault(CONF_PLANNING_ENABLED, True)
         self._options.setdefault(CONF_ACTION_EMISSION_ENABLED, True)
+        self._options.setdefault(CONF_PLANNER_PRESET, DEFAULT_PRESET)
         self._options.setdefault(
             CONF_OPTIMIZER_PROFILE, OPTIMIZER_PROFILE_BALANCED
         )
@@ -715,6 +726,9 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
                 )
             if not errors:
                 normalized = _normalize_core_input(user_input)
+                self._options[CONF_PLANNER_PRESET] = normalized.pop(
+                    CONF_PLANNER_PRESET, DEFAULT_PRESET
+                )
                 self._options[CONF_OPTIMIZER_PROFILE] = str(
                     normalized.pop(CONF_OPTIMIZER_PROFILE, OPTIMIZER_PROFILE_BALANCED)
                 )
@@ -740,6 +754,7 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
                 _core_schema(
                     {
                         **self._data,
+                        CONF_PLANNER_PRESET: self._options[CONF_PLANNER_PRESET],
                         CONF_OPTIMIZER_PROFILE: self._options[CONF_OPTIMIZER_PROFILE],
                         CONF_OPTIMIZER_LOOKAHEAD_HOURS: _lookahead_hours_from_slots(
                             self._options[CONF_OPTIMIZER_LOOKAHEAD_SLOTS],

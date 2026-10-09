@@ -1,7 +1,8 @@
-"""Forecast-only policy evaluation shared by inexpensive experimental planners.
+"""Forecast-only policy evaluation shared by solver-independent planners.
 
 This is an explicit policy objective, not a reimplementation of the HiGHS MILP
 objective. Battery target shortfall is lexicographically prior to economic score.
+End-of-slot reserve shortfalls carry the original solver's recovery penalty.
 Unspent terminal energy gets no invented credit; final levels remain visible.
 """
 
@@ -11,6 +12,7 @@ from typing import Sequence
 from ..models import OptimizationParams
 from ..physics import EPSILON, POLICIES, Transition, transition
 from .contract import PlannerResult
+from .recovery import reserve_shortfall_cost
 
 
 @dataclass(frozen=True)
@@ -75,7 +77,7 @@ def evaluate_schedule(
         if level < b.minimum_kwh - EPSILON
     ]
     steps, violations = [], []
-    cost, throughput, switches = 0.0, 0.0, 0
+    cost, throughput, switches, recovery_cost = 0.0, 0.0, 0, 0.0
     previous = [0] * len(batteries)
     deadband = params.action_deadband_kwh
     for slot in range(horizon):
@@ -88,6 +90,7 @@ def evaluate_schedule(
         )
         steps.append(step)
         levels = step.levels
+        recovery_cost += reserve_shortfall_cost(batteries, levels)
         cost += step.grid_import * params.grid_import_price_per_kwh[slot]
         cost -= step.grid_export * params.grid_export_price_per_kwh[slot]
         throughput += step.charge + sum(step.discharge)
@@ -124,7 +127,8 @@ def evaluate_schedule(
         tuple(reserve),
         cost
         + throughput * params.throughput_cost_per_kwh
-        + switches * params.mode_switch_cost,
+        + switches * params.mode_switch_cost
+        + recovery_cost,
     )
 
 
@@ -136,13 +140,28 @@ def build_result(
     state: str | None = None,
     diagnostics: dict | None = None,
 ) -> PlannerResult:
-    """Build the battery simulation result; HA promotion requires its full API.
+    """Build the shared live result from the accepted physical trajectory.
 
     A supplied evaluation must correspond to these exact params and policies.
     This avoids replaying the accepted candidate in a bounded search loop.
     """
     evaluation = evaluation or evaluate_schedule(params, policies)
-    return {
+    # Publish executable controls, not ineffective search labels. At exactly
+    # zero grid flow, preserve has the same accepted physical trajectory but
+    # does not tell a live inverter to enable charging from a forbidden source
+    # or past its headroom limit. Keep even tiny nonzero grid flows unchanged.
+    published = []
+    normalized_grid_actions = 0
+    for index, row in enumerate(policies):
+        actions = []
+        for slot, mode in enumerate(row):
+            if mode == "grid_charge" and evaluation.steps[slot].grid_charge[index] == 0.0:
+                mode = "preserve"
+                normalized_grid_actions += 1
+            actions.append(mode)
+        published.append(actions)
+    policies = published
+    result = {
         "entities": [
             {
                 "name": battery.name,
@@ -169,10 +188,18 @@ def build_result(
                 "score": list(evaluation.score),
                 "throughput_kwh": evaluation.throughput_kwh,
                 "mode_switches": evaluation.mode_switches,
+                "normalized_zero_grid_charge_actions": normalized_grid_actions,
                 "target_checks": list(evaluation.target_violations),
                 "reserve_shortfalls": list(evaluation.reserve_shortfalls),
+                "reserve_recovery_penalty": sum(
+                    reserve_shortfall_cost(params.battery_entities, step.levels)
+                    for step in evaluation.steps
+                ),
                 "terminal_energy_credit": 0.0,
                 "optional_loads": "advisory inputs excluded from battery cost",
             },
         },
     }
+    from .reporting import enrich_result
+
+    return enrich_result(params, policies, evaluation, result)

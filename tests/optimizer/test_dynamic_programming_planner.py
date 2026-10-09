@@ -6,7 +6,7 @@ import pytest
 
 from custom_components.wattplan.optimizer.models import OptimizationParams
 from custom_components.wattplan.optimizer.planners.dynamic_programming import (
-    _State, _key, factory,
+    _State, _advance, _key, factory,
 )
 from custom_components.wattplan.optimizer.planners.evaluation import evaluate_schedule
 from tests.optimizer.planner_conformance import assert_conforms, conformance_params
@@ -29,7 +29,8 @@ def request(*, prices=(0.1, 1.0, 0.0, 0.0), usage=(0.0, 1.0, 0.0, 0.0),
 
 
 def policies(result):
-    return [[a["state"] for a in b["schedule"]] for b in result["entities"]]
+    return [[a["state"] for a in b["schedule"]] for b in result["entities"]
+            if b["type"] == "battery"]
 
 
 def exhaustive_score(params):
@@ -175,3 +176,75 @@ def test_tiny_budget_retains_last_slot_target_and_reports_tail():
     assert result["diagnostics"]["tail_transitions"] == 3
     assert result["diagnostics"]["evaluation"]["target_checks"][0]["timeslot"] == 3
     assert result["diagnostics"]["evaluation"]["score"][0] == 0.0
+
+
+def test_prefix_reserve_penalty_matches_full_evaluation_without_billing_penalty():
+    params = request(initial=0.1, usage=(0.0,) * 4)
+    params.battery_entities[0].minimum_kwh = 1.0
+    params.battery_entities[0].charge_curve_kwh = [0.2]
+    state = _State((0.1,), (0,))
+    for slot in range(4):
+        state = _advance(params, state, ("grid_charge",), slot)
+    evaluation = evaluate_schedule(params, [["grid_charge"] * 4])
+    assert state.score == pytest.approx(evaluation.score)
+    assert evaluation.objective - evaluation.tariff_cost == pytest.approx(8000.0)
+    actual = factory()(params)
+    assert actual["projections"]["projected_cost"] < 1.0
+    assert actual["fitness"] > 1000.0
+    assert "battery_min_unmet" in actual["problems"]
+
+
+@pytest.mark.parametrize("budget", [1, 10000])
+def test_reserve_recovery_starts_now_despite_expensive_power_and_tiny_budget(budget):
+    params = request(prices=(10.0, 0.0, 0.0, 0.0), usage=(0.0,) * 4)
+    params.battery_entities[0].minimum_kwh = 1.0
+    params.battery_entities[0].charge_curve_kwh = [0.4]
+    actual = factory(max_expansions=budget)(params)
+    assert policies(actual)[0][:3] == ["grid_charge"] * 3
+    assert [slot["level"] for slot in actual["entities"][0]["schedule"]][:3] == pytest.approx([0.4, 0.8, 1.2])
+    assert actual["diagnostics"]["evaluation"]["score"] == pytest.approx(
+        evaluate_schedule(params, policies(actual)).score
+    )
+
+
+def test_recovery_never_invents_grid_ingress_for_pv_only_battery():
+    params = request(ingress=2, usage=(0.0,) * 4, pv=(0.4,) * 4)
+    params.battery_entities[0].minimum_kwh = 1.0
+    actual = factory(max_expansions=1)(params)
+    assert "grid_charge" not in policies(actual)[0]
+    assert [slot["level"] for slot in actual["entities"][0]["schedule"]] == pytest.approx([0.4, 0.8, 1.2, 1.6])
+    assert actual["projections"]["projected_cost"] == 0.0
+
+
+def test_direct_factory_and_registry_support_comfort_optional_and_ha_contract():
+    from custom_components.wattplan.optimizer.planners import create_planner
+    from custom_components.wattplan.optimizer.planners.comfort import prepare_comfort
+    from tests.optimizer.test_planner_comfort import request as comfort_request
+
+    raw = comfort_request().model_dump()
+    raw["battery_entities"] = request(initial=0.1).model_dump()["battery_entities"]
+    raw["battery_entities"][0].update(
+        minimum_kwh=0.5, target={"timeslot": 3, "soc_kwh": 1.0, "mode": "at_least"}
+    )
+    raw["optional_entities"] = [{
+        "name": "dishwasher", "duration_timeslots": 2,
+        "start_before_timeslot": 8, "energy_kwh": 0.6,
+    }]
+    params = OptimizationParams.model_validate(raw)
+    before = params.model_dump()
+    direct = factory()(params)
+    registered = create_planner("dynamic-programming")(params)
+    assert params.model_dump() == before
+    assert direct["entities"] == registered["entities"]
+    assert direct["projections"] == registered["projections"]
+    assert len(direct["entities"]) == 2
+    assert direct["optional_entity_options"][0]["options"]
+    assert len(direct["energy_flows"]["per_slot"]) == 8
+    assert direct["execution_time"] > 0
+    assert not direct["suboptimal"]
+    modeled = prepare_comfort(params).params
+    evaluation = evaluate_schedule(modeled, policies(direct))
+    assert direct["projections"]["projected_cost"] == pytest.approx(evaluation.tariff_cost)
+    assert direct["diagnostics"]["evaluation"]["score"] == pytest.approx(evaluation.score)
+    assert factory().capabilities.comfort
+    assert factory().capabilities.optional_loads == "supported"

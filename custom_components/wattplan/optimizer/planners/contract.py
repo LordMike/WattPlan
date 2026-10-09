@@ -1,8 +1,8 @@
-"""Small shared battery contract, independent of the production solver internals."""
+"""Shared planner results and the narrower battery-only replay validator."""
 
 from dataclasses import dataclass
 import math
-from typing import Any, Literal, Protocol, TypedDict
+from typing import Any, Literal, NotRequired, Protocol, TypedDict
 
 from ..models import OptimizationParams
 from ..physics import POLICIES
@@ -19,11 +19,31 @@ class BatterySchedule(TypedDict):
     schedule: list[BatteryAction]
 
 
+class ComfortAction(TypedDict):
+    enabled: bool
+    level: float
+
+
+class ComfortSchedule(TypedDict):
+    name: str
+    type: Literal["comfort"]
+    schedule: list[ComfortAction]
+
+
 class PlannerResult(TypedDict):
-    entities: list[BatterySchedule]
+    entities: list[BatterySchedule | ComfortSchedule]
     state: str | None
     projections: dict[str, Any]
     diagnostics: dict[str, Any]
+    energy_flows: dict[str, Any]
+    optional_entity_options: list[dict[str, Any]]
+    fitness: float
+    avg_price: float
+    execution_time: NotRequired[float]
+    suboptimal: bool
+    overconstrained: bool
+    suboptimal_reasons: list[str]
+    problems: list[str]
 
 
 @dataclass(frozen=True)

@@ -38,7 +38,7 @@ async def _setup_battery_entry(hass: HomeAssistant):
         subentries_data=[_battery_subentry(subentry_id="battery", name="battery")],
     )
     with patch(
-        "custom_components.wattplan.coordinator.optimize",
+        "custom_components.wattplan.optimizer.optimize",
         side_effect=_fake_optimize_with_entities,
     ):
         await _setup_entry(hass, entry)
@@ -89,7 +89,7 @@ async def test_battery_target_survives_reload(hass: HomeAssistant) -> None:
     await _set_target(hass, soc_kwh=7.5, reach_at=reach_at)
 
     with patch(
-        "custom_components.wattplan.coordinator.optimize",
+        "custom_components.wattplan.optimizer.optimize",
         side_effect=_fake_optimize_with_entities,
     ):
         assert await hass.config_entries.async_reload(entry.entry_id)
@@ -115,7 +115,7 @@ async def test_cleared_battery_target_stays_cleared_after_reload(
     )
 
     with patch(
-        "custom_components.wattplan.coordinator.optimize",
+        "custom_components.wattplan.optimizer.optimize",
         side_effect=_fake_optimize_with_entities,
     ):
         assert await hass.config_entries.async_reload(entry.entry_id)
@@ -148,7 +148,7 @@ async def test_expired_and_unknown_stored_targets_are_dropped(
     }
 
     with patch(
-        "custom_components.wattplan.coordinator.optimize",
+        "custom_components.wattplan.optimizer.optimize",
         side_effect=_fake_optimize_with_entities,
     ):
         assert await hass.config_entries.async_setup(entry.entry_id)

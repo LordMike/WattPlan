@@ -1,5 +1,9 @@
 # Additional independent planner comparison
 
+This is the preserved benchmark before live planner feature parity. The newer
+[parity comparison](parity-comparison.md) records the updated implementations;
+capability statements and measurements below refer to this report's frozen source.
+
 The frozen [nine-variant configuration](additional-benchmark.json) compares six
 selected profiles from four new algorithms against self-consumption and beam
 widths 2/16. Each algorithm was implemented and initially tuned by a separate

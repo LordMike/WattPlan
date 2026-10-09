@@ -1,5 +1,30 @@
 # Architecture
 
+## Shared planner features
+
+The live coordinator routes named configurations through
+`optimizer/planners/presets.py` and the lazy registry. HiGHS retains its native
+pipeline. Every other factory wraps its battery search with `shared.py`:
+`comfort.py` constructs required load schedules, the algorithm searches using
+the resulting modeled demand, and `reporting.py` publishes projections, optional
+appliance recommendations and observed constraint violations from the accepted
+physical trajectory. Comfort continuity is stored separately from battery state
+inside the registry's configuration-owned envelope. `optimizer/` remains free
+of Home Assistant imports.
+
+Policy searches penalize end-of-slot minimum-energy shortfalls and seed or order
+early recovery actions. This affects optimization preference, never tariff
+accounting. Self-consumption keeps passive battery actions and reports shortfalls.
+
+The live caller's timeout still cannot terminate native executor work. A
+shielded per-entry future remains owned in HA data across reloads; another call
+is rejected while that work runs, and a late result never replaces the accepted
+plan or runtime state. The simulator separately uses killable worker processes
+and its existing hard 120-second limit for each complete replay.
+Planning also retains the owning entry runtime across source acquisition and
+execution awaits. Reloading a preset or shutting down invalidates that ownership;
+obsolete results are discarded before they update the active runtime or plan.
+
 ## Plan Outlook
 
 `plan_outlook.py` builds a language-neutral model from captured planner inputs
@@ -313,11 +338,15 @@ The opaque state includes bounded clock/configuration metadata, published batter
 
 That boundary is the main extraction seam if the optimizer is ever split into its own package later.
 
-Offline implementations live in `optimizer/planners/`. A lazy factory boundary
+Interchangeable implementations live in `optimizer/planners/`. A lazy factory boundary
 selects HiGHS, self-consumption, greedy, local search, beam search, dynamic
 programming, charge-window search, genetic search, cross-entropy search, or a separate
-`module:factory`; HA retains its
-existing `optimize()` entry point. The factory validates capabilities and owns
+`module:factory`. HA selects a finite configuration from `planners/presets.py`
+and runs it through that same registry in its executor. Missing preset options
+select legacy HiGHS and retain its existing lookahead and preference settings.
+Fixed HiGHS preset suffixes count slots; alternative planners own their search
+settings. Preset identity and fixed options accompany the effective input in
+reproductions, results and HA diagnostics. The factory validates capabilities and owns
 the implementation/options/version state envelope while HiGHS retains its
 legacy state internally. Shared policy physics lives in `optimizer/physics.py`,
 used by simulation, forecast schedule evaluation, historical accounting and

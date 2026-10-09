@@ -8,6 +8,8 @@ from ..physics import EPSILON, transition
 from .budget import SearchBudget
 from .contract import PlannerCapabilities
 from .evaluation import build_result, evaluate_schedule, target_miss
+from .recovery import reserve_shortfall_cost
+from .shared import wrap_battery_planner
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +22,7 @@ class _Node:
     miss: float = 0.0
     parent: "_Node | None" = None
     actions: tuple[str, ...] = ()
+    reserve_penalty: float = 0.0
 
 
 def _joint_actions(batteries, limit):
@@ -75,12 +78,26 @@ def _advance(params, node, actions, slot):
             if b.target is not None and b.target.timeslot == slot
         ),
         node, actions,
+        node.reserve_penalty + reserve_shortfall_cost(params.battery_entities, step.levels),
     )
 
 
 def _objective(params, node):
     return (node.cost + node.throughput * params.throughput_cost_per_kwh
-            + node.switches * params.mode_switch_cost)
+            + node.switches * params.mode_switch_cost + node.reserve_penalty)
+
+
+def _recovery_actions(batteries, node, actions):
+    """Try restoring deficient batteries first, within the existing action cap."""
+    if not any(level < b.minimum_kwh - EPSILON
+               for b, level in zip(batteries, node.levels, strict=True)):
+        return actions
+    recovery = tuple(
+        ("grid_charge" if b.can_charge_from & 1 else "preserve")
+        if level < b.minimum_kwh - EPSILON else "self_consume"
+        for b, level in zip(batteries, node.levels, strict=True)
+    )
+    return (recovery, *(joint for joint in actions if joint != recovery))[:len(actions)]
 
 
 def _guidance(params, lookahead):
@@ -177,6 +194,8 @@ def _tail_actions(params, node, slot, guidance, scale):
                 mode = "preserve"
             elif target.mode != "at_least" and level >= high - EPSILON:
                 mode = "preserve"
+        if level < b.minimum_kwh - EPSILON:
+            mode = "grid_charge" if b.can_charge_from & 1 else "preserve"
         actions.append(mode)
     return tuple(actions)
 
@@ -219,7 +238,7 @@ def factory(*, beam_width=16, max_expansions=30000, max_joint_actions=81,
             candidates = {}
             stopped = False
             for node in beam:
-                for joint in actions:
+                for joint in _recovery_actions(batteries, node, actions):
                     if not budget.take():
                         stopped = True
                         break
@@ -274,4 +293,4 @@ def factory(*, beam_width=16, max_expansions=30000, max_joint_actions=81,
         })
 
     plan.capabilities = capabilities
-    return plan
+    return wrap_battery_planner(plan)

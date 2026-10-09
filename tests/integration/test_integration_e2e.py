@@ -419,7 +419,7 @@ async def test_legacy_lookahead_migrates_and_can_be_edited_in_hours(
         return _fake_optimize(params)
 
     with patch(
-        "custom_components.wattplan.coordinator.optimize", side_effect=capture_params
+        "custom_components.wattplan.optimizer.optimize", side_effect=capture_params
     ):
         await _setup_entry(hass, entry)
         assert entry.minor_version == 2
@@ -479,7 +479,7 @@ async def test_runtime_missing_lookahead_falls_back_to_22_slots(
         return _fake_optimize(params)
 
     with patch(
-        "custom_components.wattplan.coordinator.optimize", side_effect=capture_params
+        "custom_components.wattplan.optimizer.optimize", side_effect=capture_params
     ):
         await _setup_entry(hass, entry)
 
@@ -507,7 +507,7 @@ async def test_run_services_are_isolated_by_name(hass: HomeAssistant) -> None:
     assert beta_before is not None
 
     with patch(
-        "custom_components.wattplan.coordinator.optimize",
+        "custom_components.wattplan.optimizer.optimize",
         side_effect=_fake_optimize_with_entities,
     ):
         await _run_optimize(hass, name="Alpha")
@@ -601,7 +601,7 @@ async def test_scheduler_runs_at_interval(hass: HomeAssistant) -> None:
         },
     )
 
-    with patch("custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize):
+    with patch("custom_components.wattplan.optimizer.optimize", side_effect=_fake_optimize):
         await _setup_entry(hass, entry)
         coordinator = entry.runtime_data.coordinator
         initial_attempt_at = coordinator.last_attempt_at
@@ -628,7 +628,7 @@ async def test_scheduler_rearms_after_each_run_and_stops_on_unload(
         },
     )
 
-    with patch("custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize):
+    with patch("custom_components.wattplan.optimizer.optimize", side_effect=_fake_optimize):
         await _setup_entry(hass, entry)
         coordinator = entry.runtime_data.coordinator
         assert coordinator.config_entry is entry
@@ -659,7 +659,7 @@ async def test_scheduler_idle_when_planning_and_emission_disabled(
         },
     )
 
-    with patch("custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize):
+    with patch("custom_components.wattplan.optimizer.optimize", side_effect=_fake_optimize):
         await _setup_entry(hass, entry)
         assert entry.runtime_data.coordinator.next_refresh_at is None
 
@@ -676,7 +676,7 @@ async def test_scheduler_respects_disabled_polling(hass: HomeAssistant) -> None:
         pref_disable_polling=True,
     )
 
-    with patch("custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize):
+    with patch("custom_components.wattplan.optimizer.optimize", side_effect=_fake_optimize):
         await _setup_entry(hass, entry)
         assert entry.runtime_data.coordinator.next_refresh_at is None
 
@@ -744,12 +744,12 @@ async def test_status_sensors_reflect_failures(
     await _setup_entry(hass, entry)
     optimize_patch = (
         patch(
-            "custom_components.wattplan.coordinator.optimize",
+            "custom_components.wattplan.optimizer.optimize",
             side_effect=patch_optimize,
         )
         if patch_optimize
         else patch(
-            "custom_components.wattplan.coordinator.optimize",
+            "custom_components.wattplan.optimizer.optimize",
             side_effect=_fake_optimize,
         )
     )
@@ -791,7 +791,7 @@ async def test_fixed_battery_with_numeric_soc_is_planned(
         captured_params.append(params)
         return _fake_optimize_with_entities(params)
 
-    with patch("custom_components.wattplan.coordinator.optimize", side_effect=capture):
+    with patch("custom_components.wattplan.optimizer.optimize", side_effect=capture):
         await _run_optimize(hass)
 
     assert [_name_of(battery) for battery in captured_params[-1].battery_entities] == [
@@ -831,7 +831,7 @@ async def test_constant_comfort_schedule_publishes_current_actions(
         return assert_plan_invariants(result)
 
     with patch(
-        "custom_components.wattplan.coordinator.optimize",
+        "custom_components.wattplan.optimizer.optimize",
         side_effect=constant_comfort,
     ):
         await _run_optimize(hass)
@@ -917,7 +917,7 @@ async def test_battery_availability_controls_planner_input_and_status(
         captured_params.append(params)
         return _fake_optimize_with_entities(params)
 
-    with patch("custom_components.wattplan.coordinator.optimize", side_effect=capture):
+    with patch("custom_components.wattplan.optimizer.optimize", side_effect=capture):
         await _run_optimize(hass)
 
     assert [
@@ -997,7 +997,7 @@ async def test_invalid_soc_without_availability_skips_only_that_battery(
         result["state"] = None
         return result
 
-    with patch("custom_components.wattplan.coordinator.optimize", side_effect=capture):
+    with patch("custom_components.wattplan.optimizer.optimize", side_effect=capture):
         await _run_optimize(hass)
 
     params = captured_params[-1]
@@ -1016,7 +1016,7 @@ async def test_invalid_soc_without_availability_skips_only_that_battery(
         recovered_soc,
         {"unit_of_measurement": unit},
     )
-    with patch("custom_components.wattplan.coordinator.optimize", side_effect=capture):
+    with patch("custom_components.wattplan.optimizer.optimize", side_effect=capture):
         await _run_optimize(hass)
 
     assert [
@@ -1057,7 +1057,7 @@ async def test_kwh_soc_is_clamped_and_unit_converted(
         captured_params.append(params)
         return _fake_optimize_with_entities(params)
 
-    with patch("custom_components.wattplan.coordinator.optimize", side_effect=capture):
+    with patch("custom_components.wattplan.optimizer.optimize", side_effect=capture):
         await _run_optimize(hass)
 
     battery = captured_params[-1].battery_entities[0]
@@ -1109,7 +1109,7 @@ async def test_unusable_kwh_soc_skips_only_that_battery(
         result["state"] = None
         return result
 
-    with patch("custom_components.wattplan.coordinator.optimize", side_effect=capture):
+    with patch("custom_components.wattplan.optimizer.optimize", side_effect=capture):
         await _run_optimize(hass)
 
     assert [_name_of(b) for b in captured_params[-1].battery_entities] == [
@@ -1151,7 +1151,7 @@ async def test_mixed_batteries_send_only_available_batteries_to_optimizer(
         captured_params.append(params)
         return _fake_optimize_with_entities(params)
 
-    with patch("custom_components.wattplan.coordinator.optimize", side_effect=capture):
+    with patch("custom_components.wattplan.optimizer.optimize", side_effect=capture):
         await _run_optimize(hass)
 
     assert [_name_of(battery) for battery in captured_params[-1].battery_entities] == [
@@ -1185,7 +1185,7 @@ async def test_all_batteries_skipped_still_runs_no_battery_plan(
         captured_params.append(params)
         return _fake_optimize_with_entities(params)
 
-    with patch("custom_components.wattplan.coordinator.optimize", side_effect=capture):
+    with patch("custom_components.wattplan.optimizer.optimize", side_effect=capture):
         await _run_optimize(hass)
 
     assert captured_params[-1].battery_entities == []
@@ -1209,7 +1209,7 @@ async def test_status_recovers_after_source_recovery(
     )
     await _setup_entry(hass, entry)
     with patch(
-        "custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize
+        "custom_components.wattplan.optimizer.optimize", side_effect=_fake_optimize
     ), pytest.raises(PlanningStageError):
         await _run_optimize(hass)
 
@@ -1225,7 +1225,7 @@ async def test_status_recovers_after_source_recovery(
     )
     await hass.async_block_till_done(wait_background_tasks=True)
 
-    with patch("custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize):
+    with patch("custom_components.wattplan.optimizer.optimize", side_effect=_fake_optimize):
         await _run_optimize(hass)
 
     assert hass.states.get("sensor.home_status").state == "ok"
@@ -1247,7 +1247,7 @@ async def test_suboptimal_result_is_exposed(
     suboptimal_result["suboptimal"] = True
     suboptimal_result["suboptimal_reasons"] = ["constraint_tightness"]
 
-    with patch("custom_components.wattplan.coordinator.optimize", return_value=suboptimal_result):
+    with patch("custom_components.wattplan.optimizer.optimize", return_value=suboptimal_result):
         await _run_optimize(hass)
 
     status = hass.states.get("sensor.home_status")

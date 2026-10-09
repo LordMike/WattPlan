@@ -4,6 +4,8 @@ from ..physics import EPSILON
 from .budget import SearchBudget
 from .contract import PlannerCapabilities
 from .evaluation import build_result, evaluate_schedule, target_miss
+from .recovery import reserve_recovery_seed
+from .shared import wrap_battery_planner
 
 
 def factory(*, max_evaluations=256, trade_window_slots=24):
@@ -25,6 +27,7 @@ def factory(*, max_evaluations=256, trade_window_slots=24):
             ["self_consume" if price > 0 else "preserve" for price in prices]
             for _ in batteries
         ]
+        policies = reserve_recovery_seed(params, policies)
         budget = SearchBudget(max_evaluations)
         budget.take()
         best = evaluate_schedule(params, policies)
@@ -43,8 +46,9 @@ def factory(*, max_evaluations=256, trade_window_slots=24):
         # Construct a monotone target chain rather than demanding each action
         # immediately help. This crosses empty/full-battery plateaus without a
         # general local search; only the best fully replayed schedule is retained.
-        target_allowance = max(1, max_evaluations // (4 * max(1, len(batteries))))
-        for index, battery in enumerate(batteries):
+        targets = [index for index, battery in enumerate(batteries) if battery.target]
+        for position, index in enumerate(targets):
+            battery = batteries[index]
             target = battery.target
             if (
                 target is None
@@ -54,7 +58,7 @@ def factory(*, max_evaluations=256, trade_window_slots=24):
             deadline = target.timeslot
             base = [row[:] for row in policies]
             base[index][: deadline + 1] = ["preserve"] * (deadline + 1)
-            evaluation = consider(base, "target")
+            evaluation = best if base == policies else consider(base, "target")
             if evaluation is None:
                 break
             level = evaluation.steps[deadline].levels[index]
@@ -69,6 +73,11 @@ def factory(*, max_evaluations=256, trade_window_slots=24):
                 ),
             )
             chain = base
+            # A missed deadline ranks before economics. Share remaining work
+            # among targets instead of reserving most of it for tariff trades.
+            target_allowance = max(
+                1, (max_evaluations - budget.evaluations) // (len(targets) - position)
+            )
             for slot in order[:target_allowance]:
                 candidate = [row[:] for row in chain]
                 candidate[index][slot] = direction
@@ -183,4 +192,4 @@ def factory(*, max_evaluations=256, trade_window_slots=24):
         )
 
     plan.capabilities = PlannerCapabilities()
-    return plan
+    return wrap_battery_planner(plan)

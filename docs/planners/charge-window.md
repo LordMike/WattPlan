@@ -6,8 +6,13 @@ stateless, original code inspired by the general idea of charging windows in
 Predbat's public documentation. No Predbat source is copied, no native solver is
 called, and no past solution or forecast score is reused on the next decision.
 
-The counted self-consumption baseline is followed by tariff-threshold and target
-seeds. Deadline-anchored charge, preserve and release intervals are evaluated
+The first counted candidate starts from self-consumption, with physically
+constructed target actions and immediate reserve recovery when configured.
+Healthy batteries without targets retain the original baseline. A single target
+construction pass uses actual battery curves, efficiency and available load;
+`target_seed_transitions` reports that work separately from scored evaluations.
+Tariff-threshold and additional target seeds follow. Deadline-anchored charge,
+preserve and release intervals are evaluated
 before economic refinement. Economic candidates include an atomic contiguous
 charge block, preservation until a later contiguous release block, uniform
 window changes and shifts of existing policy boundaries. Interval lengths descend
@@ -19,7 +24,9 @@ include all batteries and the entire supplied horizon.
 Every candidate goes through `planners.evaluation.evaluate_schedule`, using only
 the current request forecasts and neutral battery physics. Target misses at the
 inclusive deadline are minimized lexicographically before net tariff cost,
-throughput cost and physical behavior switching cost. The accepted evaluation is
+throughput cost, physical behavior switching cost, and per-slot reserve-shortfall
+penalties. Reserve penalties prioritize recovery but never appear in billed cost.
+The accepted evaluation is
 reused by `build_result`: final projections incur no uncounted replay. Ingress,
 PV sharing, reserve, nonlinear charge/discharge curves and efficiencies have the
 same execution semantics as the simulator. Policies are `self_consume`,
@@ -44,11 +51,15 @@ already elapsed. Search deadlines are checked between candidates; a single
 physical replay may exceed them. The simulator independently enforces its
 whole-replay wall limit.
 
-The planner ignores legacy `lookahead_slots`, `rolling_window_slots`,
+The planner ignores legacy `lookahead_slots`,
 `solver_time_limit_seconds` and `infer_battery_preserve_policy`; it scores and
-returns the full supplied horizon and declares the default battery-only planner
-capabilities. Comfort inputs are unsupported. Optional recommendations are
-advisory and excluded from the battery objective. State is always `None`.
+returns the full supplied horizon. The [shared comfort layer](comfort-parity.md)
+honors rolling targets, run constraints, history, and runtime continuity, then
+includes accepted comfort consumption in the window search. Full HA projections,
+flows, unmet-constraint status, and fixed-policy optional-appliance recommendations
+are returned by direct factory and registry calls. Optional loads remain advisory
+and excluded from the battery objective. Battery search stays stateless; comfort
+continuity uses the shared opaque state wrapper.
 
 Diagnostics include requested/effective evaluation limits, counted evaluations,
 termination reason, seeds, candidate attempts, visited scales, accepted move

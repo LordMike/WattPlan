@@ -339,12 +339,17 @@ async def async_handle_export_planner_input_service(
 ) -> dict[str, Any]:
     entry = resolve_single_run_entry(hass, call, label="Planner input export")
     request = await entry.runtime_data.coordinator.async_build_planner_input_export()
-    return _format_service_export(
-        payload_key="model",
-        payload=request["optimizer_params"],
-        as_json_key="model_json",
-        as_json=call.data["as_json"],
-    )
+    return {
+        "planner_preset": request.get("planner_preset", "highs"),
+        "planner": request.get("planner", "highs"),
+        "planner_options": request.get("planner_options", {}),
+        **_format_service_export(
+            payload_key="model",
+            payload=request["optimizer_params"],
+            as_json_key="model_json",
+            as_json=call.data["as_json"],
+        ),
+    }
 
 
 async def async_handle_export_usage_forecast_debug_service(

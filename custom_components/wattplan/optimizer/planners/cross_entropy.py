@@ -3,9 +3,12 @@
 import math
 import random
 
+from ..physics import EPSILON
 from .budget import SearchBudget
 from .contract import PlannerCapabilities
 from .evaluation import build_result, evaluate_schedule
+from .recovery import reserve_recovery_seed
+from .shared import wrap_battery_planner
 
 _ACTIONS = ("self_consume", "preserve", "grid_charge")
 _MAX_SLOT_BATTERY_EVALUATIONS = 196_608
@@ -61,7 +64,7 @@ def _seeds(params):
                     above_target = (
                         battery.initial_kwh > target.soc_kwh + target.tolerance_kwh
                     )
-                    if target.mode == "at_most" or above_target:
+                    if target.mode == "at_most" or (target.mode == "exact" and above_target):
                         target_rows[index][:end] = ["self_consume"] * end
                         continue
                     target_rows[index][:end] = ["preserve"] * end
@@ -164,11 +167,22 @@ def factory(
         budget.take()
         budget.max_seconds = max_seconds
         baseline = [["self_consume"] * horizon for _ in batteries]
+        initial_name = "self-consumption"
+        if any(b.target for b in batteries):
+            # Put a deadline construction into the compulsory first evaluation.
+            # This scans seed recipes only; it performs no uncounted scoring.
+            initial_name, baseline = next(
+                (name, candidate) for name, candidate in _seeds(params)
+                if name.startswith("target-")
+            )
+        baseline = reserve_recovery_seed(params, baseline)
+        if any(b.initial_kwh < b.minimum_kwh - EPSILON for b in batteries):
+            initial_name += "+reserve-recovery"
         best_policies = baseline
         best = evaluate_schedule(params, baseline)
         baseline_score = list(best.score)
         evaluated_seeds = [(best.score, baseline)]
-        names = ["self-consumption"]
+        names = [initial_name]
         seen = {tuple(tuple(row) for row in baseline)}
         for name, candidate in _seeds(params):
             key = tuple(tuple(row) for row in candidate)
@@ -259,6 +273,7 @@ def factory(
                 "effective_max_evaluations": effective,
                 "seed": seed,
                 "seed_candidates": names,
+                "seed_construction": "target recipe and physical reserve preparation before counted evaluation",
                 "baseline_score": baseline_score,
                 "generations": generations,
                 "candidate_attempts": attempts,
@@ -272,4 +287,4 @@ def factory(
         )
 
     plan.capabilities = PlannerCapabilities()
-    return plan
+    return wrap_battery_planner(plan)

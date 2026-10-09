@@ -1,5 +1,10 @@
 # Offline planner comparison ledger
 
+This is preserved historical evidence. See the newer
+[parity comparison](parity-comparison.md) for all published configurations after
+the shared live features were added; historical capability notes below describe
+the source versions measured at the time.
+
 The simulator runs nine built-in planners side by side: `highs`,
 `self-consumption`, `greedy`, `local-search`, `beam-search`,
 `dynamic-programming`, `charge-window`, `genetic`, and `cross-entropy`.

@@ -1,4 +1,4 @@
-"""Lazy factories and implementation-owned opaque state for simulator calls."""
+"""Lazy planner factories and configuration-owned opaque state for HA and replay."""
 
 import base64
 import importlib

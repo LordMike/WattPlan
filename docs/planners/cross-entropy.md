@@ -10,7 +10,12 @@ control, or terminal energy credit is used.
 
 Each cycle starts afresh with a local fixed-seed random generator. Forecast tariff
 thresholds seed economically coherent policies; target seeds preserve and charge
-before an inclusive deadline or discharge toward an upper bound. These are
+before an inclusive deadline or discharge toward an upper bound. A target seed
+is selected for the compulsory first evaluation when targets exist. Initially
+deficient batteries add a physically replayed reserve-recovery prefix before that
+evaluation, so even a one-evaluation budget begins recovery. Healthy no-target
+requests keep their original self-consumption seed and CEM sampling sequence.
+These are
 constructions rather than separate search algorithms, and their evaluations count
 against the same budget. Seeds can miss feasible targets when curves or PV make
 the simple charging estimate inaccurate. CEM optimizes the exact shared target
@@ -22,13 +27,18 @@ runs while allowing different slot distributions. The smoothing update combines
 old probabilities and elite frequencies, then applies an affine probability floor.
 The floor also applies to initialization, including `guidance=1`. Forbidden grid
 charging has probability zero throughout initialization, fitting and sampling.
-The retained best schedule can never worsen relative to the physical
-self-consumption baseline under the shared objective.
+The retained best schedule can never worsen relative to its counted initial seed
+under the shared objective. End-of-slot reserve-shortfall penalties prioritize
+recovery and remain separate from billed tariff cost.
 
 All supplied forecast slots are returned and scored, including targets beyond
-legacy `lookahead_slots`. The legacy rolling window, lookahead, solver time limit,
+legacy `lookahead_slots`. The legacy lookahead, solver time limit,
 and inferred preserve preferences are unused and disclosed through capabilities.
-Comfort inputs are unsupported and optional recommendations are advisory.
+The [shared comfort layer](comfort-parity.md) handles rolling targets, run
+constraints, runtime history and continuity, then includes comfort consumption in
+CEM scoring. Both direct factory and registry calls return full HA cost and flow
+projections, unmet-constraint diagnostics, and optional-appliance recommendations
+priced under the selected battery policy. Optional loads remain advisory.
 
 | Keyword-only option | Default | Meaning |
 | --- | ---: | --- |

@@ -1,11 +1,11 @@
 # Experimental genetic planner
 
 Factory: `custom_components.wattplan.optimizer.planners.genetic:factory`.
-This stateless battery-only implementation runs a fresh generational genetic
+This implementation runs a fresh generational genetic
 algorithm on every cycle. A chromosome is a complete battery-major sequence of
 `self_consume`, `preserve`, and (where ingress permits it) `grid_charge` actions.
 It uses no solver, external optimization package, previous-cycle plan or future
-actual data. Home Assistant's production optimizer remains unchanged.
+actual data. Home Assistant offers genetic presets alongside the default HiGHS.
 
 The initial population includes self consumption, preserve, permitted grid
 charging, and forecast/target-aware seeds. Seed construction follows the shared
@@ -16,6 +16,11 @@ batteries * horizon) and does not shorten scoring or target deadlines. Deadline 
 levels, the inclusive deadline, permitted ingress, efficiency and an optimistic
 remaining charge bound. It protects attained lower targets and discharges above
 upper targets. This is a heuristic seed, not a guarantee of target feasibility.
+The mandatory first chromosome restores any initial reserve deficit using legal
+ingress before continuing its self-consumption policies. Its full evaluation is
+counted even with a one-evaluation or already-expired cooperative budget. Recovery
+construction transitions are included in `seed_transitions` and broken out as
+`reserve_seed_transitions`. Healthy requests retain the original baseline.
 
 Tournament selection chooses parents. Temporal window crossover exchanges
 coherent schedule sections, independently across batteries. Mutations replace a
@@ -23,16 +28,20 @@ contiguous mode block, exchange temporal windows, or change one action. Elites
 survive each generation. Duplicate chromosomes are skipped; initial filling and
 each generation have finite attempt caps. A small action space or disabled
 variation therefore cannot make population filling hang. The best evaluated
-chromosome is always retained, including the self-consumption baseline.
+chromosome is always retained, including the reserve-aware baseline.
 
 Every candidate is scored against the **entire supplied forecast horizon** by
 `evaluate_schedule`. Target miss in kWh is minimized lexicographically before
-tariff cost plus throughput and physical mode-switch preferences. `build_result`
+tariff cost plus reserve recovery, throughput and physical mode-switch preferences. `build_result`
 reuses that evaluation, so final projected levels and tariff cost follow the
 canonical physical model. The model owns PV allocation, reserves, efficiencies,
 charge/discharge curves and grid-charge headroom. There is no terminal energy
-credit or invented energy. Optional loads are ignored and comfort loads rejected.
-Shared `lookahead_slots`, `rolling_window_slots`, `solver_time_limit_seconds` and
+credit or invented energy. The shared wrapper schedules comfort constraints and
+includes comfort consumption in the battery forecast. Full HA reporting exposes
+costs, separate base/comfort energy flows, observed constraint violations, and
+fixed-policy optional appliance recommendations. Factory and registry calls have
+the same features. Missed constraints degrade the accepted plan without claiming
+infeasibility. Shared `lookahead_slots`, `solver_time_limit_seconds` and
 `infer_battery_preserve_policy` preferences are unused and reported.
 
 ## Options and diagnostics
@@ -64,7 +73,8 @@ seed transitions, attempted and unique candidates, completed generations,
 population diversity, peak diversity, crossover/mutation counts, fixed seed,
 forecast horizon, elapsed search time and the baseline score. Fixed seed and
 fixed evaluation budgets reproduce schedules and objective values; optional
-wall limits depend on hardware. No persistent state is emitted.
+wall limits depend on hardware. Battery search emits no persistent state; the
+shared wrapper carries comfort continuity and measures complete execution time.
 
 ## Validation and limits
 

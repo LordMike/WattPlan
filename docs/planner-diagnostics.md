@@ -29,6 +29,10 @@ household energy forecasts and battery configuration.
 New records use schema version 2. Plan records (`record_type: plan`) preserve
 `request.optimizer_params` and `result`, adding setup ID, timezone, currency,
 `input_captured_at`, actuals status and available preceding completed intervals.
+Plan requests also record `planner_preset`, underlying `planner`, and
+`planner_options`. Preserve these fields when reproducing a selected algorithm;
+the numeric input model alone does not identify it. Older records without this
+metadata use the original HiGHS planner and empty factory options.
 With historical tracking, independent `record_type: actuals` updates append
 measured usage/PV, stored tariffs, optional grid flows, source roles and quality
 flags when a slot completes, even without a successful plan. Actuals updates use
@@ -72,13 +76,23 @@ To replay an individual line locally:
 ```python
 import json
 
-from custom_components.wattplan.optimizer import OptimizationParams, optimize
+from custom_components.wattplan.optimizer import OptimizationParams
+from custom_components.wattplan.optimizer.planners import create_planner
 
 record = json.loads(line)
 # Select a plan record; actuals-only updates have no request/result.
-replayed = optimize(OptimizationParams(**record["request"]["optimizer_params"]))
+request = record["request"]
+planner = create_planner(request.get("planner", "highs"), request.get("planner_options", {}))
+replayed = planner(OptimizationParams(**request["optimizer_params"]))
 print(replayed["entities"] == record["result"]["entities"])
 ```
+
+For a current input snapshot, `wattplan.export_planner_input` retains its
+existing `model` response (`model_json` when `as_json` is true) and adds the
+same three planner metadata fields alongside it. Replay the model with
+`create_planner(response.get("planner", "highs"), response.get("planner_options", {}))`.
+Keep the complete response so a fixed HiGHS lookahead or alternative algorithm
+is not lost when exporting just the numeric input.
 
 The former Planner Reproduction entity and its Recorder-based binary payload
 are no longer used. The existing Plan Details entities remain current inspection

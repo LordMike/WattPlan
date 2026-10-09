@@ -8,6 +8,8 @@ from ..physics import EPSILON, transition
 from .budget import SearchBudget
 from .contract import PlannerCapabilities
 from .evaluation import build_result, evaluate_schedule, target_miss
+from .recovery import reserve_shortfall_cost
+from .shared import wrap_battery_planner
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +58,7 @@ def _advance(params, state, actions, slot):
         - step.grid_export * params.grid_export_price_per_kwh[slot]
         + (step.charge + sum(step.discharge)) * params.throughput_cost_per_kwh
         + switches * params.mode_switch_cost
+        + reserve_shortfall_cost(params.battery_entities, step.levels)
     )
     return _State(
         tuple(step.levels),
@@ -92,6 +95,14 @@ def _actions(batteries, limit):
     base = tuple("self_consume" for _ in batteries)
 
     def ordered():
+        if any(b.initial_kwh < b.minimum_kwh - EPSILON for b in batteries):
+            # Even a one-transition budget starts with an executable recovery
+            # candidate. Healthy batteries keep their normal baseline action.
+            yield tuple(
+                ("grid_charge" if b.can_charge_from & 1 else "preserve")
+                if b.initial_kwh < b.minimum_kwh - EPSILON else "self_consume"
+                for b in batteries
+            )
         for mode in ("self_consume", "preserve", "grid_charge"):
             yield tuple(mode if mode in row else "preserve" for row in choices)
         for index, row in enumerate(choices):
@@ -243,6 +254,8 @@ def _tail_actions(params, state, slot, bounds):
                 mode = "preserve"
             elif target.mode != "at_least" and level >= high - EPSILON:
                 mode = "preserve"
+        if level < battery.minimum_kwh - EPSILON:
+            mode = "grid_charge" if battery.can_charge_from & 1 else "preserve"
         actions.append(mode)
     return tuple(actions)
 
@@ -377,4 +390,4 @@ def factory(
         )
 
     plan.capabilities = capabilities
-    return plan
+    return wrap_battery_planner(plan)

@@ -1,14 +1,17 @@
 # Greedy battery planner
 
 Use `custom_components.wattplan.optimizer.planners.greedy:factory` in the offline
-simulator. Production planning remains HiGHS. Options are strict keyword arguments:
+simulator or choose a greedy preset in Home Assistant; HiGHS remains the default.
+Options are strict keyword arguments:
 `max_evaluations=256` (positive integer) and `trade_window_slots=24` (integer 1–672).
 The latter bounds a tariff trade's future release opportunity, in planner slots;
 it is six hours with fifteen-minute slots. Legacy `lookahead_slots` is ignored.
 The returned schedule and shared evaluation always cover the full supplied horizon.
 
 The deterministic seed self-consumes positive-price load and preserves on zero or
-negative import prices. For a missed target, one constructive chain first preserves
+negative import prices. Initially deficient batteries first recover their reserve
+using legal ingress; this recovery is included even with a one-evaluation budget.
+For a missed target, one constructive chain first preserves
 through its inclusive deadline, then progressively adds cheap charging or valuable
 discharge actions. Only the best fully evaluated candidate is retained, so a chain
 can cross an empty-storage plateau. Subsequent fixed passes preserve cheap load,
@@ -21,19 +24,30 @@ there are no convergence loops, restarts or general neighborhood search.
 All decisions use request forecasts alone. Shared neutral physics evaluates PV
 allocation in battery order, proportional discharge, ingress restrictions, tapered
 curves, AC efficiencies, reserves and grid-charge headroom. Full-horizon target
-misses are lexicographically first, then tariff cost plus throughput and switching
+misses are lexicographically first, then tariff cost plus reserve-recovery,
+throughput and switching
 preferences. Terminal energy credit is zero. Signed import/export tariffs retain
 their sign; paid import can profitably leave stored energy at horizon end. Every
 accepted candidate improves the same evaluator score; initial requests are untouched.
 
 `SearchBudget` counts the seed and every candidate before replay. Target construction
-allocates approximately one quarter of the budget across batteries, plus each
-battery's initial preserve candidate. The remaining preserve/trade/release passes
+shares remaining evaluations among target-bearing batteries; an identical initial
+preserve candidate reuses its accepted evaluation. Unmet targets take priority
+over economic passes, so a small budget can still construct a multi-charge target.
+The remaining preserve/trade/release passes
 divide available evaluations approximately 1:2:1. Work is bounded by
 `max_evaluations` full replays: roughly O(max_evaluations × batteries × horizon),
 with O(batteries × horizon) schedule storage, plus tariff sorting and bounded release
 scans. Budget 1 returns the seed. Every configured battery still receives a complete
-finite schedule. The planner is stateless and never imports or falls back to `highspy`.
+finite schedule. Battery search is stateless and never imports or falls back to `highspy`.
+
+Both direct factories and registry calls use the shared comfort wrapper. It plans
+comfort constraints and includes their consumption before battery search, then
+publishes complete HA projections and base/comfort energy flows. Optional appliance
+recommendations replay the accepted battery policies with each proposed load.
+Whole-call execution time includes preparation and reporting. Reserve and target
+misses appear in HA plan health as observed violations, without an infeasibility
+claim. Battery search is stateless; the wrapper carries comfort continuity.
 
 The heuristic does not guarantee a globally optimal schedule or feasible targets.
 Discrete full-slot policies can miss an exact target that a continuous controller

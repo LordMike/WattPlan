@@ -7,6 +7,7 @@ HiGHS selection is unchanged; there is no solver fallback.
 The planner advances executable joint `self_consume`, `preserve`, and permitted
 `grid_charge` policies through shared physical transitions. Each beam node stores
 physical SoC, previous actual behavior, accumulated tariff/throughput/switching
+and reserve-recovery
 cost, deadline misses, and a linked policy prefix. Identical physical levels and
 previous modes are merged, retaining the lower exact prefix score. Floating point
 states are compared exactly, without rounding away physical differences. Stable
@@ -59,9 +60,15 @@ enumeration favors coordinated actions and earlier batteries; diagnostics report
 the full action-space size and the number omitted per prefix. Two grid-capable
 batteries enumerate all nine combinations at the default cap.
 
+While a battery is below its reserve, an action restoring deficient batteries is
+considered first within that same cap. This also permits immediate recovery with
+a one-expansion budget. Every end-of-slot reserve shortfall contributes the shared
+5000-per-kWh preference to prefix scoring; final replay independently checks it.
+PV-only recovery uses available PV without inventing grid charging.
+
 Search stops cooperatively between expansions. A partially expanded slot can
 still select the best visited prefix. It then completes one full-horizon schedule
-using one cheap deterministic forecast/target-aware joint action per slot.
+using one cheap deterministic forecast/target/reserve-aware joint action per slot.
 Completion uses price comparisons and optimistic target reachability to choose
 each battery policy; it does not enumerate alternatives or promise optimality.
 `max_expansions`/`max_seconds` bound search, not this mandatory completion/replay.
@@ -81,10 +88,16 @@ these explicit limits, with work linear in battery count per transition.
 
 The complete supplied horizon is always scored and returned. The separate
 `guidance_slots` option controls guidance; request `lookahead_slots`,
-`rolling_window_slots`, `solver_time_limit_seconds`, and
+`solver_time_limit_seconds`, and
 `infer_battery_preserve_policy` are explicitly ignored. Throughput, action deadband,
-and mode-switch costs are honored. Comfort inputs are rejected, optional loads
-are advisory and ignored, input params and state are not mutated.
+and mode-switch costs are honored. The common wrapper schedules comfort loads
+with the configured rolling-window and minimum-run constraints before battery
+search. Comfort consumption enters the battery forecast, while public energy
+flows retain separate base and comfort consumption. Optional appliances receive
+fixed-policy incremental-cost recommendations. Both direct factory and registry
+calls return complete HA projections, constraint health and measured whole-call
+timing. Input params and state are not mutated. An observed target or reserve
+miss degrades the accepted plan; it does not prove no feasible schedule exists.
 
 ## Reproducible tuning ledger
 

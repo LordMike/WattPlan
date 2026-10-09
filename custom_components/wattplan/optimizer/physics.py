@@ -79,6 +79,9 @@ def transition(
     ``grid_eligible`` may latch the full-slot headroom test at an action boundary
     when a caller splits that action at measurement or replanning boundaries.
     Historical self-consumption explicitly uses its legacy sequential allocation.
+    Remaining PV surplus prevents grid charging: a single site cannot import
+    grid-labeled battery energy while exporting that surplus. Netting the flows
+    would instead charge a grid-only battery from a forbidden PV source.
     """
     if len(batteries) != len(levels) or len(batteries) != len(modes):
         raise ValueError("Battery state and policy dimensions differ")
@@ -145,7 +148,12 @@ def transition(
                 )
                 deficit = max(0.0, deficit - discharge[i])
     for i, b in enumerate(batteries):
-        if modes[i] == "grid_charge" and b.can_charge_from & 1 and eligible[i]:
+        if (
+            modes[i] == "grid_charge"
+            and b.can_charge_from & 1
+            and eligible[i]
+            and surplus <= EPSILON
+        ):
             grid_charge[i] = min(
                 max(limits[i][0] * slot_fraction - pv_charge[i], 0.0),
                 max(b.capacity_kwh - next_levels[i], 0.0) / b.charge_efficiency,

@@ -112,7 +112,7 @@ async def test_missing_service_for_required_source_fails_plan_with_status(
 
     with (
         patch(
-            "custom_components.wattplan.coordinator.optimize",
+            "custom_components.wattplan.optimizer.optimize",
             side_effect=_fake_optimize_with_entities,
         ),
         pytest.raises(PlanningStageError) as err,
@@ -142,7 +142,7 @@ async def test_missing_service_for_pv_source_degrades_plan(
     await _setup_entry(hass, entry)
 
     with patch(
-        "custom_components.wattplan.coordinator.optimize",
+        "custom_components.wattplan.optimizer.optimize",
         side_effect=_fake_optimize_with_entities,
     ):
         await _run_optimize(hass)
@@ -164,28 +164,48 @@ async def test_optimizer_timeout_fails_plan_with_execution_error(
     coordinator = entry.runtime_data.coordinator
 
     original = hass.async_add_executor_job
+    release = asyncio.Event()
+    completed = asyncio.Event()
+    optimizer_calls = 0
 
     async def hang_on_optimizer(target: Any, *args: Any) -> Any:
+        nonlocal optimizer_calls
         # The test hass runs executor jobs inline, so simulate a stuck solve.
-        if target is coordinator_module.optimize:
-            await asyncio.sleep(5)
-        return await original(target, *args)
+        if target is coordinator_module.run_preset:
+            optimizer_calls += 1
+            await release.wait()
+        try:
+            return await original(target, *args)
+        finally:
+            if target is coordinator_module.run_preset:
+                completed.set()
 
     with (
         patch.object(coordinator, "_optimizer_timeout_seconds", return_value=0.05),
         patch.object(hass, "async_add_executor_job", hang_on_optimizer),
-        patch.object(
-            coordinator_module, "optimize", side_effect=_fake_optimize_with_entities
-        ),
-        pytest.raises(PlanningStageError) as err,
+        patch("custom_components.wattplan.optimizer.optimize", side_effect=_fake_optimize_with_entities),
     ):
-        await _run_optimize(hass)
-
-    assert err.value.kind is StageErrorKind.PLANNER_EXECUTION
-    assert "did not finish" in str(err.value)
-    assert coordinator._plan_error.kind is StageErrorKind.PLANNER_EXECUTION
-    # The plan from setup is retained, so the status degrades instead of failing.
-    assert hass.states.get("sensor.home_status").state == "degraded"
+        try:
+            with pytest.raises(PlanningStageError) as err:
+                await _run_optimize(hass)
+            assert err.value.kind is StageErrorKind.PLANNER_EXECUTION
+            assert "did not finish" in str(err.value)
+            assert coordinator._plan_error.kind is StageErrorKind.PLANNER_EXECUTION
+            # The plan from setup is retained, so the status degrades.
+            assert hass.states.get("sensor.home_status").state == "degraded"
+            state_after_timeout = entry.runtime_data.optimizer_state
+            with pytest.raises(PlanningStageError, match="still running"):
+                await _run_optimize(hass)
+            assert optimizer_calls == 1
+            release.set()
+            await completed.wait()
+            await hass.async_block_till_done()
+            assert entry.runtime_data.optimizer_state == state_after_timeout
+            await _run_optimize(hass)
+            assert optimizer_calls == 2
+        finally:
+            release.set()
+            await completed.wait()
 
 
 @pytest.mark.parametrize("state", [STATE_UNAVAILABLE, STATE_UNKNOWN])
@@ -221,7 +241,7 @@ async def test_unavailable_comfort_entity_sends_no_off_streak_to_the_planner(
         captured.append(params)
         return _fake_optimize_with_entities(params)
 
-    with patch("custom_components.wattplan.coordinator.optimize", side_effect=capture):
+    with patch("custom_components.wattplan.optimizer.optimize", side_effect=capture):
         await _run_optimize(hass)
 
     comfort = captured[-1].comfort_entities[0]

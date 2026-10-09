@@ -25,6 +25,7 @@ from ..const import (
     CONF_OPTIONS_COUNT,
     CONF_OPTIMIZER_LOOKAHEAD_HOURS,
     CONF_OPTIMIZER_LOOKAHEAD_SLOTS,
+    CONF_PLANNER_PRESET,
     CONF_PREFER_PV_SURPLUS_CHARGING,
     CONF_ROLLING_WINDOW_HOURS,
     CONF_RUN_WITHIN_HOURS,
@@ -39,6 +40,10 @@ from .source_shared import (
     _lookahead_slots_from_hours,
     _optional_max_distinct_options,
     _validate_text_field,
+)
+from ..optimizer.planners.presets import (
+    DEFAULT_PRESET,
+    lookahead_slots as preset_lookahead_slots,
 )
 
 
@@ -149,7 +154,11 @@ def _validate_comfort_data(
                 LEGACY_OPTIMIZER_LOOKAHEAD_SLOTS,
             )
         )
-        solve_horizon = min(plan_slots, lookahead_slots)
+        solve_horizon = preset_lookahead_slots(
+            entry.options.get(CONF_PLANNER_PRESET, DEFAULT_PRESET),
+            lookahead_slots,
+            plan_slots,
+        )
         for field in (
             CONF_MIN_CONSECUTIVE_ON_MINUTES,
             CONF_MIN_CONSECUTIVE_OFF_MINUTES,
@@ -168,7 +177,8 @@ def _validate_core_lookahead_for_comforts(
     lookahead_slots = _lookahead_slots_from_hours(
         float(data[CONF_OPTIMIZER_LOOKAHEAD_HOURS]), slot_minutes
     )
-    solve_horizon = min(plan_slots, lookahead_slots)
+    preset = data.get(CONF_PLANNER_PRESET, DEFAULT_PRESET)
+    solve_horizon = preset_lookahead_slots(preset, lookahead_slots, plan_slots)
     for subentry in entry.subentries.values():
         if subentry.subentry_type != SUBENTRY_TYPE_COMFORT:
             continue
@@ -180,10 +190,13 @@ def _validate_core_lookahead_for_comforts(
                 CONF_MIN_CONSECUTIVE_OFF_MINUTES,
             )
         ):
+            field = (
+                CONF_OPTIMIZER_LOOKAHEAD_HOURS
+                if preset == DEFAULT_PRESET
+                else CONF_PLANNER_PRESET
+            )
             return {
-                CONF_OPTIMIZER_LOOKAHEAD_HOURS: (
-                    "optimizer_lookahead_too_short_for_comfort"
-                )
+                field: "optimizer_lookahead_too_short_for_comfort"
             }
     return {}
 

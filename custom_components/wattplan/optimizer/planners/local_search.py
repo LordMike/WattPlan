@@ -4,9 +4,12 @@ import math
 import random
 
 from ..models import OptimizationParams
+from ..physics import EPSILON
 from .budget import SearchBudget
 from .contract import PlannerCapabilities
 from .evaluation import build_result, evaluate_schedule
+from .recovery import reserve_recovery_seed
+from .shared import wrap_battery_planner
 
 
 # Limit replay work as well as candidate count on long/many-battery requests.
@@ -83,6 +86,37 @@ def _copy(policies):
     return [row.copy() for row in policies]
 
 
+def _initial_policy(params):
+    """Construct a deadline-aware first candidate without scoring hidden seeds.
+
+    Charge-count estimates are only guidance; the counted full replay decides
+    their physical result. Starting here gives even small search budgets a
+    feasible immediate-target candidate before exploring tariff opportunities.
+    """
+    horizon = len(params.usage_kwh)
+    rows = [["self_consume"] * horizon for _ in params.battery_entities]
+    for index, battery in enumerate(params.battery_entities):
+        target = battery.target
+        if target is None:
+            continue
+        end = target.timeslot + 1
+        if target.mode == "at_most" or (
+            target.mode == "exact"
+            and battery.initial_kwh > target.soc_kwh + target.tolerance_kwh
+        ):
+            continue
+        rows[index][:end] = ["preserve"] * end
+        rate = max(battery.charge_curve_kwh) * battery.charge_efficiency
+        needed = max(target.soc_kwh - target.tolerance_kwh - battery.initial_kwh, 0.0)
+        if not battery.can_charge_from & 1 or rate <= EPSILON or needed <= EPSILON:
+            continue
+        count = min(end, math.ceil((needed - EPSILON) / rate))
+        cheap = sorted(range(end), key=lambda slot: (params.grid_import_price_per_kwh[slot], slot))
+        for slot in cheap[:count]:
+            rows[index][slot] = "grid_charge"
+    return reserve_recovery_seed(params, rows)
+
+
 def factory(*, max_evaluations=96, max_seconds=None, seed=0, max_restarts=2):
     """Score complete horizons; legacy lookahead/solver preferences are unused.
 
@@ -125,14 +159,18 @@ def factory(*, max_evaluations=96, max_seconds=None, seed=0, max_restarts=2):
         # Always reserve the baseline before starting any seed construction. The
         # first unavoidable replay establishes a complete result even with tiny
         # time limits; it is counted and may cooperatively overrun that deadline.
-        baseline = [["self_consume"] * horizon for _ in batteries]
+        baseline = _initial_policy(params)
         budget.take()
         budget.max_seconds = max_seconds
         best_eval = evaluate_schedule(params, baseline)
         best = baseline
         seen.add(tuple(tuple(row) for row in baseline))
         baseline_score = best_eval.score
-        seeds_evaluated.append("self-consumption")
+        seeds_evaluated.append(
+            "target-or-reserve" if any(
+                b.target or b.initial_kwh < b.minimum_kwh - EPSILON for b in batteries
+            ) else "self-consumption"
+        )
         if batteries:
             for label, candidate in _seeds(params):
                 if budget.termination_reason is not None or attempts >= attempt_limit:
@@ -231,6 +269,9 @@ def factory(*, max_evaluations=96, max_seconds=None, seed=0, max_restarts=2):
                 "restarts": restarts,
                 "improvements": improvements,
                 "baseline_score": list(baseline_score),
+                "reserve_seed_construction_passes": int(any(
+                    b.initial_kwh < b.minimum_kwh - EPSILON for b in batteries
+                )),
                 "scored_horizon_slots": horizon,
                 "lookahead_semantics": "full supplied horizon; lookahead_slots ignored",
                 "state_reuse": "stateless; current request evaluated independently",
@@ -238,4 +279,4 @@ def factory(*, max_evaluations=96, max_seconds=None, seed=0, max_restarts=2):
         )
 
     plan.capabilities = PlannerCapabilities()
-    return plan
+    return wrap_battery_planner(plan)

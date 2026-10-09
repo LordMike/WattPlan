@@ -39,6 +39,7 @@ from ..const import (
     CONF_ON_OFF_SOURCE,
     CONF_OPTIMIZER_LOOKAHEAD_SLOTS,
     CONF_OPTIMIZER_PROFILE,
+    CONF_PLANNER_PRESET,
     CONF_OPTIONS_COUNT,
     CONF_ROLLING_WINDOW_HOURS,
     CONF_RUN_WITHIN_HOURS,
@@ -62,6 +63,11 @@ from ..const import (
 )
 from ..coordinator_parts import PlanningStageError, RunTimer, StageErrorKind
 from ..historical_on_off_provider import HistoricalOnOffProvider
+from ..optimizer.planners.presets import (
+    DEFAULT_PRESET,
+    get_preset,
+    lookahead_slots as preset_lookahead_slots,
+)
 from ..source_pipeline import build_source_value_provider
 from ..source_types import SourceProvider, SourceProviderError, SourceWindow
 from ..target_runtime import clear_expired_battery_targets, get_active_battery_target
@@ -141,6 +147,15 @@ class PlanningRequestBuilder:
                 LEGACY_OPTIMIZER_LOOKAHEAD_SLOTS,
             )
         )
+        preset_name = entry.options.get(CONF_PLANNER_PRESET, DEFAULT_PRESET)
+        try:
+            preset = get_preset(preset_name)
+        except ValueError as err:
+            raise PlanningStageError(StageErrorKind.PLANNER_INPUT, str(err)) from err
+        if preset_name != DEFAULT_PRESET:
+            lookahead_slots = preset_lookahead_slots(
+                preset_name, lookahead_slots, expected_slots
+            )
         window = SourceWindow(
             start_at=self._floor_to_slot(datetime.now(tz=UTC), slot_minutes),
             slot_minutes=slot_minutes,
@@ -387,6 +402,9 @@ class PlanningRequestBuilder:
 
         request: dict[str, Any] = {
             "entry_id": entry.entry_id,
+            "planner_preset": preset_name,
+            "planner": preset.planner,
+            "planner_options": dict(preset.options),
             "slot_minutes": slot_minutes,
             "hours_to_plan": hours_to_plan,
             "window": window,

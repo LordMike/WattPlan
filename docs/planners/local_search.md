@@ -1,9 +1,8 @@
 # Bounded local-search planner
 
 Factory: `custom_components.wattplan.optimizer.planners.local_search:factory`.
-This is an offline battery policy experiment, also available as `local-search`.
-Production planning continues to use HiGHS. There is no native solver dependency
-or fallback.
+Available as `local-search` and the live HA presets `local-search-3` and
+`local-search-96`. There is no native solver dependency or fallback.
 
 ## Policy and objective
 
@@ -14,39 +13,52 @@ ordered PV allocation, proportional discharge, ingress masks, efficiencies,
 SoC curves, capacity and reserve. It cannot suppress PV charging, export battery
 energy, or invent load. An initially low reserve remains visible.
 
-Scores minimize target miss kWh before tariff cost plus the request's throughput
-and switching penalties. Target deadlines include the end of their slot;
+Scores minimize target miss kWh before tariff cost plus the request's throughput,
+switching and per-slot reserve-shortfall penalties. The reserve penalty matches
+the original HiGHS preference and is excluded from reported tariff costs.
+Target deadlines include the end of their slot;
 `at_least`, `at_most`, `exact`, tolerances and infeasible misses use the shared
 objective. No terminal energy credit is assigned. An approximate search may
 miss a feasible or better schedule; reporting a target does not guarantee it.
 
 **The search and objective cover the full supplied forecast horizon.**
-`lookahead_slots` is ignored, as are `rolling_window_slots`,
+`lookahead_slots` is ignored, as are
 `solver_time_limit_seconds` and `infer_battery_preserve_policy`; these appear in
 capability diagnostics. The legacy HiGHS reference uses its own lookahead and
 scalar soft-target objective. Different horizons/objectives confound a direct
-algorithm-only attribution of realized cost differences. Comfort is rejected;
-optional recommendations are explicitly ignored. Throughput and switching
+algorithm-only attribution of realized cost differences. Shared comfort preparation
+uses rolling-window history and minimum on/off constraints, adds scheduled demand
+before battery search, and preserves active commitments in opaque state. Optional
+loads receive advisory rankings against the accepted battery policy. Throughput and switching
 preferences participate in the shared evaluation. The action deadband classifies
 switching; it does not clip physical flows.
 
 Each call starts from current SoC, equipment, forecasts and targets. No request
-is mutated, no actuals enter planning, and state is `None`. There is no cached
-schedule or score to invalidate across timestamp/equipment changes.
+is mutated and no actuals enter planning. Battery search is stateless; comfort
+continuity may produce state. There is no cached battery schedule or score to
+invalidate across timestamp/equipment changes.
 
 ## Search and bounds
 
-Seeds include self-consumption, preserve, four broad tariff thresholds,
+The first counted seed is self-consumption for healthy batteries without targets.
+When targets exist it instead protects deadline energy and estimates the number of
+cheap charging slots needed before each deadline. This lets the 3-evaluation preset
+pursue immediate targets before tariff exploration. Starting below reserve invokes
+one bounded physical construction pass to begin recovery immediately; diagnostics
+disclose this separately as `reserve_seed_construction_passes`. Ingress permissions
+and energy limits remain enforced, and the first full scored replay still counts
+against the search budget, even when that budget is one.
+
+Further seeds include self-consumption, preserve, four broad tariff thresholds,
 cheap-before-deadline target protection with adjacent charge-count alternatives,
-and a maximum target-charge prefix. Seed construction does not replay physics
-or silently evaluate candidates. Curves and coupled batteries are judged only
-by the shared evaluator.
+and a maximum target-charge prefix. Those further seeds use algebraic guidance;
+curves and coupled batteries are judged by each counted full evaluation.
 
 The loop interleaves single-action edits, contiguous blocks of 2/4/8/16/32 slots
 and two-slot exchanges. Coordinates prioritize target prefixes and large signed
 price magnitudes with seeded tie order. A bounded block perturbation can restart
 search from the best policy; the returned global best always preserves strict
-lexicographic improvements over the self-consumption baseline. Duplicate
+lexicographic improvements over the first scored seed (reported as `baseline_score`). Duplicate
 candidates are skipped without consuming an evaluation, but do consume a
 separate attempt budget so exhausted small spaces cannot spin indefinitely.
 
@@ -69,7 +81,9 @@ One counted baseline replay is reserved before enabling the optional deadline
 so even a tiny deadline returns a complete physical result. Like any cooperative
 budget, that replay or a subsequent in-flight evaluation can overrun the time
 bound; the simulator independently enforces its whole-call timeout. There is no
-unbudgeted final replay. Fixed count/seed runs are reproducible; wall deadlines
+unbudgeted final search replay. Shared live reporting also calculates baseline
+projections and optional advisory rankings; these are reported separately from
+search evaluations. Fixed count/seed runs are reproducible; wall deadlines
 are hardware-dependent. Search stops at evaluation, time or attempt limits, or
 after its permitted stalled restarts.
 

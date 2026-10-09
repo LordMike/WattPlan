@@ -7,6 +7,8 @@ from ..physics import EPSILON, battery_power_limits, transition
 from .budget import SearchBudget
 from .contract import PlannerCapabilities
 from .evaluation import build_result, evaluate_schedule
+from .recovery import reserve_recovery_seed
+from .shared import wrap_battery_planner
 
 
 def _guided_seed(params, scale, guidance_slots):
@@ -62,6 +64,8 @@ def _guided_seed(params, scale, guidance_slots):
                 and valuable > available + future_pv + EPSILON
             )):
                 mode = "grid_charge"
+            if level < b.minimum_kwh - EPSILON:
+                mode = "grid_charge" if b.can_charge_from & 1 else "preserve"
             target = b.target
             if target is not None and slot <= target.timeslot:
                 low = target.soc_kwh - target.tolerance_kwh
@@ -160,12 +164,20 @@ def factory(*, max_evaluations=48, population_size=8, generations=8,
         # elapsed while preparing the request. Reserve its one evaluation first.
         budget = SearchBudget(max_evaluations)
         budget.take()
+        deficient = any(b.initial_kwh < b.minimum_kwh - EPSILON for b in batteries)
+        baseline = tuple(tuple(row) for row in reserve_recovery_seed(params, baseline))
         first = evaluate_schedule(params, baseline)
         budget.max_seconds = max_seconds
         population = [(first, baseline)]
         best = population[0]
         seen = {baseline}
-        attempts, seed_evaluations, seed_transitions = 0, 1, 0
+        reserve_seed_transitions = next(
+            (slot + 1 for slot, step in enumerate(first.steps)
+             if all(level >= b.minimum_kwh - EPSILON
+                    for b, level in zip(batteries, step.levels, strict=True))),
+            horizon,
+        ) if deficient else 0
+        attempts, seed_evaluations, seed_transitions = 0, 1, reserve_seed_transitions
         completed, crossovers, mutations = 0, 0, 0
         peak_diversity = 1
         attempt_limit = max_evaluations * 8
@@ -266,6 +278,7 @@ def factory(*, max_evaluations=48, population_size=8, generations=8,
             "generations": completed, "max_generations": generations,
             "elite_count": elite_count, "tournament_size": tournament_size,
             "seed_evaluations": seed_evaluations, "seed_transitions": seed_transitions,
+            "reserve_seed_transitions": reserve_seed_transitions,
             "candidate_attempts": attempts, "candidate_attempt_limit": attempt_limit,
             "diversity": len({item[1] for item in population}),
             "peak_diversity": peak_diversity, "unique_evaluated": len(seen),
@@ -277,4 +290,4 @@ def factory(*, max_evaluations=48, population_size=8, generations=8,
         })
 
     plan.capabilities = capabilities
-    return plan
+    return wrap_battery_planner(plan)

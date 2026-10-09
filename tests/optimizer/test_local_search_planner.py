@@ -226,3 +226,77 @@ def test_local_search_import_does_not_load_highs():
         check=True,
         timeout=30,
     )
+
+
+@pytest.mark.parametrize("count", [1, 3, 96])
+def test_first_candidate_restores_low_reserve_before_cheaper_later_price(count):
+    payload = request(prices=(10, 1, 1, 1), usage=(0, 0, 0, 0)).model_dump()
+    payload["battery_entities"][0]["minimum_kwh"] = 0.8
+    result = factory(max_evaluations=count)(OptimizationParams(**payload))
+    first = result["entities"][0]["schedule"][0]
+    assert first["state"] == "grid_charge"
+    assert first["level"] >= 0.8
+    assert "battery_min_unmet" not in result["suboptimal_reasons"]
+    assert result["diagnostics"]["evaluations"] <= count
+    assert result["diagnostics"]["reserve_seed_construction_passes"] == 1
+
+
+@pytest.mark.parametrize("count", [1, 3, 96])
+def test_small_budget_prioritizes_reachable_immediate_target(count):
+    payload = request(
+        prices=(10, 1, 1, 1), usage=(0, 0, 0, 0), initial=0.2,
+        target={"timeslot": 0, "soc_kwh": 1.0},
+    ).model_dump()
+    payload["battery_entities"][0]["charge_efficiency"] = 0.9
+    result = factory(max_evaluations=count)(OptimizationParams(**payload))
+    assert result["entities"][0]["schedule"][0]["state"] == "grid_charge"
+    assert "battery_target_unmet" not in result["suboptimal_reasons"]
+    assert result["diagnostics"]["evaluations"] <= count
+    assert result["diagnostics"]["reserve_seed_construction_passes"] == 0
+
+
+def test_recovery_and_target_never_override_grid_ingress_permission():
+    payload = request(
+        prices=(10, 1, 1, 1), usage=(0, 0, 0, 0),
+        target={"timeslot": 0, "soc_kwh": 1.0},
+    ).model_dump()
+    payload["battery_entities"][0].update(minimum_kwh=0.8, can_charge_from=2)
+    result = factory(max_evaluations=3)(OptimizationParams(**payload))
+    assert all(item["state"] != "grid_charge" for item in result["entities"][0]["schedule"])
+    assert {"battery_target_unmet", "battery_min_unmet"} <= set(result["suboptimal_reasons"])
+
+
+@pytest.mark.parametrize("count", [3, 96])
+def test_direct_factory_supports_live_comfort_optional_and_complete_outputs(count):
+    payload = request(prices=(0.1, 1, 0.2, 0.8), usage=(0.2,) * 4).model_dump()
+    payload.update(
+        rolling_window_slots=4,
+        comfort_entities=[{
+            "name": "heat", "power_usage_kwh": 0.4,
+            "target_on_slots_per_rolling_window": 1,
+            "max_consecutive_off_slots": 3, "is_on_now": False,
+            "off_streak_slots_now": 2, "on_history": [True, False, False],
+        }],
+        optional_entities=[{
+            "name": "washer", "duration_timeslots": 1,
+            "start_after_timeslot": 0, "start_before_timeslot": 4,
+            "energy_kwh": 0.3, "options": 2,
+        }],
+    )
+    params = OptimizationParams(**payload)
+    before = params.model_dump(mode="json")
+    planner = factory(max_evaluations=count)
+    result = planner(params)
+    assert planner.capabilities.comfort
+    assert planner.capabilities.optional_loads == "supported"
+    assert params.model_dump(mode="json") == before
+    assert {item["name"] for item in result["entities"]} == {"house", "heat"}
+    heat = next(item for item in result["entities"] if item["name"] == "heat")
+    for slot, flow in enumerate(result["energy_flows"]["per_slot"]):
+        assert flow["base_load_kwh"] == pytest.approx(0.2)
+        assert flow["comfort_load_kwh"] == pytest.approx(0.4 * heat["schedule"][slot]["enabled"])
+    assert len(result["projections"]["per_slot"]) == 4
+    assert len(result["optional_entity_options"][0]["options"]) == 2
+    assert result["diagnostics"]["evaluations"] <= count
+    assert result["execution_time"] >= 0
+    assert result["state"]

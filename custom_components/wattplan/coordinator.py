@@ -40,7 +40,8 @@ from .coordinator_logic import (
     SourceStatusManager,
 )
 from .historical_on_off_provider import HistoricalOnOffProvider
-from .optimizer import OptimizationParams, optimize
+from .optimizer import OptimizationParams
+from .optimizer.planners.presets import DEFAULT_PRESET, run_preset
 from .planner_history import PlannerHistory
 from .source_issues import (
     clear_entry_source_issues,
@@ -59,6 +60,11 @@ def snapshot_storage_key(entry_id: str) -> str:
 
 SCHEDULE_OFFSET = timedelta(seconds=2)
 MIN_OPTIMIZER_TIMEOUT_SECONDS = 60
+DATA_OPTIMIZER_JOBS = "optimizer_jobs"
+
+
+class _ObsoletePlanningRun(Exception):
+    """A request outlived the config entry runtime that owns it."""
 
 
 class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
@@ -90,6 +96,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             update_interval=None,
         )
         self._entry_id = entry_id
+        self._shutting_down = False
         self._base_update_interval = update_interval
         self._interval: timedelta | None = update_interval
         self._scheduler_started = False
@@ -308,6 +315,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
 
     async def async_shutdown(self) -> None:
         """Stop the scheduler, heartbeat and other background callbacks."""
+        self._shutting_down = True
         self._scheduler_started = False
         self._cancel_schedule()
         self._async_stop_heartbeat()
@@ -383,12 +391,16 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         self._last_run_timings = None
 
         async with self._plan_lock:
+            runtime_data = None
             try:
                 self._source_status.reset()
                 entry = self._require_entry()
+                runtime_data = entry.runtime_data
+                self._ensure_current_planning_run(runtime_data)
                 request = await self._async_build_planning_request(entry, timer)
+                self._ensure_current_planning_run(runtime_data)
                 planner_result = await self._async_run_optimizer(
-                    request, entry.runtime_data, timer=timer
+                    request, runtime_data, timer=timer
                 )
                 self._remember_historical_price_series(entry, request)
                 timer.mark("Historical price retention")
@@ -411,17 +423,27 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 # the complete list replaces them once the run finishes.
                 self._last_run_timings = list(timer.entries)
                 await self.async_persist_snapshot()
+                self._ensure_current_planning_run(runtime_data)
                 timer.mark("Snapshot persist")
                 await self.planner_history.async_record(
                     new_snapshot.created_at, request, planner_result
                 )
+                self._ensure_current_planning_run(runtime_data)
                 timer.mark("Planner history record")
                 self._sync_source_issues(entry)
                 timer.mark("total")
                 self._last_run_timings = list(timer.entries)
                 if trigger is CycleTrigger.SERVICE:
                     self.async_update_listeners()
+            except _ObsoletePlanningRun as err:
+                # The new coordinator owns health, state and listeners now.
+                raise PlanningStageError(
+                    StageErrorKind.PLANNER_EXECUTION,
+                    "Planner configuration changed while planning; result discarded",
+                ) from err
             except PlanningStageError as err:
+                if runtime_data is not None and not self._is_current_planning_run(runtime_data):
+                    raise
                 self._set_last_plan_duration(started)
                 self._source_status.mark_failed_status(err, snapshot=self._snapshot)
                 self._sync_source_issues(self._require_entry())
@@ -436,6 +458,8 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 self.async_update_listeners()
                 raise
             except Exception as err:
+                if runtime_data is not None and not self._is_current_planning_run(runtime_data):
+                    raise
                 self._set_last_plan_duration(started)
                 self._source_status.mark_failed_status(err, snapshot=self._snapshot)
                 self._sync_source_issues(self._require_entry())
@@ -526,6 +550,20 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             )
         return entry
 
+    def _is_current_planning_run(self, runtime_data: Any) -> bool:
+        """Check runtime ownership after every asynchronous planning boundary."""
+        entry = self.hass.config_entries.async_get_entry(self._entry_id)
+        return (
+            not self._shutting_down
+            and entry is not None
+            and getattr(entry, "runtime_data", None) is runtime_data
+            and runtime_data.coordinator is self
+        )
+
+    def _ensure_current_planning_run(self, runtime_data: Any) -> None:
+        if not self._is_current_planning_run(runtime_data):
+            raise _ObsoletePlanningRun
+
     async def _async_build_planning_request(
         self, entry: ConfigEntry, timer: RunTimer
     ) -> dict[str, Any]:
@@ -589,7 +627,8 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         *,
         timer: RunTimer,
     ) -> dict[str, Any]:
-        """Run poweroptim in the executor and normalize planner exceptions."""
+        """Run the selected planner in the executor and normalize exceptions."""
+        self._ensure_current_planning_run(runtime_data)
         optimizer_params = request["optimizer_params"]
         _LOGGER.debug(
             (
@@ -642,12 +681,34 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             request["_input_captured_at"] = datetime.now(tz=UTC).isoformat()
             timer.mark("Reproduction params recording")
 
-        # Each MILP solve has its own HiGHS time limit; this bounds the whole
-        # plan so a hard instance cannot hold the plan lock past one slot.
+        # Native executor work cannot be stopped by cancelling its waiter. Keep
+        # ownership in hass.data across entry reloads, and never overlap another
+        # solve for this entry while a timed-out/cancelled call is still running.
+        jobs = self.hass.data.setdefault(DOMAIN, {}).setdefault(DATA_OPTIMIZER_JOBS, {})
+        pending = jobs.get(self._entry_id)
+        if pending is not None and not pending.done():
+            raise PlanningStageError(
+                StageErrorKind.PLANNER_EXECUTION,
+                "Previous optimizer invocation is still running",
+            )
         timeout_seconds = self._optimizer_timeout_seconds(request["slot_minutes"])
         try:
+            job = asyncio.ensure_future(self.hass.async_add_executor_job(
+                run_preset, params, request.get("planner_preset", DEFAULT_PRESET)
+            ))
+            jobs[self._entry_id] = job
+
+            def release(completed):
+                if jobs.get(self._entry_id) is completed:
+                    jobs.pop(self._entry_id, None)
+                # Retrieve late failures after the waiter has timed out. Such
+                # results never replace a newer runtime state or published plan.
+                if not completed.cancelled():
+                    completed.exception()
+
+            job.add_done_callback(release)
             async with asyncio.timeout(timeout_seconds):
-                result = await self.hass.async_add_executor_job(optimize, params)
+                result = await asyncio.shield(job)
         except TimeoutError as err:
             raise PlanningStageError(
                 StageErrorKind.PLANNER_EXECUTION,
@@ -660,6 +721,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             ) from err
 
         timer.mark("Optimizer executor job")
+        self._ensure_current_planning_run(runtime_data)
         runtime_data.optimizer_state = result.get("state")
         return result
 

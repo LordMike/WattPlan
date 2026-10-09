@@ -91,7 +91,7 @@ async def test_outlook_generation_failure_keeps_plan_usable_and_sensor_unavailab
     entry = _entry()
     entry.add_to_hass(hass)
 
-    with patch("custom_components.wattplan.coordinator.optimize", _optimizer_result):
+    with patch("custom_components.wattplan.optimizer.optimize", _optimizer_result):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
         with caplog.at_level(logging.ERROR):
@@ -122,7 +122,7 @@ async def test_outlook_render_failure_makes_only_outlook_sensor_unavailable(
     entry = _entry()
     entry.add_to_hass(hass)
 
-    with patch("custom_components.wattplan.coordinator.optimize", _optimizer_result):
+    with patch("custom_components.wattplan.optimizer.optimize", _optimizer_result):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
         await hass.services.async_call(
@@ -155,7 +155,7 @@ async def test_no_plan_outlook_remains_a_status_report(hass: HomeAssistant) -> N
     entry.add_to_hass(hass)
 
     with patch(
-        "custom_components.wattplan.coordinator.optimize",
+        "custom_components.wattplan.optimizer.optimize",
         side_effect=RuntimeError("optimizer failed"),
     ):
         assert await hass.config_entries.async_setup(entry.entry_id)
@@ -173,7 +173,7 @@ async def test_restored_unvalidated_plan_without_outlook_remains_a_status_report
     entry = _entry()
     entry.add_to_hass(hass)
 
-    with patch("custom_components.wattplan.coordinator.optimize", _optimizer_result):
+    with patch("custom_components.wattplan.optimizer.optimize", _optimizer_result):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
         await hass.services.async_call(

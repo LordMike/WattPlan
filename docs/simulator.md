@@ -154,6 +154,13 @@ it off early. PV follows battery order; discharge is proportional among eligible
 batteries. Limits, capacity, reserve, ingress permissions and efficiencies apply.
 Starting below reserve does not manufacture energy.
 
+The site has one grid direction per execution interval. After all permitted PV
+charging, any remaining PV surplus is exported and prevents grid charging.
+Simply netting simultaneous flows would wrongly let a GRID-only battery consume
+PV. When other eligible batteries absorb all surplus, grid charging can proceed.
+Different batteries may charge and discharge together, but discharge serves only
+household/comfort demand, never another battery's charging load.
+
 Historical self-consumption shares this kernel while retaining its sequential
 discharge allocation. Continuous MILP control application retains its separate
 deadband/control semantics and shares limit/headroom primitives.

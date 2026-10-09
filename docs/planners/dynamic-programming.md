@@ -7,7 +7,9 @@ At each supplied forecast slot, the planner applies permitted joint battery poli
 using the shared physical transition. Its Bellman table is keyed by the tuple of
 SoC cells and each battery's previous actual charge/idle/discharge behavior. A cell
 retains the trajectory with the smallest accumulated lexicographic score: target
-misses first, then tariff cost plus throughput and physical switching penalties.
+misses first, then tariff cost plus throughput, physical switching, and per-slot
+reserve-shortfall penalties. The shared reserve penalty prioritizes replenishing
+initially deficient batteries without inventing energy or charging billed cost.
 Targets are checked at the end of their inclusive deadline slot, with the shared
 exact/at-least/at-most semantics and tolerance.
 
@@ -35,7 +37,9 @@ terminal energy credit or a proof of an admissible full-cost bound.
 | `value_horizon_slots` | 24 | Positive integer forecast slots used to value stored energy during pruning/completion |
 | `max_seconds` | null | Optional finite positive cooperative search deadline |
 
-Coordinated all-self-consume, all-preserve and permitted all-grid-charge policies,
+For initially deficient batteries, an ingress-permitted reserve recovery action
+comes first, including under a one-transition budget. Coordinated all-self-consume,
+all-preserve and permitted all-grid-charge policies,
 then single-battery changes, precede a lazily generated Cartesian action tail.
 Preparation stops at the smaller of `max_joint_actions` and `max_expansions`; no
 Cartesian state grid is allocated. With many batteries, some joint actions are
@@ -46,18 +50,22 @@ schedules; a wall deadline is hardware-dependent.
 
 The full supplied horizon is returned for every battery. If the count or cooperative
 time budget expires, a single retained prefix is completed by a forecast/target-aware
-policy. This mandatory completion is outside the search budget and costs one physical
+policy which also prioritizes reserve recovery. This mandatory completion is outside the search budget and costs one physical
 transition per remaining slot; the final evaluator also replays every supplied slot.
 `expansions`, `tail_transitions`, `replay_transitions`, `evaluations`, `searched_slots`,
 merge/prune counts and excluded joint-action counts report these costs and approximations
 separately. `termination_reason` identifies exhaustion. Tiny budgets therefore still
 return full physical schedules but can have poor target and economic outcomes.
 
-The legacy `lookahead_slots`, rolling-window, solver-deadline and preserve-inference
+The legacy `lookahead_slots`, solver-deadline and preserve-inference
 preferences are ignored and disclosed. `value_horizon_slots` limits heuristic
 valuation only; the Bellman recursion and target scoring still use the full
-supplied horizon. Comfort loads are rejected; optional loads
-remain advisory and unimplemented. There is no battery export, curtailment, invented
+supplied horizon. The [shared comfort layer](comfort-parity.md) handles rolling
+targets, run constraints, history, and continuity, then passes modeled comfort
+consumption into DP. Full HA reporting includes comfort actions, cost and flow
+projections, unmet target/reserve diagnostics, and optional-appliance windows
+priced under the selected battery policy. Direct factory and registry calls use
+the same wrapper. There is no battery export, curtailment, invented
 load or monetary value assigned to final SoC. Compare realized replay cost alongside
 final stored energy, target misses, coverage and total replay time.
 
