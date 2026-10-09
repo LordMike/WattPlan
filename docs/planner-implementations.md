@@ -103,7 +103,7 @@ shortfall is reported without manufacturing energy. Optimizing planners use an
 immediate reserve-recovery seed or search action and the disclosed shortfall
 penalty. Self-consumption deliberately remains a passive battery baseline.
 Recovery penalties never enter reported tariff cost. See
-[feature parity](planners/parity.md) for the acceptance scope and limitations.
+[planner presets](optimizer-profiles.md) for supported features and limitations.
 `build_result` accepts a previously computed `evaluation` to avoid replaying an
 accepted candidate; it must correspond to those exact params and policies.
 

@@ -17,8 +17,8 @@ The detailed solver semantics below describe HiGHS unless stated otherwise.
 The policy-search alternatives share the input model and live result fields,
 but use full-horizon discrete battery actions, target-first scoring, and their
 own search budgets. The shared wrapper handles comfort and optional appliances;
-see [feature parity](planners/parity.md), [comfort](planners/comfort-parity.md),
-and [reporting](planners/reporting-parity.md) for their exact semantics.
+see [comfort](planners/comfort-parity.md) and
+[reporting](planners/reporting-parity.md) for their exact semantics.
 Algorithm-specific diagnostics live under `diagnostics`; HiGHS solve/cadence
 counters are absent from planners that do not perform those operations.
 
