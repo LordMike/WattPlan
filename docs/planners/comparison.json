@@ -4,6 +4,10 @@
     {"name": "self-consumption", "planner": "self-consumption"},
     {"name": "greedy", "planner": "greedy"},
     {"name": "local-search", "planner": "local-search"},
-    {"name": "beam-search", "planner": "beam-search"}
+    {"name": "beam-search", "planner": "beam-search"},
+    {"name": "dynamic-programming", "planner": "dynamic-programming"},
+    {"name": "charge-window", "planner": "charge-window"},
+    {"name": "genetic", "planner": "genetic"},
+    {"name": "cross-entropy", "planner": "cross-entropy"}
   ]
 }

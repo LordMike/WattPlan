@@ -4,6 +4,8 @@ from bisect import bisect_right
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import timedelta
+import math
+from time import monotonic
 from typing import Any, Protocol
 
 from ..models import OptimizationParams
@@ -11,11 +13,43 @@ from ..planners.contract import validate_battery_result as validate_result
 from ..planners.registry import resolve_factory
 from .adapters import DEFAULT_PLANNER
 from .dataset import Dataset, canonical
+from .worker import PlannerTimeout
 from ..physics import (
     battery_power_limits,
     grid_charge_headroom_sufficient,
     transition,
 )
+
+RUN_TIMEOUT_SECONDS = 120.0
+
+
+class RunTimeout(TimeoutError):
+    """The entire replay exhausted its wall-clock budget."""
+
+    def __init__(self, timeout: float, elapsed: float):
+        super().__init__(f"Simulation exceeded {timeout:g}s whole-run limit")
+        self.timeout_seconds = timeout
+        self.elapsed_seconds = elapsed
+
+
+class RunBudget:
+    """One deadline shared by worker startup, every cycle, and simulation work."""
+
+    def __init__(self, timeout_seconds: float = RUN_TIMEOUT_SECONDS):
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise ValueError("Run timeout must be finite and positive")
+        self.timeout_seconds = min(timeout_seconds, RUN_TIMEOUT_SECONDS)
+        self.started_at = monotonic()
+
+    def elapsed(self) -> float:
+        return monotonic() - self.started_at
+
+    def remaining(self) -> float:
+        elapsed = self.elapsed()
+        if elapsed >= self.timeout_seconds:
+            raise RunTimeout(self.timeout_seconds, elapsed)
+        return self.timeout_seconds - elapsed
+
 
 PREFERENCE_FIELDS = frozenset(
     {
@@ -55,8 +89,15 @@ class Planner(Protocol):
     def call(self, payload: dict, *, reset: bool, timeout: float) -> dict: ...
 
 
-def simulate(dataset: Dataset, variant: Variant, planner: Planner) -> dict[str, Any]:
+def simulate(
+    dataset: Dataset,
+    variant: Variant,
+    planner: Planner,
+    *,
+    budget: RunBudget | None = None,
+) -> dict[str, Any]:
     """Execute a variant; any planner failure invalidates the whole scored run."""
+    budget = budget or RunBudget()
     windows, skipped = dataset.windows()
     report = {
         "variant": variant.name,
@@ -66,6 +107,10 @@ def simulate(dataset: Dataset, variant: Variant, planner: Planner) -> dict[str, 
         "segments": [],
         "skipped_decisions": skipped,
         "failure": None,
+        "failure_details": None,
+        "run_timeout_seconds": budget.timeout_seconds,
+        "run_wall_seconds": None,
+        "completed_cycles": 0,
         "inferred_range": dataset.range_info(),
         "patches": deepcopy(dataset.patches),
     }
@@ -74,12 +119,47 @@ def simulate(dataset: Dataset, variant: Variant, planner: Planner) -> dict[str, 
             status="no_coverage", failure="No decisions overlap usable actuals"
         )
         report["totals"] = None
+        report["run_wall_seconds"] = budget.elapsed()
         return report
+
+    def failed(err: Exception, at) -> dict[str, Any]:
+        if isinstance(err, PlannerTimeout):
+            err = RunTimeout(budget.timeout_seconds, budget.elapsed())
+        if isinstance(err, RunTimeout):
+            # Local test adapters need only call(); process-backed adapters can
+            # also be stopped when simulation overhead exhausts the deadline.
+            close = getattr(planner, "close", None)
+            if close is not None:
+                close(kill=True)
+        report.update(
+            status="failed",
+            failure=f"{at.isoformat()}: {type(err).__name__}: {err}",
+            failure_details={
+                "at": at.isoformat(),
+                "exception_type": type(err).__name__,
+                **(
+                    {
+                        "scope": "run",
+                        "timeout_seconds": err.timeout_seconds,
+                        "elapsed_seconds": err.elapsed_seconds,
+                        "completed_cycles": report["completed_cycles"],
+                        "completed_planning_calls": len(report["cycles"]),
+                    }
+                    if isinstance(err, RunTimeout)
+                    else {}
+                ),
+            },
+            totals=None,
+            run_wall_seconds=budget.elapsed(),
+        )
+        return report
+
     actual_starts = [a.start for a in dataset.actuals]
     levels, state = [], None
     current = None
     for window in windows:
         try:
+            budget.remaining()
             payload = deepcopy(window.event.params)
             payload.update(variant.settings)
             reset = window.reset_reason is not None
@@ -105,9 +185,8 @@ def simulate(dataset: Dataset, variant: Variant, planner: Planner) -> dict[str, 
                 raise ValueError(
                     "Comfort loads are not supported by historical simulation v1"
                 )
-            reply = planner.call(
-                payload, reset=reset, timeout=max(60, params.slot_minutes * 60)
-            )
+            reply = planner.call(payload, reset=reset, timeout=budget.remaining())
+            budget.remaining()
             result = reply["result"]
             schedules = validate_result(result, params)
             state = result.get("state")
@@ -135,6 +214,7 @@ def simulate(dataset: Dataset, variant: Variant, planner: Planner) -> dict[str, 
             last_action = None
             eligible = None
             while cursor < window.end:
+                budget.remaining()
                 actual = dataset.actuals[bisect_right(actual_starts, cursor) - 1]
                 action_index = int((cursor - window.event.start) // slot)
                 action_end = window.event.start + (action_index + 1) * slot
@@ -165,6 +245,7 @@ def simulate(dataset: Dataset, variant: Variant, planner: Planner) -> dict[str, 
                     slot_fraction=(end - cursor) / slot,
                     grid_eligible=eligible,
                 )
+                budget.remaining()
                 levels = step.levels
                 import_cost = step.grid_import * actual.values["import_price"]
                 export_revenue = step.grid_export * actual.values["export_price"]
@@ -231,17 +312,15 @@ def simulate(dataset: Dataset, variant: Variant, planner: Planner) -> dict[str, 
                             }
                         )
                 cursor = end
+                budget.remaining()
             current["end"] = window.end.isoformat()
             current["final_soc_kwh"] = {
                 b.name: level for b, level in zip(params.battery_entities, levels)
             }
+            budget.remaining()
+            report["completed_cycles"] += 1
         except Exception as err:
-            report.update(
-                status="failed",
-                failure=f"{window.start.isoformat()}: {type(err).__name__}: {err}",
-            )
-            report["totals"] = None
-            return report
+            return failed(err, window.start)
     keys = (
         "usage_kwh",
         "pv_kwh",
@@ -272,4 +351,9 @@ def simulate(dataset: Dataset, variant: Variant, planner: Planner) -> dict[str, 
     report["totals"]["covered_seconds"] = sum(
         (w.end - w.start).total_seconds() for w in windows
     )
+    try:
+        budget.remaining()
+    except RunTimeout as err:
+        return failed(err, windows[-1].end)
+    report["run_wall_seconds"] = budget.elapsed()
     return report

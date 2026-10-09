@@ -131,6 +131,8 @@ def write_reports(output: Path, summary: dict, runs: list[dict]) -> None:
         )
         sections.append(
             f"<section><h2>{escape(run['run'])} · {escape(run['status'])}</h2>"
+            f"<p>Whole-run wall-clock limit: {escape(str(run.get('run_timeout_seconds', 'unrecorded')))} seconds; "
+            f"observed run time: {escape(str(run.get('run_wall_seconds', 'unrecorded')))} seconds.</p>"
             f"<p>{escape(run.get('failure') or '')}</p><table>{rows}</table>"
             "<h3>Stored energy by segment</h3><table><tr><th>Segment</th><th>Start</th><th>End</th>"
             f"<th>Initial kWh</th><th>Final kWh</th></tr>{reserves}</table>"

@@ -20,7 +20,7 @@ from custom_components.wattplan.optimizer.planners.evaluation import (
     evaluate_schedule,
     target_miss,
 )
-from custom_components.wattplan.optimizer.planners.registry import resolve_factory
+from custom_components.wattplan.optimizer.planners.registry import BUILTINS, resolve_factory
 from custom_components.wattplan.optimizer.simulation.dataset import load_dataset
 from scripts.generate_simulation_data import main as generate, records_for_day
 from tests.optimizer.planner_conformance import assert_conforms, conformance_params
@@ -39,9 +39,7 @@ def state_factory(*, marker=1):
     return plan
 
 
-@pytest.mark.parametrize(
-    "factory", ["highs", "self-consumption", "greedy", "local-search", "beam-search"]
-)
+@pytest.mark.parametrize("factory", list(BUILTINS))
 @pytest.mark.parametrize("params", conformance_params())
 def test_builtins_conform(factory, params):
     assert_conforms(factory, params)
@@ -197,7 +195,7 @@ def test_synthetic_generator_full_day_is_reproducible_and_not_perfect_forecast(
     assert dataset.events[0].params == original
 
 
-@pytest.mark.parametrize("factory", ["self-consumption", "greedy", "local-search", "beam-search"])
+@pytest.mark.parametrize("factory", [name for name in BUILTINS if name != "highs"])
 def test_lightweight_planner_import_does_not_load_highs(factory):
     code = f"from custom_components.wattplan.optimizer.planners import create_planner; create_planner({factory!r}); import sys; assert 'highspy' not in sys.modules; assert 'custom_components.wattplan.optimizer.mpc_power_optimizer' not in sys.modules"
     subprocess.run([sys.executable, "-c", code], check=True, timeout=30)

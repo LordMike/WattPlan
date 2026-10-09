@@ -1,9 +1,12 @@
 # Offline planner comparison ledger
 
-The simulator can run `highs`, `self-consumption`, `greedy`, `local-search`, and
-`beam-search` side by side. Home Assistant continues to call the existing HiGHS
-planner. The three new implementations are battery-only experiments; comfort
-inputs are rejected and optional recommendations are explicitly ignored.
+The simulator runs nine built-in planners side by side: `highs`,
+`self-consumption`, `greedy`, `local-search`, `beam-search`,
+`dynamic-programming`, `charge-window`, `genetic`, and `cross-entropy`.
+Home Assistant continues to call the existing HiGHS planner. Experimental
+implementations optimize batteries; comfort inputs are rejected and optional
+recommendations are explicitly ignored. The original five-planner results below
+are retained as historical evidence.
 
 Use the supplied [comparison configuration](comparison.json):
 

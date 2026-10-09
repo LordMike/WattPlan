@@ -1,12 +1,25 @@
 """Isolated planner calls with a killable whole-call timeout."""
 
 import json
+import math
 import multiprocessing
+import threading
 import time
 import traceback
 
 from ..models import OptimizationParams
 from ..planners.registry import create_planner
+
+PLANNER_TIMEOUT_SECONDS = 120.0
+
+
+class PlannerTimeout(TimeoutError):
+    """A killed planner invocation, including its observed timeout duration."""
+
+    def __init__(self, timeout: float, elapsed: float):
+        super().__init__(f"Planner exceeded {timeout:g}s whole-call limit")
+        self.timeout_seconds = timeout
+        self.elapsed_seconds = elapsed
 
 
 def _serve(connection, factory_path: str, options: dict) -> None:
@@ -47,27 +60,74 @@ class PlannerWorker:
         )
         self._process.start()
         child.close()
+        self._closed = False
+        self._exchange = None
 
     def call(self, payload: dict, *, reset: bool, timeout: float) -> dict:
-        self._connection.send((payload, reset))
-        if not self._connection.poll(timeout):
-            self.close()
-            raise TimeoutError(f"Planner exceeded {timeout:g}s whole-call limit")
-        try:
-            response = self._connection.recv()
-        except (EOFError, OSError) as err:
-            raise RuntimeError("Planner worker exited without a result") from err
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("Planner timeout must be finite and positive")
+        timeout = min(timeout, PLANNER_TIMEOUT_SECONDS)
+        if self._closed:
+            raise RuntimeError("Planner worker is closed")
+        started = time.perf_counter()
+        finished = threading.Event()
+        outcome = []
+
+        def exchange():
+            try:
+                self._connection.send((payload, reset))
+                outcome.append(self._connection.recv())
+            except BaseException as err:
+                # Do not retain pipe frames/buffers after killing a blocked send.
+                outcome.append(err.with_traceback(None))
+            finally:
+                outcome.append(time.perf_counter())
+                finished.set()
+
+        # Pipe send can block before a starting worker reads, and poll only
+        # promises some bytes, not a complete response. Bound the whole exchange.
+        self._exchange = threading.Thread(target=exchange, daemon=True)
+        self._exchange.start()
+        deadline = started + timeout
+        while not finished.is_set():
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0:
+                break
+            # Recheck the absolute deadline if a timed wait returns early.
+            finished.wait(remaining)
+        if not finished.is_set() or outcome[-1] > deadline:
+            elapsed = time.perf_counter() - started
+            self.close(kill=True)
+            raise PlannerTimeout(timeout, elapsed)
+        self._exchange.join()
+        response = outcome[0]
+        if isinstance(response, BaseException):
+            self.close(kill=True)
+            if isinstance(response, (EOFError, OSError)):
+                raise RuntimeError(
+                    "Planner worker exited without a result"
+                ) from response
+            raise response
         if "error" in response:
+            self.close()
             raise RuntimeError(response["error"])
         return response
 
-    def close(self) -> None:
+    def close(self, *, kill: bool = False) -> None:
+        if self._closed:
+            return
+        self._closed = True
         if self._process.is_alive():
-            self._process.terminate()
+            if kill:
+                self._process.kill()
+            else:
+                self._process.terminate()
         self._process.join(timeout=5)
         if self._process.is_alive():
             self._process.kill()
             self._process.join(timeout=5)
+        if self._exchange is not None:
+            self._exchange.join(timeout=5)
         self._connection.close()
 
     def __enter__(self):

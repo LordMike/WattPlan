@@ -15,6 +15,10 @@ BUILTINS = {
     "greedy": "custom_components.wattplan.optimizer.planners.greedy:factory",
     "local-search": "custom_components.wattplan.optimizer.planners.local_search:factory",
     "beam-search": "custom_components.wattplan.optimizer.planners.beam_search:factory",
+    "dynamic-programming": "custom_components.wattplan.optimizer.planners.dynamic_programming:factory",
+    "charge-window": "custom_components.wattplan.optimizer.planners.charge_window:factory",
+    "genetic": "custom_components.wattplan.optimizer.planners.genetic:factory",
+    "cross-entropy": "custom_components.wattplan.optimizer.planners.cross_entropy:factory",
 }
 ALIASES = {
     "custom_components.wattplan.optimizer.simulation.adapters:highs_factory": "highs",

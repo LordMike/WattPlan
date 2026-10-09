@@ -24,7 +24,12 @@ from custom_components.wattplan.optimizer.simulation.dataset import (
     load_dataset,
     timestamp,
 )
-from custom_components.wattplan.optimizer.simulation.engine import Variant, simulate
+from custom_components.wattplan.optimizer.simulation.engine import (
+    RUN_TIMEOUT_SECONDS,
+    RunBudget,
+    Variant,
+    simulate,
+)
 from custom_components.wattplan.optimizer.simulation.reporting import (
     latency_summary,
     write_reports,
@@ -72,7 +77,7 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--config",
         type=Path,
-        help='JSON variants: planner is a built-in name or module:factory; settings and options are objects',
+        help="JSON variants: planner is a built-in name or module:factory; settings and options are objects",
     )
     parser.add_argument(
         "--output",
@@ -164,8 +169,9 @@ def main(argv=None) -> int:
             for variant in variants if repeat % 2 == 0 else list(reversed(variants)):
                 label = f"{variant.name} / repeat {repeat + 1}"
                 print(label, flush=True)
+                budget = RunBudget()
                 with PlannerWorker(variant.planner, variant.options) as worker:
-                    run = simulate(dataset, variant, worker)
+                    run = simulate(dataset, variant, worker, budget=budget)
                 run.update(run=label, repeat=repeat + 1, configuration=asdict(variant))
                 run["latency"] = {
                     key: latency_summary(run["cycles"], key)
@@ -176,6 +182,7 @@ def main(argv=None) -> int:
         configuration = [asdict(v) for v in variants]
         summary = {
             "schema_version": 1,
+            "run_timeout_seconds": RUN_TIMEOUT_SECONDS,
             "setup_id": dataset.setup_id,
             "currency": dataset.currency,
             "timezone": dataset.timezone,

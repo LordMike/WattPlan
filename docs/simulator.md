@@ -113,9 +113,11 @@ Example configuration:
 }
 ```
 
-Use `highs`, `self-consumption`, `greedy`, `local-search`, `beam-search`, or an
+Use `highs`, `self-consumption`, `greedy`, `local-search`, `beam-search`,
+`dynamic-programming`, `charge-window`, `genetic`, `cross-entropy`, or an
 importable `module:factory`. The [comparison configuration](planners/comparison.json)
-runs all five; see the [experiment ledger](planners/comparison.md). A factory
+runs all nine defaults; see the [experiment ledger](planners/comparison.md) for
+the earlier five-planner results. A factory
 receives `options` as keyword arguments and returns a callable accepting the
 existing `OptimizationParams`. This is trusted local Python code. The shared
 battery contract requires complete named schedules and finite projected levels.
@@ -164,11 +166,31 @@ Household load includes the appliances that actually ran. V1 also does not execu
 optional suggestions.
 
 Variants run sequentially in separate processes. Repeats default to one and
-alternate variant order. Each call has HA's whole-call limit:
-`max(60, slot_minutes * 60)` seconds, including worker startup. Timeouts kill the
-worker. Exceptions/invalid output invalidate scored totals for the entire run;
-partial rows remain for diagnosis. Reported wall/CPU times cover planner calls,
-excluding startup and input validation. Compute latency is not an actuator delay.
+alternate variant order. **One complete replay of one planner configuration has
+a 120-second wall-clock budget.** Each variant/repeat gets a fresh budget. All
+cycles share that deadline: a 24-hour/96-cycle replay and a 48-hour/192-cycle
+replay each get 120 seconds in total. The budget does not scale with data length,
+slot duration or lookahead, and does not apply to the batch of all variants.
+
+The deadline starts immediately before worker construction and includes startup,
+request/result transfer, model validation, every internal solver call, simulated
+physics, and outcome aggregation. Each worker call receives only the remaining
+run time. Solver-specific budgets cannot extend the run deadline. Initial input
+loading/coverage validation and final report writing are outside this budget, as
+is process cleanup after completion. Synchronous process creation and simulation
+steps are checked immediately after they return; blocked planner communication
+is interrupted by killing its worker when the remaining budget expires. Bounded
+process/thread cleanup can follow the cutoff.
+
+An exhausted run is failed with no scored totals; later variants/repeats continue.
+Partial rows, run-scope timeout diagnostics, the failed timestamp, completed replay
+cycles and completed planner calls remain for diagnosis. JSON and HTML report
+the configured limit and observed run wall time. Exceptions and invalid output
+also invalidate the entire run. Per-call wall/CPU timings still cover completed
+planner calls, excluding startup and input validation; `run_wall_seconds` covers
+the replay budget's wider scope (and failure cleanup when needed). Compute
+latency is not an actuator delay. This simulator budget does not change the
+production Home Assistant integration's timeout.
 
 ## Reports
 

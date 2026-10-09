@@ -7,6 +7,10 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
+from custom_components.wattplan.optimizer.simulation import (
+    engine,
+    worker as worker_module,
+)
 from custom_components.wattplan.optimizer.models import (
     BatteryEntityParams,
     OptimizationParams,
@@ -22,14 +26,22 @@ from custom_components.wattplan.optimizer.simulation.dataset import (
     Event,
     load_dataset,
 )
-from custom_components.wattplan.optimizer.simulation.engine import Variant, simulate
+from custom_components.wattplan.optimizer.simulation.engine import (
+    RUN_TIMEOUT_SECONDS,
+    RunBudget,
+    Variant,
+    simulate,
+)
 from custom_components.wattplan.optimizer.simulation.physics import transition
 from custom_components.wattplan.optimizer.simulation.reporting import (
     comparisons,
     write_reports,
 )
 from custom_components.wattplan.optimizer.simulation.scenarios import synthetic_dataset
-from custom_components.wattplan.optimizer.simulation.worker import PlannerWorker
+from custom_components.wattplan.optimizer.simulation.worker import (
+    PlannerTimeout,
+    PlannerWorker,
+)
 
 START = datetime(2026, 9, 20, tzinfo=UTC)
 
@@ -141,6 +153,81 @@ def test_causal_forecasts_and_simulated_soc_replace_only_runtime_state():
     assert (
         data.events[1].params["battery_entities"][0]["initial_kwh"] == 2
     )  # no mutation
+
+
+@pytest.mark.parametrize("slot_minutes", [15, 30, 60])
+def test_run_timeout_is_two_minutes_independent_of_slot_length(slot_minutes):
+    data = dataset(
+        [event(slot_minutes=slot_minutes)],
+        [actual(hours=slot_minutes / 60)],
+    )
+    planner = LocalPlanner()
+    report = simulate(data, Variant("test"), planner)
+    assert report["status"] == "complete"
+    assert 0 < planner.calls[0][2] <= RUN_TIMEOUT_SECONDS == 120
+    assert report["run_timeout_seconds"] == 120
+    assert report["run_wall_seconds"] >= 0
+
+
+@pytest.mark.parametrize("slots", [96, 192])
+def test_same_budget_covers_all_calls_without_scaling_with_dataset_length(
+    slots, monkeypatch
+):
+    clock = [1000.0]
+    monkeypatch.setattr(engine, "monotonic", lambda: clock[0])
+
+    class TimedPlanner(LocalPlanner):
+        def __init__(self):
+            super().__init__()
+            self.timeouts = []
+            self.killed = False
+
+        def call(self, p, *, reset, timeout):
+            self.timeouts.append(timeout)
+            if timeout < 70:
+                clock[0] += timeout
+                raise PlannerTimeout(timeout, timeout)
+            clock[0] += 70  # Each call individually takes less than 120 seconds.
+            return super().call(p, reset=reset, timeout=timeout)
+
+        def close(self, *, kill=False):
+            self.killed = kill
+
+    p = payload()
+    p["slot_minutes"] = 15
+    planner = TimedPlanner()
+    report = simulate(synthetic_dataset(p, slots), Variant("timed"), planner)
+    assert report["status"] == "failed"
+    assert report["totals"] is None
+    assert planner.timeouts == [120, 50]
+    assert planner.killed
+    assert report["run_timeout_seconds"] == report["run_wall_seconds"] == 120
+    assert report["failure_details"]["scope"] == "run"
+    assert report["failure_details"]["timeout_seconds"] == 120
+    assert report["failure_details"]["completed_cycles"] == 1
+    assert report["failure_details"]["completed_planning_calls"] == 1
+
+
+@pytest.mark.parametrize("phase", ["validate_result", "transition"])
+def test_simulation_overhead_counts_against_run_deadline(monkeypatch, phase):
+    clock = [1000.0]
+    monkeypatch.setattr(engine, "monotonic", lambda: clock[0])
+    original = getattr(engine, phase)
+
+    def expensive(*args, **kwargs):
+        clock[0] += 121
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(engine, phase, expensive)
+    planner = LocalPlanner()
+    report = simulate(dataset(), Variant("timed"), planner)
+    assert report["status"] == "failed"
+    assert report["totals"] is None
+    assert len(planner.calls) == 1
+    assert report["failure_details"]["completed_planning_calls"] == 1
+    assert report["failure_details"]["completed_cycles"] == 0
+    assert report["failure_details"]["elapsed_seconds"] == 121
+    assert report["intervals"] == []
 
 
 def test_efficiencies_and_energy_conservation_are_hand_calculated():
@@ -365,6 +452,25 @@ def hanging_factory():
     return plan
 
 
+def hanging_second_factory():
+    calls = 0
+    baseline = self_consumption_factory()
+
+    def plan(params):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            time.sleep(30)
+        return baseline(params)
+
+    return plan
+
+
+def _nonreading_worker(connection, factory, options):
+    """A starting child that never accepts its first request."""
+    time.sleep(30)
+
+
 def test_worker_isolates_variant_state_and_resets_factory_at_segment_boundaries():
     with PlannerWorker("tests.optimizer.test_simulation:counter_factory") as worker:
         assert worker.call(payload(), reset=True, timeout=30)["result"]["counter"] == 1
@@ -374,11 +480,114 @@ def test_worker_isolates_variant_state_and_resets_factory_at_segment_boundaries(
         assert worker.call(payload(), reset=True, timeout=30)["result"]["counter"] == 1
 
 
+def test_worker_rechecks_deadline_after_early_wait_return(monkeypatch):
+    from types import SimpleNamespace
+
+    clock = [0.0]
+    callbacks = []
+
+    class EarlyEvent:
+        ready = False
+        waits = 0
+
+        def is_set(self):
+            return self.ready
+
+        def set(self):
+            self.ready = True
+
+        def wait(self, remaining):
+            self.waits += 1
+            clock[0] += 0.01
+            if self.waits == 1:
+                return False
+            callbacks[0]()
+            return self.ready
+
+    completed = EarlyEvent()
+
+    def thread(*, target, daemon):
+        callbacks.append(target)
+        return SimpleNamespace(start=lambda: None, join=lambda: None)
+
+    monkeypatch.setattr(worker_module, "time", SimpleNamespace(perf_counter=lambda: clock[0]))
+    monkeypatch.setattr(worker_module, "threading", SimpleNamespace(Event=lambda: completed, Thread=thread))
+    worker = object.__new__(PlannerWorker)
+    worker._closed = False
+    worker._exchange = None
+    worker._connection = SimpleNamespace(send=lambda message: None, recv=lambda: {"result": "ready"})
+    worker.close = lambda **kwargs: pytest.fail("A premature wake must not kill the worker")
+    assert worker.call({}, reset=True, timeout=0.05) == {"result": "ready"}
+    assert completed.waits == 2
+    assert clock[0] == pytest.approx(0.02)
+
+
 def test_worker_timeout_kills_process():
     with PlannerWorker("tests.optimizer.test_simulation:hanging_factory") as worker:
-        with pytest.raises(TimeoutError):
+        with pytest.raises(PlannerTimeout) as raised:
             worker.call(payload(), reset=True, timeout=0.05)
+        assert raised.value.timeout_seconds == 0.05
+        assert raised.value.elapsed_seconds >= 0.05
         assert not worker._process.is_alive()
+        assert not worker._exchange.is_alive()
+        with pytest.raises(RuntimeError, match="closed"):
+            worker.call(payload(), reset=True, timeout=1)
+
+
+@pytest.mark.parametrize("timeout", [0, -1, float("nan"), float("inf")])
+def test_worker_rejects_invalid_timeout(timeout):
+    with PlannerWorker(BASELINE_PLANNER) as worker:
+        with pytest.raises(ValueError, match="finite and positive"):
+            worker.call(payload(), reset=True, timeout=timeout)
+        assert worker._exchange is None
+
+
+def test_worker_cannot_extend_whole_call_cap(monkeypatch):
+    monkeypatch.setattr(worker_module, "PLANNER_TIMEOUT_SECONDS", 0.05)
+    with PlannerWorker("tests.optimizer.test_simulation:hanging_factory") as worker:
+        with pytest.raises(PlannerTimeout) as raised:
+            worker.call(payload(), reset=True, timeout=900)
+        assert raised.value.timeout_seconds == 0.05
+        assert not worker._process.is_alive()
+        assert not worker._exchange.is_alive()
+
+
+def test_timeout_covers_blocked_request_send(monkeypatch):
+    monkeypatch.setattr(worker_module, "_serve", _nonreading_worker)
+    with PlannerWorker(BASELINE_PLANNER) as worker:
+        # Larger than the pipe buffer; the child never drains the request.
+        started = time.perf_counter()
+        with pytest.raises(PlannerTimeout):
+            worker.call({"large": "x" * 8_000_000}, reset=True, timeout=0.1)
+        assert time.perf_counter() - started < 5
+        assert not worker._process.is_alive()
+        assert not worker._exchange.is_alive()
+
+
+def test_timeout_covers_blocked_response_read(monkeypatch):
+    with PlannerWorker(BASELINE_PLANNER) as worker:
+        worker.call(payload(), reset=True, timeout=30)  # Finish child startup.
+        receive = worker._connection.recv
+
+        def blocked_receive():
+            receive()  # Some response data arrived, so poll would have succeeded.
+            return receive()  # The full read still blocks waiting for more bytes.
+
+        monkeypatch.setattr(worker._connection, "recv", blocked_receive)
+        started = time.perf_counter()
+        with pytest.raises(PlannerTimeout):
+            worker.call(payload(), reset=False, timeout=0.1)
+        assert time.perf_counter() - started < 5
+        assert not worker._process.is_alive()
+        assert not worker._exchange.is_alive()
+
+
+def test_worker_failure_cleans_up_exchange_thread():
+    with PlannerWorker("tests.optimizer.test_simulation:counter_factory") as worker:
+        with pytest.raises(RuntimeError, match="ValidationError"):
+            worker.call({}, reset=True, timeout=30)
+        assert not worker._process.is_alive()
+        assert not worker._exchange.is_alive()
 
 
 def test_real_planner_can_run_synthetic_cycles_with_shared_physics():
@@ -458,7 +667,147 @@ def test_cli_validation_and_isolated_repeated_reports(tmp_path):
     ]
     assert summary["coverage"]["covered_seconds"] == 7200
     assert all(run["status"] == "complete" for run in summary["runs"])
+    assert summary["run_timeout_seconds"] == 120
     assert (output / "report.html").is_file()
+
+
+def test_cli_timeout_invalidates_partial_score_and_continues_variants(
+    tmp_path, monkeypatch
+):
+    from scripts import simulate_planner
+
+    # Leave time for a cold worker startup before testing the hanging second call.
+    timeout_seconds = 10
+    workers = []
+
+    class RecordingWorker(PlannerWorker):
+        def __init__(self, factory, options):
+            super().__init__(factory, options)
+            workers.append(self)
+
+    monkeypatch.setattr(simulate_planner, "PlannerWorker", RecordingWorker)
+    monkeypatch.setattr(simulate_planner, "RunBudget", lambda: RunBudget(timeout_seconds))
+    monkeypatch.setattr(simulate_planner, "RUN_TIMEOUT_SECONDS", timeout_seconds)
+    inputs = tmp_path / "inputs.jsonl"
+    inputs.write_text("\n".join(json.dumps(r) for r in _records(dataset())))
+    config = tmp_path / "variants.json"
+    config.write_text(
+        json.dumps(
+            {
+                "variants": [
+                    {
+                        "name": "timeout",
+                        "planner": "tests.optimizer.test_simulation:hanging_second_factory",
+                    },
+                    {"name": "later", "planner": BASELINE_PLANNER},
+                ]
+            }
+        )
+    )
+    output = tmp_path / "output"
+    assert (
+        simulate_planner.main(
+            [str(inputs), "--config", str(config), "--output", str(output)]
+        )
+        == 1
+    )
+    summary = json.loads((output / "summary.json").read_text())
+    failed, complete = summary["runs"]
+    assert failed["status"] == "failed"
+    assert failed["totals"] is None
+    assert failed["run_timeout_seconds"] == timeout_seconds
+    assert failed["failure_details"]["at"] == (START + timedelta(hours=1)).isoformat()
+    assert failed["failure_details"]["exception_type"] == "RunTimeout"
+    assert failed["failure_details"]["scope"] == "run"
+    assert failed["failure_details"]["timeout_seconds"] == timeout_seconds
+    assert failed["failure_details"]["elapsed_seconds"] >= timeout_seconds
+    assert failed["failure_details"]["completed_cycles"] == 1
+    full_failed = json.loads((output / "01-run.json").read_text())
+    assert len(full_failed["cycles"]) == len(full_failed["intervals"]) == 1
+    assert complete["status"] == "complete"
+    assert complete["totals"]["covered_seconds"] == 7200
+    assert summary["comparisons"] == []  # Partial failed costs never compare.
+    assert (
+        f"Whole-run wall-clock limit: {timeout_seconds} seconds"
+        in (output / "report.html").read_text()
+    )
+    assert all(not worker._process.is_alive() for worker in workers)
+    assert all(not worker._exchange.is_alive() for worker in workers)
+
+
+def test_cli_counts_startup_and_gives_every_variant_repeat_a_fresh_budget(
+    tmp_path, monkeypatch
+):
+    from scripts import simulate_planner
+
+    clock = [1000.0]
+    workers = []
+    monkeypatch.setattr(engine, "monotonic", lambda: clock[0])
+
+    class SlowStartingWorker(LocalPlanner):
+        def __init__(self, factory, options):
+            super().__init__()
+            self.killed = False
+            workers.append(self)
+            clock[0] += 1 if factory == BASELINE_PLANNER else 121
+
+        def close(self, *, kill=False):
+            self.killed |= kill
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            self.close()
+
+    monkeypatch.setattr(simulate_planner, "PlannerWorker", SlowStartingWorker)
+    inputs = tmp_path / "inputs.jsonl"
+    inputs.write_text("\n".join(json.dumps(r) for r in _records(dataset())))
+    config = tmp_path / "variants.json"
+    config.write_text(
+        json.dumps(
+            {
+                "variants": [
+                    {"name": "slow-start"},
+                    {"name": "fast", "planner": BASELINE_PLANNER},
+                ]
+            }
+        )
+    )
+    output = tmp_path / "output"
+    assert (
+        simulate_planner.main(
+            [
+                str(inputs),
+                "--config",
+                str(config),
+                "--output",
+                str(output),
+                "--repeats",
+                "2",
+            ]
+        )
+        == 1
+    )
+    summary = json.loads((output / "summary.json").read_text())
+    assert [run["status"] for run in summary["runs"]] == [
+        "failed",
+        "complete",
+        "complete",
+        "failed",
+    ]
+    for run in summary["runs"]:
+        assert run["run_timeout_seconds"] == 120
+        if run["status"] == "failed":
+            assert run["run_wall_seconds"] == 121
+            assert run["completed_cycles"] == 0
+            assert run["totals"] is None
+        else:
+            assert run["run_wall_seconds"] == 1
+            assert run["completed_cycles"] == 2
+    assert [worker.killed for worker in workers] == [True, False, False, True]
+    assert [len(worker.calls) for worker in workers] == [0, 2, 2, 0]
+    assert all(call[2] == 119 for worker in workers for call in worker.calls)
 
 
 def test_glob_selection_and_no_match(tmp_path):

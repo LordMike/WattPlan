@@ -3,10 +3,35 @@
 The production `optimize(OptimizationParams)` entry point continues to use the
 existing HiGHS planner and its legacy state. Experimental selection lives in the
 simulator. Built-in names are `highs`, `self-consumption`, `greedy`, `local-search`,
-and `beam-search`; any importable `module:factory` works without registration.
+`beam-search`, `dynamic-programming`, `charge-window`, `genetic`, and
+`cross-entropy`; any importable `module:factory` works without registration.
 See the [comparison ledger](planners/comparison.md) and its runnable
 [configuration](planners/comparison.json). The old `simulation.adapters` factory
 paths remain aliases. Solver modules load only when HiGHS is called.
+
+## Additional search implementations
+
+All four additional planners compute a fresh schedule from the current request on
+every cycle, using the full supplied horizon. They share the physical evaluator
+and target-first objective below. Their budgets bound search effort, not forecast
+coverage; diagnostics disclose aggregation, pruning and fallback completion.
+
+| Built-in name | Search method | Implementation and tuning notes |
+| --- | --- | --- |
+| `dynamic-programming` | Aggregate real battery trajectories by SoC state and previous physical behavior | [Dynamic programming](planners/dynamic-programming.md) |
+| `charge-window` | Coarse-to-fine search over charge, preserve and release windows | [Charge-window search](planners/charge-window.md) |
+| `genetic` | Population selection, crossover and mutation of complete schedules | [Genetic search](planners/genetic.md) |
+| `cross-entropy` | Sample schedules and update their action distribution from elite candidates | [Cross-entropy search](planners/cross-entropy.md) |
+
+The [selected benchmark configuration](planners/additional-benchmark.json)
+contains two DP profiles, one charge-window profile, two genetic profiles and
+one cross-entropy profile, plus self-consumption and two beam references.
+These selections are initial tuning results, not changed production defaults.
+
+The simulator gives each configuration/repeat a 120-second budget for its entire
+replay, including all planning cycles. Count budgets and fixed random seeds make
+search comparisons reproducible; a larger budget is not a guarantee of better
+realized cost under imperfect forecasts.
 
 ## Implement one module
 
@@ -111,8 +136,8 @@ reason, and search time. Include seeds and restart counts in algorithm diagnosti
 when relevant. Fixed evaluation counts and fixed seeds give reproducible search;
 an optional wall deadline is hardware-dependent. Search deadlines are cooperative,
 checked between candidates; the simulator separately kills a worker exceeding the
-whole-call limit. Count initial candidates and final replays honestly. No automatic
-solver fallback is hidden by the shared factory.
+remaining whole-replay budget. Count initial candidates and final replays
+honestly. No automatic solver fallback is hidden by the shared factory.
 
 ## State ownership
 
