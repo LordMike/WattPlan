@@ -51,7 +51,7 @@ PRESETS = {
             {"beam_width": width, "guidance_slots": 24, "guidance_scale": 1,
              "max_expansions": 30000, "max_joint_actions": 81},
         )
-        for width in (2, 16)
+        for width in (1, 2, 8, 16)
     },
     "dynamic-programming-fast": PlannerPreset(
         "dynamic-programming", "Dynamic programming — fast",

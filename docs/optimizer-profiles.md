@@ -19,7 +19,7 @@ result. Switching presets reloads the integration and replaces the previous plan
 | Self-consumption | `self-consumption` |
 | Greedy | `greedy-8`, `greedy-256` |
 | Local search | `local-search-3`, `local-search-96` |
-| Beam search | `beam-2`, `beam-16` |
+| Beam search | `beam-1`, `beam-2`, `beam-8`, `beam-16` |
 | Dynamic programming | `dynamic-programming-fast`, `dynamic-programming-strong` |
 | Charge-window search | `charge-window-96` |
 | Genetic search | `genetic-fast`, `genetic-standard` |
@@ -71,6 +71,12 @@ This can preserve an initially costly charging choice that pays off later. It
 fits one or a few batteries more naturally than large groups, where the number
 of joint actions grows quickly. A wider beam retains more alternatives at greater
 computational cost; discarded paths cannot be recovered later.
+
+The preset number limits how many alternatives are retained: `beam-1` uses the
+least search effort, `beam-2` is a fast starting choice, and `beam-8` and
+`beam-16` explore more alternatives. All four share the same features and other
+search settings. Compare their runtime and cost with your own exports using the
+[simulator](simulator.md); a wider beam does not guarantee a cheaper result.
 
 ### Dynamic programming
 

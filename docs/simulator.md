@@ -149,7 +149,9 @@ python scripts/simulate_planner.py .tmp/simulator/exports \
 ```
 
 `all` means every named configuration in [the planner guide](optimizer-profiles.md),
-including each HiGHS lookahead. Bare algorithms such as `beam-search` use factory
+including each HiGHS lookahead and `beam-1`, `beam-2`, `beam-8`, and `beam-16`.
+Use `--planners all` for recurring comparisons so newly added presets join the
+benchmark automatically. Bare algorithms such as `beam-search` use factory
 defaults; `beam-16` selects the fixed preset available in HA. `highs` uses recorded
 HiGHS settings, while `highs-16` fixes its lookahead to 16 slots. Without
 `--planners` or `--config`, the comparison is HiGHS versus self-consumption,
