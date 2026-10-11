@@ -204,6 +204,12 @@ approximation at other energy levels and adds search work. It is not a guarantee
 of savings. The option defaults to false; passive dispatch, fleet fallback and
 target repair omit this grid refinement.
 
+The `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12-initialknot1-prerefill1`
+composition retains the same uncertainty assumptions and energy grid as its
+`-initialknot1` counterpart, adding the existing pre-refill guard to reject passive
+dispatch when it detects an earlier feasible cheaper grid buy; this does not
+guarantee a profitable trade.
+
 Hybrid `-rollout2` variants refine only the first action through two exact physical
 slots before interpolating the remaining value. Each action is chosen before
 that slot's PV realization; the second action may respond to the first slot's
