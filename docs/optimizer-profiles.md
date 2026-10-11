@@ -220,6 +220,9 @@ Zero demand spread preserves the existing PV model. Additional branches can
 increase work and cause unnecessary charging; compare a complete annual replay.
 The `-demand25-h12-rollout2` preset combines the 12-slot demand model with the
 two-slot first-action refinement; compare it separately from each component.
+Additional demand presets compare spreads of 10% and 50% over 12 slots, and a
+25% spread over 6 or 24 slots. These are fixed forecast assumptions, with the
+same solar gate, PV spread and charging premium; none selects settings by date.
 
 Adaptive solar policy (`adaptive-solar-gate1.5-grid6-switchR-low100-highN`)
 chooses the PV uncertainty spread from the same next-24-hour forecast surplus
