@@ -197,6 +197,14 @@ charging breakpoints to its energy grid. They retain the same passive gate,
 original-input replay and fleet fallback; extra knots can improve or worsen
 the approximate value table and increase its search work.
 
+Hybrid `-rollout2` variants refine only the first action through two exact physical
+slots before interpolating the remaining value. Each action is chosen before
+that slot's PV realization; the second action may respond to the first slot's
+observed successor state. Later planned actions use the ordinary value table.
+The rollout leaves the passive gate, original-input replay and fleet fallback
+unchanged. It is an approximate search refinement, not a guarantee of savings;
+target repair can replace the proposed schedule. The option defaults to false.
+
 Adaptive solar policy (`adaptive-solar-gate1.5-grid6-switchR-low100-highN`)
 chooses the PV uncertainty spread from the same next-24-hour forecast surplus
 ratio used by the passive gate. Below switch ratio `R` it uses a 100% symmetric

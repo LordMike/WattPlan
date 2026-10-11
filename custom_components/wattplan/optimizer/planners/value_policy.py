@@ -40,6 +40,14 @@ An optional grid-charge premium adds a search-only cost per AC kWh entering
 the battery from the grid. Scenario branches use their own physical grid-charge
 amounts. It never charges ordinary household imports or PV charging, and does
 not enter reported costs. Fleet fallback and target repair omit this heuristic.
+
+Optional first-action rollout evaluates two forecast slots at exact physical
+states before interpolating the remaining value table. Each action precedes its
+own slot's PV branch; the second action may depend on the first branch's observed
+state. Only slot zero uses this refinement. The tail remains approximate, and
+fleet fallback and target repair do not use rollout.
+Diagnostics distinguish evaluated rollout from an accepted policy replaced by
+target repair; the initial rollout score always describes the pre-repair search.
 """
 
 from bisect import bisect_right
@@ -85,7 +93,7 @@ def _charge_knots(battery):
 
 def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
             terminal_value_fraction=0.0, include_charge_knots=False, pv_scenario_spread=0.0,
-            grid_charge_premium_per_kwh=0.0):
+            grid_charge_premium_per_kwh=0.0, first_action_rollout=False):
     """Return a deterministic interpolated cost-to-go planner."""
     if type(energy_intervals) is not int or not 2 <= energy_intervals <= 128:
         raise ValueError("energy_intervals must be an integer between 2 and 128")
@@ -96,6 +104,8 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
             raise ValueError(f"{name} must be finite and nonnegative")
     if type(include_charge_knots) is not bool:
         raise ValueError("include_charge_knots must be a boolean")
+    if type(first_action_rollout) is not bool:
+        raise ValueError("first_action_rollout must be a boolean")
     if (type(pv_scenario_spread) not in {int, float}
             or not math.isfinite(pv_scenario_spread) or not 0 <= pv_scenario_spread <= 1):
         raise ValueError("pv_scenario_spread must be finite and between zero and one")
@@ -109,6 +119,9 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
             result = fallback(params)
             result["diagnostics"]["value_policy_fallback"] = "bounded_joint_state_dp"
             result["diagnostics"]["forecast_adjustments_applied"] = False
+            if first_action_rollout:
+                result["diagnostics"].update(first_action_rollout=True, first_action_rollout_evaluated=False,
+                    first_action_rollout_applied=False, rollout_search_transitions=0)
             if grid_charge_premium_per_kwh:
                 result["diagnostics"].update(
                     grid_charge_premium_per_kwh=grid_charge_premium_per_kwh,
@@ -133,7 +146,7 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
         tables[horizon] = [terminal, terminal, terminal]
         transitions = 0
 
-        def candidates(slot, level, pv_factor=1.0):
+        def candidates(slot, level, pv_factor=1.0, *, successor_value=None):
             nonlocal transitions
             rows = []
             for action in choices:
@@ -145,7 +158,9 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
                 mode = (1 if charge > EPSILON and charge >= params.action_deadband_kwh
                         else -1 if discharge > EPSILON and discharge >= params.action_deadband_kwh else 0)
                 miss = target_miss(battery.target, step.levels[0]) if battery.target and battery.target.timeslot == slot else 0.0
-                future_miss, future_cost = _interpolate(knots, tables[slot + 1][mode + 1], step.levels[0])
+                future_miss, future_cost = (
+                    _interpolate(knots, tables[slot + 1][mode + 1], step.levels[0])
+                    if successor_value is None else successor_value(slot + 1, step.levels[0], mode))
                 cost = (step.grid_import * params.grid_import_price_per_kwh[slot]
                         - step.grid_export * params.grid_export_price_per_kwh[slot]
                         + (charge + discharge) * params.throughput_cost_per_kwh
@@ -155,12 +170,12 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
                 rows.append((miss + future_miss, cost + future_cost, mode, action))
             return rows
 
-        def scenario_candidates(slot, level):
+        def scenario_candidates(slot, level, *, successor_value=None):
             # Exactly zero forecast PV has identical branches; avoid duplicate physics.
             if params.solar_input_kwh[slot] == 0 or pv_scale == 0:
-                return candidates(slot, level)
-            low = candidates(slot, level, 1 - pv_scenario_spread)
-            high = candidates(slot, level, 1 + pv_scenario_spread)
+                return candidates(slot, level, successor_value=successor_value)
+            low = candidates(slot, level, 1 - pv_scenario_spread, successor_value=successor_value)
+            high = candidates(slot, level, 1 + pv_scenario_spread, successor_value=successor_value)
             return [((a[0] + b[0]) / 2, (a[1] + b[1]) / 2,
                      (a[2], b[2]), a[3]) for a, b in zip(low, high, strict=True)]
 
@@ -172,6 +187,16 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
 
         candidate_fn = scenario_candidates if pv_scenario_spread else candidates
         first_expected_score = None
+        rollout_transitions = 0
+        rollout_score = None
+
+        def exact_successor(slot, level, previous):
+            """Choose the next action before its PV branch, at the observed state."""
+            nonlocal rollout_transitions
+            before = transitions
+            rows = candidate_fn(slot, level)
+            rollout_transitions += transitions - before
+            return min(scenario_score(row, previous) for row in rows)
 
         for slot in range(horizon - 1, -1, -1):
             table = [[], [], []]
@@ -187,13 +212,18 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
         level, previous = battery.initial_kwh, 0
         policies = [[]]
         for slot in range(horizon):
-            rows = candidate_fn(slot, level)
+            if first_action_rollout and slot == 0 and horizon >= 2:
+                rows = candidate_fn(slot, level, successor_value=exact_successor)
+            else:
+                rows = candidate_fn(slot, level)
             if pv_scenario_spread:
                 best = min(rows, key=lambda row: scenario_score(row, previous))
                 if slot == 0:
                     first_expected_score = scenario_score(best, previous)
             else:
                 best = min(rows, key=lambda row: (row[0], row[1] + (row[2] != previous) * params.mode_switch_cost))
+            if first_action_rollout and slot == 0 and horizon >= 2:
+                rollout_score = scenario_score(best, previous)
             action = best[3]
             policies[0].append(action)
             # The accepted path carries the unadjusted request's exact energy.
@@ -216,6 +246,8 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
                       "forecast_adjustments_applied": False}
             if grid_charge_premium_per_kwh:
                 repair["grid_charge_premium_applied"] = False
+            if first_action_rollout:
+                repair["first_action_rollout_applied"] = False
             if improved:
                 policies, evaluation = repaired_policies, repaired_evaluation
         return build_result(params, policies, evaluation=evaluation, diagnostics={
@@ -231,6 +263,11 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
             "include_charge_knots": include_charge_knots, "target_repair": repair,
             "pv_scale": pv_scale, "demand_scale": demand_scale,
             "terminal_value_fraction": terminal_value_fraction,
+            **({"first_action_rollout": True, "first_action_rollout_evaluated": horizon >= 2,
+                "first_action_rollout_applied": horizon >= 2 and not (repair and repair["improved"]),
+                "rollout_search_transitions": rollout_transitions,
+                "initial_rollout_search_score": rollout_score}
+               if first_action_rollout else {}),
             **({"grid_charge_premium_per_kwh": grid_charge_premium_per_kwh,
                 "grid_charge_premium_applied": True}
                if grid_charge_premium_per_kwh else {}),

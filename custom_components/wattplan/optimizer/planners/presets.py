@@ -270,6 +270,17 @@ PRESETS = {
         )
         for premium in (0.0, 0.03)
     },
+    **{
+        ("value-solar-gate-1.5-grid6-terminal0-scenario100"
+         + (f"-chargepremium{premium:g}" if premium else "")
+         + "-rollout2"): PlannerPreset(
+            "hybrid-policy", f"Value policy — solar gate 1.5, PV spread 100%, two-slot first-action rollout, grid premium {premium:g}/kWh",
+            {"surplus_ratio": 1.5, "energy_intervals": 6,
+             "terminal_value_fraction": 0.0, "pv_scenario_spread": 1.0,
+             "grid_charge_premium_per_kwh": premium, "first_action_rollout": True},
+        )
+        for premium in (0.0, 0.03, 0.1)
+    },
 }
 
 

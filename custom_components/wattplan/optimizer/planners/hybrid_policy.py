@@ -26,6 +26,8 @@ projections unchanged and is unused when the passive branch is selected.
 battery charging premium; passive dispatch and reported costs are unaffected.
 ``include_charge_knots`` forwards the value policy's optional physical charging
 breakpoints. Passive dispatch and joint-DP fleet fallback do not use these knots.
+``first_action_rollout`` forwards the value policy's exact two-slot first-action
+refinement, with the remaining horizon still valued by interpolation.
 Optional ``prerefill_guard`` rejects passive dispatch when it predicts a dear
 import before natural PV charging restores the initial SoC, and an earlier cheap
 grid buy is locally feasible. It probes shared physics, not a full alternative
@@ -78,7 +80,7 @@ def _prerefill_opportunity(params, slots):
 
 def factory(*, surplus_ratio=1.5, energy_intervals=4, terminal_value_fraction=0.0,
             pv_scenario_spread=0.0, prerefill_guard=False, grid_charge_premium_per_kwh=0.0,
-            include_charge_knots=False):
+            include_charge_knots=False, first_action_rollout=False):
     """Use passive dispatch only when forecast surplus clears the gate."""
     if (type(surplus_ratio) not in {int, float}
         or not math.isfinite(surplus_ratio) or surplus_ratio <= 0):
@@ -89,6 +91,7 @@ def factory(*, surplus_ratio=1.5, energy_intervals=4, terminal_value_fraction=0.
                           terminal_value_fraction=terminal_value_fraction,
                           pv_scenario_spread=pv_scenario_spread,
                           include_charge_knots=include_charge_knots,
+                          first_action_rollout=first_action_rollout,
                           grid_charge_premium_per_kwh=grid_charge_premium_per_kwh).__wrapped__
     baseline = baseline_factory().__wrapped__
 
@@ -136,6 +139,9 @@ def factory(*, surplus_ratio=1.5, energy_intervals=4, terminal_value_fraction=0.
             "energy_intervals": energy_intervals,
             "terminal_value_fraction": terminal_value_fraction,
             "pv_scenario_spread": pv_scenario_spread,
+            **({"first_action_rollout": True,
+                "first_action_rollout_applied": result["diagnostics"].get("first_action_rollout_applied", False)}
+               if first_action_rollout else {}),
             **({"include_charge_knots": True,
                 "include_charge_knots_applied": result["diagnostics"].get("include_charge_knots", False)}
                if include_charge_knots else {}),
