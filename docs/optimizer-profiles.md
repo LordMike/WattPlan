@@ -192,6 +192,10 @@ arrives before demand. `-prerefill1` variants check the order of forecast slots:
 they retain value dispatch if a feasible cheaper grid-charge opportunity precedes
 expensive imports before solar restores the initial battery level. This is a
 heuristic opportunity check, not proof that buying early will save money.
+Hybrid `-chargeknots1` variants forward the value policy's additional physical
+charging breakpoints to its energy grid. They retain the same passive gate,
+original-input replay and fleet fallback; extra knots can improve or worsen
+the approximate value table and increase its search work.
 
 Adaptive solar policy (`adaptive-solar-gate1.5-grid6-switchR-low100-highN`)
 chooses the PV uncertainty spread from the same next-24-hour forecast surplus

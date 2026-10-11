@@ -24,6 +24,8 @@ per-slot PV uncertainty assumption. It leaves gate inputs and reported physical
 projections unchanged and is unused when the passive branch is selected.
 ``grid_charge_premium_per_kwh`` forwards the value policy's search-only grid
 battery charging premium; passive dispatch and reported costs are unaffected.
+``include_charge_knots`` forwards the value policy's optional physical charging
+breakpoints. Passive dispatch and joint-DP fleet fallback do not use these knots.
 Optional ``prerefill_guard`` rejects passive dispatch when it predicts a dear
 import before natural PV charging restores the initial SoC, and an earlier cheap
 grid buy is locally feasible. It probes shared physics, not a full alternative
@@ -75,7 +77,8 @@ def _prerefill_opportunity(params, slots):
 
 
 def factory(*, surplus_ratio=1.5, energy_intervals=4, terminal_value_fraction=0.0,
-            pv_scenario_spread=0.0, prerefill_guard=False, grid_charge_premium_per_kwh=0.0):
+            pv_scenario_spread=0.0, prerefill_guard=False, grid_charge_premium_per_kwh=0.0,
+            include_charge_knots=False):
     """Use passive dispatch only when forecast surplus clears the gate."""
     if (type(surplus_ratio) not in {int, float}
         or not math.isfinite(surplus_ratio) or surplus_ratio <= 0):
@@ -85,6 +88,7 @@ def factory(*, surplus_ratio=1.5, energy_intervals=4, terminal_value_fraction=0.
     value = value_factory(energy_intervals=energy_intervals,
                           terminal_value_fraction=terminal_value_fraction,
                           pv_scenario_spread=pv_scenario_spread,
+                          include_charge_knots=include_charge_knots,
                           grid_charge_premium_per_kwh=grid_charge_premium_per_kwh).__wrapped__
     baseline = baseline_factory().__wrapped__
 
@@ -132,6 +136,9 @@ def factory(*, surplus_ratio=1.5, energy_intervals=4, terminal_value_fraction=0.
             "energy_intervals": energy_intervals,
             "terminal_value_fraction": terminal_value_fraction,
             "pv_scenario_spread": pv_scenario_spread,
+            **({"include_charge_knots": True,
+                "include_charge_knots_applied": result["diagnostics"].get("include_charge_knots", False)}
+               if include_charge_knots else {}),
             **({"grid_charge_premium_per_kwh": grid_charge_premium_per_kwh,
                 "grid_charge_premium_applied": not passive and len(batteries) == 1}
                if grid_charge_premium_per_kwh else {}),
