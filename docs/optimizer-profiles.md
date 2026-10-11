@@ -154,6 +154,13 @@ They still report flows and costs using the original inputs. This models
 independent uncertainty in each slot, not a calibrated weather forecast, and can
 overpay for protection against low solar production.
 
+An optional `grid_charge_premium_per_kwh` adds a cost per AC kWh of battery
+grid charging during value-policy search. Hybrid presets with `-chargepremiumN`
+use the explicit premium `N` in your tariff currency per kWh. The premium can
+discourage weak forecast trades but also reject profitable ones. It never adds
+to reported electricity cost, and the passive branch, fleet fallback and target
+repair retain their existing behavior. Zero disables the heuristic.
+
 Linear dispatch (`linear-dispatch-h*-round*-pv*-tv*`) solves a continuous
 single-battery approximation, then rounds it into executable inverter policies.
 `h` limits the search horizon in slots, `round` sets the percentage of maximum

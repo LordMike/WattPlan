@@ -35,6 +35,11 @@ level; accepted policies are replayed against original inputs. Identical zero-PV
 branches share work. This uncertainty model is a configurable assumption, not a
 calibrated weather distribution: it ignores cross-hour weather correlation and
 can overpay for protection. Spread zero keeps the deterministic policy path.
+
+An optional grid-charge premium adds a search-only cost per AC kWh entering
+the battery from the grid. Scenario branches use their own physical grid-charge
+amounts. It never charges ordinary household imports or PV charging, and does
+not enter reported costs. Fleet fallback and target repair omit this heuristic.
 """
 
 from bisect import bisect_right
@@ -79,12 +84,14 @@ def _charge_knots(battery):
 
 
 def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
-            terminal_value_fraction=0.0, include_charge_knots=False, pv_scenario_spread=0.0):
+            terminal_value_fraction=0.0, include_charge_knots=False, pv_scenario_spread=0.0,
+            grid_charge_premium_per_kwh=0.0):
     """Return a deterministic interpolated cost-to-go planner."""
     if type(energy_intervals) is not int or not 2 <= energy_intervals <= 128:
         raise ValueError("energy_intervals must be an integer between 2 and 128")
     for name, value in (("pv_scale", pv_scale), ("demand_scale", demand_scale),
-                        ("terminal_value_fraction", terminal_value_fraction)):
+                        ("terminal_value_fraction", terminal_value_fraction),
+                        ("grid_charge_premium_per_kwh", grid_charge_premium_per_kwh)):
         if type(value) not in {int, float} or not math.isfinite(value) or value < 0:
             raise ValueError(f"{name} must be finite and nonnegative")
     if type(include_charge_knots) is not bool:
@@ -102,6 +109,10 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
             result = fallback(params)
             result["diagnostics"]["value_policy_fallback"] = "bounded_joint_state_dp"
             result["diagnostics"]["forecast_adjustments_applied"] = False
+            if grid_charge_premium_per_kwh:
+                result["diagnostics"].update(
+                    grid_charge_premium_per_kwh=grid_charge_premium_per_kwh,
+                    grid_charge_premium_applied=False)
             return result
         battery = batteries[0]
         horizon = len(params.usage_kwh)
@@ -139,6 +150,8 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
                         - step.grid_export * params.grid_export_price_per_kwh[slot]
                         + (charge + discharge) * params.throughput_cost_per_kwh
                         + reserve_shortfall_cost(batteries, step.levels))
+                if grid_charge_premium_per_kwh:
+                    cost += sum(step.grid_charge) * grid_charge_premium_per_kwh
                 rows.append((miss + future_miss, cost + future_cost, mode, action))
             return rows
 
@@ -201,6 +214,8 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
                       "original_target_miss_kwh": evaluation.target_miss_kwh,
                       "expansions": repaired_result["diagnostics"]["expansions"], "evaluations": 2,
                       "forecast_adjustments_applied": False}
+            if grid_charge_premium_per_kwh:
+                repair["grid_charge_premium_applied"] = False
             if improved:
                 policies, evaluation = repaired_policies, repaired_evaluation
         return build_result(params, policies, evaluation=evaluation, diagnostics={
@@ -216,6 +231,9 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
             "include_charge_knots": include_charge_knots, "target_repair": repair,
             "pv_scale": pv_scale, "demand_scale": demand_scale,
             "terminal_value_fraction": terminal_value_fraction,
+            **({"grid_charge_premium_per_kwh": grid_charge_premium_per_kwh,
+                "grid_charge_premium_applied": True}
+               if grid_charge_premium_per_kwh else {}),
             "terminal_search_credit_per_kwh": credit,
             "forecast_adjustments_applied": True, "search_transitions": transitions,
             "evaluations": 3 if repair is not None else 1, "termination_reason": "value_tables_complete",
