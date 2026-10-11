@@ -215,6 +215,16 @@ composition retains the same uncertainty assumptions and energy grid as its
 dispatch when it detects an earlier feasible cheaper grid buy; this does not
 guarantee a profitable trade.
 
+The guarded grid6 `-pvtailq1of3` composition leaves the nearest 12 paired demand/PV
+slots unchanged. Later slots use PV factors 0 and 1.5 with probabilities one third
+and two thirds, preserving the forecast mean while retaining a complete-cloud
+outcome. This fixed distribution is an explicit search assumption, not a
+calibrated probability or a guarantee of savings. Reporting uses original inputs;
+passive dispatch, fleet fallback and target repair omit the assumption.
+The optional `pv_tail_low_probability` defaults to 0.5 and must be finite with
+`0 < q <= 0.5`. A nondefault value requires positive PV and paired demand spreads,
+an explicit positive paired demand slot bound, and disabled first-action rollout.
+
 Hybrid `-rollout2` variants refine only the first action through two exact physical
 slots before interpolating the remaining value. Each action is chosen before
 that slot's PV realization; the second action may respond to the first slot's

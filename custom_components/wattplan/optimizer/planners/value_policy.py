@@ -57,6 +57,14 @@ through the full horizon. Prepared demand includes fixed comfort placement, so
 the spread describes aggregate demand without rescheduling comfort by branch.
 Reporting replays original inputs; fleet fallback and target repair omit it.
 
+Optional PV-only tail probability changes the distribution after the bounded
+paired-demand slots. Low PV keeps factor (1-spread) with probability q; high PV
+uses (1+q*spread/(1-q)) with probability (1-q), preserving the supplied PV mean.
+Active paired slots retain their equal weights. The default q=.5 is unchanged;
+nondefault probabilities require bounded paired demand and omit rollout. This is
+an explicit risk assumption, not calibrated weather probability. Nominal reporting,
+fleet fallback and target repair do not use this tail distribution.
+
 Optional rollout PV persistence reuses one latent PV factor for the first two
 rollout slots, then resets to the independent value-table tail. Only different
 observed PV outcomes in slot zero reveal the factor for the second action.
@@ -116,7 +124,8 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
             terminal_value_fraction=0.0, include_charge_knots=False, pv_scenario_spread=0.0,
             grid_charge_premium_per_kwh=0.0, first_action_rollout=False,
             paired_demand_scenario_spread=0.0, paired_demand_scenario_slots=None,
-            rollout_pv_persistence=False, include_initial_knot=False):
+            rollout_pv_persistence=False, include_initial_knot=False,
+            pv_tail_low_probability=0.5):
     """Return a deterministic interpolated cost-to-go planner."""
     if type(energy_intervals) is not int or not 2 <= energy_intervals <= 128:
         raise ValueError("energy_intervals must be an integer between 2 and 128")
@@ -143,6 +152,19 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
     if paired_demand_scenario_slots is not None and (
             type(paired_demand_scenario_slots) is not int or paired_demand_scenario_slots <= 0):
         raise ValueError("paired_demand_scenario_slots must be None or a positive integer")
+    if (type(pv_tail_low_probability) not in {int, float}
+            or not math.isfinite(pv_tail_low_probability)
+            or not 0 < pv_tail_low_probability <= 0.5):
+        raise ValueError("pv_tail_low_probability must be finite and greater than zero and at most 0.5")
+    tail_modified = pv_tail_low_probability != 0.5
+    if tail_modified:
+        if (not pv_scenario_spread or not paired_demand_scenario_spread
+                or paired_demand_scenario_slots is None):
+            raise ValueError("nondefault pv_tail_low_probability requires positive PV and "
+                             "paired demand spreads and an explicit demand slot bound")
+        if first_action_rollout or rollout_pv_persistence:
+            raise ValueError("nondefault pv_tail_low_probability does not support rollout")
+    tail_high_pv = 1 + pv_tail_low_probability * pv_scenario_spread / (1 - pv_tail_low_probability)
     if rollout_pv_persistence and not first_action_rollout:
         raise ValueError("rollout_pv_persistence requires first_action_rollout")
     if rollout_pv_persistence and paired_demand_scenario_spread:
@@ -158,6 +180,12 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
             result = fallback(params)
             result["diagnostics"]["value_policy_fallback"] = "bounded_joint_state_dp"
             result["diagnostics"]["forecast_adjustments_applied"] = False
+            if tail_modified:
+                result["diagnostics"].update(pv_tail_low_probability=pv_tail_low_probability,
+                    pv_tail_evaluated=False, pv_tail_applied=False,
+                    pv_tail_start_slot=None, pv_tail_effective_slots=0,
+                    pv_tail_factors=[1 - pv_scenario_spread, tail_high_pv],
+                    pv_tail_weights=[pv_tail_low_probability, 1 - pv_tail_low_probability])
             if include_initial_knot:
                 result["diagnostics"].update(include_initial_knot=True,
                     initial_knot_evaluated=False, initial_knot_added=False,
@@ -268,6 +296,36 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
                         else ((modes[0] != previous) + (modes[1] != previous)) / 2)
             return row[0], row[1] + switches * params.mode_switch_cost
 
+        if tail_modified:
+            half_weight_candidates = scenario_candidates
+            half_weight_score = scenario_score
+
+            def scenario_candidates(slot, level, *, successor_value=None):
+                nonlocal scenario_branches
+                if slot < demand_slots:
+                    return half_weight_candidates(slot, level, successor_value=successor_value)
+                # Demand is nominal in this tail. Keep the cloud outcome while
+                # preserving the supplied PV mean with unequal probabilities.
+                low_pv = 1 - pv_scenario_spread
+                pv = params.solar_input_kwh[slot] * pv_scale
+                identical = pv * low_pv == pv * tail_high_pv
+                scenario_branches += 1 if identical else 2
+                low = candidates(slot, level, low_pv, successor_value=successor_value)
+                if identical:
+                    return low
+                high = candidates(slot, level, tail_high_pv, successor_value=successor_value)
+                q = pv_tail_low_probability
+                # The optional fifth field is a weight, never an averaged mode.
+                return [(q*a[0] + (1-q)*b[0], q*a[1] + (1-q)*b[1],
+                         (a[2], b[2]), a[3], q) for a, b in zip(low, high, strict=True)]
+
+            def scenario_score(row, previous):
+                if len(row) == 4:
+                    return half_weight_score(row, previous)
+                modes, q = row[2], row[4]
+                switches = q * (modes[0] != previous) + (1-q) * (modes[1] != previous)
+                return row[0], row[1] + switches * params.mode_switch_cost
+
         candidate_fn = scenario_candidates if scenario_active else candidates
         first_expected_score = None
         rollout_transitions = 0
@@ -353,6 +411,8 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
                 repair["rollout_pv_persistence_applied"] = False
             if include_initial_knot:
                 repair["initial_knot_applied"] = False
+            if tail_modified:
+                repair["pv_tail_applied"] = False
             if improved:
                 policies, evaluation = repaired_policies, repaired_evaluation
         return build_result(params, policies, evaluation=evaluation, diagnostics={
@@ -362,7 +422,9 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
                 "pv_scenario_factors": [1 - pv_scenario_spread, 1 + pv_scenario_spread],
                 "pv_scenario_weights": [0.5, 0.5],
                 "initial_value_policy_expected_score": first_expected_score,
-                "scenario_assumption": ("independent per-slot paired low PV/high aggregate demand and high PV/low aggregate demand"
+                "scenario_assumption": ("independent per-slot equal-weight paired PV/demand in bounded active slots; mean-preserving unequal-weight PV-only tail"
+                                        if tail_modified else
+                                        "independent per-slot paired low PV/high aggregate demand and high PV/low aggregate demand"
                                         if paired_demand_scenario_spread else "independent symmetric per-slot PV factors")}
                if scenario_active else {}),
             **({"paired_demand_scenario_spread": paired_demand_scenario_spread,
@@ -374,6 +436,14 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
                 "paired_demand_scenario_effective_hours": demand_slots * params.slot_minutes / 60,
                 "scenario_branch_evaluations": scenario_branches}
                if paired_demand_scenario_spread else {}),
+            **({"pv_tail_low_probability": pv_tail_low_probability,
+                "pv_tail_evaluated": demand_slots < horizon,
+                "pv_tail_applied": demand_slots < horizon and not (repair and repair["improved"]),
+                "pv_tail_start_slot": demand_slots,
+                "pv_tail_effective_slots": horizon - demand_slots,
+                "pv_tail_factors": [1 - pv_scenario_spread, tail_high_pv],
+                "pv_tail_weights": [pv_tail_low_probability, 1 - pv_tail_low_probability]}
+               if tail_modified else {}),
             "energy_intervals": energy_intervals, "energy_knots": len(knots),
             **({"include_initial_knot": True, "initial_knot_evaluated": True,
                 "initial_knot_added": initial_knot_added,
