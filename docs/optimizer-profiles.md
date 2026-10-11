@@ -205,6 +205,15 @@ The rollout leaves the passive gate, original-input replay and fleet fallback
 unchanged. It is an approximate search refinement, not a guarantee of savings;
 target repair can replace the proposed schedule. The option defaults to false.
 
+The `-rollout2-pvpersist2` variant assumes the same low/high PV factor across
+the two rollout slots. The first action precedes the PV outcome; the second can
+use the factor only if the first slot's observed PV distinguishes it. Zero PV
+or zero PV scale reveals nothing, so the next action still precedes its own PV
+outcome. Equal battery levels alone do not determine what was observed. The
+remaining value table retains independent PV scenarios. This explicit persistence
+assumption is not calibrated and can worsen costs. It requires first-action rollout
+and currently rejects pairing with demand uncertainty; default behavior is unchanged.
+
 Hybrid `-demandN-hM` variants pair the lower PV branch with demand increased by
 `N` percent, and the higher PV branch with demand decreased by that percentage.
 The two equally weighted outcomes retain the supplied means and assume negative

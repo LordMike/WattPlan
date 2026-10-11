@@ -56,6 +56,14 @@ slot bound limits demand uncertainty while PV scenarios and planning continue
 through the full horizon. Prepared demand includes fixed comfort placement, so
 the spread describes aggregate demand without rescheduling comfort by branch.
 Reporting replays original inputs; fleet fallback and target repair omit it.
+
+Optional rollout PV persistence reuses one latent PV factor for the first two
+rollout slots, then resets to the independent value-table tail. Only different
+observed PV outcomes in slot zero reveal the factor for the second action.
+Zero first-slot PV reveals nothing, so the next action still precedes its own
+PV realization. Equal battery levels do not hide distinguishable generation.
+Perfect two-slot persistence is an explicit assumption, not calibrated weather.
+This isolated model requires rollout and does not support paired demand spread.
 """
 
 from bisect import bisect_right
@@ -102,7 +110,8 @@ def _charge_knots(battery):
 def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
             terminal_value_fraction=0.0, include_charge_knots=False, pv_scenario_spread=0.0,
             grid_charge_premium_per_kwh=0.0, first_action_rollout=False,
-            paired_demand_scenario_spread=0.0, paired_demand_scenario_slots=None):
+            paired_demand_scenario_spread=0.0, paired_demand_scenario_slots=None,
+            rollout_pv_persistence=False):
     """Return a deterministic interpolated cost-to-go planner."""
     if type(energy_intervals) is not int or not 2 <= energy_intervals <= 128:
         raise ValueError("energy_intervals must be an integer between 2 and 128")
@@ -115,6 +124,8 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
         raise ValueError("include_charge_knots must be a boolean")
     if type(first_action_rollout) is not bool:
         raise ValueError("first_action_rollout must be a boolean")
+    if type(rollout_pv_persistence) is not bool:
+        raise ValueError("rollout_pv_persistence must be a boolean")
     if (type(pv_scenario_spread) not in {int, float}
             or not math.isfinite(pv_scenario_spread) or not 0 <= pv_scenario_spread <= 1):
         raise ValueError("pv_scenario_spread must be finite and between zero and one")
@@ -125,6 +136,10 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
     if paired_demand_scenario_slots is not None and (
             type(paired_demand_scenario_slots) is not int or paired_demand_scenario_slots <= 0):
         raise ValueError("paired_demand_scenario_slots must be None or a positive integer")
+    if rollout_pv_persistence and not first_action_rollout:
+        raise ValueError("rollout_pv_persistence requires first_action_rollout")
+    if rollout_pv_persistence and paired_demand_scenario_spread:
+        raise ValueError("rollout_pv_persistence does not support paired_demand_scenario_spread")
     scenario_active = bool(pv_scenario_spread or paired_demand_scenario_spread)
     capabilities = PlannerCapabilities()
     fallback = joint_factory(max_states=8, max_expansions=1024)
@@ -136,6 +151,10 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
             result = fallback(params)
             result["diagnostics"]["value_policy_fallback"] = "bounded_joint_state_dp"
             result["diagnostics"]["forecast_adjustments_applied"] = False
+            if rollout_pv_persistence:
+                result["diagnostics"].update(rollout_pv_persistence=True,
+                    rollout_pv_persistence_evaluated=False, rollout_pv_persistence_applied=False,
+                    rollout_pv_factor_revealed=False, initial_pv_persistence_search_score=None)
             if paired_demand_scenario_spread:
                 result["diagnostics"].update(
                     paired_demand_scenario_spread=paired_demand_scenario_spread,
@@ -154,6 +173,10 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
         battery = batteries[0]
         horizon = len(params.usage_kwh)
         demand_slots = min(horizon, paired_demand_scenario_slots or horizon)
+        persistence_evaluated = rollout_pv_persistence and horizon >= 2 and pv_scenario_spread > 0
+        first_pv = params.solar_input_kwh[0] * pv_scale
+        factor_revealed = (persistence_evaluated
+            and first_pv * (1 - pv_scenario_spread) != first_pv * (1 + pv_scenario_spread))
         knots = sorted(set([battery.capacity_kwh * n / energy_intervals
                             for n in range(energy_intervals + 1)]
                            + [battery.minimum_kwh]))
@@ -242,6 +265,14 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
             rollout_transitions += transitions - before
             return min(scenario_score(row, previous) for row in rows)
 
+        def persistent_successor(slot, level, previous, pv_factor):
+            """The prior PV observation reveals this factor, not the current action."""
+            nonlocal rollout_transitions
+            before = transitions
+            rows = candidates(slot, level, pv_factor)
+            rollout_transitions += transitions - before
+            return min(scenario_score(row, previous) for row in rows)
+
         for slot in range(horizon - 1, -1, -1):
             table = [[], [], []]
             for level in knots:
@@ -257,7 +288,15 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
         policies = [[]]
         for slot in range(horizon):
             if first_action_rollout and slot == 0 and horizon >= 2:
-                rows = candidate_fn(slot, level, successor_value=exact_successor)
+                if factor_revealed:
+                    low = candidates(slot, level, 1 - pv_scenario_spread,
+                        successor_value=lambda s, k, mode: persistent_successor(s, k, mode, 1 - pv_scenario_spread))
+                    high = candidates(slot, level, 1 + pv_scenario_spread,
+                        successor_value=lambda s, k, mode: persistent_successor(s, k, mode, 1 + pv_scenario_spread))
+                    rows = [((a[0] + b[0]) / 2, (a[1] + b[1]) / 2,
+                             (a[2], b[2]), a[3]) for a, b in zip(low, high, strict=True)]
+                else:
+                    rows = candidate_fn(slot, level, successor_value=exact_successor)
             else:
                 rows = candidate_fn(slot, level)
             if scenario_active:
@@ -294,6 +333,8 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
                 repair["first_action_rollout_applied"] = False
             if paired_demand_scenario_spread:
                 repair["paired_demand_scenario_applied"] = False
+            if rollout_pv_persistence:
+                repair["rollout_pv_persistence_applied"] = False
             if improved:
                 policies, evaluation = repaired_policies, repaired_evaluation
         return build_result(params, policies, evaluation=evaluation, diagnostics={
@@ -319,6 +360,13 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
             "include_charge_knots": include_charge_knots, "target_repair": repair,
             "pv_scale": pv_scale, "demand_scale": demand_scale,
             "terminal_value_fraction": terminal_value_fraction,
+            **({"rollout_pv_persistence": True,
+                "rollout_pv_persistence_evaluated": persistence_evaluated,
+                "rollout_pv_persistence_applied": persistence_evaluated and not (repair and repair["improved"]),
+                "rollout_pv_factor_revealed": factor_revealed,
+                "initial_pv_persistence_search_score": rollout_score if persistence_evaluated else None,
+                "rollout_pv_persistence_assumption": "one latent PV factor in slots zero and one; independent tail from slot two"}
+               if rollout_pv_persistence else {}),
             **({"first_action_rollout": True, "first_action_rollout_evaluated": horizon >= 2,
                 "first_action_rollout_applied": horizon >= 2 and not (repair and repair["improved"]),
                 "rollout_search_transitions": rollout_transitions,

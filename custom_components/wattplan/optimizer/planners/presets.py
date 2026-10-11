@@ -309,6 +309,13 @@ PRESETS = {
         )
         for spread, slots in ((10, 12), (50, 12), (25, 6), (25, 24))
     },
+    "value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-rollout2-pvpersist2": PlannerPreset(
+        "hybrid-policy", "Value policy — two-slot first-action rollout with persistent PV uncertainty",
+        {"surplus_ratio": 1.5, "energy_intervals": 6,
+         "terminal_value_fraction": 0.0, "pv_scenario_spread": 1.0,
+         "grid_charge_premium_per_kwh": 0.03,
+         "first_action_rollout": True, "rollout_pv_persistence": True},
+    ),
 }
 
 
