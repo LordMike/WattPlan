@@ -203,6 +203,16 @@ This is a forecast heuristic, without calendar rules or learned weather
 probabilities. Switching assumptions can improve or worsen costs; compare a
 complete replay before selecting it.
 
+An optional adaptive `-premiumswitchR-lowL-highH` suffix independently chooses
+the grid charging premium from that forecast ratio: below `R` it uses `L`, and
+at or above it uses `H`, in tariff currency per AC kWh of battery grid charging.
+Both premiums default to zero. Equal PV spreads isolate the premium selector
+from uncertainty selection. Zero surplus selects the low options; positive
+surplus with zero demand deficit and charging headroom selects the high options.
+Exactly one configured hybrid policy runs. Selected options are diagnostics,
+not a claim that passive dispatch, fleet fallback or target repair use premiums.
+This forecast assumption can prevent useful trades and does not guarantee savings.
+
 These families use shared comfort preparation and optional-load reporting.
 They are experimental alternatives: compare them with the simulator using your
 own exports before choosing one for daily operation.
