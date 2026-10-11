@@ -215,6 +215,11 @@ composition retains the same uncertainty assumptions and energy grid as its
 dispatch when it detects an earlier feasible cheaper grid buy; this does not
 guarantee a profitable trade.
 
+The guarded grid6 `-chargepremium0.05-demand25-h12-initialknot1-prerefill1`
+variant changes only the search premium from 0.03 to 0.05. It tests whether a
+stronger charging penalty improves trade selection; it does not predict a savings
+gain and retains the default equal-weight PV tail.
+
 The guarded grid6 `-pvtailq1of3` composition leaves the nearest 12 paired demand/PV
 slots unchanged. Later slots use PV factors 0 and 1.5 with probabilities one third
 and two thirds, preserving the forecast mean while retaining a complete-cloud
