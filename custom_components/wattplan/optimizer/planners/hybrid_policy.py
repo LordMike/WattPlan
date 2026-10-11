@@ -49,12 +49,18 @@ import before natural PV charging restores the initial SoC, and an earlier cheap
 grid buy is locally feasible. It probes shared physics, not a full alternative
 action sequence; intervening consumption and saturation can change the potential
 benefit. This heuristic adds prefix transitions but never a second planner call.
+Optional ``first_preserve_prefix`` compares passive dispatch with preserving only
+the current first slot, then passive dispatch. It accepts a strictly cheaper
+nominal tariff prefix only after battery levels reconverge exactly and within
+the same relative 24-hour gate bound. Forecast errors or later replanning can
+change this hypothetical benefit; full reporting always replays original inputs.
 """
 
 import math
 
 from ..physics import EPSILON, transition
 from .contract import PlannerCapabilities
+from .evaluation import build_result
 from .self_consumption import factory as baseline_factory
 from .shared import wrap_battery_planner
 from .value_policy import factory as value_factory
@@ -94,19 +100,64 @@ def _prerefill_opportunity(params, slots):
     return details
 
 
+def _first_preserve_comparison(params, slots):
+    """Compare two fixed causal prefixes, using only supplied nominal physics."""
+    battery = params.battery_entities[0]
+    passive = transition([battery], [battery.initial_kwh], ["self_consume"],
+        usage=params.usage_kwh[0], pv=params.solar_input_kwh[0])
+    details = dict(evaluated=True, applied=False, omission_reason=None,
+        transitions=1, bound_slots=slots, bound_hours=slots * params.slot_minutes / 60,
+        convergence_slot=None, passive_tariff_cost=None, preserve_tariff_cost=None,
+        hypothetical_tariff_improvement=None)
+    if sum(passive.discharge) <= EPSILON:
+        details["omission_reason"] = "first_passive_discharge_at_most_epsilon"
+        return details
+    passive_level, preserve_level = battery.initial_kwh, battery.initial_kwh
+    passive_cost, preserve_cost = 0.0, 0.0
+    for slot in range(slots):
+        if slot:
+            passive = transition([battery], [passive_level], ["self_consume"],
+                usage=params.usage_kwh[slot], pv=params.solar_input_kwh[slot])
+            details["transitions"] += 1
+        preserved = transition([battery], [preserve_level],
+            ["preserve" if slot == 0 else "self_consume"],
+            usage=params.usage_kwh[slot], pv=params.solar_input_kwh[slot])
+        details["transitions"] += 1
+        price, export = params.grid_import_price_per_kwh[slot], params.grid_export_price_per_kwh[slot]
+        passive_cost += passive.grid_import * price - passive.grid_export * export
+        preserve_cost += preserved.grid_import * price - preserved.grid_export * export
+        passive_level, preserve_level = passive.levels[0], preserved.levels[0]
+        if passive_level == preserve_level:
+            details["convergence_slot"] = slot
+            break
+    improvement = passive_cost - preserve_cost
+    details.update(passive_tariff_cost=passive_cost, preserve_tariff_cost=preserve_cost,
+                   hypothetical_tariff_improvement=improvement)
+    if details["convergence_slot"] is None:
+        details["omission_reason"] = "no_state_convergence_within_bound"
+    elif improvement > EPSILON:
+        details["applied"] = True
+    else:
+        details["omission_reason"] = "no_strict_tariff_improvement"
+    return details
+
+
 def factory(*, surplus_ratio=1.5, energy_intervals=4, terminal_value_fraction=0.0,
             pv_scenario_spread=0.0, prerefill_guard=False, grid_charge_premium_per_kwh=0.0,
             include_charge_knots=False, first_action_rollout=False,
             paired_demand_scenario_spread=0.0, paired_demand_scenario_slots=None,
             rollout_pv_persistence=False, include_initial_knot=False,
             pv_tail_low_probability=0.5, include_discharge_budget_knot=False,
-            include_nominal_joint_scenario=False, nominal_joint_scenario_slots=6):
+            include_nominal_joint_scenario=False, nominal_joint_scenario_slots=6,
+            first_preserve_prefix=False):
     """Use passive dispatch only when forecast surplus clears the gate."""
     if (type(surplus_ratio) not in {int, float}
         or not math.isfinite(surplus_ratio) or surplus_ratio <= 0):
         raise ValueError("surplus_ratio must be finite and positive")
     if type(prerefill_guard) is not bool:
         raise ValueError("prerefill_guard must be a boolean")
+    if type(first_preserve_prefix) is not bool:
+        raise ValueError("first_preserve_prefix must be a boolean")
     value = value_factory(energy_intervals=energy_intervals,
                           terminal_value_fraction=terminal_value_fraction,
                           pv_scenario_spread=pv_scenario_spread,
@@ -154,9 +205,27 @@ def factory(*, surplus_ratio=1.5, energy_intervals=4, terminal_value_fraction=0.
             prerefill = _prerefill_opportunity(params, slots)
             if prerefill["reject_passive"]:
                 passive, reason = False, "dear_deficit_before_pv_refill"
-        result = (baseline if passive else value)(params)
+        prefix = None
+        if first_preserve_prefix:
+            prefix = (_first_preserve_comparison(params, slots) if passive else
+                dict(evaluated=False, applied=False, omission_reason=reason or "surplus_gate_not_met",
+                    transitions=0, bound_slots=slots, bound_hours=slots * params.slot_minutes / 60,
+                    convergence_slot=None, passive_tariff_cost=None, preserve_tariff_cost=None,
+                    hypothetical_tariff_improvement=None))
+        if prefix and prefix["applied"]:
+            result = build_result(params, [["preserve"] + ["self_consume"] * (len(params.usage_kwh) - 1)],
+                diagnostics={"termination_reason": "bounded_first_preserve_prefix",
+                    "evaluations": 1,
+                    "battery_policy": "preserve first slot, then self_consume; bounded nominal prefix comparison",
+                    "reserve_recovery": "PV only; no forced grid charging"})
+        else:
+            result = (baseline if passive else value)(params)
         result.setdefault("diagnostics", {})["hybrid_gate"] = {
-            "selected_policy": "self_consumption" if passive else "value_policy",
+            "selected_policy": ("first_preserve_then_self_consumption" if prefix and prefix["applied"]
+                                else "self_consumption" if passive else "value_policy"),
+            **({"first_preserve_prefix": True,
+                **{f"first_preserve_prefix_{key}": value for key, value in prefix.items()}}
+               if first_preserve_prefix else {}),
             "forced_value_reason": reason,
             "surplus_ratio": surplus_ratio,
             "forecast_surplus_kwh": surplus,

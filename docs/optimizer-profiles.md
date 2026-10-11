@@ -243,6 +243,17 @@ These fixed probabilities are a search assumption, not calibrated confidence or
 a savings prediction. Reporting replays original inputs; passive dispatch,
 fleet fallback and target repair omit the mixture.
 
+The guarded grid6 `-preserveprefix24h` composition enables `first_preserve_prefix`
+(default false) only after the existing gate and pre-refill guard select passive
+dispatch. It compares all-passive with preserving the first slot then consuming
+passively, using original forecast tariffs and shared physics. It accepts only a
+strictly cheaper prefix whose battery levels reconverge exactly within the same
+relative 24-hour cap. Targets, reserve recovery, fleets,
+negative tariffs and battery preferences retain value dispatch. The comparison
+does not credit terminal energy or change uncertainty assumptions. Its prefix
+gain is hypothetical: forecast errors and later replanning can change the result.
+Full-horizon reporting replays the concrete accepted policy against original inputs.
+
 The guarded grid6 `-pvtailq1of3` composition leaves the nearest 12 paired demand/PV
 slots unchanged. Later slots use PV factors 0 and 1.5 with probabilities one third
 and two thirds, preserving the forecast mean while retaining a complete-cloud
