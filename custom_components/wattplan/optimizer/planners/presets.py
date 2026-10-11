@@ -85,6 +85,27 @@ PRESETS = {
          "smoothing": 0.7, "probability_floor": 0.02, "block_slots": 4,
          "guidance": 0.85, "seed": 0},
     ),
+    **{
+        f"local-margin-{margin:g}": PlannerPreset(
+            "local-refinement", f"Local refinement — grid margin {margin:g}/kWh",
+            {"grid_margin_per_kwh": margin},
+        )
+        for margin in (0.1, 0.3, 0.6)
+    },
+    **{
+        f"local-preserve-{fraction}": PlannerPreset(
+            "local-refinement", f"Local refinement — preservation quantile {fraction:g}",
+            {"preserve_fraction": fraction},
+        )
+        for fraction in (0.0, 0.15, 0.35, 0.5, 0.65, 0.8, 0.95)
+    },
+    **{
+        f"local-tariff-{fraction}-preserve-0.35": PlannerPreset(
+            "local-refinement", f"Local refinement — tariff quantile {fraction}, preservation 0.35",
+            {"tariff_fraction": fraction, "preserve_fraction": 0.35},
+        )
+        for fraction in (0.05, 0.1)
+    },
 }
 
 

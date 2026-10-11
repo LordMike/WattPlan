@@ -110,6 +110,19 @@ found in better candidates. It encourages coherent operating periods, but can
 miss dependencies between actions far apart in time or across batteries. Like
 genetic search, its preset uses a fixed random seed and a bounded search budget.
 
+## Experimental planner families
+
+Local refinement (`local-margin-*`, `local-preserve-*`, `local-tariff-*`) compares a small set of
+complete schedules. The margin is an additional required forecast saving per
+kWh of grid charging, in your tariff currency. Preservation variants add a
+price-quantile rule for holding energy. Tariff variants also set the price
+quantile used to construct a grid-charging candidate. These controls can avoid marginal trades,
+but can also reject useful charging opportunities.
+
+These families use shared comfort preparation and optional-load reporting.
+They are experimental alternatives: compare them with the simulator using your
+own exports before choosing one for daily operation.
+
 ## Shared features and limits
 
 All presets provide battery schedules, comfort schedules, optional-appliance

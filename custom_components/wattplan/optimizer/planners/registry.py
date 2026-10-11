@@ -19,6 +19,7 @@ BUILTINS = {
     "charge-window": "custom_components.wattplan.optimizer.planners.charge_window:factory",
     "genetic": "custom_components.wattplan.optimizer.planners.genetic:factory",
     "cross-entropy": "custom_components.wattplan.optimizer.planners.cross_entropy:factory",
+    "local-refinement": "custom_components.wattplan.optimizer.planners.local_refinement:factory",
 }
 ALIASES = {
     "custom_components.wattplan.optimizer.simulation.adapters:highs_factory": "highs",
