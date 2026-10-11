@@ -218,6 +218,8 @@ is not rescheduled by branch. The passive gate and reported costs use original
 inputs, while fleet fallback and target repair omit this uncertainty assumption.
 Zero demand spread preserves the existing PV model. Additional branches can
 increase work and cause unnecessary charging; compare a complete annual replay.
+The `-demand25-h12-rollout2` preset combines the 12-slot demand model with the
+two-slot first-action refinement; compare it separately from each component.
 
 Adaptive solar policy (`adaptive-solar-gate1.5-grid6-switchR-low100-highN`)
 chooses the PV uncertainty spread from the same next-24-hour forecast surplus

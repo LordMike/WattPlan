@@ -291,6 +291,14 @@ PRESETS = {
         )
         for label, slots in (("12", 12), ("full", None))
     },
+    "value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12-rollout2": PlannerPreset(
+        "hybrid-policy", "Value policy — paired demand spread 25% for 12 slots, two-slot first-action rollout",
+        {"surplus_ratio": 1.5, "energy_intervals": 6,
+         "terminal_value_fraction": 0.0, "pv_scenario_spread": 1.0,
+         "grid_charge_premium_per_kwh": 0.03,
+         "paired_demand_scenario_spread": 0.25, "paired_demand_scenario_slots": 12,
+         "first_action_rollout": True},
+    ),
 }
 
 
