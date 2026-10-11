@@ -64,6 +64,11 @@ Zero first-slot PV reveals nothing, so the next action still precedes its own
 PV realization. Equal battery levels do not hide distinguishable generation.
 Perfect two-slot persistence is an explicit assumption, not calibrated weather.
 This isolated model requires rollout and does not support paired demand spread.
+
+An optional exact initial-energy knot anchors idle-state continuation values.
+It adds at most one table node, retains valid below-reserve initial states, and
+deduplicates by exact equality without snapping adjacent floating-point values.
+Fleet fallback and target repair do not use this table refinement.
 """
 
 from bisect import bisect_right
@@ -111,7 +116,7 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
             terminal_value_fraction=0.0, include_charge_knots=False, pv_scenario_spread=0.0,
             grid_charge_premium_per_kwh=0.0, first_action_rollout=False,
             paired_demand_scenario_spread=0.0, paired_demand_scenario_slots=None,
-            rollout_pv_persistence=False):
+            rollout_pv_persistence=False, include_initial_knot=False):
     """Return a deterministic interpolated cost-to-go planner."""
     if type(energy_intervals) is not int or not 2 <= energy_intervals <= 128:
         raise ValueError("energy_intervals must be an integer between 2 and 128")
@@ -122,6 +127,8 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
             raise ValueError(f"{name} must be finite and nonnegative")
     if type(include_charge_knots) is not bool:
         raise ValueError("include_charge_knots must be a boolean")
+    if type(include_initial_knot) is not bool:
+        raise ValueError("include_initial_knot must be a boolean")
     if type(first_action_rollout) is not bool:
         raise ValueError("first_action_rollout must be a boolean")
     if type(rollout_pv_persistence) is not bool:
@@ -151,6 +158,10 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
             result = fallback(params)
             result["diagnostics"]["value_policy_fallback"] = "bounded_joint_state_dp"
             result["diagnostics"]["forecast_adjustments_applied"] = False
+            if include_initial_knot:
+                result["diagnostics"].update(include_initial_knot=True,
+                    initial_knot_evaluated=False, initial_knot_added=False,
+                    initial_knot_applied=False, initial_knot_value_kwh=None)
             if rollout_pv_persistence:
                 result["diagnostics"].update(rollout_pv_persistence=True,
                     rollout_pv_persistence_evaluated=False, rollout_pv_persistence_applied=False,
@@ -186,6 +197,11 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
             knots = sorted(set(knots + [min(max(v, 0.0), battery.capacity_kwh)
                 for v in (battery.target.soc_kwh - battery.target.tolerance_kwh,
                           battery.target.soc_kwh + battery.target.tolerance_kwh)]))
+        initial_knot_added = include_initial_knot and battery.initial_kwh not in knots
+        if initial_knot_added:
+            # Exact equality deduplicates existing nodes without moving a valid
+            # carried state, including below-reserve recovery states.
+            knots = sorted(knots + [battery.initial_kwh])
         choices = ("self_consume", "preserve", "grid_charge") if battery.can_charge_from & 1 else ("self_consume", "preserve")
         terminal_price = max(median(params.grid_import_price_per_kwh[-12:]), 0.0)
         credit = terminal_price * battery.discharge_efficiency * terminal_value_fraction
@@ -335,6 +351,8 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
                 repair["paired_demand_scenario_applied"] = False
             if rollout_pv_persistence:
                 repair["rollout_pv_persistence_applied"] = False
+            if include_initial_knot:
+                repair["initial_knot_applied"] = False
             if improved:
                 policies, evaluation = repaired_policies, repaired_evaluation
         return build_result(params, policies, evaluation=evaluation, diagnostics={
@@ -357,6 +375,11 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
                 "scenario_branch_evaluations": scenario_branches}
                if paired_demand_scenario_spread else {}),
             "energy_intervals": energy_intervals, "energy_knots": len(knots),
+            **({"include_initial_knot": True, "initial_knot_evaluated": True,
+                "initial_knot_added": initial_knot_added,
+                "initial_knot_value_kwh": battery.initial_kwh,
+                "initial_knot_applied": not (repair and repair["improved"])}
+               if include_initial_knot else {}),
             "include_charge_knots": include_charge_knots, "target_repair": repair,
             "pv_scale": pv_scale, "demand_scale": demand_scale,
             "terminal_value_fraction": terminal_value_fraction,

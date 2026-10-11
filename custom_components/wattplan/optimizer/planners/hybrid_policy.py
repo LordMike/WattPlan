@@ -33,6 +33,8 @@ the value policy's paired aggregate-demand uncertainty and relative slot bound.
 The forecast gate and original-input reporting stay unchanged.
 ``rollout_pv_persistence`` forwards the isolated two-slot latent PV model, whose
 factor is available for recourse only after distinguishable first-slot PV.
+``include_initial_knot`` forwards an exact carried initial-energy table node;
+passive dispatch and fleet fallback omit this optional interpolation refinement.
 Optional ``prerefill_guard`` rejects passive dispatch when it predicts a dear
 import before natural PV charging restores the initial SoC, and an earlier cheap
 grid buy is locally feasible. It probes shared physics, not a full alternative
@@ -87,7 +89,7 @@ def factory(*, surplus_ratio=1.5, energy_intervals=4, terminal_value_fraction=0.
             pv_scenario_spread=0.0, prerefill_guard=False, grid_charge_premium_per_kwh=0.0,
             include_charge_knots=False, first_action_rollout=False,
             paired_demand_scenario_spread=0.0, paired_demand_scenario_slots=None,
-            rollout_pv_persistence=False):
+            rollout_pv_persistence=False, include_initial_knot=False):
     """Use passive dispatch only when forecast surplus clears the gate."""
     if (type(surplus_ratio) not in {int, float}
         or not math.isfinite(surplus_ratio) or surplus_ratio <= 0):
@@ -98,6 +100,7 @@ def factory(*, surplus_ratio=1.5, energy_intervals=4, terminal_value_fraction=0.
                           terminal_value_fraction=terminal_value_fraction,
                           pv_scenario_spread=pv_scenario_spread,
                           include_charge_knots=include_charge_knots,
+                          include_initial_knot=include_initial_knot,
                           first_action_rollout=first_action_rollout,
                           paired_demand_scenario_spread=paired_demand_scenario_spread,
                           paired_demand_scenario_slots=paired_demand_scenario_slots,
@@ -149,6 +152,12 @@ def factory(*, surplus_ratio=1.5, energy_intervals=4, terminal_value_fraction=0.
             "energy_intervals": energy_intervals,
             "terminal_value_fraction": terminal_value_fraction,
             "pv_scenario_spread": pv_scenario_spread,
+            **({"include_initial_knot": True,
+                "initial_knot_evaluated": result["diagnostics"].get("initial_knot_evaluated", False),
+                "initial_knot_added": result["diagnostics"].get("initial_knot_added", False),
+                "initial_knot_applied": result["diagnostics"].get("initial_knot_applied", False),
+                "initial_knot_value_kwh": result["diagnostics"].get("initial_knot_value_kwh")}
+               if include_initial_knot else {}),
             **({"rollout_pv_persistence": True,
                 "rollout_pv_persistence_evaluated": result["diagnostics"].get("rollout_pv_persistence_evaluated", False),
                 "rollout_pv_persistence_applied": result["diagnostics"].get("rollout_pv_persistence_applied", False)}

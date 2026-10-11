@@ -197,6 +197,13 @@ charging breakpoints to its energy grid. They retain the same passive gate,
 original-input replay and fleet fallback; extra knots can improve or worsen
 the approximate value table and increase its search work.
 
+Hybrid `-initialknot1` variants add the request's exact starting battery energy
+to the value table's energy grid when it is not already present. This can avoid
+interpolation error when holding the current charge, but also changes the
+approximation at other energy levels and adds search work. It is not a guarantee
+of savings. The option defaults to false; passive dispatch, fleet fallback and
+target repair omit this grid refinement.
+
 Hybrid `-rollout2` variants refine only the first action through two exact physical
 slots before interpolating the remaining value. Each action is chosen before
 that slot's PV realization; the second action may respond to the first slot's
