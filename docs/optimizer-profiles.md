@@ -204,6 +204,11 @@ approximation at other energy levels and adds search work. It is not a guarantee
 of savings. The option defaults to false; passive dispatch, fleet fallback and
 target repair omit this grid refinement.
 
+The `value-solar-gate-1.5-grid8-terminal0-scenario100-chargepremium0.03-demand25-h12-initialknot1`
+variant uses eight energy intervals with the same unguarded grid6 uncertainty,
+premium and initial-knot settings. The finer table adds search work and can change
+interpolation choices; it does not guarantee greater savings.
+
 The `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12-initialknot1-prerefill1`
 composition retains the same uncertainty assumptions and energy grid as its
 `-initialknot1` counterpart, adding the existing pre-refill guard to reject passive
