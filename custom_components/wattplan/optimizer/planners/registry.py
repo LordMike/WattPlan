@@ -25,6 +25,9 @@ BUILTINS = {
     "linear-dispatch": "custom_components.wattplan.optimizer.planners.linear_dispatch:factory",
     "hybrid-policy": "custom_components.wattplan.optimizer.planners.hybrid_policy:factory",
     "adaptive-solar-policy": "custom_components.wattplan.optimizer.planners.adaptive_solar_policy:factory",
+    "mobility-baseline": "custom_components.wattplan.optimizer.planners.mobility_policy:baseline_factory",
+    "mobility-fleet-beam": "custom_components.wattplan.optimizer.planners.mobility_policy:factory",
+    "mobility-tariff-seeds": "custom_components.wattplan.optimizer.planners.mobility_policy:tariff_factory",
 }
 ALIASES = {
     "custom_components.wattplan.optimizer.simulation.adapters:highs_factory": "highs",

@@ -90,7 +90,7 @@ result = optimize(params)
 | `name` | `str` | Yes | - | Non-empty | Unique globally. |
 | `initial_kwh` | `float` | Yes | - | Finite, `0..capacity_kwh` | Initial state of charge (kWh). |
 | `target` | `BatteryEntityParams.TargetParams \| None` | No | `null` | If set: `timeslot < horizon` | Optional deadline target constraint. |
-| `minimum_kwh` | `float` | Yes | - | Finite, `0..capacity_kwh` | Minimum desired state (kWh). Soft floor: the solve penalizes, rather than forbids, ending a slot below it. A battery that starts below it is planned to recover as fast as its limits allow, and the plan reports `battery_min_unmet` for as long as the planned SoC stays below the floor. |
+| `minimum_kwh` | `float` | Yes | - | Finite, `0..capacity_kwh` | Minimum desired state (kWh). Soft floor: search penalizes, rather than forbids, ending a slot below it. Planners declaring reserve recovery pursue recovery within their limits; passive controls only observe it. The plan reports `battery_min_unmet` for as long as the planned SoC stays below the floor. |
 | `capacity_kwh` | `float` | Yes | - | Finite, `> 0` | Storage capacity (kWh). |
 | `charge_curve_kwh` | `list[float]` | Yes | - | Non-empty, finite, `>= 0` | Chargeable energy per slot by SoC curve (kWh per slot). |
 | `discharge_curve_kwh` | `list[float]` | Yes | - | Non-empty, finite, `>= 0` | Dischargeable energy per slot by SoC curve (kWh per slot). |
@@ -98,6 +98,79 @@ result = optimize(params)
 | `discharge_efficiency` | `float` | No | `1.0` | Finite, `(0, 1]` | Fraction of discharged SoC energy delivered to load. |
 | `prefer_pv_surplus_charging` | `bool` | No | `false` | - | Internal/deferred hint for routing PV surplus into this battery. This is not exposed as a battery action state and should not be used as a user-facing control contract. |
 | `can_charge_from` | `int` | No | `2` | `0`, `1`, `2`, `3` | Allowed charging-ingress flags (`1=GRID`, `2=PV`, `3`=both; `0` means charging disabled). |
+| `connected_slots` | `list[bool] \| null` | No | `null` | Strict booleans, exactly horizon length | `false` disables all site AC exchange for this battery in that slot. Null means always connected. |
+| `external_energy_kwh` | `list[float] \| null` | No | `null` | Finite nonnegative DC energy, exactly horizon length | Withdrawal from this battery at the end of each slot, after household exchange and departure checks; null means zero. |
+| `departure_requirements` | `list[DepartureRequirementParams]` | No | `[]` | Each `timeslot` within horizon and `minimum_kwh` within capacity | Repeated minimum-energy checks before that slot's external withdrawal. |
+
+### Mobility input and planner contract
+
+`DepartureRequirementParams` has `timeslot` (nonnegative slot index) and
+`minimum_kwh` (finite nonnegative DC stored energy, at most battery capacity).
+It is separate from the ordinary end-slot battery `target`: departures are
+checked after that slot's permitted site exchange but **before** its external
+withdrawal; an ordinary target checks the post-withdrawal level. External draws
+can consume energy below the household reserve, down to zero. Excess draw is
+reported as unserved energy and never manufactured. An away battery cannot
+charge, absorb PV or discharge into household demand; its external withdrawal
+still occurs.
+
+Active mobility metadata requires an explicit planner capability
+`PlannerCapabilities(mobility=True)`. The new `mobility-baseline`,
+`mobility-tariff-seeds` and `mobility-fleet-beam` factories provide it. Existing
+families reject active metadata before planning; all-true connection lists,
+zero external draws and no departure requirements are inert. The ordinary
+default request, score and result fields retain their previous behavior.
+Capability `targets="observed"` distinguishes the passive household control in
+the baseline and two-seed mobility planners from ordinary target search.
+`economic_scope` is `household` (household economics, with optional mobility),
+`mobility` (only mobile charging economics), or `none`. `reserve_recovery` states
+whether deliberate initial-below-reserve recovery is pursued across the
+supported fleet. Neither field promises feasibility or optimality. Mobility
+baseline declares none/false; tariff seeds mobility/false; fleet beam declares
+household/true with mobility enabled. Existing self-consumption declares
+none/false. Merely observing reserve and target misses does not imply an
+algorithm attempts to fix them.
+
+Shared `physics.transition_at(batteries, levels, modes, *, slot, usage, pv,
+slot_fraction=1.0, apply_external=True, grid_eligible=None)` applies availability
+and then the end-slot withdrawal. Fractional execution applies the external draw
+once at the original slot boundary, not once per fractional substep. Its optional
+`levels_before_external`, `external_energy` (served DC) and `external_shortfall`
+lists describe that boundary accounting; final `levels` are post-withdrawal.
+
+For active requests shared `Evaluation.score` is
+`(mobility_miss_kwh, target_miss_kwh, objective)`, where mobility miss adds
+departure shortfalls and unserved DC energy. Without active mobility it retains
+the existing two-component score. Full-horizon original-input reporting adds
+`projections.mobility_served_kwh`, `mobility_unserved_kwh`, `departure_checks`
+and `service_feasible`; per-slot flows add `external_energy_kwh` and
+`external_unserved_kwh`. Served trips are not site AC import, inverter throughput
+or electricity tariff expense. Infeasible forecast service remains visible.
+The conventional household-without-storage `baseline_cost` excludes vehicle
+service. Active projections therefore disclose
+`baseline_kind="household_without_storage_excludes_mobility_service"` and
+`projected_savings_comparable=False`; its generic savings field is not an EV
+service comparison. Compare electricity cost against a mobility-capable baseline
+only when departure service and unserved draws are equivalent, with terminal
+stored energy also visible.
+
+Completed simulator runs containing active mobility report `battery_flows` on
+every actual interval, including intervals whose current forecast has no mobility
+events. Entries follow request battery order and contain `name`, AC
+`charge_kwh` (PV plus grid), AC `discharge_kwh`, `level_before_kwh`,
+`level_before_external_kwh` and final `level_kwh`. The interval's
+`external_energy_by_battery` contains served DC withdrawals. These fields allow
+independent per-battery conservation, availability and power-limit checks;
+external DC draws are excluded from site AC balance and conversion loss.
+Simulator totals disclose unserved energy, departure misses and
+`service_feasible`. Incomplete or service-infeasible runs cannot enter savings
+comparisons; diagnostic costs remain visible. A service-infeasible reference
+suppresses comparisons rather than substituting a different baseline. Runs with
+only inert metadata retain the legacy report shape.
+
+See [mobility presets](optimizer-profiles.md#mobility-aware-planners) for search
+budgets, baseline behavior and limitations. These additions provide optimizer
+and simulator API support, not a Home Assistant vehicle-source configuration.
 
 **Curve Unit Note:**
 - `charge_curve_kwh` and `discharge_curve_kwh` are **kWh per slot**, not kW.

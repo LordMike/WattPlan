@@ -24,6 +24,9 @@ result. Switching presets reloads the integration and replaces the previous plan
 | Charge-window search | `charge-window-96` |
 | Genetic search | `genetic-fast`, `genetic-standard` |
 | Cross-entropy search | `cem-48` |
+| Mobility service baseline | `mobility-baseline` |
+| Mobility tariff seeds | `mobility-tariff-seeds-2` |
+| Mobility fleet beam | `mobility-fleet-beam-4-exp1500-joint27`, `mobility-fleet-beam-8-exp6000-joint27` |
 
 The numbers in HiGHS preset names count **forecast slots**, not hours. At
 15-minute resolution, `highs-16` looks four hours ahead and `highs-24` six hours;
@@ -47,6 +50,76 @@ and use stored energy for household demand above the configured reserve. It does
 not charge from the grid, save energy for expensive hours, or actively pursue
 battery targets. It reports missed targets and reserve shortfalls. Comfort
 scheduling and optional-appliance suggestions remain available.
+
+### Mobility-aware planners
+
+These API presets support batteries with supplied connection windows, repeated
+departure energy requirements and end-of-slot external DC energy withdrawals,
+such as an EV. They do not acquire a vehicle calendar or infer future trips.
+Other planner families reject active mobility inputs; selecting a mobility
+preset is explicit and does not rename an existing algorithm. No new Home
+Assistant vehicle source configuration or automatic routing is provided.
+
+`mobility-baseline` keeps stationary batteries in self-consumption. It charges a
+mobile battery from the grid at its first connected opportunity until it has
+enough forecast energy for its next departure and intervening withdrawals, then
+preserves that energy. Permitted PV absorption remains automatic. If no departure
+remains, it considers remaining withdrawals and reserve. A full charging slot can
+overshoot a minimum requirement; it is an inverter policy, not a fractional
+charge setpoint. Existing ordinary battery targets are observed by this baseline.
+
+The new mobility planners identify mobile control by departure requirements or
+explicit connection/external-energy metadata, even if the current horizon is connected with
+zero draws and no departure. This keeps the baseline preserving the vehicle
+during a horizon without a visible trip; batteries with no such metadata remain
+stationary. The legacy capability rule separately treats all-true/zero metadata
+as inert for backward compatibility.
+
+`mobility-tariff-seeds-2` compares that complete baseline with one schedule that
+delays costly charging to cheaper supplied connected slots before the next
+departure or withdrawal. Its rate-based delay test is optimistic about curves,
+PV competition and saturation; full shared evaluation retains the baseline if
+the alternative is worse. It performs two complete candidate evaluations and
+does not search all economic schedules.
+Both these specialized controls leave metadata-free household batteries passive.
+They observe ordinary household battery targets and reserve shortfalls rather
+than deliberately charging the household battery to recover reserve or meet
+targets. Mobile service charging is separate. The tariff seed's canonical score
+still includes observed target misses when comparing its two candidates, but
+that limited candidate construction does not pursue ordinary battery targets.
+
+The fleet beam searches joint charge/preserve/self-consumption policies, including
+using vehicle energy for household demand and replenishing it before departure.
+The names specify beam width, transition expansion budget, and a cap of 27 joint
+actions per prefix. Availability, PV allocation, charging permissions, variable
+curves, reserve and efficiency remain shared physical rules. Optimistic future
+recharge guidance ranks prefixes; it is not a joint service-feasibility proof.
+Pruning and capped action enumeration can miss useful or feasible schedules.
+The complete service baseline remains a candidate even if the search exhausts
+its budget. Mandatory seed construction, tail completion, full candidate replay,
+comfort scheduling and reporting add work outside the transition budget. No
+annual runtime or greater-savings guarantee is implied by a larger preset.
+
+For active mobility requests the objective first minimizes departure shortfalls
+plus unserved external energy, then ordinary target misses, then tariff and
+configured wear/switch/reserve-recovery penalties. Vehicle trip energy is a DC
+battery withdrawal, not household import or export, inverter throughput, or an
+invented tariff charge. Forecast service can be impossible due to capacity,
+connection windows, charge rates or the discrete charging policy; reported
+`departure_checks`, `mobility_unserved_kwh` and `service_feasible` describe the
+accepted schedule, not a certificate that no other schedule could meet service.
+Reported electricity costs do not credit remaining terminal battery energy.
+The normal comfort wrapper runs once and optional appliances remain advisory.
+
+The planner capability `economic_scope` describes household economics
+(`household`), only mobility charging economics (`mobility`), or no economic
+search (`none`). Household scope can also support mobility when the separate
+mobility capability is true, as fleet beam does. `reserve_recovery=True` means
+deliberate initial-below-reserve recovery is pursued across the supported fleet,
+subject to ingress and physical limits; false means that behavior is only
+observed or incidental. These declarations describe planner scope, not
+feasibility or optimality guarantees. They distinguish economic search from
+passive controls without silently changing a baseline into an optimizer.
 
 ### Greedy
 

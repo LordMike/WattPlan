@@ -8,7 +8,7 @@ import math
 from time import monotonic
 from typing import Any, Protocol
 
-from ..models import OptimizationParams
+from ..models import OptimizationParams, has_mobility_inputs
 from ..planners.contract import validate_battery_result as validate_result
 from ..planners.registry import resolve_factory
 from .adapters import DEFAULT_PLANNER
@@ -18,6 +18,7 @@ from ..physics import (
     battery_power_limits,
     grid_charge_headroom_sufficient,
     transition,
+    transition_at,
 )
 
 RUN_TIMEOUT_SECONDS = 120.0
@@ -156,6 +157,8 @@ def simulate(
 
     actual_starts = [a.start for a in dataset.actuals]
     levels, state = [], None
+    mobility_run = False
+    battery_flows_by_interval = []
     current = None
     for window in windows:
         try:
@@ -181,6 +184,11 @@ def simulate(
             for battery, level in zip(payload["battery_entities"], levels, strict=True):
                 battery["initial_kwh"] = level
             params = OptimizationParams(**payload)
+            active_mobility = has_mobility_inputs(params)
+            if active_mobility:
+                mobility_run = True
+                report["mobility_assumption"] = "controlled synthetic known mobility from request metadata; not historical EV observations"
+                current.setdefault("departure_checks", [])
             if params.comfort_entities:
                 raise ValueError(
                     "Comfort loads are not supported by historical simulation v1"
@@ -236,10 +244,14 @@ def simulate(
                     schedules[b.name][action_index]["state"]
                     for b in params.battery_entities
                 ]
-                step = transition(
+                transition_fn = transition_at if active_mobility else transition
+                levels_before = levels
+                step = transition_fn(
                     params.battery_entities,
                     levels,
                     modes,
+                    **({"slot": action_index, "apply_external": end == action_end}
+                       if active_mobility else {}),
                     usage=usage,
                     pv=pv,
                     slot_fraction=(end - cursor) / slot,
@@ -286,6 +298,36 @@ def simulate(
                         ),
                     }
                 )
+                # Keep physical flows until run-wide mobility is known, including
+                # connected windows with no mobility events of their own.
+                battery_flows_by_interval.append([
+                    {
+                        "name": battery.name,
+                        "charge_kwh": step.pv_charge[i] + step.grid_charge[i],
+                        "discharge_kwh": step.discharge[i],
+                        "level_before_kwh": levels_before[i],
+                        "level_before_external_kwh": (
+                            step.levels_before_external or step.levels
+                        )[i],
+                        "level_kwh": step.levels[i],
+                    }
+                    for i, battery in enumerate(params.battery_entities)
+                ])
+                if active_mobility:
+                    report["intervals"][-1].update(
+                        external_energy_kwh=sum(step.external_energy or ()),
+                        external_unserved_kwh=sum(step.external_shortfall or ()),
+                        external_energy_by_battery={b.name: (step.external_energy or [0.0] * len(levels))[i]
+                            for i, b in enumerate(params.battery_entities)})
+                    if end == action_end:
+                        before = step.levels_before_external or step.levels
+                        for i, battery in enumerate(params.battery_entities):
+                            for requirement in battery.departure_requirements:
+                                if requirement.timeslot == action_index:
+                                    current["departure_checks"].append({"battery": battery.name,
+                                        "at": end.isoformat(), "soc_kwh": before[i],
+                                        "minimum_kwh": requirement.minimum_kwh,
+                                        "miss_kwh": max(requirement.minimum_kwh - before[i], 0.0)})
                 # Targets are evaluated at their recorded inclusive deadline,
                 # never at the optimizer's predicted level or outside coverage.
                 for battery, level in zip(params.battery_entities, levels):
@@ -351,6 +393,20 @@ def simulate(
     report["totals"]["covered_seconds"] = sum(
         (w.end - w.start).total_seconds() for w in windows
     )
+    if mobility_run:
+        for row, flows in zip(report["intervals"], battery_flows_by_interval):
+            row["battery_flows"] = flows
+            row.setdefault("external_energy_kwh", 0.0)
+            row.setdefault("external_unserved_kwh", 0.0)
+            row.setdefault("external_energy_by_battery", {name: 0.0 for name in row["soc_kwh"]})
+        checks = [check for segment in report["segments"] for check in segment.get("departure_checks", [])]
+        totals = report["totals"]
+        totals["external_energy_kwh"] = sum(row.get("external_energy_kwh", 0.0) for row in report["intervals"])
+        totals["external_unserved_kwh"] = sum(row.get("external_unserved_kwh", 0.0) for row in report["intervals"])
+        totals["departure_misses"] = sum(check["miss_kwh"] > 1e-6 for check in checks)
+        totals["service_failures"] = totals["departure_misses"] + sum(
+            row.get("external_unserved_kwh", 0.0) > 1e-6 for row in report["intervals"])
+        totals["service_feasible"] = totals["service_failures"] == 0
     try:
         budget.remaining()
     except RunTimeout as err:

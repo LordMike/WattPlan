@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import math
 from typing import Any, Literal, NotRequired, Protocol, TypedDict
 
-from ..models import OptimizationParams
+from ..models import OptimizationParams, has_mobility_inputs
 from ..physics import POLICIES
 
 
@@ -51,8 +51,13 @@ class PlannerCapabilities:
     """Unsupported comfort inputs fail; ignored advisory features are reported."""
 
     comfort: bool = False
+    mobility: bool = False
     optional_loads: Literal["supported", "ignored"] = "ignored"
     targets: Literal["optimized", "observed"] = "optimized"
+    # Scope describes intended search/control, not an optimality guarantee.
+    # "household" also permits mobility economics when mobility=True.
+    economic_scope: Literal["household", "mobility", "none"] = "household"
+    reserve_recovery: bool = True
     ignored_preferences: tuple[str, ...] = (
         "rolling_window_slots",
         "solver_time_limit_seconds",
@@ -61,6 +66,8 @@ class PlannerCapabilities:
     )
 
     def validate(self, params: OptimizationParams) -> list[str]:
+        if has_mobility_inputs(params) and not self.mobility:
+            raise ValueError("Planner does not support battery mobility inputs")
         if params.comfort_entities and not self.comfort:
             raise ValueError("Planner does not support comfort loads")
         notes = []

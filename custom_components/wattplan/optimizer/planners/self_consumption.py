@@ -51,6 +51,8 @@ def factory():
 
     plan.capabilities = PlannerCapabilities(
         targets="observed",
+        economic_scope="none",
+        reserve_recovery=False,
         ignored_preferences=(
             *PlannerCapabilities().ignored_preferences,
             "throughput_cost_per_kwh", "mode_switch_cost", "action_deadband_kwh",

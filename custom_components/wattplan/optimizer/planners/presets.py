@@ -22,6 +22,19 @@ class PlannerPreset:
 
 DEFAULT_PRESET = "highs"
 PRESETS = {
+    "mobility-baseline": PlannerPreset(
+        "mobility-baseline", "Mobility — first-available service baseline"
+    ),
+    "mobility-tariff-seeds-2": PlannerPreset(
+        "mobility-tariff-seeds", "Mobility — two service/tariff seed candidates"
+    ),
+    **{
+        f"mobility-fleet-beam-{width}-exp{expansions}-joint27": PlannerPreset(
+            "mobility-fleet-beam", f"Mobility fleet beam — width {width}, {expansions} expansions",
+            {"beam_width": width, "max_expansions": expansions, "max_joint_actions": 27},
+        )
+        for width, expansions in ((4, 1500), (8, 6000))
+    },
     "highs": PlannerPreset("highs", "HiGHS — existing settings"),
     **{
         f"highs-{slots}": PlannerPreset(

@@ -19,13 +19,18 @@ def latency_summary(cycles: list[dict], key: str) -> dict:
 
 
 def comparisons(runs: list[dict]) -> list[dict]:
-    """Compare complete runs only; always retain the reserve difference."""
+    """Compare completed service-feasible runs against the original reference."""
     complete = [run for run in runs if run["status"] == "complete"]
     if not complete:
         return []
     baseline = complete[0]
+    if not baseline["totals"].get("service_feasible", True):
+        # Never silently promote an alternative into the configured control.
+        return []
     result = []
     for run in complete[1:]:
+        if not run["totals"].get("service_feasible", True):
+            continue
         deltas = [
             {
                 "segment": segment["segment"],
@@ -108,6 +113,13 @@ def write_reports(output: Path, summary: dict, runs: list[dict]) -> None:
         for run in runs
     ]
     summary = {**summary, "runs": compact, "comparisons": comparisons(runs)}
+    excluded = [run["run"] for run in runs if run["status"] == "complete"
+                and not run["totals"].get("service_feasible", True)]
+    if excluded:
+        summary["comparison_exclusions"] = {name: "mobility_service_infeasible" for name in excluded}
+        complete = [run for run in runs if run["status"] == "complete"]
+        if complete and complete[0]["run"] in excluded:
+            summary["comparison_omission_reason"] = "reference_mobility_service_infeasible"
     (output / "summary.json").write_text(
         json.dumps(summary, indent=2, allow_nan=False) + "\n", encoding="utf-8"
     )
@@ -131,6 +143,9 @@ def write_reports(output: Path, summary: dict, runs: list[dict]) -> None:
         )
         sections.append(
             f"<section><h2>{escape(run['run'])} · {escape(run['status'])}</h2>"
+            + ("<p>Mobility service failed; trajectory costs are diagnostic and excluded from comparisons.</p>"
+               if run["run"] in excluded else "")
+            +
             f"<p>Whole-run wall-clock limit: {escape(str(run.get('run_timeout_seconds', 'unrecorded')))} seconds; "
             f"observed run time: {escape(str(run.get('run_wall_seconds', 'unrecorded')))} seconds.</p>"
             f"<p>{escape(run.get('failure') or '')}</p><table>{rows}</table>"

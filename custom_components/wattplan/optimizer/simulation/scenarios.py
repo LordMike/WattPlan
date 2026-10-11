@@ -30,6 +30,18 @@ def shift_request(
             offset = tick % len(values)
             result[key] = values[offset:] + values[:offset]
     for battery in result["battery_entities"]:
+        for key, fill in (("connected_slots", False), ("external_energy_kwh", 0.0)):
+            values = battery.get(key)
+            if values is not None:
+                # Exhausted absolute fixture forecasts cannot invent periodic trips.
+                battery[key] = values[tick:] + [fill] * min(tick, len(values))
+        requirements = []
+        for requirement in battery.get("departure_requirements", []):
+            deadline = requirement["timeslot"] - tick
+            if deadline >= 0:
+                requirements.append({**requirement, "timeslot": deadline})
+        if "departure_requirements" in battery:
+            battery["departure_requirements"] = requirements
         if soc is not None:
             battery["initial_kwh"] = soc[battery["name"]]
         target = battery.get("target")

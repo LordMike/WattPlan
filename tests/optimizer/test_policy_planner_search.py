@@ -19,7 +19,11 @@ from tests.optimizer.planner_conformance import (
     battery_policies, conformance_params, economic_params,
 )
 
-POLICY_SEARCHES = [name for name in BUILTINS if name not in {"highs", "self-consumption"}]
+POLICY_PLANNERS = [name for name in BUILTINS if name != "highs"]
+POLICY_SEARCHES = [name for name in POLICY_PLANNERS
+                  if create_planner(name).capabilities.economic_scope == "household"]
+TARGET_SEARCHES = [name for name in POLICY_PLANNERS
+                  if create_planner(name).capabilities.targets == "optimized"]
 COUNT_SEARCHES = ["greedy", "local-search", "charge-window", "genetic", "cross-entropy"]
 WORK_CAPPED_SEARCHES = ["local-search", "charge-window", "cross-entropy"]
 
@@ -29,6 +33,16 @@ def policy_planner(request):
     # Alternate seeds exercise reproducibility beyond the published seed-zero presets.
     options = {"seed": 11} if request.param in {"local-search", "genetic", "cross-entropy"} else {}
     return create_planner(request.param, options)
+
+
+@pytest.fixture(params=TARGET_SEARCHES)
+def target_planner(request):
+    return create_planner(request.param)
+
+
+@pytest.fixture(params=POLICY_PLANNERS)
+def any_policy_planner(request):
+    return create_planner(request.param)
 
 
 def test_simple_cheap_charge_then_expensive_discharge(policy_planner):
@@ -51,25 +65,30 @@ def test_signed_tariffs_are_scored_from_the_executed_policy(policy_planner):
     ("at_least", 0, 2, (0, 0)), ("exact", 0, 1, (0, 0)),
     ("at_most", 2, 0, (1, 1)), ("exact", 2, 0, (1, 1)),
 ])
-def test_reachable_target_modes_take_priority_over_tariff_cost(policy_planner, mode, initial, goal, usage):
+def test_reachable_target_modes_take_priority_over_tariff_cost(target_planner, mode, initial, goal, usage):
     params = economic_params(prices=(10, 10), usage=usage, initial=initial,
                              target={"timeslot": 1, "soc_kwh": goal, "mode": mode})
-    result = policy_planner(params)
+    result = target_planner(params)
     assert result["diagnostics"]["evaluation"]["score"][0] == 0
     assert "battery_target_unmet" not in result["suboptimal_reasons"]
 
 
-def test_inclusive_deadline_cannot_borrow_energy_from_a_later_cheap_slot(policy_planner):
+def test_inclusive_deadline_cannot_borrow_energy_from_a_later_cheap_slot(any_policy_planner):
     params = economic_params(prices=(100, -100), usage=(0, 0),
                              target={"timeslot": 0, "soc_kwh": 2, "mode": "exact"})
-    result = policy_planner(params)
+    result = any_policy_planner(params)
     check = result["diagnostics"]["evaluation"]["target_checks"][0]
-    assert check["soc_kwh"] == 1
-    assert check["miss_kwh"] == 1
+    if any_policy_planner.capabilities.targets == "optimized":
+        assert check["soc_kwh"] == 1
+        assert check["miss_kwh"] == 1
+    else:
+        assert check["soc_kwh"] == 0
+        assert check["miss_kwh"] == 2
     assert "battery_target_unmet" in result["suboptimal_reasons"]
 
 
-def test_repeatability_input_isolation_and_changed_requests(policy_planner):
+def test_repeatability_input_isolation_and_changed_requests(any_policy_planner):
+    policy_planner = any_policy_planner
     params = conformance_params()[2]
     before = params.model_dump(mode="json")
     first, second = policy_planner(params), policy_planner(params)
@@ -79,11 +98,30 @@ def test_repeatability_input_isolation_and_changed_requests(policy_planner):
     changed = economic_params(prices=(5, -3), usage=(1, 0), initial=2,
                               target={"timeslot": 0, "soc_kwh": 1, "mode": "exact"})
     after = policy_planner(changed)
-    assert after["diagnostics"]["evaluation"]["score"][0] == 0
+    if policy_planner.capabilities.targets == "optimized":
+        assert after["diagnostics"]["evaluation"]["score"][0] == 0
+    else:
+        assert any("targets are measured but not optimized" in note
+                   for note in after["diagnostics"]["planner"]["notes"])
     assert after["projections"]["projected_cost"] == pytest.approx(
         evaluator.evaluate_schedule(changed, battery_policies(after)).tariff_cost
     )
     assert any("lookahead_slots" in note for note in after["diagnostics"]["planner"]["notes"])
+
+
+@pytest.mark.parametrize("name", [name for name in POLICY_PLANNERS
+    if create_planner(name).capabilities.economic_scope != "household"])
+def test_specialized_controls_leave_metadata_free_household_passive_and_report_actual_cost(name):
+    planner = create_planner(name)
+    params = economic_params()
+    result = planner(params)
+    rows = battery_policies(result)
+    assert rows == [["self_consume"] * len(params.usage_kwh)]
+    evaluated = evaluator.evaluate_schedule(params, rows)
+    assert result["projections"]["projected_cost"] == pytest.approx(evaluated.tariff_cost)
+    assert result["diagnostics"]["evaluation"]["score"] == pytest.approx(evaluated.score)
+    assert planner.capabilities.targets == "observed"
+    assert planner.capabilities.reserve_recovery is False
 
 
 @pytest.mark.parametrize("name", COUNT_SEARCHES)

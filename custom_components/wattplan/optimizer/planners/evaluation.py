@@ -9,8 +9,8 @@ Unspent terminal energy gets no invented credit; final levels remain visible.
 from dataclasses import dataclass
 from typing import Sequence
 
-from ..models import OptimizationParams
-from ..physics import EPSILON, POLICIES, Transition, transition
+from ..models import OptimizationParams, has_mobility_inputs
+from ..physics import EPSILON, POLICIES, Transition, transition, transition_at
 from .contract import PlannerResult
 from .recovery import reserve_shortfall_cost
 
@@ -24,14 +24,23 @@ class Evaluation:
     target_violations: tuple[dict, ...]
     reserve_shortfalls: tuple[dict, ...]
     objective: float
+    mobility_active: bool = False
+    departure_violations: tuple[dict, ...] = ()
+    mobility_unserved_kwh: float = 0.0
+
+    @property
+    def mobility_miss_kwh(self):
+        return self.mobility_unserved_kwh + sum(row["miss_kwh"] for row in self.departure_violations)
 
     @property
     def target_miss_kwh(self) -> float:
         return sum(item["miss_kwh"] for item in self.target_violations)
 
     @property
-    def score(self) -> tuple[float, float]:
+    def score(self) -> tuple[float, ...]:
         """Minimize target misses first, then tariff plus preference penalties."""
+        if self.mobility_active:
+            return self.mobility_miss_kwh, self.target_miss_kwh, self.objective
         return self.target_miss_kwh, self.objective
 
 
@@ -63,6 +72,8 @@ def evaluate_schedule(
     if params.comfort_entities:
         raise ValueError("Shared policy evaluation does not model comfort loads")
     batteries, horizon = params.battery_entities, len(params.usage_kwh)
+    mobility_active = has_mobility_inputs(params)
+    transition_fn = transition_at if mobility_active else transition
     if len(policies) != len(batteries) or any(len(row) != horizon for row in policies):
         raise ValueError("Policies must cover every battery and forecast slot")
     for battery, row in zip(batteries, policies, strict=True):
@@ -79,17 +90,20 @@ def evaluate_schedule(
     steps, violations = [], []
     cost, throughput, switches, recovery_cost = 0.0, 0.0, 0, 0.0
     previous = [0] * len(batteries)
+    departures, unserved = [], 0.0
     deadband = params.action_deadband_kwh
     for slot in range(horizon):
-        step = transition(
+        step = transition_fn(
             batteries,
             levels,
             [row[slot] for row in policies],
+            **({"slot": slot} if mobility_active else {}),
             usage=params.usage_kwh[slot],
             pv=params.solar_input_kwh[slot],
         )
         steps.append(step)
         levels = step.levels
+        unserved += sum(step.external_shortfall or ())
         recovery_cost += reserve_shortfall_cost(batteries, levels)
         cost += step.grid_import * params.grid_import_price_per_kwh[slot]
         cost -= step.grid_export * params.grid_export_price_per_kwh[slot]
@@ -118,6 +132,13 @@ def evaluate_schedule(
                         "miss_kwh": target_miss(target, levels[index]),
                     }
                 )
+            for requirement in battery.departure_requirements:
+                if requirement.timeslot == slot:
+                    before = (step.levels_before_external or levels)[index]
+                    miss = max(requirement.minimum_kwh - before, 0.0)
+                    departures.append({"battery": battery.name, "timeslot": slot,
+                        "soc_kwh": before, "minimum_kwh": requirement.minimum_kwh,
+                        "miss_kwh": miss if miss > EPSILON else 0.0})
     return Evaluation(
         tuple(steps),
         cost,
@@ -129,6 +150,9 @@ def evaluate_schedule(
         + throughput * params.throughput_cost_per_kwh
         + switches * params.mode_switch_cost
         + recovery_cost,
+        mobility_active,
+        tuple(departures),
+        unserved,
     )
 
 
@@ -202,4 +226,18 @@ def build_result(
     }
     from .reporting import enrich_result
 
-    return enrich_result(params, policies, evaluation, result)
+    result = enrich_result(params, policies, evaluation, result)
+    if evaluation.mobility_active:
+        served = sum(sum(step.external_energy or ()) for step in evaluation.steps)
+        feasible = evaluation.mobility_miss_kwh <= EPSILON
+        result["projections"].update(mobility_served_kwh=served,
+            mobility_unserved_kwh=evaluation.mobility_unserved_kwh,
+            departure_checks=list(evaluation.departure_violations), service_feasible=feasible)
+        result["diagnostics"]["evaluation"].update(
+            objective_kind="mobility_miss_then_target_miss_then_tariff_and_preferences",
+            departure_checks=list(evaluation.departure_violations),
+            mobility_unserved_kwh=evaluation.mobility_unserved_kwh, service_feasible=feasible)
+        for flow, step in zip(result["energy_flows"]["per_slot"], evaluation.steps, strict=True):
+            flow["external_energy_kwh"] = sum(step.external_energy or ())
+            flow["external_unserved_kwh"] = sum(step.external_shortfall or ())
+    return result

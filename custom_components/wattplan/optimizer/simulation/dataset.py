@@ -75,7 +75,8 @@ class Event:
                         k: v
                         for k, v in b.items()
                         if k
-                        not in {"initial_kwh", "target", "prefer_pv_surplus_charging"}
+                        not in {"initial_kwh", "target", "prefer_pv_surplus_charging",
+                                "connected_slots", "external_energy_kwh", "departure_requirements"}
                     }
                     for b in self.params["battery_entities"]
                 ],

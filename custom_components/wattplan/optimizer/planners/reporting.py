@@ -7,8 +7,8 @@ battery policies fixed and include their downstream effect on battery energy.
 from time import perf_counter
 from typing import TYPE_CHECKING, Sequence
 
-from ..models import OptimizationParams
-from ..physics import EPSILON, transition
+from ..models import OptimizationParams, has_mobility_inputs
+from ..physics import EPSILON, transition, transition_at
 
 if TYPE_CHECKING:
     from .evaluation import Evaluation
@@ -52,6 +52,8 @@ def cost_projection(
     savings = baseline - projected
     return {
         "baseline_cost": baseline,
+        **({"baseline_kind": "household_without_storage_excludes_mobility_service",
+            "projected_savings_comparable": False} if has_mobility_inputs(params) else {}),
         "projected_cost": projected,
         "projected_savings_cost": savings,
         "projected_savings_pct": (
@@ -76,6 +78,7 @@ def optional_entity_options(
     if not params.optional_entities:
         return []
     horizon = len(evaluation.steps)
+    transition_fn = transition_at if evaluation.mobility_active else transition
     modes = [tuple(row[slot] for row in policies) for slot in range(horizon)]
     baseline_costs = [
         step.grid_import * buy - step.grid_export * sell
@@ -101,10 +104,11 @@ def optional_entity_options(
             end = start + duration
             for slot in range(start, horizon):
                 extra = entity.energy_kwh[slot - start] if slot < end else 0.0
-                step = transition(
+                step = transition_fn(
                     params.battery_entities,
                     levels,
                     modes[slot],
+                    **({"slot": slot} if evaluation.mobility_active else {}),
                     usage=params.usage_kwh[slot] + extra,
                     pv=params.solar_input_kwh[slot],
                 )
@@ -193,6 +197,8 @@ def enrich_result(
         reasons.add("battery_min_unmet")
     if any(check["miss_kwh"] > EPSILON for check in evaluation.target_violations):
         reasons.add("battery_target_unmet")
+    if evaluation.mobility_active and evaluation.mobility_miss_kwh > EPSILON:
+        reasons.add("battery_mobility_service_unmet")
     reasons = sorted(reasons)
     imported = sum(step.grid_import for step in evaluation.steps)
     optional_started = perf_counter()

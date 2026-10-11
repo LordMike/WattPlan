@@ -13,6 +13,11 @@ from custom_components.wattplan.optimizer.planners.evaluation import evaluate_sc
 from tests.optimizer.planner_conformance import battery_policies
 
 
+def preset_capabilities(name):
+    preset = PRESETS[name]
+    return create_planner(preset.planner, dict(preset.options)).capabilities
+
+
 def request(*, battery=True, comfort=True, optional=True):
     return OptimizationParams(
         plan_start="2026-10-09T00:00:00+00:00", slot_minutes=15,
@@ -120,8 +125,14 @@ def test_direct_factories_and_registry_have_the_same_live_features(name, constra
     for field in ("entities", "projections", "energy_flows", "optional_entity_options",
                   "suboptimal", "suboptimal_reasons"):
         assert direct[field] == registered[field]
-    if not constrained or name != "self-consumption":
+    capabilities = direct_planner.capabilities
+    if not constrained or (capabilities.targets == "optimized" and capabilities.reserve_recovery):
         assert not direct["suboptimal"], direct["suboptimal_reasons"]
+    else:
+        assert direct["suboptimal"]
+        assert "battery_target_unmet" in direct["suboptimal_reasons"]
+        assert any("targets are measured but not optimized" in note
+                   for note in direct["diagnostics"]["capability_notes"])
     if name != "highs":
         replay = evaluate_schedule(prepare_comfort(params).params, battery_policies(direct))
         assert direct["projections"]["projected_cost"] == pytest.approx(replay.tariff_cost)
@@ -144,7 +155,7 @@ def test_all_presets_report_unreachable_targets_and_reserves(preset):
     assert {"battery_target_unmet", "battery_min_unmet"} <= set(result["suboptimal_reasons"])
 
 
-@pytest.mark.parametrize("preset", [name for name in PRESETS if name != "self-consumption"])
+@pytest.mark.parametrize("preset", [name for name in PRESETS if preset_capabilities(name).reserve_recovery])
 def test_optimizing_presets_recover_reserve_before_waiting_for_cheaper_power(preset):
     payload = request(comfort=False, optional=False).model_dump()
     payload.update(usage_kwh=[0] * 8, solar_input_kwh=[0] * 8,
@@ -156,7 +167,7 @@ def test_optimizing_presets_recover_reserve_before_waiting_for_cheaper_power(pre
     assert "battery_min_unmet" not in result["suboptimal_reasons"]
 
 
-@pytest.mark.parametrize("preset", [name for name in PRESETS if name != "self-consumption"])
+@pytest.mark.parametrize("preset", [name for name in PRESETS if preset_capabilities(name).targets == "optimized"])
 def test_optimizing_presets_meet_a_reachable_immediate_target(preset):
     payload = request(comfort=False, optional=False).model_dump()
     payload.update(usage_kwh=[0] * 8, solar_input_kwh=[0] * 8,
@@ -167,3 +178,26 @@ def test_optimizing_presets_meet_a_reachable_immediate_target(preset):
     result = run_preset(OptimizationParams(**payload), preset)
     assert result["entities"][0]["schedule"][0]["level"] >= 1.0 - 1e-6
     assert "battery_target_unmet" not in result["suboptimal_reasons"]
+
+
+@pytest.mark.parametrize("preset", [name for name in PRESETS if not preset_capabilities(name).reserve_recovery])
+def test_passive_household_controls_observe_initial_reserve_without_forced_grid_recovery(preset):
+    payload = request(comfort=False, optional=False).model_dump()
+    payload.update(usage_kwh=[0] * 8, solar_input_kwh=[0] * 8,
+                   grid_import_price_per_kwh=[10, 9, 8, 7, 6, 5, 4, 1])
+    payload["battery_entities"][0].update(initial_kwh=0, minimum_kwh=0.8)
+    result = run_preset(OptimizationParams(**payload), preset)
+    assert all(action["state"] == "self_consume" for action in result["entities"][0]["schedule"])
+    assert "battery_min_unmet" in result["suboptimal_reasons"]
+
+
+@pytest.mark.parametrize("preset", [name for name in PRESETS if preset_capabilities(name).targets == "observed"])
+def test_target_observers_report_reachable_household_target_without_claiming_to_pursue_it(preset):
+    payload = request(comfort=False, optional=False).model_dump()
+    payload.update(usage_kwh=[0] * 8, solar_input_kwh=[0] * 8)
+    payload["battery_entities"][0].update(initial_kwh=0.2,target={"timeslot":0,"soc_kwh":1.0})
+    result = run_preset(OptimizationParams(**payload), preset)
+    assert result["entities"][0]["schedule"][0]["level"] == pytest.approx(0.2)
+    assert "battery_target_unmet" in result["suboptimal_reasons"]
+    assert any("targets are measured but not optimized" in note
+               for note in result["diagnostics"]["capability_notes"])
