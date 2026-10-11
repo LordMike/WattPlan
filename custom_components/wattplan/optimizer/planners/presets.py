@@ -123,6 +123,14 @@ PRESETS = {
         )
     },
     **{
+        f"value-grid{grid}-pv{pv}-terminal0": PlannerPreset(
+            "value-policy", f"Value policy — {grid} energy intervals, PV {pv}%",
+            {"energy_intervals": grid, "pv_scale": pv / 100,
+             "terminal_value_fraction": 0.0},
+        )
+        for grid, pv in ((4, 100), (8, 100), (4, 75), (4, 50), (2, 100), (2, 50), (6, 100))
+    },
+    **{
         f"price-reserve-c15-d{discharge}-m10-p50-r{slots}-f100-demand1-fm{margin}-grid0": PlannerPreset(
             "price-reserve", f"Price reserve — demand reserve, {slots} slots, spread {margin / 100:g}",
             {"charge_quantile": 0.15, "discharge_quantile": discharge / 100,
@@ -131,6 +139,38 @@ PRESETS = {
              "future_price_margin": margin / 100, "grid_enabled": False},
         )
         for discharge, slots, margin in ((65, 12, 0), (65, 24, 20), (100, 24, 0), (100, 12, 20))
+    },
+    **{
+        f"value-grid4-pv100-terminal{credit}": PlannerPreset(
+            "value-policy", f"Value policy — 4 energy intervals, terminal value {credit}%",
+            {"energy_intervals": 4, "pv_scale": 1.0,
+             "terminal_value_fraction": credit / 100},
+        )
+        for credit in (25, 50)
+    },
+    **{
+        f"value-grid{grid}-pv100-terminal0-chargeknots1": PlannerPreset(
+            "value-policy", f"Value policy — {grid} energy intervals plus charging thresholds",
+            {"energy_intervals": grid, "pv_scale": 1.0,
+             "terminal_value_fraction": 0.0, "include_charge_knots": True},
+        )
+        for grid in (2, 4)
+    },
+    **{
+        f"value-grid4-pv100-demand{demand}-terminal50": PlannerPreset(
+            "value-policy", f"Value policy — 4 energy intervals, demand {demand}%, terminal value 50%",
+            {"energy_intervals": 4, "pv_scale": 1.0,
+             "demand_scale": demand / 100, "terminal_value_fraction": 0.5},
+        )
+        for demand in (75, 125)
+    },
+    **{
+        f"value-grid4-pv100-terminal50-scenario{spread}": PlannerPreset(
+            "value-policy", f"Value policy — 4 intervals, terminal value 50%, PV spread {spread}%",
+            {"energy_intervals": 4, "pv_scale": 1.0,
+             "terminal_value_fraction": 0.5, "pv_scenario_spread": spread / 100},
+        )
+        for spread in (50, 100)
     },
 }
 

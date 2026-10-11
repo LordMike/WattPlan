@@ -132,6 +132,28 @@ capacity in one slot. `fm` gives the required future
 price difference in hundredths of the tariff currency per kWh, and `grid0`
 disables economic grid charging while retaining target and reserve recovery.
 
+Value policy (`value-grid*-pv*-terminal*`) estimates future energy value on a
+coarse battery-energy grid. `grid` gives the number of energy intervals and `pv`
+the percentage of forecast PV used during search. Optional `demand` gives the
+percentage of forecast usage; reporting uses the original inputs. These scalings
+express forecast assumptions, not corrections learned from your history.
+It is designed for one battery and uses bounded joint-state dynamic
+programming for multiple batteries. Coarse grids can miss narrow targets or
+charging thresholds. `terminal` gives the percentage of an estimated future
+energy value used to score remaining energy during search; zero disables it.
+This heuristic can encourage excessive retention. Reported cost never includes
+that credit.
+`chargeknots1` variants add energy points at charging-rate saturation and
+grid-charge eligibility thresholds. If the selected schedule misses a battery
+target, a bounded target-repair search may replace it; feasibility is still not
+guaranteed for every request.
+
+`scenarioN` variants consider equally likely PV forecasts `N` percent below and
+above the supplied forecast, choosing each action by its average future cost.
+They still report flows and costs using the original inputs. This models
+independent uncertainty in each slot, not a calibrated weather forecast, and can
+overpay for protection against low solar production.
+
 These families use shared comfort preparation and optional-load reporting.
 They are experimental alternatives: compare them with the simulator using your
 own exports before choosing one for daily operation.
@@ -161,9 +183,9 @@ different appliances do not reserve capacity against one another. Use your
 Projected cost is grid import cost minus export revenue. It excludes battery
 wear estimates and optional appliances you have not scheduled. A cheaper plan
 may also finish with less stored energy: compare final battery levels and target
-misses alongside cost. The planners do not give leftover energy a separate
-end-of-plan credit, so using energy down to the configured reserve can be the
-cheapest forecast outcome.
+misses alongside cost. Reported costs do not give leftover energy a separate
+end-of-plan credit. Some value-policy variants use such a credit internally to
+guide their search; other planners can favor using energy down to the reserve.
 
 ## Battery behavior
 

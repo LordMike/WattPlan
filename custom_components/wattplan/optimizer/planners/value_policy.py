@@ -1,0 +1,226 @@
+"""Backward interpolated value-function battery dispatch.
+
+Unlike forward frontier DP, this planner computes a cost-to-go table at fixed
+energy knots, then chooses every policy at the exact carried physical level.
+Shared physics owns all knot and forward transitions; interpolation estimates
+future target miss and economics, never rounds the executed energy. Optional
+charge knots capture full-charge saturation and grid eligibility breakpoints. Physical
+charge/idle/discharge history is part of the value table for switching costs.
+
+Coarse grids make this inexpensive for one battery but can smooth narrow target
+windows and grid-charge eligibility discontinuities. Any observed target miss
+triggers a bounded finer joint-state DP repair; the better shared target-first
+score wins. Repair remains approximate and cannot certify target feasibility. This is approximate dynamic
+programming, not an exact optimality guarantee. Multiple batteries use the
+existing bounded joint-state DP explicitly, avoiding exponential grid products.
+Comfort is placed before battery dispatch and optional loads ranked afterward by
+the shared wrapper. Fleet fallback does not use forecast scalings or terminal
+credit and reports that distinction in diagnostics.
+
+PV/demand multipliers are explicit forecast robustness assumptions applied only
+to the search model; reporting always replays the accepted policies against the
+unaltered request. A terminal value fraction optionally estimates stored energy
+at the horizon from the final twelve forecast tariffs. It is a search heuristic,
+not a credit in reported electricity cost. All configuration is stateless; no
+actual future observations, dates, corpus-specific rules or random draws enter
+policy selection. Lower PV assumptions can protect against optimistic persistence
+forecasts but can buy unnecessarily before real sunshine; excessive terminal
+credit can retain energy too long. Grid resolution trades runtime for fidelity.
+
+An optional PV scenario spread uses equal-probability factors (1-spread,1+spread)
+independently at each forecast slot. It averages each physical branch's immediate
+cost, target miss and interpolated successor value, including branch mode history.
+Forward action selection uses the same expected score at the unaltered carried
+level; accepted policies are replayed against original inputs. Identical zero-PV
+branches share work. This uncertainty model is a configurable assumption, not a
+calibrated weather distribution: it ignores cross-hour weather correlation and
+can overpay for protection. Spread zero keeps the deterministic policy path.
+"""
+
+from bisect import bisect_right
+import math
+from statistics import median
+
+from ..physics import EPSILON, MIN_GRID_CHARGE_SLOT_FRACTION, transition
+from .contract import PlannerCapabilities
+from .dynamic_programming import factory as joint_factory
+from .evaluation import build_result, evaluate_schedule, target_miss
+from .recovery import reserve_shortfall_cost
+from .shared import wrap_battery_planner
+
+
+def _interpolate(knots, values, level):
+    index = min(max(bisect_right(knots, level) - 1, 0), len(knots) - 2)
+    weight = min(max((level - knots[index]) / (knots[index + 1] - knots[index]), 0.0), 1.0)
+    a, b = values[index], values[index + 1]
+    return (a[0] + weight * (b[0] - a[0]), a[1] + weight * (b[1] - a[1]))
+
+
+def _charge_knots(battery):
+    """Piecewise roots for full-charge saturation and grid headroom eligibility."""
+    if not battery.can_charge_from & 1:
+        return []
+    curve = list(battery.charge_curve_kwh)
+    if len(curve) == 1:
+        curve *= 2
+    levels = [battery.capacity_kwh * n / (len(curve) - 1) for n in range(len(curve))]
+    roots = []
+    for fraction in (1.0, MIN_GRID_CHARGE_SLOT_FRACTION):
+        slack = EPSILON * battery.charge_efficiency if fraction < 1 else 0.0
+        for low, high, low_limit, high_limit in zip(levels, levels[1:], curve, curve[1:]):
+            a = battery.capacity_kwh - low - fraction * battery.charge_efficiency * low_limit + slack
+            b = battery.capacity_kwh - high - fraction * battery.charge_efficiency * high_limit + slack
+            if a == b or a * b > 0:
+                continue
+            root = low + (high - low) * a / (a - b)
+            if 0 < root < battery.capacity_kwh:
+                roots.append(root)
+    return roots
+
+
+def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
+            terminal_value_fraction=0.0, include_charge_knots=False, pv_scenario_spread=0.0):
+    """Return a deterministic interpolated cost-to-go planner."""
+    if type(energy_intervals) is not int or not 2 <= energy_intervals <= 128:
+        raise ValueError("energy_intervals must be an integer between 2 and 128")
+    for name, value in (("pv_scale", pv_scale), ("demand_scale", demand_scale),
+                        ("terminal_value_fraction", terminal_value_fraction)):
+        if type(value) not in {int, float} or not math.isfinite(value) or value < 0:
+            raise ValueError(f"{name} must be finite and nonnegative")
+    if type(include_charge_knots) is not bool:
+        raise ValueError("include_charge_knots must be a boolean")
+    if (type(pv_scenario_spread) not in {int, float}
+            or not math.isfinite(pv_scenario_spread) or not 0 <= pv_scenario_spread <= 1):
+        raise ValueError("pv_scenario_spread must be finite and between zero and one")
+    capabilities = PlannerCapabilities()
+    fallback = joint_factory(max_states=8, max_expansions=1024)
+    target_repair = joint_factory(soc_step_kwh=0.05, max_states=64, max_expansions=20000)
+
+    def plan(params):
+        batteries = params.battery_entities
+        if len(batteries) != 1:
+            result = fallback(params)
+            result["diagnostics"]["value_policy_fallback"] = "bounded_joint_state_dp"
+            result["diagnostics"]["forecast_adjustments_applied"] = False
+            return result
+        battery = batteries[0]
+        horizon = len(params.usage_kwh)
+        knots = sorted(set([battery.capacity_kwh * n / energy_intervals
+                            for n in range(energy_intervals + 1)]
+                           + [battery.minimum_kwh]))
+        if include_charge_knots:
+            knots = sorted(set(knots + _charge_knots(battery)))
+        if battery.target:
+            knots = sorted(set(knots + [min(max(v, 0.0), battery.capacity_kwh)
+                for v in (battery.target.soc_kwh - battery.target.tolerance_kwh,
+                          battery.target.soc_kwh + battery.target.tolerance_kwh)]))
+        choices = ("self_consume", "preserve", "grid_charge") if battery.can_charge_from & 1 else ("self_consume", "preserve")
+        terminal_price = max(median(params.grid_import_price_per_kwh[-12:]), 0.0)
+        credit = terminal_price * battery.discharge_efficiency * terminal_value_fraction
+        terminal = [(0.0, -max(k - battery.minimum_kwh, 0.0) * credit) for k in knots]
+        tables = [None] * (horizon + 1)
+        tables[horizon] = [terminal, terminal, terminal]
+        transitions = 0
+
+        def candidates(slot, level, pv_factor=1.0):
+            nonlocal transitions
+            rows = []
+            for action in choices:
+                step = transition(batteries, [level], [action],
+                    usage=params.usage_kwh[slot] * demand_scale,
+                    pv=params.solar_input_kwh[slot] * pv_scale * pv_factor)
+                transitions += 1
+                charge, discharge = step.charge, sum(step.discharge)
+                mode = (1 if charge > EPSILON and charge >= params.action_deadband_kwh
+                        else -1 if discharge > EPSILON and discharge >= params.action_deadband_kwh else 0)
+                miss = target_miss(battery.target, step.levels[0]) if battery.target and battery.target.timeslot == slot else 0.0
+                future_miss, future_cost = _interpolate(knots, tables[slot + 1][mode + 1], step.levels[0])
+                cost = (step.grid_import * params.grid_import_price_per_kwh[slot]
+                        - step.grid_export * params.grid_export_price_per_kwh[slot]
+                        + (charge + discharge) * params.throughput_cost_per_kwh
+                        + reserve_shortfall_cost(batteries, step.levels))
+                rows.append((miss + future_miss, cost + future_cost, mode, action))
+            return rows
+
+        def scenario_candidates(slot, level):
+            # Exactly zero forecast PV has identical branches; avoid duplicate physics.
+            if params.solar_input_kwh[slot] == 0 or pv_scale == 0:
+                return candidates(slot, level)
+            low = candidates(slot, level, 1 - pv_scenario_spread)
+            high = candidates(slot, level, 1 + pv_scenario_spread)
+            return [((a[0] + b[0]) / 2, (a[1] + b[1]) / 2,
+                     (a[2], b[2]), a[3]) for a, b in zip(low, high, strict=True)]
+
+        def scenario_score(row, previous):
+            modes = row[2]
+            switches = ((modes != previous) if type(modes) is int
+                        else ((modes[0] != previous) + (modes[1] != previous)) / 2)
+            return row[0], row[1] + switches * params.mode_switch_cost
+
+        candidate_fn = scenario_candidates if pv_scenario_spread else candidates
+        first_expected_score = None
+
+        for slot in range(horizon - 1, -1, -1):
+            table = [[], [], []]
+            for level in knots:
+                rows = candidate_fn(slot, level)
+                for previous in (-1, 0, 1):
+                    if pv_scenario_spread:
+                        table[previous + 1].append(min(scenario_score(row, previous) for row in rows))
+                    else:
+                        table[previous + 1].append(min((miss, cost + (mode != previous) * params.mode_switch_cost)
+                            for miss, cost, mode, _ in rows))
+            tables[slot] = table
+        level, previous = battery.initial_kwh, 0
+        policies = [[]]
+        for slot in range(horizon):
+            rows = candidate_fn(slot, level)
+            if pv_scenario_spread:
+                best = min(rows, key=lambda row: scenario_score(row, previous))
+                if slot == 0:
+                    first_expected_score = scenario_score(best, previous)
+            else:
+                best = min(rows, key=lambda row: (row[0], row[1] + (row[2] != previous) * params.mode_switch_cost))
+            action = best[3]
+            policies[0].append(action)
+            # The accepted path carries the unadjusted request's exact energy.
+            step = transition(batteries, [level], [action], usage=params.usage_kwh[slot], pv=params.solar_input_kwh[slot])
+            level = step.levels[0]
+            charge, discharge = step.charge, sum(step.discharge)
+            previous = (1 if charge > EPSILON and charge >= params.action_deadband_kwh
+                        else -1 if discharge > EPSILON and discharge >= params.action_deadband_kwh else 0)
+        evaluation = evaluate_schedule(params, policies)
+        repair = None
+        if evaluation.target_miss_kwh > EPSILON:
+            repaired_result = target_repair(params)
+            repaired_policies = [[entry["state"] for entry in entity["schedule"]]
+                for entity in repaired_result["entities"] if entity["type"] == "battery"]
+            repaired_evaluation = evaluate_schedule(params, repaired_policies)
+            improved = repaired_evaluation.score < evaluation.score
+            repair = {"algorithm": "bounded_joint_state_dp", "improved": improved,
+                      "original_target_miss_kwh": evaluation.target_miss_kwh,
+                      "expansions": repaired_result["diagnostics"]["expansions"], "evaluations": 2,
+                      "forecast_adjustments_applied": False}
+            if improved:
+                policies, evaluation = repaired_policies, repaired_evaluation
+        return build_result(params, policies, evaluation=evaluation, diagnostics={
+            "algorithm": ("scenario_expected_backward_value_policy" if pv_scenario_spread
+                          else "interpolated_backward_value_policy"), "approximate": True,
+            **({"pv_scenario_spread": pv_scenario_spread,
+                "pv_scenario_factors": [1 - pv_scenario_spread, 1 + pv_scenario_spread],
+                "pv_scenario_weights": [0.5, 0.5],
+                "initial_value_policy_expected_score": first_expected_score,
+                "scenario_assumption": "independent symmetric per-slot PV factors"}
+               if pv_scenario_spread else {}),
+            "energy_intervals": energy_intervals, "energy_knots": len(knots),
+            "include_charge_knots": include_charge_knots, "target_repair": repair,
+            "pv_scale": pv_scale, "demand_scale": demand_scale,
+            "terminal_value_fraction": terminal_value_fraction,
+            "terminal_search_credit_per_kwh": credit,
+            "forecast_adjustments_applied": True, "search_transitions": transitions,
+            "evaluations": 3 if repair is not None else 1, "termination_reason": "value_tables_complete",
+            "forecast_horizon_slots": horizon,
+        })
+
+    plan.capabilities = capabilities
+    return wrap_battery_planner(plan)
