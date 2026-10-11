@@ -20,6 +20,7 @@ BUILTINS = {
     "genetic": "custom_components.wattplan.optimizer.planners.genetic:factory",
     "cross-entropy": "custom_components.wattplan.optimizer.planners.cross_entropy:factory",
     "local-refinement": "custom_components.wattplan.optimizer.planners.local_refinement:factory",
+    "price-reserve": "custom_components.wattplan.optimizer.planners.price_reserve:factory",
 }
 ALIASES = {
     "custom_components.wattplan.optimizer.simulation.adapters:highs_factory": "highs",

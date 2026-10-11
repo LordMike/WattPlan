@@ -119,6 +119,19 @@ price-quantile rule for holding energy. Tariff variants also set the price
 quantile used to construct a grid-charging candidate. These controls can avoid marginal trades,
 but can also reject useful charging opportunities.
 
+Price reserve (`price-reserve-*`) uses import-price quantiles, charging losses
+and forecast solar surplus to decide when to charge or hold energy. In its
+names, `c` and `d` are charge and discharge percentiles, `m` is the margin in
+hundredths of your tariff currency per kWh, `p` is the percentage of forecast
+solar surplus reserved, `r` is the number of forecast slots considered for that
+reserve, and `f` is the usable-capacity fill percentage. Full-power charging can
+overshoot the intended headroom; holding energy too long can increase costs.
+`demand1` variants limit preservation to energy needed for more expensive
+forecast deficits before a forecast solar surplus of at least 10% of battery
+capacity in one slot. `fm` gives the required future
+price difference in hundredths of the tariff currency per kWh, and `grid0`
+disables economic grid charging while retaining target and reserve recovery.
+
 These families use shared comfort preparation and optional-load reporting.
 They are experimental alternatives: compare them with the simulator using your
 own exports before choosing one for daily operation.

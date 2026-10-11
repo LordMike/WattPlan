@@ -106,6 +106,32 @@ PRESETS = {
         )
         for fraction in (0.05, 0.1)
     },
+    **{
+        f"price-reserve-c{charge}-d{discharge}-m{margin}-p{pv}-r12-f{fill}": PlannerPreset(
+            "price-reserve", f"Price reserve — charge {charge}%, discharge {discharge}%, margin {margin / 100:g}",
+            {"charge_quantile": charge / 100, "discharge_quantile": discharge / 100,
+             "margin": margin / 100, "pv_reserve": pv / 100,
+             "reserve_slots": 12, "max_fill": fill / 100},
+        )
+        for charge, discharge, margin, pv, fill in (
+            (5, 15, 10, 50, 100), (15, 35, 10, 50, 100),
+            (25, 50, 10, 50, 100), (15, 35, 30, 100, 100),
+            (15, 15, 10, 50, 75), (15, 0, 10, 50, 100),
+            (0, 35, 0, 0, 100), (5, 65, 10, 50, 100),
+            (15, 80, 10, 50, 100), (25, 65, 0, 0, 100),
+            (5, 80, 10, 100, 75),
+        )
+    },
+    **{
+        f"price-reserve-c15-d{discharge}-m10-p50-r{slots}-f100-demand1-fm{margin}-grid0": PlannerPreset(
+            "price-reserve", f"Price reserve — demand reserve, {slots} slots, spread {margin / 100:g}",
+            {"charge_quantile": 0.15, "discharge_quantile": discharge / 100,
+             "margin": 0.1, "pv_reserve": 0.5, "reserve_slots": slots,
+             "max_fill": 1.0, "demand_reserve": True,
+             "future_price_margin": margin / 100, "grid_enabled": False},
+        )
+        for discharge, slots, margin in ((65, 12, 0), (65, 24, 20), (100, 24, 0), (100, 12, 20))
+    },
 }
 
 
