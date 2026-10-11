@@ -238,6 +238,15 @@ PRESETS = {
         )
         for premium in (0.01, 0.03, 0.1)
     },
+    **{
+        f"adaptive-solar-gate1.5-grid6-switch{ratio:g}-low100-high{spread}": PlannerPreset(
+            "adaptive-solar-policy", f"Adaptive solar policy — switch ratio {ratio:g}, PV spread 100%/{spread}%",
+            {"surplus_ratio": 1.5, "energy_intervals": 6,
+             "spread_switch_ratio": ratio, "low_surplus_spread": 1.0,
+             "high_surplus_spread": spread / 100},
+        )
+        for ratio, spread in ((0.5, 0), (1.0, 0), (0.5, 50), (1.0, 50))
+    },
 }
 
 

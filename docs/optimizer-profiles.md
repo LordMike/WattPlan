@@ -193,6 +193,16 @@ they retain value dispatch if a feasible cheaper grid-charge opportunity precede
 expensive imports before solar restores the initial battery level. This is a
 heuristic opportunity check, not proof that buying early will save money.
 
+Adaptive solar policy (`adaptive-solar-gate1.5-grid6-switchR-low100-highN`)
+chooses the PV uncertainty spread from the same next-24-hour forecast surplus
+ratio used by the passive gate. Below switch ratio `R` it uses a 100% symmetric
+spread; at or above it uses `N` percent. The denominator is the greater of
+forecast deficits and battery AC charging headroom. The chosen hybrid policy
+then runs once, retaining the passive gate at 1.5 and six energy intervals.
+This is a forecast heuristic, without calendar rules or learned weather
+probabilities. Switching assumptions can improve or worsen costs; compare a
+complete replay before selecting it.
+
 These families use shared comfort preparation and optional-load reporting.
 They are experimental alternatives: compare them with the simulator using your
 own exports before choosing one for daily operation.

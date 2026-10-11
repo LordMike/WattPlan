@@ -24,6 +24,7 @@ BUILTINS = {
     "value-policy": "custom_components.wattplan.optimizer.planners.value_policy:factory",
     "linear-dispatch": "custom_components.wattplan.optimizer.planners.linear_dispatch:factory",
     "hybrid-policy": "custom_components.wattplan.optimizer.planners.hybrid_policy:factory",
+    "adaptive-solar-policy": "custom_components.wattplan.optimizer.planners.adaptive_solar_policy:factory",
 }
 ALIASES = {
     "custom_components.wattplan.optimizer.simulation.adapters:highs_factory": "highs",
