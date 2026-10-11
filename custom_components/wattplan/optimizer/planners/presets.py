@@ -28,6 +28,10 @@ PRESETS = {
     "mobility-tariff-seeds-2": PlannerPreset(
         "mobility-tariff-seeds", "Mobility — two service/tariff seed candidates"
     ),
+    "mobility-hybrid-seeds-4-grid4": PlannerPreset(
+        "mobility-hybrid-seeds", "Mobility — four joint hybrid/service seeds, grid 4",
+        {"energy_intervals": 4},
+    ),
     **{
         f"mobility-fleet-beam-{width}-exp{expansions}-joint27": PlannerPreset(
             "mobility-fleet-beam", f"Mobility fleet beam — width {width}, {expansions} expansions",

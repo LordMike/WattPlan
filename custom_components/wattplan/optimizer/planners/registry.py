@@ -28,6 +28,7 @@ BUILTINS = {
     "mobility-baseline": "custom_components.wattplan.optimizer.planners.mobility_policy:baseline_factory",
     "mobility-fleet-beam": "custom_components.wattplan.optimizer.planners.mobility_policy:factory",
     "mobility-tariff-seeds": "custom_components.wattplan.optimizer.planners.mobility_policy:tariff_factory",
+    "mobility-hybrid-seeds": "custom_components.wattplan.optimizer.planners.mobility_hybrid_seeds:factory",
 }
 ALIASES = {
     "custom_components.wattplan.optimizer.simulation.adapters:highs_factory": "highs",

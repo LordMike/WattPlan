@@ -26,6 +26,7 @@ result. Switching presets reloads the integration and replaces the previous plan
 | Cross-entropy search | `cem-48` |
 | Mobility service baseline | `mobility-baseline` |
 | Mobility tariff seeds | `mobility-tariff-seeds-2` |
+| Mobility hybrid seeds | `mobility-hybrid-seeds-4-grid4` |
 | Mobility fleet beam | `mobility-fleet-beam-4-exp1500-joint27`, `mobility-fleet-beam-8-exp6000-joint27` |
 
 The numbers in HiGHS preset names count **forecast slots**, not hours. At
@@ -87,6 +88,19 @@ than deliberately charging the household battery to recover reserve or meet
 targets. Mobile service charging is separate. The tariff seed's canonical score
 still includes observed target misses when comparing its two candidates, but
 that limited candidate construction does not pursue ordinary battery targets.
+
+`mobility-hybrid-seeds-4-grid4` evaluates four complete joint schedules: passive
+or raw hybrid-policy stationary control, crossed with first-available or tariff
+mobile charging. The stationary search uses grid 4 and default deterministic
+forecasts; integrated comfort demand is prepared once. Mobile actions are
+recomputed from each candidate's joint battery levels and shared PV allocation.
+The exact first-available/passive baseline is retained, including duplicate
+seeds. Full service-first scoring chooses among four candidates; it does not
+search arbitrary fleet schedules or model branch uncertainty. Multiple stationary
+batteries inherit hybrid-policy's bounded fleet fallback. An ordinary mobile
+battery target instead dispatches the whole fleet to beam width 4 with 1500
+expansions, retaining the service baseline and explicitly reporting that fallback.
+Neither branch guarantees target/service feasibility, optimality or annual savings.
 
 The fleet beam searches joint charge/preserve/self-consumption policies, including
 using vehicle energy for household demand and replenishing it before departure.

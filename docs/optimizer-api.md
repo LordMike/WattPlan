@@ -116,8 +116,8 @@ still occurs.
 
 Active mobility metadata requires an explicit planner capability
 `PlannerCapabilities(mobility=True)`. The new `mobility-baseline`,
-`mobility-tariff-seeds` and `mobility-fleet-beam` factories provide it. Existing
-families reject active metadata before planning; all-true connection lists,
+`mobility-tariff-seeds`, `mobility-hybrid-seeds` and `mobility-fleet-beam` factories
+provide it. Existing families reject active metadata before planning; all-true connection lists,
 zero external draws and no departure requirements are inert. The ordinary
 default request, score and result fields retain their previous behavior.
 Capability `targets="observed"` distinguishes the passive household control in
@@ -130,6 +130,14 @@ baseline declares none/false; tariff seeds mobility/false; fleet beam declares
 household/true with mobility enabled. Existing self-consumption declares
 none/false. Merely observing reserve and target misses does not imply an
 algorithm attempts to fix them.
+
+`mobility-hybrid-seeds` also declares household economics, reserve recovery and
+optimized targets. Its four complete seeds combine metadata-free raw stationary
+hybrid-policy (default grid 4, no scenario branches) or passive control with two
+mobile charging controls, using joint shared physics and full service-first
+scores. Ordinary mobile targets use a disclosed whole-fleet bounded beam fallback
+(width 4, 1500 expansions). These declarations describe search intent, not an
+optimality or feasibility guarantee; input-order PV allocation is unchanged.
 
 Shared `physics.transition_at(batteries, levels, modes, *, slot, usage, pv,
 slot_fraction=1.0, apply_external=True, grid_eligible=None)` applies availability
