@@ -341,6 +341,15 @@ PRESETS = {
          "include_initial_knot": True, "prerefill_guard": True,
          "pv_tail_low_probability": 1 / 3},
     ),
+    "value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12-initialknot1-prerefill1-nominalmix50-h6": PlannerPreset(
+        "hybrid-policy", "Value policy — exact initial knot, pre-refill guard, nominal joint mixture for 6 slots",
+        {"surplus_ratio": 1.5, "energy_intervals": 6,
+         "terminal_value_fraction": 0.0, "pv_scenario_spread": 1.0,
+         "grid_charge_premium_per_kwh": 0.03,
+         "paired_demand_scenario_spread": 0.25, "paired_demand_scenario_slots": 12,
+         "include_initial_knot": True, "prerefill_guard": True,
+         "include_nominal_joint_scenario": True, "nominal_joint_scenario_slots": 6},
+    ),
     "value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12-initialknot1-prerefill1-dischargebudgetknot1": PlannerPreset(
         "hybrid-policy", "Value policy — exact initial knot, pre-refill guard, per-slot discharge budget knot",
         {"surplus_ratio": 1.5, "energy_intervals": 6,

@@ -231,6 +231,18 @@ This refinement adds search work and does not certify optimality or savings;
 original-input reporting, passive dispatch, fleet fallback and target repair
 retain their existing behavior.
 
+The guarded grid6 `-nominalmix50-h6` composition changes only the nearest six
+joint uncertainty slots: adverse, nominal and optimistic outcomes receive
+weights 0.25, 0.5 and 0.25, preserving both forecast means. Remaining paired
+slots and the PV-only tail retain their existing assumptions. The optional
+`include_nominal_joint_scenario` defaults to false; `nominal_joint_scenario_slots`
+is a positive integer defaulting to six and is capped by the paired demand bound
+and supplied horizon. Enabled use requires positive PV and paired demand spreads
+with an explicit paired bound, and does not support first-action rollout.
+These fixed probabilities are a search assumption, not calibrated confidence or
+a savings prediction. Reporting replays original inputs; passive dispatch,
+fleet fallback and target repair omit the mixture.
+
 The guarded grid6 `-pvtailq1of3` composition leaves the nearest 12 paired demand/PV
 slots unchanged. Later slots use PV factors 0 and 1.5 with probabilities one third
 and two thirds, preserving the forecast mean while retaining a complete-cloud

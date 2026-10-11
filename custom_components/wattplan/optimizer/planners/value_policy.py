@@ -85,6 +85,13 @@ An optional exact initial-energy knot anchors idle-state continuation values.
 It adds at most one table node, retains valid below-reserve initial states, and
 deduplicates by exact equality without snapping adjacent floating-point values.
 Fleet fallback and target repair do not use this table refinement.
+
+An optional nearest-slot joint mixture adds a nominal outcome with weight one
+half, retaining adverse/optimistic outcomes with weight one quarter each. Both
+forecast means remain unchanged. Its relative slot cap also respects the paired
+demand bound. It is a fixed uncertainty assumption, not calibrated confidence.
+Own-slot actions precede all outcomes; reporting replays original inputs.
+Rollout is deliberately unsupported for this mixture; fleet/repair omit it.
 """
 
 from bisect import bisect_right
@@ -133,7 +140,8 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
             grid_charge_premium_per_kwh=0.0, first_action_rollout=False,
             paired_demand_scenario_spread=0.0, paired_demand_scenario_slots=None,
             rollout_pv_persistence=False, include_initial_knot=False,
-            pv_tail_low_probability=0.5, include_discharge_budget_knot=False):
+            pv_tail_low_probability=0.5, include_discharge_budget_knot=False,
+            include_nominal_joint_scenario=False, nominal_joint_scenario_slots=6):
     """Return a deterministic interpolated cost-to-go planner."""
     if type(energy_intervals) is not int or not 2 <= energy_intervals <= 128:
         raise ValueError("energy_intervals must be an integer between 2 and 128")
@@ -148,6 +156,10 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
         raise ValueError("include_initial_knot must be a boolean")
     if type(include_discharge_budget_knot) is not bool:
         raise ValueError("include_discharge_budget_knot must be a boolean")
+    if type(include_nominal_joint_scenario) is not bool:
+        raise ValueError("include_nominal_joint_scenario must be a boolean")
+    if type(nominal_joint_scenario_slots) is not int or nominal_joint_scenario_slots <= 0:
+        raise ValueError("nominal_joint_scenario_slots must be a positive integer")
     if type(first_action_rollout) is not bool:
         raise ValueError("first_action_rollout must be a boolean")
     if type(rollout_pv_persistence) is not bool:
@@ -175,6 +187,13 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
         if first_action_rollout or rollout_pv_persistence:
             raise ValueError("nondefault pv_tail_low_probability does not support rollout")
     tail_high_pv = 1 + pv_tail_low_probability * pv_scenario_spread / (1 - pv_tail_low_probability)
+    if include_nominal_joint_scenario:
+        if (not pv_scenario_spread or not paired_demand_scenario_spread
+                or paired_demand_scenario_slots is None):
+            raise ValueError("include_nominal_joint_scenario requires positive PV and "
+                             "paired demand spreads and an explicit demand slot bound")
+        if first_action_rollout or rollout_pv_persistence:
+            raise ValueError("include_nominal_joint_scenario does not support rollout")
     if rollout_pv_persistence and not first_action_rollout:
         raise ValueError("rollout_pv_persistence requires first_action_rollout")
     if rollout_pv_persistence and paired_demand_scenario_spread:
@@ -205,6 +224,13 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
             result = fallback(params)
             result["diagnostics"]["value_policy_fallback"] = "bounded_joint_state_dp"
             result["diagnostics"]["forecast_adjustments_applied"] = False
+            if include_nominal_joint_scenario:
+                result["diagnostics"].update(include_nominal_joint_scenario=True,
+                    nominal_joint_scenario_slots=nominal_joint_scenario_slots,
+                    nominal_joint_scenario_evaluated=False, nominal_joint_scenario_applied=False,
+                    nominal_joint_scenario_effective_slots=0,
+                    nominal_joint_scenario_effective_hours=0.0,
+                    nominal_joint_scenario_omission_reason="joint_or_empty_battery_request")
             if include_discharge_budget_knot:
                 budget_diagnostics["discharge_budget_knot_omission_reason"] = "joint_or_empty_battery_request"
                 result["diagnostics"].update(budget_diagnostics)
@@ -240,6 +266,7 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
         battery = batteries[0]
         horizon = len(params.usage_kwh)
         demand_slots = min(horizon, paired_demand_scenario_slots or horizon)
+        nominal_slots = min(nominal_joint_scenario_slots, demand_slots)
         persistence_evaluated = rollout_pv_persistence and horizon >= 2 and pv_scenario_spread > 0
         first_pv = params.solar_input_kwh[0] * pv_scale
         factor_revealed = (persistence_evaluated
@@ -398,6 +425,47 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
                 switches = q * (modes[0] != previous) + (1-q) * (modes[1] != previous)
                 return row[0], row[1] + switches * params.mode_switch_cost
 
+        if include_nominal_joint_scenario:
+            existing_scenario_candidates = scenario_candidates
+            existing_scenario_score = scenario_score
+
+            def scenario_candidates(slot, level, *, successor_value=None):
+                nonlocal scenario_branches
+                if slot >= nominal_slots:
+                    return existing_scenario_candidates(slot, level, successor_value=successor_value)
+                outcomes = ((0.25, 1 - pv_scenario_spread, 1 + paired_demand_scenario_spread),
+                            (0.5, 1.0, 1.0),
+                            (0.25, 1 + pv_scenario_spread, 1 - paired_demand_scenario_spread))
+                # Combine identical scaled input pairs before physics, rather
+                # than treating coincident successor battery levels as observations.
+                inputs = {}
+                pv = params.solar_input_kwh[slot] * pv_scale
+                usage = params.usage_kwh[slot] * demand_scale
+                for weight, pv_factor, demand_factor in outcomes:
+                    key = (pv * pv_factor, usage * demand_factor)
+                    if key in inputs:
+                        old_weight, p, d = inputs[key]
+                        inputs[key] = (old_weight + weight, p, d)
+                    else:
+                        inputs[key] = (weight, pv_factor, demand_factor)
+                scenario_branches += len(inputs)
+                branches = [(weight, candidates(slot, level, p, demand_factor=d,
+                             successor_value=successor_value)) for weight, p, d in inputs.values()]
+                if len(branches) == 1:
+                    return branches[0][1]
+                weights = tuple(weight for weight, _ in branches)
+                return [(sum(weight * rows[i][0] for weight, rows in branches),
+                         sum(weight * rows[i][1] for weight, rows in branches),
+                         tuple(rows[i][2] for _, rows in branches), action, weights)
+                        for i, action in enumerate(choices)]
+
+            def scenario_score(row, previous):
+                if len(row) == 4 or type(row[4]) is not tuple:
+                    return existing_scenario_score(row, previous)
+                switches = sum(weight * (mode != previous)
+                               for weight, mode in zip(row[4], row[2], strict=True))
+                return row[0], row[1] + switches * params.mode_switch_cost
+
         candidate_fn = scenario_candidates if scenario_active else candidates
         first_expected_score = None
         rollout_transitions = 0
@@ -484,6 +552,8 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
                 repair["rollout_pv_persistence_applied"] = False
             if include_initial_knot:
                 repair["initial_knot_applied"] = False
+            if include_nominal_joint_scenario:
+                repair["nominal_joint_scenario_applied"] = False
             if tail_modified:
                 repair["pv_tail_applied"] = False
             if include_discharge_budget_knot:
@@ -499,7 +569,11 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
                 "pv_scenario_factors": [1 - pv_scenario_spread, 1 + pv_scenario_spread],
                 "pv_scenario_weights": [0.5, 0.5],
                 "initial_value_policy_expected_score": first_expected_score,
-                "scenario_assumption": ("independent per-slot equal-weight paired PV/demand in bounded active slots; mean-preserving unequal-weight PV-only tail"
+                "scenario_assumption": (("bounded nearest-slot adverse/nominal/optimistic joint mixture; "
+                    "remaining paired slots equal-weight; PV-only tail "
+                    + ("mean-preserving asymmetric" if tail_modified else "symmetric equal-weight"))
+                    if include_nominal_joint_scenario else
+                    "independent per-slot equal-weight paired PV/demand in bounded active slots; mean-preserving unequal-weight PV-only tail"
                                         if tail_modified else
                                         "independent per-slot paired low PV/high aggregate demand and high PV/low aggregate demand"
                                         if paired_demand_scenario_spread else "independent symmetric per-slot PV factors")}
@@ -522,6 +596,19 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
                 "pv_tail_weights": [pv_tail_low_probability, 1 - pv_tail_low_probability]}
                if tail_modified else {}),
             "energy_intervals": energy_intervals, "energy_knots": len(knots),
+            **({"include_nominal_joint_scenario": True,
+                "nominal_joint_scenario_slots": nominal_joint_scenario_slots,
+                "nominal_joint_scenario_evaluated": True,
+                "nominal_joint_scenario_applied": not (repair and repair["improved"]),
+                "nominal_joint_scenario_effective_slots": nominal_slots,
+                "nominal_joint_scenario_effective_hours": nominal_slots * params.slot_minutes / 60,
+                "nominal_joint_scenario_weights": [0.25, 0.5, 0.25],
+                "nominal_joint_scenario_pv_factors": [1 - pv_scenario_spread, 1.0, 1 + pv_scenario_spread],
+                "nominal_joint_scenario_demand_factors": [1 + paired_demand_scenario_spread, 1.0, 1 - paired_demand_scenario_spread],
+                "nominal_joint_scenario_omission_reason": "accepted_target_repair" if repair and repair["improved"] else None,
+                "initial_nominal_joint_search_score": first_expected_score,
+                "nominal_joint_scenario_assumption": "independent bounded paired adverse/nominal/optimistic mixture; supplied means retained"}
+               if include_nominal_joint_scenario else {}),
             **budget_diagnostics,
             **({"include_initial_knot": True, "initial_knot_evaluated": True,
                 "initial_knot_added": initial_knot_added,

@@ -35,6 +35,9 @@ The forecast gate and original-input reporting stay unchanged.
 factor is available for recourse only after distinguishable first-slot PV.
 ``include_initial_knot`` forwards an exact carried initial-energy table node;
 passive dispatch and fleet fallback omit this optional interpolation refinement.
+``include_nominal_joint_scenario`` and ``nominal_joint_scenario_slots`` forward
+the bounded mean-preserving adverse/nominal/optimistic joint mixture. Passive
+gate inputs remain the original forecasts.
 ``pv_tail_low_probability`` forwards the value policy's mean-preserving PV-only
 tail distribution after bounded paired demand. The default half weight is
 unchanged; passive dispatch and fleet fallback omit the optional tail model.
@@ -96,7 +99,8 @@ def factory(*, surplus_ratio=1.5, energy_intervals=4, terminal_value_fraction=0.
             include_charge_knots=False, first_action_rollout=False,
             paired_demand_scenario_spread=0.0, paired_demand_scenario_slots=None,
             rollout_pv_persistence=False, include_initial_knot=False,
-            pv_tail_low_probability=0.5, include_discharge_budget_knot=False):
+            pv_tail_low_probability=0.5, include_discharge_budget_knot=False,
+            include_nominal_joint_scenario=False, nominal_joint_scenario_slots=6):
     """Use passive dispatch only when forecast surplus clears the gate."""
     if (type(surplus_ratio) not in {int, float}
         or not math.isfinite(surplus_ratio) or surplus_ratio <= 0):
@@ -113,6 +117,8 @@ def factory(*, surplus_ratio=1.5, energy_intervals=4, terminal_value_fraction=0.
                           paired_demand_scenario_spread=paired_demand_scenario_spread,
                           paired_demand_scenario_slots=paired_demand_scenario_slots,
                           pv_tail_low_probability=pv_tail_low_probability,
+                          include_nominal_joint_scenario=include_nominal_joint_scenario,
+                          nominal_joint_scenario_slots=nominal_joint_scenario_slots,
                           rollout_pv_persistence=rollout_pv_persistence,
                           grid_charge_premium_per_kwh=grid_charge_premium_per_kwh).__wrapped__
     baseline = baseline_factory().__wrapped__
@@ -161,6 +167,14 @@ def factory(*, surplus_ratio=1.5, energy_intervals=4, terminal_value_fraction=0.
             "energy_intervals": energy_intervals,
             "terminal_value_fraction": terminal_value_fraction,
             "pv_scenario_spread": pv_scenario_spread,
+            **({"include_nominal_joint_scenario": True,
+                "nominal_joint_scenario_slots": nominal_joint_scenario_slots,
+                "nominal_joint_scenario_evaluated": result["diagnostics"].get("nominal_joint_scenario_evaluated", False),
+                "nominal_joint_scenario_applied": result["diagnostics"].get("nominal_joint_scenario_applied", False),
+                "nominal_joint_scenario_effective_slots": result["diagnostics"].get("nominal_joint_scenario_effective_slots", 0),
+                "nominal_joint_scenario_effective_hours": result["diagnostics"].get("nominal_joint_scenario_effective_hours", 0.0),
+                "nominal_joint_scenario_omission_reason": "passive_dispatch" if passive else result["diagnostics"].get("nominal_joint_scenario_omission_reason")}
+               if include_nominal_joint_scenario else {}),
             **({"include_discharge_budget_knot": True,
                 "discharge_budget_knot_evaluated": result["diagnostics"].get("discharge_budget_knot_evaluated", False),
                 "discharge_budget_knot_added": result["diagnostics"].get("discharge_budget_knot_added", False),
