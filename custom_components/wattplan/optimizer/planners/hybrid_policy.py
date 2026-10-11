@@ -38,6 +38,9 @@ passive dispatch and fleet fallback omit this optional interpolation refinement.
 ``pv_tail_low_probability`` forwards the value policy's mean-preserving PV-only
 tail distribution after bounded paired demand. The default half weight is
 unchanged; passive dispatch and fleet fallback omit the optional tail model.
+``include_discharge_budget_knot`` forwards optional stage-specific passive
+discharge-budget nodes. Passive dispatch and fleet fallback omit these nodes;
+unsupported variable discharge curves or nonzero stressed PV retain old tables.
 Optional ``prerefill_guard`` rejects passive dispatch when it predicts a dear
 import before natural PV charging restores the initial SoC, and an earlier cheap
 grid buy is locally feasible. It probes shared physics, not a full alternative
@@ -93,7 +96,7 @@ def factory(*, surplus_ratio=1.5, energy_intervals=4, terminal_value_fraction=0.
             include_charge_knots=False, first_action_rollout=False,
             paired_demand_scenario_spread=0.0, paired_demand_scenario_slots=None,
             rollout_pv_persistence=False, include_initial_knot=False,
-            pv_tail_low_probability=0.5):
+            pv_tail_low_probability=0.5, include_discharge_budget_knot=False):
     """Use passive dispatch only when forecast surplus clears the gate."""
     if (type(surplus_ratio) not in {int, float}
         or not math.isfinite(surplus_ratio) or surplus_ratio <= 0):
@@ -105,6 +108,7 @@ def factory(*, surplus_ratio=1.5, energy_intervals=4, terminal_value_fraction=0.
                           pv_scenario_spread=pv_scenario_spread,
                           include_charge_knots=include_charge_knots,
                           include_initial_knot=include_initial_knot,
+                          include_discharge_budget_knot=include_discharge_budget_knot,
                           first_action_rollout=first_action_rollout,
                           paired_demand_scenario_spread=paired_demand_scenario_spread,
                           paired_demand_scenario_slots=paired_demand_scenario_slots,
@@ -157,6 +161,14 @@ def factory(*, surplus_ratio=1.5, energy_intervals=4, terminal_value_fraction=0.
             "energy_intervals": energy_intervals,
             "terminal_value_fraction": terminal_value_fraction,
             "pv_scenario_spread": pv_scenario_spread,
+            **({"include_discharge_budget_knot": True,
+                "discharge_budget_knot_evaluated": result["diagnostics"].get("discharge_budget_knot_evaluated", False),
+                "discharge_budget_knot_added": result["diagnostics"].get("discharge_budget_knot_added", False),
+                "discharge_budget_knot_applied": result["diagnostics"].get("discharge_budget_knot_applied", False),
+                "discharge_budget_knot_omission_reason": ("passive_dispatch" if passive else
+                    result["diagnostics"].get("discharge_budget_knot_omission_reason")),
+                "discharge_budget_knot_nodes_added": result["diagnostics"].get("discharge_budget_knot_nodes_added", 0)}
+               if include_discharge_budget_knot else {}),
             **({"pv_tail_low_probability": pv_tail_low_probability,
                 "pv_tail_evaluated": result["diagnostics"].get("pv_tail_evaluated", False),
                 "pv_tail_applied": result["diagnostics"].get("pv_tail_applied", False),

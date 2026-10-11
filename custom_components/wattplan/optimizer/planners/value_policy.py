@@ -65,6 +65,14 @@ nondefault probabilities require bounded paired demand and omit rollout. This is
 an explicit risk assumption, not calibrated weather probability. Nominal reporting,
 fleet fallback and target repair do not use this tail distribution.
 
+Optional discharge-budget knots add at most one node per table layer for a
+constant discharge rate and exactly zero stressed low PV. A backward sum of
+reachable adverse AC discharge, divided by efficiency and added to the reserve,
+marks the remaining passive discharge budget. Rate-limited household imports can
+remain unavoidable, and budgets beyond capacity add no node. Successors use the
+next layer's nodes; nominal reporting, targets and physical modes stay unchanged.
+Unsupported physics retains the existing global tables with explicit diagnostics.
+
 Optional rollout PV persistence reuses one latent PV factor for the first two
 rollout slots, then resets to the independent value-table tail. Only different
 observed PV outcomes in slot zero reveal the factor for the second action.
@@ -125,7 +133,7 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
             grid_charge_premium_per_kwh=0.0, first_action_rollout=False,
             paired_demand_scenario_spread=0.0, paired_demand_scenario_slots=None,
             rollout_pv_persistence=False, include_initial_knot=False,
-            pv_tail_low_probability=0.5):
+            pv_tail_low_probability=0.5, include_discharge_budget_knot=False):
     """Return a deterministic interpolated cost-to-go planner."""
     if type(energy_intervals) is not int or not 2 <= energy_intervals <= 128:
         raise ValueError("energy_intervals must be an integer between 2 and 128")
@@ -138,6 +146,8 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
         raise ValueError("include_charge_knots must be a boolean")
     if type(include_initial_knot) is not bool:
         raise ValueError("include_initial_knot must be a boolean")
+    if type(include_discharge_budget_knot) is not bool:
+        raise ValueError("include_discharge_budget_knot must be a boolean")
     if type(first_action_rollout) is not bool:
         raise ValueError("first_action_rollout must be a boolean")
     if type(rollout_pv_persistence) is not bool:
@@ -176,10 +186,28 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
 
     def plan(params):
         batteries = params.battery_entities
+        budget_diagnostics = {}
+        if include_discharge_budget_knot:
+            budget_diagnostics = {
+                "include_discharge_budget_knot": True,
+                "discharge_budget_knot_evaluated": False,
+                "discharge_budget_knot_added": False,
+                "discharge_budget_knot_applied": False,
+                "discharge_budget_knot_omission_reason": None,
+                "discharge_budget_knot_values_by_slot": [],
+                "discharge_budget_knot_node_counts_by_slot": [],
+                "discharge_budget_knot_nodes_added": 0,
+                "discharge_budget_knot_capacity_exceeded_slots": [],
+                "discharge_budget_knot_deduplicated_slots": [],
+                "discharge_budget_knot_unavoidable_adverse_import_kwh": None,
+            }
         if len(batteries) != 1:
             result = fallback(params)
             result["diagnostics"]["value_policy_fallback"] = "bounded_joint_state_dp"
             result["diagnostics"]["forecast_adjustments_applied"] = False
+            if include_discharge_budget_knot:
+                budget_diagnostics["discharge_budget_knot_omission_reason"] = "joint_or_empty_battery_request"
+                result["diagnostics"].update(budget_diagnostics)
             if tail_modified:
                 result["diagnostics"].update(pv_tail_low_probability=pv_tail_low_probability,
                     pv_tail_evaluated=False, pv_tail_applied=False,
@@ -230,6 +258,49 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
             # Exact equality deduplicates existing nodes without moving a valid
             # carried state, including below-reserve recovery states.
             knots = sorted(knots + [battery.initial_kwh])
+        knots_by_slot = None
+        if include_discharge_budget_knot:
+            rate = battery.discharge_curve_kwh[0]
+            if any(value != rate for value in battery.discharge_curve_kwh):
+                omission = "nonconstant_discharge_curve"
+            elif any(pv * pv_scale * (1 - pv_scenario_spread) != 0
+                     for pv in params.solar_input_kwh):
+                omission = "nonzero_stressed_pv"
+            else:
+                omission = None
+            budget_diagnostics["discharge_budget_knot_omission_reason"] = omission
+            budget_diagnostics["discharge_budget_knot_values_by_slot"] = [None] * horizon
+            budget_diagnostics["discharge_budget_knot_node_counts_by_slot"] = [len(knots)] * (horizon + 1)
+            if omission is None:
+                knots_by_slot = [knots] * (horizon + 1)
+                remaining, unavoidable = 0.0, 0.0
+                capacity_exceeded, deduplicated = [], []
+                for slot in range(horizon - 1, -1, -1):
+                    factor = 1 + paired_demand_scenario_spread if slot < demand_slots else 1.0
+                    adverse_usage = params.usage_kwh[slot] * demand_scale * factor
+                    remaining += min(adverse_usage, rate)
+                    unavoidable += max(adverse_usage - rate, 0.0)
+                    node = battery.minimum_kwh + remaining / battery.discharge_efficiency
+                    if node > battery.capacity_kwh:
+                        # Capacity is already a base node; do not call clipping
+                        # a sufficient energy boundary for an infeasible budget.
+                        capacity_exceeded.append(slot)
+                        continue
+                    budget_diagnostics["discharge_budget_knot_values_by_slot"][slot] = node
+                    if node in knots:
+                        deduplicated.append(slot)
+                    else:
+                        knots_by_slot[slot] = sorted(knots + [node])
+                        budget_diagnostics["discharge_budget_knot_nodes_added"] += 1
+                budget_diagnostics.update(
+                    discharge_budget_knot_evaluated=True,
+                    discharge_budget_knot_added=budget_diagnostics["discharge_budget_knot_nodes_added"] > 0,
+                    discharge_budget_knot_applied=True,
+                    discharge_budget_knot_node_counts_by_slot=[len(layer) for layer in knots_by_slot],
+                    discharge_budget_knot_capacity_exceeded_slots=sorted(capacity_exceeded),
+                    discharge_budget_knot_deduplicated_slots=sorted(deduplicated),
+                    discharge_budget_knot_unavoidable_adverse_import_kwh=unavoidable,
+                )
         choices = ("self_consume", "preserve", "grid_charge") if battery.can_charge_from & 1 else ("self_consume", "preserve")
         terminal_price = max(median(params.grid_import_price_per_kwh[-12:]), 0.0)
         credit = terminal_price * battery.discharge_efficiency * terminal_value_fraction
@@ -252,7 +323,8 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
                         else -1 if discharge > EPSILON and discharge >= params.action_deadband_kwh else 0)
                 miss = target_miss(battery.target, step.levels[0]) if battery.target and battery.target.timeslot == slot else 0.0
                 future_miss, future_cost = (
-                    _interpolate(knots, tables[slot + 1][mode + 1], step.levels[0])
+                    _interpolate(knots_by_slot[slot + 1] if knots_by_slot is not None else knots,
+                                 tables[slot + 1][mode + 1], step.levels[0])
                     if successor_value is None else successor_value(slot + 1, step.levels[0], mode))
                 cost = (step.grid_import * params.grid_import_price_per_kwh[slot]
                         - step.grid_export * params.grid_export_price_per_kwh[slot]
@@ -349,7 +421,8 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
 
         for slot in range(horizon - 1, -1, -1):
             table = [[], [], []]
-            for level in knots:
+            layer_knots = knots_by_slot[slot] if knots_by_slot is not None else knots
+            for level in layer_knots:
                 rows = candidate_fn(slot, level)
                 for previous in (-1, 0, 1):
                     if scenario_active:
@@ -413,8 +486,12 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
                 repair["initial_knot_applied"] = False
             if tail_modified:
                 repair["pv_tail_applied"] = False
+            if include_discharge_budget_knot:
+                repair["discharge_budget_knot_applied"] = False
             if improved:
                 policies, evaluation = repaired_policies, repaired_evaluation
+                if include_discharge_budget_knot:
+                    budget_diagnostics["discharge_budget_knot_applied"] = False
         return build_result(params, policies, evaluation=evaluation, diagnostics={
             "algorithm": ("scenario_expected_backward_value_policy" if scenario_active
                           else "interpolated_backward_value_policy"), "approximate": True,
@@ -445,6 +522,7 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
                 "pv_tail_weights": [pv_tail_low_probability, 1 - pv_tail_low_probability]}
                if tail_modified else {}),
             "energy_intervals": energy_intervals, "energy_knots": len(knots),
+            **budget_diagnostics,
             **({"include_initial_knot": True, "initial_knot_evaluated": True,
                 "initial_knot_added": initial_knot_added,
                 "initial_knot_value_kwh": battery.initial_kwh,

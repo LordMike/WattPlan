@@ -220,6 +220,17 @@ variant changes only the search premium from 0.03 to 0.05. It tests whether a
 stronger charging penalty improves trade selection; it does not predict a savings
 gain and retains the default equal-weight PV tail.
 
+The guarded grid6 `-dischargebudgetknot1` composition enables the optional
+`include_discharge_budget_knot` (default false). It adds at most one node to each
+value-table layer: reserve plus the remaining adverse demand the constant
+discharge rate can serve, adjusted for discharge efficiency. It requires a
+constant discharge curve and exactly zero scaled worst-case PV; unsupported
+requests retain the existing tables. Nodes above capacity are omitted and
+existing nodes deduplicate. Rate-limited household imports can remain unavoidable.
+This refinement adds search work and does not certify optimality or savings;
+original-input reporting, passive dispatch, fleet fallback and target repair
+retain their existing behavior.
+
 The guarded grid6 `-pvtailq1of3` composition leaves the nearest 12 paired demand/PV
 slots unchanged. Later slots use PV factors 0 and 1.5 with probabilities one third
 and two thirds, preserving the forecast mean while retaining a complete-cloud
