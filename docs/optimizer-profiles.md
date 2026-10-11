@@ -205,6 +205,20 @@ The rollout leaves the passive gate, original-input replay and fleet fallback
 unchanged. It is an approximate search refinement, not a guarantee of savings;
 target repair can replace the proposed schedule. The option defaults to false.
 
+Hybrid `-demandN-hM` variants pair the lower PV branch with demand increased by
+`N` percent, and the higher PV branch with demand decreased by that percentage.
+The two equally weighted outcomes retain the supplied means and assume negative
+dependence between PV and demand; this is a stress assumption, not a calibrated
+forecast distribution. `hM` applies demand uncertainty only to the nearest `M`
+forecast slots; `hfull` applies it throughout the supplied horizon. PV uncertainty
+continues beyond that bound. Slots have the request's configured duration.
+Each action precedes its own joint outcome, including when first-action rollout
+is enabled. The demand is the aggregate after fixed comfort placement; comfort
+is not rescheduled by branch. The passive gate and reported costs use original
+inputs, while fleet fallback and target repair omit this uncertainty assumption.
+Zero demand spread preserves the existing PV model. Additional branches can
+increase work and cause unnecessary charging; compare a complete annual replay.
+
 Adaptive solar policy (`adaptive-solar-gate1.5-grid6-switchR-low100-highN`)
 chooses the PV uncertainty spread from the same next-24-hour forecast surplus
 ratio used by the passive gate. Below switch ratio `R` it uses a 100% symmetric

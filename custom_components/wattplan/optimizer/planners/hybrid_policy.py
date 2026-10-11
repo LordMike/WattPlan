@@ -28,6 +28,9 @@ battery charging premium; passive dispatch and reported costs are unaffected.
 breakpoints. Passive dispatch and joint-DP fleet fallback do not use these knots.
 ``first_action_rollout`` forwards the value policy's exact two-slot first-action
 refinement, with the remaining horizon still valued by interpolation.
+``paired_demand_scenario_spread`` and ``paired_demand_scenario_slots`` forward
+the value policy's paired aggregate-demand uncertainty and relative slot bound.
+The forecast gate and original-input reporting stay unchanged.
 Optional ``prerefill_guard`` rejects passive dispatch when it predicts a dear
 import before natural PV charging restores the initial SoC, and an earlier cheap
 grid buy is locally feasible. It probes shared physics, not a full alternative
@@ -80,7 +83,8 @@ def _prerefill_opportunity(params, slots):
 
 def factory(*, surplus_ratio=1.5, energy_intervals=4, terminal_value_fraction=0.0,
             pv_scenario_spread=0.0, prerefill_guard=False, grid_charge_premium_per_kwh=0.0,
-            include_charge_knots=False, first_action_rollout=False):
+            include_charge_knots=False, first_action_rollout=False,
+            paired_demand_scenario_spread=0.0, paired_demand_scenario_slots=None):
     """Use passive dispatch only when forecast surplus clears the gate."""
     if (type(surplus_ratio) not in {int, float}
         or not math.isfinite(surplus_ratio) or surplus_ratio <= 0):
@@ -92,6 +96,8 @@ def factory(*, surplus_ratio=1.5, energy_intervals=4, terminal_value_fraction=0.
                           pv_scenario_spread=pv_scenario_spread,
                           include_charge_knots=include_charge_knots,
                           first_action_rollout=first_action_rollout,
+                          paired_demand_scenario_spread=paired_demand_scenario_spread,
+                          paired_demand_scenario_slots=paired_demand_scenario_slots,
                           grid_charge_premium_per_kwh=grid_charge_premium_per_kwh).__wrapped__
     baseline = baseline_factory().__wrapped__
 
@@ -139,6 +145,12 @@ def factory(*, surplus_ratio=1.5, energy_intervals=4, terminal_value_fraction=0.
             "energy_intervals": energy_intervals,
             "terminal_value_fraction": terminal_value_fraction,
             "pv_scenario_spread": pv_scenario_spread,
+            **({"paired_demand_scenario_spread": paired_demand_scenario_spread,
+                "paired_demand_scenario_slots": paired_demand_scenario_slots,
+                "paired_demand_scenario_applied": result["diagnostics"].get("paired_demand_scenario_applied", False),
+                "paired_demand_scenario_effective_slots": result["diagnostics"].get("paired_demand_scenario_effective_slots", 0),
+                "paired_demand_scenario_effective_hours": result["diagnostics"].get("paired_demand_scenario_effective_hours", 0.0)}
+               if paired_demand_scenario_spread else {}),
             **({"first_action_rollout": True,
                 "first_action_rollout_applied": result["diagnostics"].get("first_action_rollout_applied", False)}
                if first_action_rollout else {}),

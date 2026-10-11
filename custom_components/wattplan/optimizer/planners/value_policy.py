@@ -48,6 +48,14 @@ state. Only slot zero uses this refinement. The tail remains approximate, and
 fleet fallback and target repair do not use rollout.
 Diagnostics distinguish evaluated rollout from an accepted policy replaced by
 target repair; the initial rollout score always describes the pre-repair search.
+
+Optional paired demand spread couples low PV with high demand and high PV with
+low demand in two equal-weight branches, retaining both forecast means. This is
+an explicit negative dependence assumption, not calibrated uncertainty. A relative
+slot bound limits demand uncertainty while PV scenarios and planning continue
+through the full horizon. Prepared demand includes fixed comfort placement, so
+the spread describes aggregate demand without rescheduling comfort by branch.
+Reporting replays original inputs; fleet fallback and target repair omit it.
 """
 
 from bisect import bisect_right
@@ -93,7 +101,8 @@ def _charge_knots(battery):
 
 def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
             terminal_value_fraction=0.0, include_charge_knots=False, pv_scenario_spread=0.0,
-            grid_charge_premium_per_kwh=0.0, first_action_rollout=False):
+            grid_charge_premium_per_kwh=0.0, first_action_rollout=False,
+            paired_demand_scenario_spread=0.0, paired_demand_scenario_slots=None):
     """Return a deterministic interpolated cost-to-go planner."""
     if type(energy_intervals) is not int or not 2 <= energy_intervals <= 128:
         raise ValueError("energy_intervals must be an integer between 2 and 128")
@@ -109,6 +118,14 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
     if (type(pv_scenario_spread) not in {int, float}
             or not math.isfinite(pv_scenario_spread) or not 0 <= pv_scenario_spread <= 1):
         raise ValueError("pv_scenario_spread must be finite and between zero and one")
+    if (type(paired_demand_scenario_spread) not in {int, float}
+            or not math.isfinite(paired_demand_scenario_spread)
+            or not 0 <= paired_demand_scenario_spread <= 1):
+        raise ValueError("paired_demand_scenario_spread must be finite and between zero and one")
+    if paired_demand_scenario_slots is not None and (
+            type(paired_demand_scenario_slots) is not int or paired_demand_scenario_slots <= 0):
+        raise ValueError("paired_demand_scenario_slots must be None or a positive integer")
+    scenario_active = bool(pv_scenario_spread or paired_demand_scenario_spread)
     capabilities = PlannerCapabilities()
     fallback = joint_factory(max_states=8, max_expansions=1024)
     target_repair = joint_factory(soc_step_kwh=0.05, max_states=64, max_expansions=20000)
@@ -119,6 +136,13 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
             result = fallback(params)
             result["diagnostics"]["value_policy_fallback"] = "bounded_joint_state_dp"
             result["diagnostics"]["forecast_adjustments_applied"] = False
+            if paired_demand_scenario_spread:
+                result["diagnostics"].update(
+                    paired_demand_scenario_spread=paired_demand_scenario_spread,
+                    paired_demand_scenario_slots=paired_demand_scenario_slots,
+                    paired_demand_scenario_evaluated=False, paired_demand_scenario_applied=False,
+                    paired_demand_scenario_effective_slots=0, paired_demand_scenario_effective_hours=0.0,
+                    scenario_branch_evaluations=0)
             if first_action_rollout:
                 result["diagnostics"].update(first_action_rollout=True, first_action_rollout_evaluated=False,
                     first_action_rollout_applied=False, rollout_search_transitions=0)
@@ -129,6 +153,7 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
             return result
         battery = batteries[0]
         horizon = len(params.usage_kwh)
+        demand_slots = min(horizon, paired_demand_scenario_slots or horizon)
         knots = sorted(set([battery.capacity_kwh * n / energy_intervals
                             for n in range(energy_intervals + 1)]
                            + [battery.minimum_kwh]))
@@ -145,13 +170,14 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
         tables = [None] * (horizon + 1)
         tables[horizon] = [terminal, terminal, terminal]
         transitions = 0
+        scenario_branches = 0
 
-        def candidates(slot, level, pv_factor=1.0, *, successor_value=None):
+        def candidates(slot, level, pv_factor=1.0, *, demand_factor=1.0, successor_value=None):
             nonlocal transitions
             rows = []
             for action in choices:
                 step = transition(batteries, [level], [action],
-                    usage=params.usage_kwh[slot] * demand_scale,
+                    usage=params.usage_kwh[slot] * demand_scale * demand_factor,
                     pv=params.solar_input_kwh[slot] * pv_scale * pv_factor)
                 transitions += 1
                 charge, discharge = step.charge, sum(step.discharge)
@@ -171,6 +197,24 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
             return rows
 
         def scenario_candidates(slot, level, *, successor_value=None):
+            nonlocal scenario_branches
+            if paired_demand_scenario_spread:
+                spread = paired_demand_scenario_spread if slot < demand_slots else 0.0
+                low_pv, high_pv = 1 - pv_scenario_spread, 1 + pv_scenario_spread
+                high_demand, low_demand = 1 + spread, 1 - spread
+                pv = params.solar_input_kwh[slot] * pv_scale
+                usage = params.usage_kwh[slot] * demand_scale
+                identical = (pv * low_pv == pv * high_pv
+                             and usage * high_demand == usage * low_demand)
+                scenario_branches += 1 if identical else 2
+                low = candidates(slot, level, low_pv, demand_factor=high_demand,
+                                 successor_value=successor_value)
+                if identical:
+                    return low
+                high = candidates(slot, level, high_pv, demand_factor=low_demand,
+                                  successor_value=successor_value)
+                return [((a[0] + b[0]) / 2, (a[1] + b[1]) / 2,
+                         (a[2], b[2]), a[3]) for a, b in zip(low, high, strict=True)]
             # Exactly zero forecast PV has identical branches; avoid duplicate physics.
             if params.solar_input_kwh[slot] == 0 or pv_scale == 0:
                 return candidates(slot, level, successor_value=successor_value)
@@ -185,7 +229,7 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
                         else ((modes[0] != previous) + (modes[1] != previous)) / 2)
             return row[0], row[1] + switches * params.mode_switch_cost
 
-        candidate_fn = scenario_candidates if pv_scenario_spread else candidates
+        candidate_fn = scenario_candidates if scenario_active else candidates
         first_expected_score = None
         rollout_transitions = 0
         rollout_score = None
@@ -203,7 +247,7 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
             for level in knots:
                 rows = candidate_fn(slot, level)
                 for previous in (-1, 0, 1):
-                    if pv_scenario_spread:
+                    if scenario_active:
                         table[previous + 1].append(min(scenario_score(row, previous) for row in rows))
                     else:
                         table[previous + 1].append(min((miss, cost + (mode != previous) * params.mode_switch_cost)
@@ -216,7 +260,7 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
                 rows = candidate_fn(slot, level, successor_value=exact_successor)
             else:
                 rows = candidate_fn(slot, level)
-            if pv_scenario_spread:
+            if scenario_active:
                 best = min(rows, key=lambda row: scenario_score(row, previous))
                 if slot == 0:
                     first_expected_score = scenario_score(best, previous)
@@ -248,17 +292,29 @@ def factory(*, energy_intervals=8, pv_scale=1.0, demand_scale=1.0,
                 repair["grid_charge_premium_applied"] = False
             if first_action_rollout:
                 repair["first_action_rollout_applied"] = False
+            if paired_demand_scenario_spread:
+                repair["paired_demand_scenario_applied"] = False
             if improved:
                 policies, evaluation = repaired_policies, repaired_evaluation
         return build_result(params, policies, evaluation=evaluation, diagnostics={
-            "algorithm": ("scenario_expected_backward_value_policy" if pv_scenario_spread
+            "algorithm": ("scenario_expected_backward_value_policy" if scenario_active
                           else "interpolated_backward_value_policy"), "approximate": True,
             **({"pv_scenario_spread": pv_scenario_spread,
                 "pv_scenario_factors": [1 - pv_scenario_spread, 1 + pv_scenario_spread],
                 "pv_scenario_weights": [0.5, 0.5],
                 "initial_value_policy_expected_score": first_expected_score,
-                "scenario_assumption": "independent symmetric per-slot PV factors"}
-               if pv_scenario_spread else {}),
+                "scenario_assumption": ("independent per-slot paired low PV/high aggregate demand and high PV/low aggregate demand"
+                                        if paired_demand_scenario_spread else "independent symmetric per-slot PV factors")}
+               if scenario_active else {}),
+            **({"paired_demand_scenario_spread": paired_demand_scenario_spread,
+                "paired_demand_scenario_slots": paired_demand_scenario_slots,
+                "paired_demand_scenario_factors": [1 + paired_demand_scenario_spread, 1 - paired_demand_scenario_spread],
+                "paired_demand_scenario_evaluated": True,
+                "paired_demand_scenario_applied": not (repair and repair["improved"]),
+                "paired_demand_scenario_effective_slots": demand_slots,
+                "paired_demand_scenario_effective_hours": demand_slots * params.slot_minutes / 60,
+                "scenario_branch_evaluations": scenario_branches}
+               if paired_demand_scenario_spread else {}),
             "energy_intervals": energy_intervals, "energy_knots": len(knots),
             "include_charge_knots": include_charge_knots, "target_repair": repair,
             "pv_scale": pv_scale, "demand_scale": demand_scale,
