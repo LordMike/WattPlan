@@ -181,6 +181,20 @@ PRESETS = {
         for horizon, rounding, pv, credit in ((24, 50, 100, 0), (36, 25, 50, 25))
     },
     **{
+        f"value-solar-gate-{ratio:g}": PlannerPreset(
+            "hybrid-policy", f"Value policy — solar surplus gate {ratio:g}",
+            {"surplus_ratio": ratio, "energy_intervals": 4},
+        )
+        for ratio in (1.0, 1.5, 2.0)
+    },
+    **{
+        f"value-solar-gate-{ratio:g}-grid{grid}": PlannerPreset(
+            "hybrid-policy", f"Value policy — solar surplus gate {ratio:g}, {grid} energy intervals",
+            {"surplus_ratio": ratio, "energy_intervals": grid},
+        )
+        for ratio, grid in ((1.0, 6), (1.5, 6), (1.5, 8))
+    },
+    **{
         f"linear-dispatch-marginal-h{horizon}-pv100-tv0": PlannerPreset(
             "linear-dispatch", f"Linear dispatch — marginal value, {horizon} slots",
             {"dispatch_mode": "marginal", "max_slots": horizon,
@@ -188,6 +202,33 @@ PRESETS = {
         )
         for horizon in (24, 36)
     },
+    **{
+        f"value-solar-gate-1.5-grid6-terminal{credit}": PlannerPreset(
+            "hybrid-policy", f"Value policy — solar surplus gate 1.5, 6 intervals, terminal value {credit}%",
+            {"surplus_ratio": 1.5, "energy_intervals": 6,
+             "terminal_value_fraction": credit / 100},
+        )
+        for credit in (25, 50)
+    },
+    **{
+        f"value-solar-gate-1.5-grid6-terminal0-scenario{spread}": PlannerPreset(
+            "hybrid-policy", f"Value policy — solar surplus gate 1.5, 6 intervals, PV spread {spread}%",
+            {"surplus_ratio": 1.5, "energy_intervals": 6,
+             "terminal_value_fraction": 0.0, "pv_scenario_spread": spread / 100},
+        )
+        for spread in (50, 100)
+    },
+    "value-solar-gate-1.5-grid8-terminal0-scenario100": PlannerPreset(
+        "hybrid-policy", "Value policy — solar surplus gate 1.5, 8 intervals, PV spread 100%",
+        {"surplus_ratio": 1.5, "energy_intervals": 8,
+         "terminal_value_fraction": 0.0, "pv_scenario_spread": 1.0},
+    ),
+    "value-solar-gate-1.5-grid6-terminal0-scenario0-prerefill1": PlannerPreset(
+        "hybrid-policy", "Value policy — solar surplus gate 1.5, 6 intervals, pre-refill guard",
+        {"surplus_ratio": 1.5, "energy_intervals": 6,
+         "terminal_value_fraction": 0.0, "pv_scenario_spread": 0.0,
+         "prerefill_guard": True},
+    ),
 }
 
 

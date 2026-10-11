@@ -172,6 +172,20 @@ the LP. A fresh native solver gives every eligible request its own solve budget.
 Reported flows and costs always replay selected policies against the original
 inputs and never include terminal search credit.
 
+Solar-gated value policy (`value-solar-gate-*`) uses passive self-consumption
+when the next 24 forecast hours have enough surplus PV relative to both demand
+deficits and battery headroom. The suffix is the required ratio. Otherwise it
+uses value dispatch with four energy intervals, or the count specified by a
+`-gridN` suffix. An optional `-terminalN` suffix applies the same terminal-value
+percentage as value policy. `-scenarioN` applies PV uncertainty to value dispatch;
+the passive-policy gate still uses the supplied forecast. Targets, low reserves, fleets,
+negative tariffs and battery preference penalties always retain value dispatch.
+The gate can miss price opportunities and does not guarantee that forecast solar
+arrives before demand. `-prerefill1` variants check the order of forecast slots:
+they retain value dispatch if a feasible cheaper grid-charge opportunity precedes
+expensive imports before solar restores the initial battery level. This is a
+heuristic opportunity check, not proof that buying early will save money.
+
 These families use shared comfort preparation and optional-load reporting.
 They are experimental alternatives: compare them with the simulator using your
 own exports before choosing one for daily operation.
