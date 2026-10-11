@@ -172,6 +172,22 @@ PRESETS = {
         )
         for spread in (50, 100)
     },
+    **{
+        f"linear-dispatch-h{horizon}-round{rounding}-pv{pv}-tv{credit}": PlannerPreset(
+            "linear-dispatch", f"Linear dispatch — {horizon} slots, rounding {rounding}%",
+            {"max_slots": horizon, "round_fraction": rounding / 100,
+             "pv_scale": pv / 100, "terminal_value_fraction": credit / 100},
+        )
+        for horizon, rounding, pv, credit in ((24, 50, 100, 0), (36, 25, 50, 25))
+    },
+    **{
+        f"linear-dispatch-marginal-h{horizon}-pv100-tv0": PlannerPreset(
+            "linear-dispatch", f"Linear dispatch — marginal value, {horizon} slots",
+            {"dispatch_mode": "marginal", "max_slots": horizon,
+             "pv_scale": 1.0, "terminal_value_fraction": 0.0},
+        )
+        for horizon in (24, 36)
+    },
 }
 
 

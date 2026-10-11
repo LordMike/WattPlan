@@ -22,6 +22,7 @@ BUILTINS = {
     "local-refinement": "custom_components.wattplan.optimizer.planners.local_refinement:factory",
     "price-reserve": "custom_components.wattplan.optimizer.planners.price_reserve:factory",
     "value-policy": "custom_components.wattplan.optimizer.planners.value_policy:factory",
+    "linear-dispatch": "custom_components.wattplan.optimizer.planners.linear_dispatch:factory",
 }
 ALIASES = {
     "custom_components.wattplan.optimizer.simulation.adapters:highs_factory": "highs",

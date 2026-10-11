@@ -154,6 +154,24 @@ They still report flows and costs using the original inputs. This models
 independent uncertainty in each slot, not a calibrated weather forecast, and can
 overpay for protection against low solar production.
 
+Linear dispatch (`linear-dispatch-h*-round*-pv*-tv*`) solves a continuous
+single-battery approximation, then rounds it into executable inverter policies.
+`h` limits the search horizon in slots, `round` sets the percentage of maximum
+grid charge needed to select charging, and `pv` and `tv` set forecast PV and
+terminal-value percentages. `linear-dispatch-marginal-h*` instead evaluates each
+legal inverter policy through shared physics, then adds the next LP energy-row
+dual times its resulting stored energy to the immediate forecast cost. This dual
+is a local future-cost slope at the relaxed solution; full-power actions can
+cross its valid region, and degenerate LP solutions can yield different slopes.
+Rounding, marginal approximation and simplified power curves can miss
+opportunities or buy excess energy. The relaxation can choose PV export where
+physical replay automatically stores available surplus. Negative-import slots
+forbid relaxed discharge to prevent profitable lossy cycling. Targets, reserve
+shortfalls and multiple batteries use deadline/reserve preparation instead of
+the LP. A fresh native solver gives every eligible request its own solve budget.
+Reported flows and costs always replay selected policies against the original
+inputs and never include terminal search credit.
+
 These families use shared comfort preparation and optional-load reporting.
 They are experimental alternatives: compare them with the simulator using your
 own exports before choosing one for daily operation.
