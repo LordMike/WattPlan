@@ -23,8 +23,6 @@ from ..const import (
     CONF_MIN_OPTION_GAP_MINUTES,
     CONF_MINIMUM_KWH,
     CONF_OPTIONS_COUNT,
-    CONF_OPTIMIZER_LOOKAHEAD_HOURS,
-    CONF_OPTIMIZER_LOOKAHEAD_SLOTS,
     CONF_PLANNER_PRESET,
     CONF_PREFER_PV_SURPLUS_CHARGING,
     CONF_ROLLING_WINDOW_HOURS,
@@ -37,7 +35,6 @@ from ..const import (
 from .source_shared import (
     MAX_NAME_LENGTH,
     SECTION_BATTERY_ADVANCED,
-    _lookahead_slots_from_hours,
     _optional_max_distinct_options,
     _validate_text_field,
 )
@@ -148,15 +145,9 @@ def _validate_comfort_data(
             errors[CONF_ROLLING_WINDOW_HOURS] = "comfort_rolling_window_mismatch"
         slot_minutes = int(entry.data[CONF_SLOT_MINUTES])
         plan_slots = int(entry.data[CONF_HOURS_TO_PLAN]) * 60 // slot_minutes
-        lookahead_slots = int(
-            entry.options.get(
-                CONF_OPTIMIZER_LOOKAHEAD_SLOTS,
-                LEGACY_OPTIMIZER_LOOKAHEAD_SLOTS,
-            )
-        )
         solve_horizon = preset_lookahead_slots(
             entry.options.get(CONF_PLANNER_PRESET, DEFAULT_PRESET),
-            lookahead_slots,
+            LEGACY_OPTIMIZER_LOOKAHEAD_SLOTS,
             plan_slots,
         )
         for field in (
@@ -174,11 +165,10 @@ def _validate_core_lookahead_for_comforts(
     """Reject planner changes that make existing comfort loads invalid."""
     slot_minutes = int(data[CONF_SLOT_MINUTES])
     plan_slots = int(data[CONF_HOURS_TO_PLAN]) * 60 // slot_minutes
-    lookahead_slots = _lookahead_slots_from_hours(
-        float(data[CONF_OPTIMIZER_LOOKAHEAD_HOURS]), slot_minutes
-    )
     preset = data.get(CONF_PLANNER_PRESET, DEFAULT_PRESET)
-    solve_horizon = preset_lookahead_slots(preset, lookahead_slots, plan_slots)
+    solve_horizon = preset_lookahead_slots(
+        preset, LEGACY_OPTIMIZER_LOOKAHEAD_SLOTS, plan_slots
+    )
     for subentry in entry.subentries.values():
         if subentry.subentry_type != SUBENTRY_TYPE_COMFORT:
             continue
@@ -190,13 +180,8 @@ def _validate_core_lookahead_for_comforts(
                 CONF_MIN_CONSECUTIVE_OFF_MINUTES,
             )
         ):
-            field = (
-                CONF_OPTIMIZER_LOOKAHEAD_HOURS
-                if preset == DEFAULT_PRESET
-                else CONF_PLANNER_PRESET
-            )
             return {
-                field: "optimizer_lookahead_too_short_for_comfort"
+                CONF_PLANNER_PRESET: "optimizer_lookahead_too_short_for_comfort"
             }
     return {}
 

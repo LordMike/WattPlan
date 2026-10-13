@@ -1,9 +1,20 @@
 # Planners and battery behavior
 
-Choose a **Planner preset** in WattPlan's General settings. A preset selects an
-algorithm and its search effort; **Battery behavior** separately controls how
-readily the planner cycles the battery. The default is **HiGHS — existing
-settings**, which retains your configured lookahead.
+Choose a **Planner preset** in WattPlan's General settings. Each preset fixes its
+algorithm and search settings. There is no separate battery behavior profile;
+the planner uses fixed neutral switching and wear preferences, while battery
+reserve, targets, and charging permissions remain configuration inputs. The
+default is **HiGHS — 22 lookahead slots**.
+
+The default picker contains HiGHS, the self-consumption baseline, and
+`local-search-3`. In the saved annual replay, `local-search-3` produced 45.30
+DKK lower scenario cost than self-consumption across three identical 8,760-hour
+replays, each taking about 22 seconds. That study used one reconstructed hourly
+year, synthetic persistence forecasts, and hypothetical battery settings. The
+broader cross-environment study showed varying results, so this is a measured
+candidate, not a general savings guarantee. Other planner presets are marked
+experimental and hidden by default. To show them, enable **Show experimental
+planners** under Options → Troubleshooting.
 
 ## Choosing a preset
 
@@ -31,9 +42,9 @@ result. Switching presets reloads the integration and replaces the previous plan
 
 The numbers in HiGHS preset names count **forecast slots**, not hours. At
 15-minute resolution, `highs-16` looks four hours ahead and `highs-24` six hours;
-at hourly resolution they look 16 and 24 hours ahead. WattPlan still returns a
-schedule for the complete planning horizon. The editable HiGHS lookahead setting
-applies only to `highs`. Other presets have fixed search settings.
+at hourly resolution they look 16 and 24 hours ahead. `highs` uses 22 slots.
+WattPlan still returns a schedule for the complete planning horizon. Other
+presets use their catalog-defined settings and the supplied plan horizon.
 
 ### HiGHS
 
@@ -440,23 +451,11 @@ misses alongside cost. Reported costs do not give leftover energy a separate
 end-of-plan credit. Some value-policy variants use such a credit internally to
 guide their search; other planners can favor using energy down to the reserve.
 
-## Battery behavior
+## Battery operation settings
 
-| Profile | Intended behavior |
-| --- | --- |
-| Aggressive | Favors price opportunities and accepts more battery activity. |
-| Balanced | The default balance between savings and calmer battery operation. |
-| Conservative | Discourages marginal moves and frequent changes of operating mode. |
-
-These are preferences, not guarantees about cycling or battery life. They do
-not change your minimum reserve or replace a charging target. Set the battery's
-minimum energy directly to retain more reserve, and use a
-[battery target](entities-and-services.md) for a required level by a deadline.
-Self-consumption keeps its fixed battery policy regardless of the profile.
-
-The planners interpret these preferences according to their control models, so
-the same profile can produce different schedules. Selecting grid charging still
-requests the full feasible slot rate; Conservative is not a charging-power limit.
-Preference penalties are not added to projected electricity cost or savings.
-Use [historical cost tracking](historical-cost-tracking.md) to assess results on
-your own installation.
+Presets use fixed algorithm settings. They do not set a battery's physical
+minimum reserve, charging permissions, or target; configure those directly on
+the battery. Projected tariff cost includes grid import cost minus export
+revenue, without a monetary estimate for battery wear. Use
+[historical cost tracking](historical-cost-tracking.md) to assess costs on your
+own installation.

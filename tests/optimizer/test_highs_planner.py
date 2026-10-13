@@ -42,7 +42,7 @@ def _params():
 @pytest.mark.parametrize("preset", ["highs", "highs-8", "highs-16", "highs-24"])
 def test_highs_preset_matches_direct_api_equipment_and_reporting(preset):
     params = _params()
-    lookahead = 8 if preset == "highs" else int(preset.split("-")[1])
+    lookahead = 22 if preset == "highs" else int(preset.split("-")[1])
     expected = optimize(params.model_copy(update={"lookahead_slots": lookahead}))
     actual = run_preset(params, preset)
     for field in (

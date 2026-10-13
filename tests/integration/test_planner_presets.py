@@ -154,10 +154,10 @@ def test_experimental_preset_filter_keeps_hidden_current_selection():
     assert set(available_preset_names(show_experimental=True)) == set(PRESETS)
 
 
-def test_irrelevant_legacy_lookahead_does_not_block_fixed_presets():
+def test_legacy_lookahead_is_ignored_by_preset_validation():
     data = {CONF_SLOT_MINUTES: 60, CONF_HOURS_TO_PLAN: 24,
             CONF_OPTIMIZER_LOOKAHEAD_HOURS: 0.1}
-    assert _validate_core_data(data)
+    assert not _validate_core_data(data)
     assert not _validate_core_data({**data, CONF_PLANNER_PRESET: "beam-2"})
     assert _validate_core_data({**data, CONF_PLANNER_PRESET: "typo"}) == {
         CONF_PLANNER_PRESET: "unknown_planner_preset"
@@ -259,7 +259,7 @@ async def test_input_export_preserves_selected_algorithm_and_existing_model_fiel
 
 
 @pytest.mark.parametrize("preset", ["highs", "highs-16", "beam-2"])
-async def test_setup_summary_describes_selected_settings(hass, preset):
+async def test_setup_summary_describes_selected_preset(hass, preset):
     flow = WattPlanConfigFlow()
     flow.hass = hass
     flow._core = {"name": "Home", CONF_SLOT_MINUTES: 15, CONF_HOURS_TO_PLAN: 48}
@@ -268,9 +268,7 @@ async def test_setup_summary_describes_selected_settings(hass, preset):
     summary = await flow.async_step_setup_complete()
     placeholders = summary["description_placeholders"]
     assert placeholders["planner_preset"] == PRESETS[preset].label
-    assert placeholders["search_settings"] == (
-        "HiGHS lookahead: 11 hours" if preset == "highs" else "Fixed by the selected preset"
-    )
+    assert "search_settings" not in placeholders
     assert "lookahead_hours" not in placeholders
 
 

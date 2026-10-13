@@ -41,7 +41,6 @@ from custom_components.wattplan.const import (
     CONF_MIN_OPTION_GAP_MINUTES,
     CONF_MINIMUM_KWH,
     CONF_ON_OFF_SOURCE,
-    CONF_OPTIMIZER_LOOKAHEAD_HOURS,
     CONF_OPTIMIZER_LOOKAHEAD_SLOTS,
     CONF_OPTIONS_COUNT,
     CONF_OUTLOOK_LANGUAGES,
@@ -373,16 +372,13 @@ async def _run_emit(
 
 
 @pytest.mark.parametrize(
-    ("slot_minutes", "legacy_hours", "edited_slots"),
-    [(15, 5.5, 48), (30, 11.0, 24), (60, 22.0, 12)],
+    "slot_minutes", [15, 30, 60],
 )
-async def test_legacy_lookahead_migrates_and_can_be_edited_in_hours(
+async def test_legacy_lookahead_is_ignored_by_runtime_and_options_flow(
     hass: HomeAssistant,
     slot_minutes: int,
-    legacy_hours: float,
-    edited_slots: int,
 ) -> None:
-    """Legacy entries should keep 22 slots, display them honestly, then edit."""
+    """Stale profile and lookahead values do not affect preset-owned tuning."""
     horizon_slots = 12 * 60 // slot_minutes
     values = [0.2] * horizon_slots
     sources = {
@@ -402,6 +398,8 @@ async def test_legacy_lookahead_migrates_and_can_be_edited_in_hours(
     options = {
         CONF_PLANNING_ENABLED: True,
         CONF_ACTION_EMISSION_ENABLED: False,
+        CONF_OPTIMIZER_LOOKAHEAD_SLOTS: 5,
+        "optimizer_profile": "aggressive",
     }
     entry = _entry(
         title=f"Legacy Home {slot_minutes}",
@@ -423,8 +421,9 @@ async def test_legacy_lookahead_migrates_and_can_be_edited_in_hours(
     ):
         await _setup_entry(hass, entry)
         assert entry.minor_version == 2
-        assert entry.options[CONF_OPTIMIZER_LOOKAHEAD_SLOTS] == 22
-        assert captured[-1].lookahead_slots == 22
+        assert entry.options[CONF_OPTIMIZER_LOOKAHEAD_SLOTS] == 5
+        effective_lookahead = 22
+        assert captured[-1].lookahead_slots == effective_lookahead
         assert captured[-1].slot_minutes == slot_minutes
         assert captured[-1].plan_start is not None
         assert captured[-1].plan_start.utcoffset() == timedelta(0)
@@ -436,18 +435,14 @@ async def test_legacy_lookahead_migrates_and_can_be_edited_in_hours(
             result["flow_id"], {"next_step_id": "planner_core"}
         )
         schema = result["data_schema"].schema
-        marker = next(
-            key
-            for key in schema
-            if getattr(key, "schema", None) == CONF_OPTIMIZER_LOOKAHEAD_HOURS
-        )
-        assert marker.default() == legacy_hours
+        schema_fields = {getattr(key, "schema", None) for key in schema}
+        assert "optimizer_lookahead_hours" not in schema_fields
+        assert "optimizer_profile" not in schema_fields
         result = await hass.config_entries.options.async_configure(
             result["flow_id"],
             {
                 CONF_SLOT_MINUTES: str(slot_minutes),
                 CONF_HOURS_TO_PLAN: "12",
-                CONF_OPTIMIZER_LOOKAHEAD_HOURS: 12,
             },
         )
         assert result["type"] is FlowResultType.MENU
@@ -455,8 +450,9 @@ async def test_legacy_lookahead_migrates_and_can_be_edited_in_hours(
         await _run_optimize(hass, entry_id=entry.entry_id)
         await hass.async_block_till_done()
 
-    assert entry.options[CONF_OPTIMIZER_LOOKAHEAD_SLOTS] == edited_slots
-    assert captured[-1].lookahead_slots == edited_slots
+    assert entry.options[CONF_OPTIMIZER_LOOKAHEAD_SLOTS] == 5
+    assert entry.options["optimizer_profile"] == "aggressive"
+    assert captured[-1].lookahead_slots == effective_lookahead
 
 
 async def test_runtime_missing_lookahead_falls_back_to_22_slots(

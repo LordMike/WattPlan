@@ -43,12 +43,12 @@ from custom_components.wattplan.const import (
     CONF_MIN_OPTION_GAP_MINUTES,
     CONF_MINIMUM_KWH,
     CONF_ON_OFF_SOURCE,
-    CONF_OPTIMIZER_LOOKAHEAD_HOURS,
     CONF_OPTIMIZER_LOOKAHEAD_SLOTS,
     CONF_OPTIONS_COUNT,
     CONF_OUTLOOK_LANGUAGES,
     CONF_PLANNER_REPRODUCTION_RETENTION_DAYS,
     CONF_PLANNING_ENABLED,
+    CONF_PLANNER_PRESET,
     CONF_RECORD_PLANNER_REPRODUCTIONS,
     CONF_SHOW_EXPERIMENTAL_PLANNERS,
     CONF_ROLLING_WINDOW_HOURS,
@@ -278,7 +278,10 @@ async def test_form(hass: HomeAssistant, mock_setup_entry: AsyncMock) -> None:
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "planner_setup"
-    assert _schema_default(result, CONF_OPTIMIZER_LOOKAHEAD_HOURS) == 12.0
+    assert _schema_default(result, CONF_PLANNER_PRESET) == "highs"
+    schema_fields = {getattr(field, "schema", None) for field in result["data_schema"].schema}
+    assert "optimizer_lookahead_hours" not in schema_fields
+    assert "optimizer_profile" not in schema_fields
     assert all(
         getattr(field, "schema", None) != CONF_OUTLOOK_LANGUAGES
         for field in result["data_schema"].schema
@@ -290,7 +293,6 @@ async def test_form(hass: HomeAssistant, mock_setup_entry: AsyncMock) -> None:
             CONF_NAME: "Home",
             CONF_SLOT_MINUTES: "60",
             CONF_HOURS_TO_PLAN: "12",
-            CONF_OPTIMIZER_LOOKAHEAD_HOURS: "6",
         },
     )
     assert result["type"] is FlowResultType.FORM
@@ -350,7 +352,8 @@ async def test_form(hass: HomeAssistant, mock_setup_entry: AsyncMock) -> None:
     assert result["title"] == "Home"
     assert len(mock_setup_entry.mock_calls) == 1
     entry = hass.config_entries.async_entries(DOMAIN)[0]
-    assert entry.options[CONF_OPTIMIZER_LOOKAHEAD_SLOTS] == 6
+    assert entry.options[CONF_PLANNER_PRESET] == "highs"
+    assert CONF_OPTIMIZER_LOOKAHEAD_SLOTS not in entry.options
 
 
 async def test_multiple_setups_allowed(
@@ -1062,17 +1065,18 @@ async def test_troubleshooting_recording_defaults_and_retention_bounds(
     assert entry.options[CONF_PLANNER_REPRODUCTION_RETENTION_DAYS] == 730
 
 
-async def test_options_planner_core_defaults_existing_entry_and_saves_lookahead(
+async def test_options_planner_core_uses_preset_owned_tuning(
     hass: HomeAssistant, mock_setup_entry: AsyncMock
 ) -> None:
-    """A missing persisted value should expose the legacy 22-slot duration."""
+    """Legacy profile and lookahead values stay out of the planner form."""
     entry = await _create_basic_entry(hass)
+    stale_slots = 5
     hass.config_entries.async_update_entry(
         entry,
         options={
-            key: value
-            for key, value in entry.options.items()
-            if key != CONF_OPTIMIZER_LOOKAHEAD_SLOTS
+            **entry.options,
+            "optimizer_profile": "aggressive",
+            CONF_OPTIMIZER_LOOKAHEAD_SLOTS: stale_slots,
         },
     )
 
@@ -1081,26 +1085,30 @@ async def test_options_planner_core_defaults_existing_entry_and_saves_lookahead(
         result["flow_id"], {"next_step_id": "planner_core"}
     )
     assert result["type"] is FlowResultType.FORM
-    assert _schema_default(result, CONF_OPTIMIZER_LOOKAHEAD_HOURS) == 22.0
+    schema_fields = {getattr(field, "schema", None) for field in result["data_schema"].schema}
+    assert "optimizer_lookahead_hours" not in schema_fields
+    assert "optimizer_profile" not in schema_fields
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         {
+            CONF_PLANNER_PRESET: "self-consumption",
             CONF_SLOT_MINUTES: "60",
             CONF_HOURS_TO_PLAN: "24",
-            CONF_OPTIMIZER_LOOKAHEAD_HOURS: 8,
         },
     )
     assert result["type"] is FlowResultType.MENU
     updated = hass.config_entries.async_get_entry(entry.entry_id)
     assert updated is not None
-    assert updated.options[CONF_OPTIMIZER_LOOKAHEAD_SLOTS] == 8
+    assert updated.options[CONF_PLANNER_PRESET] == "self-consumption"
+    assert updated.options[CONF_OPTIMIZER_LOOKAHEAD_SLOTS] == stale_slots
+    assert updated.options["optimizer_profile"] == "aggressive"
 
 
-async def test_options_rejects_lookahead_shorter_than_existing_comfort_minimum(
+async def test_options_rejects_preset_that_shortens_existing_comfort_horizon(
     hass: HomeAssistant, mock_setup_entry: AsyncMock
 ) -> None:
-    """Core edits should not save a lookahead that breaks comfort validation."""
+    """Core edits should not save a resolution that breaks comfort validation."""
     entry = await _create_basic_entry(hass)
     hass.config_entries.async_update_entry(
         entry,
@@ -1115,9 +1123,9 @@ async def test_options_rejects_lookahead_shorter_than_existing_comfort_minimum(
             CONF_NAME: "Long cycle heat",
             CONF_ROLLING_WINDOW_HOURS: 24,
             CONF_TARGET_ON_HOURS_PER_WINDOW: 8,
-            CONF_MIN_CONSECUTIVE_ON_MINUTES: 16 * 60,
+            CONF_MIN_CONSECUTIVE_ON_MINUTES: 12 * 60,
             CONF_MIN_CONSECUTIVE_OFF_MINUTES: 60,
-            CONF_MAX_CONSECUTIVE_OFF_MINUTES: 16 * 60,
+            CONF_MAX_CONSECUTIVE_OFF_MINUTES: 12 * 60,
             CONF_ON_OFF_SOURCE: "binary_sensor.long_cycle_heat",
             CONF_EXPECTED_POWER_KW: 1.5,
         },
@@ -1132,15 +1140,14 @@ async def test_options_rejects_lookahead_shorter_than_existing_comfort_minimum(
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         {
-            CONF_SLOT_MINUTES: "60",
+            CONF_SLOT_MINUTES: "15",
             CONF_HOURS_TO_PLAN: "24",
-            CONF_OPTIMIZER_LOOKAHEAD_HOURS: 12,
         },
     )
 
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {
-        CONF_OPTIMIZER_LOOKAHEAD_HOURS: "optimizer_lookahead_too_short_for_comfort"
+        CONF_PLANNER_PRESET: "optimizer_lookahead_too_short_for_comfort"
     }
     updated = hass.config_entries.async_get_entry(entry.entry_id)
     assert updated is not None
@@ -1161,9 +1168,9 @@ async def test_comfort_flow_rejects_minimum_equal_to_effective_lookahead(
             CONF_NAME: "Long cycle heat",
             CONF_ROLLING_WINDOW_HOURS: 24,
             CONF_TARGET_ON_HOURS_PER_WINDOW: 8,
-            CONF_MIN_CONSECUTIVE_ON_MINUTES: 12 * 60,
+            CONF_MIN_CONSECUTIVE_ON_MINUTES: 22 * 60,
             CONF_MIN_CONSECUTIVE_OFF_MINUTES: 60,
-            CONF_MAX_CONSECUTIVE_OFF_MINUTES: 12 * 60,
+            CONF_MAX_CONSECUTIVE_OFF_MINUTES: 22 * 60,
             CONF_ON_OFF_SOURCE: "binary_sensor.long_cycle_heat",
             CONF_EXPECTED_POWER_KW: 1.5,
         },

@@ -152,8 +152,9 @@ python scripts/simulate_planner.py .tmp/simulator/exports \
 including each HiGHS lookahead and `beam-1`, `beam-2`, `beam-8`, and `beam-16`.
 Use `--planners all` for recurring comparisons so newly added presets join the
 benchmark automatically. Bare algorithms such as `beam-search` use factory
-defaults; `beam-16` selects the fixed preset available in HA. `highs` uses recorded
-HiGHS settings, while `highs-16` fixes its lookahead to 16 slots. Without
+defaults; `beam-16` selects the fixed preset available in HA. Named presets apply
+their fixed algorithm settings to recorded inputs, just as HA does: `highs` uses
+22 lookahead slots, while `highs-16` uses 16. Without
 `--planners` or `--config`, the comparison is HiGHS versus self-consumption,
 regardless of which planner originally recorded the data.
 

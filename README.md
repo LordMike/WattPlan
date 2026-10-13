@@ -63,7 +63,7 @@ Use [Historical Cost Tracking](docs/historical-cost-tracking.md) to compare meas
 - [Entities and Services](docs/entities-and-services.md) - Planner, battery, load entities, services, and battery targets
 - [Planner Diagnostics and History](docs/planner-diagnostics.md) - Optional disk-backed plan recording, daily JSONL exports, and local replay
 - [Planner simulator](docs/simulator.md) - Enable recording, export complete days from Home Assistant, and compare selected planners locally
-- [Planners and Battery Behavior](docs/optimizer-profiles.md) - Available planners, their strengths and limits, and battery behavior profiles
+- [Planner Presets](docs/optimizer-profiles.md) - Available planners, their strengths and limits, and the experimental visibility setting
 - [Error Handling](docs/error-handling.md) - Health states, degraded operation, and what `ok`, `degraded`, and `failed` mean
 - [Development](docs/development.md) - Local setup with `uv`, local test env caveats, optional symlink workflow, packaging
 - [Architecture](docs/architecture.md) - Code layout, runtime boundaries, planning flow

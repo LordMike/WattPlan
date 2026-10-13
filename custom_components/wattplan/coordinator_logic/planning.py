@@ -37,8 +37,6 @@ from ..const import (
     CONF_MIN_OPTION_GAP_MINUTES,
     CONF_MINIMUM_KWH,
     CONF_ON_OFF_SOURCE,
-    CONF_OPTIMIZER_LOOKAHEAD_SLOTS,
-    CONF_OPTIMIZER_PROFILE,
     CONF_PLANNER_PRESET,
     CONF_OPTIONS_COUNT,
     CONF_ROLLING_WINDOW_HOURS,
@@ -53,8 +51,6 @@ from ..const import (
     CONF_SOURCES,
     CONF_TARGET_ON_HOURS_PER_WINDOW,
     CONF_PREFER_PV_SURPLUS_CHARGING,
-    LEGACY_OPTIMIZER_LOOKAHEAD_SLOTS,
-    OPTIMIZER_PROFILE_BALANCED,
     SOURCE_MODE_BUILT_IN,
     SOURCE_MODE_NOT_USED,
     SUBENTRY_TYPE_BATTERY,
@@ -65,8 +61,8 @@ from ..coordinator_parts import PlanningStageError, RunTimer, StageErrorKind
 from ..historical_on_off_provider import HistoricalOnOffProvider
 from ..optimizer.planners.presets import (
     DEFAULT_PRESET,
+    algorithm_settings,
     get_preset,
-    lookahead_slots as preset_lookahead_slots,
 )
 from ..source_pipeline import build_source_value_provider
 from ..source_types import SourceProvider, SourceProviderError, SourceWindow
@@ -80,24 +76,6 @@ SOC_OVER_CAPACITY_TOLERANCE = 0.10
 # Clamping below this many kWh is rounding noise and is not worth a warning.
 SOC_CLAMP_LOG_THRESHOLD_KWH = 0.05
 _ENERGY_UNIT_TO_KWH = {"kwh": 1.0, "wh": 0.001, "mwh": 1000.0}
-
-PROFILE_SETTINGS = {
-    "aggressive": {
-        "throughput_cost_per_kwh": 0.0,
-        "action_deadband_kwh": 0.0,
-        "mode_switch_cost": 0.0,
-    },
-    "balanced": {
-        "throughput_cost_per_kwh": 0.02,
-        "action_deadband_kwh": 0.05,
-        "mode_switch_cost": 0.01,
-    },
-    "conservative": {
-        "throughput_cost_per_kwh": 0.08,
-        "action_deadband_kwh": 0.1,
-        "mode_switch_cost": 0.03,
-    },
-}
 
 BATTERY_SKIP_NOT_AVAILABLE = "not_available_for_planning"
 BATTERY_SKIP_SOC_UNAVAILABLE = "soc_unavailable"
@@ -141,21 +119,11 @@ class PlanningRequestBuilder:
         slot_minutes = int(entry.data[CONF_SLOT_MINUTES])
         hours_to_plan = int(entry.data[CONF_HOURS_TO_PLAN])
         expected_slots = int((hours_to_plan * 60) / slot_minutes)
-        lookahead_slots = int(
-            entry.options.get(
-                CONF_OPTIMIZER_LOOKAHEAD_SLOTS,
-                LEGACY_OPTIMIZER_LOOKAHEAD_SLOTS,
-            )
-        )
         preset_name = entry.options.get(CONF_PLANNER_PRESET, DEFAULT_PRESET)
         try:
             preset = get_preset(preset_name)
         except ValueError as err:
             raise PlanningStageError(StageErrorKind.PLANNER_INPUT, str(err)) from err
-        if preset_name != DEFAULT_PRESET:
-            lookahead_slots = preset_lookahead_slots(
-                preset_name, lookahead_slots, expected_slots
-            )
         window = SourceWindow(
             start_at=self._floor_to_slot(datetime.now(tz=UTC), slot_minutes),
             slot_minutes=slot_minutes,
@@ -443,11 +411,7 @@ class PlanningRequestBuilder:
                 "rolling_window_slots": (
                     next(iter(rolling_window_slots_set)) if rolling_window_slots_set else 24
                 ),
-                "lookahead_slots": lookahead_slots,
-                **PROFILE_SETTINGS.get(
-                    str(entry.options.get(CONF_OPTIMIZER_PROFILE, OPTIMIZER_PROFILE_BALANCED)),
-                    PROFILE_SETTINGS[OPTIMIZER_PROFILE_BALANCED],
-                ),
+                **algorithm_settings(preset_name, plan_slots=expected_slots),
                 "battery_entities": battery_entities,
                 "comfort_entities": comfort_entities,
                 "optional_entities": optional_entities,

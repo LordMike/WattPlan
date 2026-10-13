@@ -155,6 +155,38 @@ def test_causal_forecasts_and_simulated_soc_replace_only_runtime_state():
     )  # no mutation
 
 
+def test_named_preset_overrides_variant_tuning_but_keeps_physical_request():
+    data = dataset(events=[event()], actuals=[actual()])
+    variant = Variant(
+        "preset-highs",
+        planner="highs",
+        settings={
+            "lookahead_slots": 6,
+            "throughput_cost_per_kwh": 1.7,
+            "action_deadband_kwh": 0.3,
+            "mode_switch_cost": 2.1,
+            "solver_time_limit_seconds": 7.5,
+            "infer_battery_preserve_policy": False,
+        },
+        options={"lookahead_slots": 22},
+        preset="highs",
+    )
+    planner = LocalPlanner()
+
+    report = simulate(data, variant, planner)
+
+    assert report["status"] == "complete"
+    used = planner.calls[0][0]
+    assert used["lookahead_slots"] == 22
+    assert used["throughput_cost_per_kwh"] == 0.0
+    assert used["action_deadband_kwh"] == 0.0
+    assert used["mode_switch_cost"] == 0.0
+    assert used["solver_time_limit_seconds"] == 20.0
+    assert used["infer_battery_preserve_policy"] is True
+    assert used["grid_import_price_per_kwh"] == [2.0] * 4
+    assert used["battery_entities"][0]["capacity_kwh"] == 4.0
+
+
 @pytest.mark.parametrize("slot_minutes", [15, 30, 60])
 def test_run_timeout_is_two_minutes_independent_of_slot_length(slot_minutes):
     data = dataset(
@@ -883,7 +915,13 @@ def test_cli_lists_and_validates_all_presets_without_running_planners(tmp_path, 
     assert simulate_planner.main([str(inputs), "--planners", "all", "--validate-only"]) == 0
     result = json.loads(capsys.readouterr().out)
     assert result["configuration"] == [
-        {"name": name, "planner": preset.planner, "settings": {}, "options": preset.options}
+        {
+            "name": name,
+            "planner": preset.planner,
+            "settings": {},
+            "options": preset.options,
+            "preset": name,
+        }
         for name, preset in PRESETS.items()
     ]
     assert simulate_planner.main([
@@ -891,9 +929,11 @@ def test_cli_lists_and_validates_all_presets_without_running_planners(tmp_path, 
     ]) == 0
     configuration = json.loads(capsys.readouterr().out)["configuration"]
     assert configuration[0] == {
-        "name": "beam-search", "planner": "beam-search", "settings": {}, "options": {},
+        "name": "beam-search", "planner": "beam-search", "settings": {},
+        "options": {}, "preset": None,
     }
     assert configuration[1]["options"] == {"lookahead_slots": 24}
+    assert configuration[1]["preset"] == "highs-24"
 
 
 def test_cli_runs_selected_presets_and_rounds_from_multiple_rest_exports(tmp_path):

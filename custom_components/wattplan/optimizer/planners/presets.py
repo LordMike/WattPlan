@@ -1,14 +1,18 @@
 """Named, reproducible planner configurations shared by HA and benchmarks.
 
-The legacy ``highs`` preset leaves request tuning unchanged. Numeric HiGHS
-suffixes are lookahead *slots*, not hours. Other numeric suffixes name the
-algorithm's search budget or beam width, as described by their labels.
+Presets own algorithm tuning; the request supplies the physical system and
+forecast. Numeric HiGHS suffixes are lookahead *slots*, not hours. Other
+numeric suffixes name the algorithm's search budget or beam width.
 """
 
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..models import OptimizationParams
+from ..models import (
+    DEFAULT_LOOKAHEAD_SLOTS,
+    DEFAULT_SOLVER_TIME_LIMIT_SECONDS,
+    OptimizationParams,
+)
 
 
 @dataclass(frozen=True)
@@ -40,7 +44,10 @@ PRESETS = {
         )
         for width, expansions in ((4, 1500), (8, 6000))
     },
-    "highs": PlannerPreset("highs", "HiGHS — existing settings", experimental=False),
+    "highs": PlannerPreset(
+        "highs", "HiGHS — 22 lookahead slots",
+        {"lookahead_slots": DEFAULT_LOOKAHEAD_SLOTS}, experimental=False,
+    ),
     **{
         f"highs-{slots}": PlannerPreset(
             "highs", f"HiGHS — {slots} lookahead slots", {"lookahead_slots": slots}
@@ -427,11 +434,37 @@ def get_preset(name: str = DEFAULT_PRESET) -> PlannerPreset:
 
 
 def lookahead_slots(name: str, legacy_slots: int, plan_slots: int) -> int:
-    """Return the effective solve horizon for comfort input validation."""
+    """Return a preset's effective solve horizon; ignore legacy user tuning."""
     preset = get_preset(name)
     if preset.planner == "highs":
-        return min(plan_slots, preset.options.get("lookahead_slots", legacy_slots))
+        return min(
+            plan_slots,
+            preset.options.get("lookahead_slots", DEFAULT_LOOKAHEAD_SLOTS),
+        )
     return plan_slots
+
+
+def algorithm_settings(
+    name: str = DEFAULT_PRESET, *, plan_slots: int | None = None
+) -> dict[str, Any]:
+    """Return fixed optimizer-model tuning owned by a named preset.
+
+    Inputs that describe the system, forecasts, comfort requirements, targets,
+    time resolution, or carried state are intentionally not included here.
+    """
+    preset = get_preset(name)
+    if plan_slots is None:
+        plan_slots = DEFAULT_LOOKAHEAD_SLOTS
+    return {
+        "lookahead_slots": int(
+            preset.options.get("lookahead_slots", plan_slots)
+        ),
+        "throughput_cost_per_kwh": 0.0,
+        "action_deadband_kwh": 0.0,
+        "mode_switch_cost": 0.0,
+        "solver_time_limit_seconds": DEFAULT_SOLVER_TIME_LIMIT_SECONDS,
+        "infer_battery_preserve_policy": True,
+    }
 
 
 def run_preset(params: OptimizationParams, name: str = DEFAULT_PRESET) -> dict:
@@ -439,7 +472,10 @@ def run_preset(params: OptimizationParams, name: str = DEFAULT_PRESET) -> dict:
     from .registry import create_planner
 
     preset = get_preset(name)
-    result = create_planner(preset.planner, dict(preset.options))(params)
+    tuned_params = params.model_copy(
+        update=algorithm_settings(name, plan_slots=len(params.grid_import_price_per_kwh))
+    )
+    result = create_planner(preset.planner, dict(preset.options))(tuned_params)
     result.setdefault("diagnostics", {}).setdefault("planner", {}).update(
         {"preset": name, "options": dict(preset.options)}
     )

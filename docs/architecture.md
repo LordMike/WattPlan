@@ -200,7 +200,7 @@ After this, the coordinator holds four slot-aligned numeric arrays that are pass
 - `usage_kwh`
 - `solar_input_kwh`
 
-The integration keeps plan coverage separate from economic lookahead. Plan coverage determines the length of these arrays and the complete schedule returned to Home Assistant. Economic lookahead determines how many future slots may influence each current MPC action. Users edit lookahead in hours, while config entries persist the resulting whole-slot value so the optimizer boundary stays resolution-independent. New setups default to 12 hours. Entries created before configurable lookahead are migrated once to the historical 22-slot value, displayed as 5.5 hours at 15-minute resolution, 11 hours at 30-minute resolution, or 22 hours at 60-minute resolution. Planner and comfort flows reject changes whose effective solve horizon is not longer than each comfort load's minimum ON/OFF duration.
+The integration keeps plan coverage separate from economic lookahead. Plan coverage determines the length of these arrays and the complete schedule returned to Home Assistant. Economic lookahead determines how many future slots may influence each current MPC action. The selected planner preset fixes algorithm tuning, including HiGHS lookahead; numeric HiGHS suffixes count slots. Direct optimizer callers may still supply their own request-level lookahead. Planner and comfort flows check that the selected preset's effective solve horizon is longer than each comfort load's minimum ON/OFF duration.
 
 Comfort runtime acquisition samples recorder history into ordered ON/OFF values
 for the `rolling_window_slots - 1` completed slots immediately before the
@@ -348,11 +348,12 @@ selects HiGHS, self-consumption, greedy, local search, beam search, dynamic
 programming, charge-window search, genetic search, cross-entropy search, or a separate
 `module:factory`. HA selects a finite configuration from `planners/presets.py`
 and runs it through that same registry in its worker process. Missing preset options
-select legacy HiGHS and retain its existing lookahead and preference settings.
-Fixed HiGHS preset suffixes count slots; alternative planners own their search
-settings. Preset identity and fixed options accompany the effective input in
-reproductions, results and HA diagnostics. The factory validates capabilities and owns
-the implementation/options/version state envelope while HiGHS retains its
+select the default HiGHS preset with its fixed 22-slot lookahead. Old profile
+and lookahead options are ignored. Fixed HiGHS preset suffixes count slots;
+alternative planners own their search settings. Preset identity and fixed options
+accompany the effective input in reproductions, results and HA diagnostics. The
+factory validates capabilities and owns the implementation/options/version state
+envelope while HiGHS retains its
 legacy state internally. Shared policy physics lives in `optimizer/physics.py`,
 used by simulation, forecast schedule evaluation, historical accounting and
 production power/headroom helpers. `simulation/physics.py` is a compatibility

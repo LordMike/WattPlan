@@ -17,7 +17,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from custom_components.wattplan.optimizer.simulation.adapters import BASELINE_PLANNER
 from custom_components.wattplan.optimizer.planners.presets import PRESETS
 from custom_components.wattplan.optimizer.planners.registry import BUILTINS
 from custom_components.wattplan.optimizer.simulation.dataset import (
@@ -146,12 +145,30 @@ def main(argv=None) -> int:
         elif args.planners:
             names = list(PRESETS) if args.planners == ["all"] else args.planners
             variants = [
-                Variant(name, PRESETS[name].planner, options=dict(PRESETS[name].options))
+                Variant(
+                    name,
+                    PRESETS[name].planner,
+                    options=dict(PRESETS[name].options),
+                    preset=name,
+                )
                 if name in PRESETS else Variant(name, name)
                 for name in names
             ]
         else:
-            variants = [Variant("highs"), Variant("self-consumption", BASELINE_PLANNER)]
+            variants = [
+                Variant(
+                    "highs",
+                    PRESETS["highs"].planner,
+                    options=dict(PRESETS["highs"].options),
+                    preset="highs",
+                ),
+                Variant(
+                    "self-consumption",
+                    PRESETS["self-consumption"].planner,
+                    options=dict(PRESETS["self-consumption"].options),
+                    preset="self-consumption",
+                ),
+            ]
         if not variants or len({v.name for v in variants}) != len(variants):
             raise ValueError("Provide uniquely named variants")
         windows, skipped = dataset.windows()

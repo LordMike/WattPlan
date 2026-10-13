@@ -10,6 +10,7 @@ from typing import Any, Protocol
 
 from ..models import OptimizationParams, has_mobility_inputs
 from ..planners.contract import validate_battery_result as validate_result
+from ..planners.presets import algorithm_settings, get_preset
 from ..planners.registry import resolve_factory
 from .adapters import DEFAULT_PLANNER
 from .dataset import Dataset, canonical
@@ -71,6 +72,7 @@ class Variant:
     planner: str = DEFAULT_PLANNER
     settings: dict[str, Any] = field(default_factory=dict)
     options: dict[str, Any] = field(default_factory=dict)
+    preset: str | None = None
 
     def __post_init__(self):
         if not self.name or not isinstance(self.name, str):
@@ -82,6 +84,12 @@ class Variant:
                 "Variants may override planning preferences, not physical equipment, targets, or input series"
             )
         resolve_factory(self.planner)
+        if self.preset is not None:
+            preset = get_preset(self.preset)
+            if self.planner != preset.planner or self.options != preset.options:
+                raise ValueError(
+                    "A preset variant must use the preset's planner and options"
+                )
         canonical(self.settings)
         canonical(self.options)
 
@@ -165,6 +173,15 @@ def simulate(
             budget.remaining()
             payload = deepcopy(window.event.params)
             payload.update(variant.settings)
+            if variant.preset is not None:
+                # Match Home Assistant: a named preset fixes algorithm tuning
+                # after any externally supplied experimental preferences.
+                payload.update(
+                    algorithm_settings(
+                        variant.preset,
+                        plan_slots=len(payload["grid_import_price_per_kwh"]),
+                    )
+                )
             reset = window.reset_reason is not None
             if reset:
                 levels = [b["initial_kwh"] for b in payload["battery_entities"]]
