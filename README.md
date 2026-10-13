@@ -38,7 +38,7 @@ After installing WattPlan via HACS, configure the following:
 - **PV Source**: Optional. Set up your solar production data source if applicable.
 - **Export Price Source**: Optional. If PV is configured, you can provide a value for exported power. Otherwise WattPlan treats export value as zero.
 - **Optional Loads**: Optional. Configure any additional loads you wish to manage, such as batteries or comfort loads.
-- **Planner Preset**: Choose a named algorithm configuration in General settings. Existing setups keep HiGHS and their current settings; [planner presets and battery behavior](docs/optimizer-profiles.md) explain the choices.
+- **Planner Preset**: Choose a named algorithm configuration in General settings. Experimental configurations are hidden by default; expose them under Options → Troubleshooting. Alongside HiGHS and the self-consumption baseline, the default shortlist includes `local-search-3`, the strongest alternative in the saved annual replay: 45.30 DKK lower scenario cost across three identical replays, each about 22 seconds. That test used one reconstructed hourly year, synthetic persistence forecasts, and hypothetical battery settings. Broader cross-environment results varied, so treat it as a measured candidate rather than a general winner. These are scenario results, not a household savings guarantee. See [planner presets and battery behavior](docs/optimizer-profiles.md) for context.
 - **Historical Cost Tracking**: Optional and disabled by default. See [Historical Cost Tracking](docs/historical-cost-tracking.md) for setup requirements and how to read the numbers.
 
 ## Tracking Performance

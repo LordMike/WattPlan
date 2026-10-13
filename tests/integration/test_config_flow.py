@@ -50,6 +50,7 @@ from custom_components.wattplan.const import (
     CONF_PLANNER_REPRODUCTION_RETENTION_DAYS,
     CONF_PLANNING_ENABLED,
     CONF_RECORD_PLANNER_REPRODUCTIONS,
+    CONF_SHOW_EXPERIMENTAL_PLANNERS,
     CONF_ROLLING_WINDOW_HOURS,
     CONF_RUN_WITHIN_HOURS,
     CONF_SLOT_MINUTES,
@@ -1015,6 +1016,7 @@ async def test_troubleshooting_recording_defaults_and_retention_bounds(
     )
     assert result["type"] is FlowResultType.FORM
     assert _schema_default(result, CONF_RECORD_PLANNER_REPRODUCTIONS) is False
+    assert _schema_default(result, CONF_SHOW_EXPERIMENTAL_PLANNERS) is False
     assert _schema_default(result, CONF_PLANNER_REPRODUCTION_RETENTION_DAYS) == 14
     retention_field = _serialized_schema_field(
         result, CONF_PLANNER_REPRODUCTION_RETENTION_DAYS
@@ -1028,6 +1030,7 @@ async def test_troubleshooting_recording_defaults_and_retention_bounds(
                 result["flow_id"],
                 {
                     CONF_RECORD_PLANNER_REPRODUCTIONS: True,
+                    CONF_SHOW_EXPERIMENTAL_PLANNERS: False,
                     CONF_PLANNER_REPRODUCTION_RETENTION_DAYS: days,
                 },
             )
@@ -1036,6 +1039,7 @@ async def test_troubleshooting_recording_defaults_and_retention_bounds(
         result["flow_id"],
         {
             CONF_RECORD_PLANNER_REPRODUCTIONS: True,
+            CONF_SHOW_EXPERIMENTAL_PLANNERS: False,
             CONF_PLANNER_REPRODUCTION_RETENTION_DAYS: 1.5,
         },
     )
@@ -1048,11 +1052,13 @@ async def test_troubleshooting_recording_defaults_and_retention_bounds(
         result["flow_id"],
         {
             CONF_RECORD_PLANNER_REPRODUCTIONS: True,
+            CONF_SHOW_EXPERIMENTAL_PLANNERS: True,
             CONF_PLANNER_REPRODUCTION_RETENTION_DAYS: 730,
         },
     )
     assert saved["type"] is FlowResultType.MENU
     assert entry.options[CONF_RECORD_PLANNER_REPRODUCTIONS] is True
+    assert entry.options[CONF_SHOW_EXPERIMENTAL_PLANNERS] is True
     assert entry.options[CONF_PLANNER_REPRODUCTION_RETENTION_DAYS] == 730
 
 

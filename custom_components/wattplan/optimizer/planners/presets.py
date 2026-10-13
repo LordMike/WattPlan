@@ -18,6 +18,7 @@ class PlannerPreset:
     planner: str
     label: str
     options: dict[str, Any] = field(default_factory=dict)
+    experimental: bool = True
 
 
 DEFAULT_PRESET = "highs"
@@ -39,7 +40,7 @@ PRESETS = {
         )
         for width, expansions in ((4, 1500), (8, 6000))
     },
-    "highs": PlannerPreset("highs", "HiGHS — existing settings"),
+    "highs": PlannerPreset("highs", "HiGHS — existing settings", experimental=False),
     **{
         f"highs-{slots}": PlannerPreset(
             "highs", f"HiGHS — {slots} lookahead slots", {"lookahead_slots": slots}
@@ -47,7 +48,8 @@ PRESETS = {
         for slots in (8, 16, 24)
     },
     "self-consumption": PlannerPreset(
-        "self-consumption", "Self-consumption — baseline (observes targets)"
+        "self-consumption", "Self-consumption — baseline (observes targets)",
+        experimental=False,
     ),
     **{
         f"greedy-{count}": PlannerPreset(
@@ -59,6 +61,7 @@ PRESETS = {
         f"local-search-{count}": PlannerPreset(
             "local-search", f"Local search — {count} evaluations",
             {"max_evaluations": count, "seed": 0},
+            experimental=count != 3,
         )
         for count in (3, 96)
     },
@@ -402,6 +405,17 @@ PRESETS = {
          "include_initial_knot": True, "prerefill_guard": True},
     ),
 }
+
+
+def available_preset_names(
+    *, show_experimental: bool = False, current: str | None = None
+) -> tuple[str, ...]:
+    """Return picker choices, retaining a hidden experimental current choice."""
+    return tuple(
+        name
+        for name, preset in PRESETS.items()
+        if show_experimental or not preset.experimental or name == current
+    )
 
 
 def get_preset(name: str = DEFAULT_PRESET) -> PlannerPreset:

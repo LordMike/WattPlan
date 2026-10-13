@@ -31,7 +31,11 @@ from .common import (
     _subentry_name,
 )
 from .state import SourceFlowState
-from ..optimizer.planners.presets import DEFAULT_PRESET, PRESETS
+from ..optimizer.planners.presets import (
+    DEFAULT_PRESET,
+    PRESETS,
+    available_preset_names,
+)
 from ..const import (
     ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
     ADAPTER_TYPE_ATTRIBUTE_VALUES,
@@ -83,6 +87,7 @@ from ..const import (
     CONF_PLANNING_ENABLED,
     CONF_OPTIMIZER_PROFILE,
     CONF_PLANNER_PRESET,
+    CONF_SHOW_EXPERIMENTAL_PLANNERS,
     CONF_PROVIDERS,
     CONF_RESAMPLE_MODE,
     CONF_ROLLING_WINDOW_HOURS,
@@ -1118,8 +1123,13 @@ def _core_schema(
         ): selector.SelectSelector(
             selector.SelectSelectorConfig(
                 options=[
-                    selector.SelectOptionDict(value=name, label=preset.label)
-                    for name, preset in PRESETS.items()
+                    selector.SelectOptionDict(value=name, label=PRESETS[name].label)
+                    for name in available_preset_names(
+                        show_experimental=bool(
+                            defaults.get(CONF_SHOW_EXPERIMENTAL_PLANNERS, False)
+                        ),
+                        current=defaults.get(CONF_PLANNER_PRESET),
+                    )
                 ],
                 mode=selector.SelectSelectorMode.DROPDOWN,
             )

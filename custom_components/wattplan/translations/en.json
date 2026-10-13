@@ -696,10 +696,12 @@
         "title": "Troubleshooting",
         "description": "Capture complete plans to local-day JSONL files for later diagnosis. Recording is off by default.",
         "data": {
+          "show_experimental_planners": "Show experimental planners",
           "record_planner_reproductions": "Record planner reproductions to disk",
           "planner_reproduction_retention_days": "Keep files for this many days"
         },
         "data_description": {
+          "show_experimental_planners": "Expose planner configurations that remain experimental because annual and cross-environment results are scenario-dependent. This only changes the picker; it does not change the selected planner or planning behavior.",
           "record_planner_reproductions": "Warning: Every successful scheduled or manual plan writes its full optimizer request and result to disk. Enable temporarily when investigating a problem.",
           "planner_reproduction_retention_days": "Keep 1 to 730 local calendar days (default: 14). Old daily files are deleted after the next recorded plan. Recording uses roughly 10 MB of disk per day at 15-minute planning intervals."
         }

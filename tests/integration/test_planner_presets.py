@@ -11,14 +11,24 @@ from homeassistant.data_entry_flow import FlowResultType
 from custom_components.wattplan.const import (
     CONF_ACTION_EMISSION_ENABLED, CONF_HOURS_TO_PLAN,
     CONF_OPTIMIZER_LOOKAHEAD_HOURS, CONF_PLANNER_PRESET, CONF_PLANNING_ENABLED,
+    CONF_PLANNER_REPRODUCTION_RETENTION_DAYS,
+    CONF_RECORD_PLANNER_REPRODUCTIONS,
     CONF_SLOT_MINUTES,
+    CONF_SHOW_EXPERIMENTAL_PLANNERS,
 )
-from custom_components.wattplan.optimizer.planners.presets import PRESETS
+from custom_components.wattplan.optimizer.planners.presets import (
+    PRESETS,
+    available_preset_names,
+)
 from custom_components.wattplan.flows.source_shared import _validate_core_data
 from custom_components.wattplan.flows.main import WattPlanConfigFlow
 from custom_components.wattplan import coordinator as coordinator_module
 from custom_components.wattplan.coordinator_parts import CycleTrigger, PlanningStageError
-from .test_config_flow import _create_basic_entry, _schema_default
+from .test_config_flow import (
+    _create_basic_entry,
+    _schema_default,
+    _serialized_schema_field,
+)
 from .test_integration_e2e import (
     _battery_subentry, _entry, _fake_optimize_with_entities, _run_optimize, _setup_entry,
     entity_registry_enabled_by_default,  # noqa: F401
@@ -31,13 +41,32 @@ async def test_options_save_preset_and_keep_it_selected(hass, mock_setup_entry):
     entry = await _create_basic_entry(hass)
     result = await hass.config_entries.options.async_init(entry.entry_id)
     result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "troubleshooting"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_RECORD_PLANNER_REPRODUCTIONS: False,
+            CONF_SHOW_EXPERIMENTAL_PLANNERS: True,
+            CONF_PLANNER_REPRODUCTION_RETENTION_DAYS: 14,
+        },
+    )
+    result = await hass.config_entries.options.async_configure(
         result["flow_id"], {"next_step_id": "planner_core"}
     )
     assert _schema_default(result, CONF_PLANNER_PRESET) == "highs"
+    assert "beam-2" in {
+        option["value"]
+        for option in _serialized_schema_field(result, CONF_PLANNER_PRESET)["selector"]["select"]["options"]
+    }
+    assert "local-search-3" in {
+        option["value"]
+        for option in _serialized_schema_field(result, CONF_PLANNER_PRESET)["selector"]["select"]["options"]
+    }
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {
             CONF_PLANNER_PRESET: "beam-2", CONF_SLOT_MINUTES: "60",
-            CONF_HOURS_TO_PLAN: "24", CONF_OPTIMIZER_LOOKAHEAD_HOURS: 12,
+            CONF_HOURS_TO_PLAN: "24",
         },
     )
     assert result["type"] is FlowResultType.MENU
@@ -47,6 +76,66 @@ async def test_options_save_preset_and_keep_it_selected(hass, mock_setup_entry):
         result["flow_id"], {"next_step_id": "planner_core"}
     )
     assert _schema_default(result, CONF_PLANNER_PRESET) == "beam-2"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_PLANNER_PRESET: "beam-2",
+            CONF_SLOT_MINUTES: "60",
+            CONF_HOURS_TO_PLAN: "24",
+        },
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "troubleshooting"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_RECORD_PLANNER_REPRODUCTIONS: False,
+            CONF_SHOW_EXPERIMENTAL_PLANNERS: False,
+            CONF_PLANNER_REPRODUCTION_RETENTION_DAYS: 14,
+        },
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "planner_core"}
+    )
+    assert _schema_default(result, CONF_PLANNER_PRESET) == "beam-2"
+    choices = {
+        option["value"]
+        for option in _serialized_schema_field(result, CONF_PLANNER_PRESET)["selector"]["select"]["options"]
+    }
+    assert choices == {"highs", "self-consumption", "local-search-3", "beam-2"}
+
+
+async def test_hidden_current_experimental_preset_remains_selectable(
+    hass, mock_setup_entry
+):
+    entry = await _create_basic_entry(hass)
+    hass.config_entries.async_update_entry(
+        entry,
+        options={
+            **entry.options,
+            CONF_PLANNER_PRESET: "beam-2",
+            CONF_SHOW_EXPERIMENTAL_PLANNERS: False,
+        },
+    )
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "planner_core"}
+    )
+    assert _schema_default(result, CONF_PLANNER_PRESET) == "beam-2"
+    choices = {
+        option["value"]
+        for option in _serialized_schema_field(result, CONF_PLANNER_PRESET)["selector"]["select"]["options"]
+    }
+    assert choices == {"highs", "self-consumption", "local-search-3", "beam-2"}
+
+
+def test_experimental_preset_filter_keeps_hidden_current_selection():
+    stable = available_preset_names()
+    assert stable == ("highs", "self-consumption", "local-search-3")
+    assert "beam-2" not in stable
+    assert "beam-2" in available_preset_names(current="beam-2")
+    assert set(available_preset_names(show_experimental=True)) == set(PRESETS)
 
 
 def test_irrelevant_legacy_lookahead_does_not_block_fixed_presets():

@@ -16,6 +16,7 @@ from ..const import (
     CONF_OUTLOOK_LANGUAGES,
     CONF_PLANNER_REPRODUCTION_RETENTION_DAYS,
     CONF_RECORD_PLANNER_REPRODUCTIONS,
+    CONF_SHOW_EXPERIMENTAL_PLANNERS,
     DEFAULT_PLANNER_REPRODUCTION_RETENTION_DAYS,
     MAX_PLANNER_REPRODUCTION_RETENTION_DAYS,
     SUPPORTED_OUTLOOK_LANGUAGES,
@@ -637,6 +638,7 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
             LEGACY_OPTIMIZER_LOOKAHEAD_SLOTS,
         )
         self._options.setdefault(CONF_RECORD_PLANNER_REPRODUCTIONS, False)
+        self._options.setdefault(CONF_SHOW_EXPERIMENTAL_PLANNERS, False)
         self._options.setdefault(
             CONF_PLANNER_REPRODUCTION_RETENTION_DAYS,
             DEFAULT_PLANNER_REPRODUCTION_RETENTION_DAYS,
@@ -681,6 +683,9 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
                 self._options[CONF_RECORD_PLANNER_REPRODUCTIONS] = user_input[
                     CONF_RECORD_PLANNER_REPRODUCTIONS
                 ]
+                self._options[CONF_SHOW_EXPERIMENTAL_PLANNERS] = user_input[
+                    CONF_SHOW_EXPERIMENTAL_PLANNERS
+                ]
                 self._options[CONF_PLANNER_REPRODUCTION_RETENTION_DAYS] = int(days)
                 self.hass.config_entries.async_update_entry(
                     self.config_entry, options=self._options
@@ -694,6 +699,10 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
                     vol.Required(
                         CONF_RECORD_PLANNER_REPRODUCTIONS,
                         default=self._options[CONF_RECORD_PLANNER_REPRODUCTIONS],
+                    ): selector.BooleanSelector(),
+                    vol.Required(
+                        CONF_SHOW_EXPERIMENTAL_PLANNERS,
+                        default=self._options[CONF_SHOW_EXPERIMENTAL_PLANNERS],
                     ): selector.BooleanSelector(),
                     vol.Required(
                         CONF_PLANNER_REPRODUCTION_RETENTION_DAYS,
@@ -755,6 +764,9 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
                     {
                         **self._data,
                         CONF_PLANNER_PRESET: self._options[CONF_PLANNER_PRESET],
+                        CONF_SHOW_EXPERIMENTAL_PLANNERS: self._options[
+                            CONF_SHOW_EXPERIMENTAL_PLANNERS
+                        ],
                         CONF_OPTIMIZER_PROFILE: self._options[CONF_OPTIMIZER_PROFILE],
                         CONF_OPTIMIZER_LOOKAHEAD_HOURS: _lookahead_hours_from_slots(
                             self._options[CONF_OPTIMIZER_LOOKAHEAD_SLOTS],
