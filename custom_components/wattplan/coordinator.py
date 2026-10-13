@@ -61,7 +61,7 @@ def snapshot_storage_key(entry_id: str) -> str:
 
 
 SCHEDULE_OFFSET = timedelta(seconds=2)
-MAX_OPTIMIZER_TIMEOUT_SECONDS = 120
+MAX_OPTIMIZER_TIMEOUT_SECONDS = 180
 DATA_SNAPSHOT_LOCKS = "snapshot_locks"
 
 
@@ -432,9 +432,18 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             self._action_recommendations_validated = False
             entry = self._require_entry()
             entry.runtime_data.optimizer_state = None
-            async with self._snapshot_lock:
-                await self._snapshot_store.async_remove()
+            await self._async_remove_snapshot()
             self.async_update_listeners()
+
+    async def _async_remove_snapshot(self) -> None:
+        """Finish deleting the old cache before a replacement run can save."""
+        async with self._snapshot_lock:
+            remove = asyncio.create_task(self._snapshot_store.async_remove())
+            try:
+                await asyncio.shield(remove)
+            except asyncio.CancelledError:
+                await async_drain(remove)
+                raise
 
     async def _async_plan_once(self, *, trigger: CycleTrigger) -> None:
         """Run the planning stage and replace the immutable snapshot."""
@@ -504,6 +513,14 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 if runtime_data is not None and not self._is_current_planning_run(runtime_data):
                     raise
                 self._set_last_plan_duration(started)
+                timer.mark("total")
+                self._last_run_timings = list(timer.entries)
+                timed_out = err.kind is StageErrorKind.PLANNER_TIMEOUT
+                if timed_out:
+                    self._snapshot = None
+                    self.data = None
+                    self._action_recommendations_validated = False
+                    runtime_data.optimizer_state = None
                 self._source_status.mark_failed_status(err, snapshot=self._snapshot)
                 self._sync_source_issues(self._require_entry())
                 self._set_stage_error(
@@ -515,6 +532,8 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 # Push state immediately so entities can reflect failures and
                 # availability changes without waiting for the next tick.
                 self.async_update_listeners()
+                if timed_out:
+                    await self._async_remove_snapshot()
                 raise
             except Exception as err:
                 if runtime_data is not None and not self._is_current_planning_run(runtime_data):
@@ -751,9 +770,14 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                     params, request.get("planner_preset", DEFAULT_PRESET)
                 )
         except TimeoutError as err:
+            timer.mark("Optimizer process (timed out)")
             raise PlanningStageError(
-                StageErrorKind.PLANNER_EXECUTION,
-                f"Optimizer did not finish within {timeout_seconds} seconds",
+                StageErrorKind.PLANNER_TIMEOUT,
+                f"Planner timed out after {timeout_seconds} seconds. Pick another planner.",
+                details={
+                    "timeout_seconds": timeout_seconds,
+                    "planner_preset": request.get("planner_preset", DEFAULT_PRESET),
+                },
             ) from err
         except Exception as err:
             raise PlanningStageError(

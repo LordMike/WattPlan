@@ -16,12 +16,18 @@ Policy searches penalize end-of-slot minimum-energy shortfalls and seed or order
 early recovery actions. This affects optimization preference, never tariff
 accounting. Self-consumption keeps passive battery actions and reports shortfalls.
 
-Live planning runs in a fresh worker process with a 120-second whole-call limit,
+Live planning runs in a fresh worker process with a 180-second whole-call limit,
 including startup, solving, shared reporting and result transfer. Cancellation
 kills and reaps that process, even during a native solve. A new planning request
 supersedes the previous request; reload and shutdown drain old work before a
 replacement runtime starts. Battery target changes also abort stale work and
 invalidate cached recommendations, even when immediate replanning is disabled.
+On timeout, the integration discards the plan, optimizer continuity state and
+disk cache. Plan-derived entities (including actions and Plan Outlook) become
+unavailable. Status and Status Message report the timeout and suggest picking
+another planner; Last Run Duration retains the elapsed time and timing checkpoints
+for the failed attempt. A successful retry restores plan availability without
+requiring a restart.
 The simulator independently bounds each complete replay at 120 seconds.
 
 Planning retains the owning entry runtime across source acquisition and execution

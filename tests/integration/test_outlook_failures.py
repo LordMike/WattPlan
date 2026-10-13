@@ -149,8 +149,8 @@ async def test_outlook_render_failure_makes_only_outlook_sensor_unavailable(
     assert entry.entry_id in caplog.text
 
 
-async def test_no_plan_outlook_remains_a_status_report(hass: HomeAssistant) -> None:
-    """Genuine no-plan states should continue to provide a status report."""
+async def test_no_plan_outlook_is_unavailable(hass: HomeAssistant) -> None:
+    """Without a plan, health remains in Status and plan-derived entities stop."""
     entry = _entry()
     entry.add_to_hass(hass)
 
@@ -163,7 +163,10 @@ async def test_no_plan_outlook_remains_a_status_report(hass: HomeAssistant) -> N
 
     outlook = hass.states.get("sensor.home_plan_outlook_en")
     assert outlook is not None
-    assert outlook.state.startswith("plan_unavailable_high_")
+    assert outlook.state == STATE_UNAVAILABLE
+    status = hass.states.get("sensor.home_status")
+    assert status.state == "failed"
+    assert "optimizer failed" in status.attributes["reason_summary"]
 
 
 async def test_restored_unvalidated_plan_without_outlook_remains_a_status_report(
