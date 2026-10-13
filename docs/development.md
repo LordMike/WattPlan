@@ -47,7 +47,7 @@ symlink is required for these in-repo tests.
 For offline planner evaluation, activate the development environment and run
 `python scripts/simulate_planner.py /path/to/snapshots --validate-only`, then use
 `--planners highs-16 self-consumption --rounds 3 --output /path/to/report` to
-execute. `--list-planners` lists presets; `--planners all` compares every preset.
+execute. `--list-planners` lists configurations; `--planners all` compares every configuration.
 Input arguments accept multiple export files, globs, or directories. See the
 [simulator walkthrough](simulator.md) for collection, downloads, variants, and
 reports. Tests use independent hand-calculated physics
@@ -60,7 +60,7 @@ Run the same simulator against that directory. These records explicitly label
 synthetic forecasts/actuals and never fill gaps in real recordings implicitly.
 See the [Optimizer API](optimizer-api.md#planner-factories) for planner factories
 and shared interfaces. Keep algorithm descriptions in their module docstrings
-and user-facing summaries in [Planners and battery behavior](optimizer-profiles.md).
+and user-facing summaries in [Planner Configurations](optimizer-profiles.md).
 Store experiment notes, tuning ledgers, and benchmark reports in ignored `.tmp/`
 or outside the repository.
 
@@ -69,7 +69,7 @@ Planner tests separate shared behavior from algorithm-specific regressions:
 - `tests/optimizer/test_planner_contract.py` runs every registered algorithm
   through the common battery contract, physical projections, input isolation,
   factory/state rules and solver-independent import checks.
-- `tests/optimizer/test_live_planner_parity.py` checks every named preset's live
+- `tests/optimizer/test_live_planner_parity.py` checks every named configuration's live
   outputs, comfort accounting, health, reserve recovery and immediate targets.
   It also compares direct factories with registry calls for every algorithm,
   including combined comfort, optional-appliance and battery-constraint inputs.

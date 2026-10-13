@@ -38,7 +38,7 @@ After installing WattPlan via HACS, configure the following:
 - **PV Source**: Optional. Set up your solar production data source if applicable.
 - **Export Price Source**: Optional. If PV is configured, you can provide a value for exported power. Otherwise WattPlan treats export value as zero.
 - **Optional Loads**: Optional. Configure any additional loads you wish to manage, such as batteries or comfort loads.
-- **Planner Preset**: Choose a named algorithm configuration in General settings. Experimental configurations are hidden by default; expose them under Options → Troubleshooting. Alongside HiGHS and the self-consumption baseline, the default shortlist includes `local-search-3`, the strongest alternative in the saved annual replay: 45.30 DKK lower scenario cost across three identical replays, each about 22 seconds. That test used one reconstructed hourly year, synthetic persistence forecasts, and hypothetical battery settings. Broader cross-environment results varied, so treat it as a measured candidate rather than a general winner. These are scenario results, not a household savings guarantee. See [planner presets and battery behavior](docs/optimizer-profiles.md) for context.
+- **Planner Configuration**: Choose a complete planner configuration in General settings. HiGHS, self-consumption, and `local-search-3` are available by default. Experimental configurations can be shown under Options → Troubleshooting. See [Planner Configurations](docs/optimizer-profiles.md) for all planners, configuration names, IDs, differences, and guidance on choosing.
 - **Historical Cost Tracking**: Optional and disabled by default. See [Historical Cost Tracking](docs/historical-cost-tracking.md) for setup requirements and how to read the numbers.
 
 ## Tracking Performance
@@ -63,7 +63,7 @@ Use [Historical Cost Tracking](docs/historical-cost-tracking.md) to compare meas
 - [Entities and Services](docs/entities-and-services.md) - Planner, battery, load entities, services, and battery targets
 - [Planner Diagnostics and History](docs/planner-diagnostics.md) - Optional disk-backed plan recording, daily JSONL exports, and local replay
 - [Planner simulator](docs/simulator.md) - Enable recording, export complete days from Home Assistant, and compare selected planners locally
-- [Planner Presets](docs/optimizer-profiles.md) - Available planners, their strengths and limits, and the experimental visibility setting
+- [Planner Configurations](docs/optimizer-profiles.md) - All planners and configurations, their strengths and limits, exact UI names, IDs, and experimental status
 - [Error Handling](docs/error-handling.md) - Health states, degraded operation, and what `ok`, `degraded`, and `failed` mean
 - [Development](docs/development.md) - Local setup with `uv`, local test env caveats, optional symlink workflow, packaging
 - [Architecture](docs/architecture.md) - Code layout, runtime boundaries, planning flow

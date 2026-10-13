@@ -5,16 +5,16 @@ This document describes the direct Python API for the optimizer packaged inside 
 Interchangeable planners use this API through built-in names or a
 `module:factory` adapter. See [Planner factories](#planner-factories) for the
 extension interface and [Planner simulator](simulator.md) for causal execution.
-Home Assistant selects a finite named preset through
+Home Assistant selects a finite named configuration through
 `optimizer.planners.presets.run_preset(params, name)`. The default `highs`
-preset fixes the legacy 22-slot lookahead; `highs-8`, `highs-16`, and `highs-24`
-select fixed lookahead **slots**. Every named preset fixes algorithm tuning,
+configuration fixes the legacy 22-slot lookahead; `highs-8`, `highs-16`, and `highs-24`
+select fixed lookahead **slots**. Every named configuration fixes algorithm tuning,
 including zero throughput, deadband, and mode-switch penalties, a 20-second
 HiGHS solve limit, and preserve-policy inference. These settings are applied
 after request validation and do not change the supplied equipment, forecasts,
 comfort requirements, targets, slot duration, horizon, or carried state.
 Direct `optimize(params)` callers continue to select HiGHS and use the tuning
-fields supplied in `params`. See [planner presets](optimizer-profiles.md).
+fields supplied in `params`. See [planner configurations](optimizer-profiles.md).
 
 The detailed solver semantics below describe HiGHS unless stated otherwise.
 The policy-search alternatives share the input model and live result fields,
@@ -37,7 +37,7 @@ The model does not export battery energy, add an export-first battery mode, curt
 
 The continuous model can still prefer exporting PV over storing it when stored energy has no modeled future value, even though an empty PV-capable battery receiving the coarse `self_consume` policy would normally charge from surplus first. PV charging under `self_consume` is ordinary inverter behavior, not a separate controllable action in this policy model.
 
-If you are using WattPlan through Home Assistant, the selected planner preset owns
+If you are using WattPlan through Home Assistant, the selected planner configuration owns
 algorithm tuning. Earlier profile and lookahead options saved in a config entry
 are ignored; `hours_to_plan` still controls the forecast horizon. The request
 model fields below remain available to direct `optimize(params)` callers and
@@ -48,7 +48,7 @@ All time-indexed fields use **timeslots**.
 - A timeslot is one fixed slice of time at your chosen resolution (for example, 15 minutes).
 - Every array index corresponds to one timeslot.
 - The API does not enforce a specific minutes-per-timeslot value; the caller is responsible for consistent input resolution.
-- `lookahead_slots` is also expressed in this same resolution. Named presets
+- `lookahead_slots` is also expressed in this same resolution. Named configurations
   select a fixed slot count; direct `optimize(params)` callers supply it in the
   request.
 
@@ -186,7 +186,7 @@ comparisons; diagnostic costs remain visible. A service-infeasible reference
 suppresses comparisons rather than substituting a different baseline. Runs with
 only inert metadata retain the legacy report shape.
 
-See [mobility presets](optimizer-profiles.md#mobility-aware-planners) for search
+See [mobility configurations](optimizer-profiles.md#mobility-aware-planners) for search
 budgets, baseline behavior and limitations. These additions provide optimizer
 and simulator API support, not a Home Assistant vehicle-source configuration.
 
@@ -436,7 +436,7 @@ This pre-validation/normalization design ensures the calculation phase operates 
 name or an importable `module:factory`. The factory receives keyword options and
 returns a callable taking `OptimizationParams`. It validates options and declares
 `PlannerCapabilities`. See the planner modules' opening docstrings for algorithm
-details; the [user guide](optimizer-profiles.md) describes available presets.
+details; the [user guide](optimizer-profiles.md) describes available configurations.
 
 Battery implementations return a complete schedule for every named battery in
 request order, with finite projected levels. Shared policy actions are

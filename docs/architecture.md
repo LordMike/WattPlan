@@ -167,7 +167,7 @@ All paths are under `custom_components/wattplan/` unless noted.
 
 ## Runtime Model
 The main runtime center is the coordinator:
-- `entry_setup.py`: Creates the coordinator, loads the persisted battery targets, starts the optional historical tracker, forwards the `sensor` and `button` platforms, then starts the scheduler. On startup the cached snapshot is restored only if it was stored with the same configuration fingerprint (hash of entry data, options, and subentries), the same explicit planner preset ID, and its plan still covers the current time; otherwise it is discarded and the first plan is awaited during setup. A restored snapshot is trusted immediately and replaced by a plan that runs as a background task right after setup. Unsupported stored preset IDs are repaired to the default before the coordinator and configuration fingerprint are created, allowing the options picker to recover.
+- `entry_setup.py`: Creates the coordinator, loads the persisted battery targets, starts the optional historical tracker, forwards the `sensor` and `button` platforms, then starts the scheduler. On startup the cached snapshot is restored only if it was stored with the same configuration fingerprint (hash of entry data, options, and subentries), the same explicit planner configuration ID, and its plan still covers the current time; otherwise it is discarded and the first plan is awaited during setup. A restored snapshot is trusted immediately and replaced by a plan that runs as a background task right after setup. Unsupported stored configuration IDs are repaired to the default before the coordinator and configuration fingerprint are created, allowing the options picker to recover.
 - `coordinator.py`: Builds planner input, runs planning, tracks stage errors, and updates runtime entities. It subclasses `DataUpdateCoordinator` for listener handling but owns its scheduler: one `async_track_point_in_utc_time` timer aimed at the next slot boundary, re-armed after every run and cancelled on shutdown. It does not use the base class's refresh timer (`update_interval` is not set while the scheduler is enabled). A separate heartbeat drives the `scheduler_stale` status attribute.
 - `config_flow.py` / `flows/`: Collect source configuration and planner settings.
 - `sensor.py` / `sensors/` and `button.py`: Expose planning state, diagnostics, error scopes, actions and the manual run/refresh buttons.
@@ -206,7 +206,7 @@ After this, the coordinator holds four slot-aligned numeric arrays that are pass
 - `usage_kwh`
 - `solar_input_kwh`
 
-The integration keeps plan coverage separate from economic lookahead. Plan coverage determines the length of these arrays and the complete schedule returned to Home Assistant. Economic lookahead determines how many future slots may influence each current MPC action. The selected planner preset fixes algorithm tuning, including HiGHS lookahead; numeric HiGHS suffixes count slots. Direct optimizer callers may still supply their own request-level lookahead. Planner and comfort flows check that the selected preset's effective solve horizon is longer than each comfort load's minimum ON/OFF duration.
+The integration keeps plan coverage separate from economic lookahead. Plan coverage determines the length of these arrays and the complete schedule returned to Home Assistant. Economic lookahead determines how many future slots may influence each current MPC action. The selected planner configuration fixes algorithm tuning, including HiGHS lookahead; numeric HiGHS suffixes count slots. Direct optimizer callers may still supply their own request-level lookahead. Planner and comfort flows check that the selected configuration's effective solve horizon is longer than each comfort load's minimum ON/OFF duration.
 
 Comfort runtime acquisition samples recorder history into ordered ON/OFF values
 for the `rolling_window_slots - 1` completed slots immediately before the
@@ -273,7 +273,7 @@ flowchart LR
   Plan --> A
 ```
 
-The coordinator snapshot retains complete time-indexed battery and comfort action schedules separately from the optional plan-detail diagnostic sensors. Action emission selects the slot covering the current time. A plan successfully calculated in the current runtime session continues to advance after a later planning failure, but a snapshot restored without a matching configuration fingerprint or planner preset ID is diagnostic-only until a fresh planning run succeeds; at startup such snapshots are discarded instead. Preset IDs are stable semantic identifiers: changing a preset's algorithm or settings requires a new ID so snapshots created under the old behavior are not reused. A snapshot restored at startup with a matching fingerprint and preset ID that still covers the current time is trusted immediately, and a background plan refreshes it. The plan becomes unusable at the end of its recorded coverage; WattPlan then publishes failed health and makes plan-dependent actions unavailable instead of inventing a fallback action. Scheduler-heartbeat staleness is exposed separately from this action-validation state.
+The coordinator snapshot retains complete time-indexed battery and comfort action schedules separately from the optional plan-detail diagnostic sensors. Action emission selects the slot covering the current time. A plan successfully calculated in the current runtime session continues to advance after a later planning failure, but a snapshot restored without a matching configuration fingerprint or planner configuration ID is diagnostic-only until a fresh planning run succeeds; at startup such snapshots are discarded instead. Configuration IDs are stable semantic identifiers: changing a configuration's algorithm or settings requires a new ID so snapshots created under the old behavior are not reused. A snapshot restored at startup with a matching fingerprint and configuration ID that still covers the current time is trusted immediately, and a background plan refreshes it. The plan becomes unusable at the end of its recorded coverage; WattPlan then publishes failed health and makes plan-dependent actions unavailable instead of inventing a fallback action. Scheduler-heartbeat staleness is exposed separately from this action-validation state.
 
 When troubleshooting recording is enabled, each accepted plan is additionally
 appended off the event loop to one JSONL file per HA local date and config
@@ -353,10 +353,10 @@ Interchangeable implementations live in `optimizer/planners/`. A lazy factory bo
 selects HiGHS, self-consumption, greedy, local search, beam search, dynamic
 programming, charge-window search, genetic search, cross-entropy search, or a separate
 `module:factory`. HA selects a finite configuration from `planners/presets.py`
-and runs it through that same registry in its worker process. Missing preset options
-select the default HiGHS preset with its fixed 22-slot lookahead. Old profile
-and lookahead options are ignored. Fixed HiGHS preset suffixes count slots;
-alternative planners own their search settings. Preset identity and fixed options
+and runs it through that same registry in its worker process. Missing configuration options
+select the default HiGHS configuration with its fixed 22-slot lookahead. Old profile
+and lookahead options are ignored. Fixed HiGHS configuration suffixes count slots;
+alternative planners own their search settings. Configuration identity and fixed options
 accompany the effective input in reproductions, results and HA diagnostics. The
 factory validates capabilities and owns the implementation/options/version state
 envelope while HiGHS retains its

@@ -127,13 +127,18 @@ exports folder: all `.json` and `.jsonl` files there are treated as recordings.
 
 ## 5. Select planners and run comparisons
 
-List the available presets:
+See the [complete configuration catalog](optimizer-profiles.md) for all configuration IDs, their
+Home Assistant dropdown labels, and experimental status. Use configuration IDs in
+`--planners`, including when the dropdown shows a descriptive label.
+
+List the available configurations and labels from your checkout, including experimental
+configurations (the command does not print experimental status):
 
 ```bash
 python scripts/simulate_planner.py --list-planners
 ```
 
-Compare selected presets, with three complete rounds each:
+Compare selected configurations, with three complete rounds each:
 
 ```bash
 python scripts/simulate_planner.py .tmp/simulator/exports \
@@ -141,18 +146,22 @@ python scripts/simulate_planner.py .tmp/simulator/exports \
   --rounds 3 --output .tmp/simulator/comparison-1
 ```
 
-Or run every published preset:
+Or run every published configuration:
 
 ```bash
 python scripts/simulate_planner.py .tmp/simulator/exports \
-  --planners all --rounds 1 --output .tmp/simulator/all-presets-1
+  --planners all --rounds 1 --output .tmp/simulator/all-configurations-1
 ```
 
-`all` means every named configuration in [the planner guide](optimizer-profiles.md),
+`all` means every named configuration in the [configuration catalog](optimizer-profiles.md),
 including each HiGHS lookahead and `beam-1`, `beam-2`, `beam-8`, and `beam-16`.
-Use `--planners all` for recurring comparisons so newly added presets join the
-benchmark automatically. Bare algorithms such as `beam-search` use factory
-defaults; `beam-16` selects the fixed preset available in HA. Named presets apply
+`all` includes experimental configurations and can be costly for long recordings.
+Prefer selected configurations for long recordings. Each configuration and
+round runs a separate complete replay, so a sweep of all 112 configurations can
+take substantial time. Use `all` for short recordings when a complete sweep is
+useful.
+Bare algorithms such as `beam-search` use factory
+defaults; `beam-16` selects the fixed configuration available in HA. Named configurations apply
 their fixed algorithm settings to recorded inputs, just as HA does: `highs` uses
 22 lookahead slots, while `highs-16` uses 16. Without
 `--planners` or `--config`, the comparison is HiGHS versus self-consumption,
@@ -181,7 +190,7 @@ directory. Choose a new output name when rerunning a comparison.
 | Argument | Meaning |
 | --- | --- |
 | Input paths | One or more export files, quoted globs, or recursive directories. |
-| `--planners NAME ...` | Presets or built-in algorithms; `all` selects all presets. |
+| `--planners NAME ...` | Configurations or built-in algorithms; `all` selects all configurations. |
 | `--list-planners` | List choices without loading exports or running planners. |
 | `--rounds N` / `--repeats N` | Complete replays per configuration; default 1, positive values only. |
 | `--output PATH` | New or empty report directory; required except for validation/listing. |
@@ -235,7 +244,7 @@ Exit codes: `0` successful validation or complete runs; `1` a failed planner run
 
 ## Advanced configurations
 
-Use JSON for settings beyond published presets:
+Use JSON for settings beyond published configurations:
 
 ```json
 {
