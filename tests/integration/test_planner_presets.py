@@ -19,10 +19,10 @@ from custom_components.wattplan.const import (
 from custom_components.wattplan.optimizer.planners.presets import (
     PRESETS,
     available_preset_names,
+    run_preset,
 )
 from custom_components.wattplan.flows.source_shared import _validate_core_data
 from custom_components.wattplan.flows.main import WattPlanConfigFlow
-from custom_components.wattplan import coordinator as coordinator_module
 from custom_components.wattplan.coordinator_parts import CycleTrigger, PlanningStageError
 from .test_config_flow import (
     _create_basic_entry,
@@ -297,7 +297,7 @@ async def test_obsolete_plan_cannot_update_runtime_publish_or_persist(
     executor = hass.async_add_executor_job
 
     async def delayed_executor(target, *args):
-        if target is coordinator_module.run_preset:
+        if target is run_preset:
             started.set()
             await release.wait()
         return await executor(target, *args)
@@ -335,7 +335,8 @@ async def test_obsolete_plan_cannot_update_runtime_publish_or_persist(
                 assert entry.runtime_data.optimizer_state is None
             persist.assert_not_called()
             history.assert_not_called()
-            assert optimizer.call_count == (1 if phase == "executor" else 0)
+            # Acquisition/worker wait is cancelled before obsolete work executes.
+            assert optimizer.call_count == 0
         finally:
             release.set()
             if not pending.done():

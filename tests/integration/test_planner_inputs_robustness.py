@@ -20,9 +20,9 @@ from custom_components.wattplan.const import (
     CONF_SOURCE_PV,
     SOURCE_MODE_SERVICE_ADAPTER,
 )
-from custom_components.wattplan import coordinator as coordinator_module
 from custom_components.wattplan.coordinator import PlanningStageError
 from custom_components.wattplan.coordinator_parts import StageErrorKind
+from custom_components.wattplan.optimizer.planners.presets import run_preset
 from custom_components.wattplan.historical_on_off_provider import (
     HistoricalOnOffProvider,
 )
@@ -171,13 +171,14 @@ async def test_optimizer_timeout_fails_plan_with_execution_error(
     async def hang_on_optimizer(target: Any, *args: Any) -> Any:
         nonlocal optimizer_calls
         # The test hass runs executor jobs inline, so simulate a stuck solve.
-        if target is coordinator_module.run_preset:
+        if target is run_preset:
             optimizer_calls += 1
-            await release.wait()
         try:
+            if target is run_preset and optimizer_calls == 1:
+                await release.wait()
             return await original(target, *args)
         finally:
-            if target is coordinator_module.run_preset:
+            if target is run_preset:
                 completed.set()
 
     with (
@@ -194,13 +195,11 @@ async def test_optimizer_timeout_fails_plan_with_execution_error(
             # The plan from setup is retained, so the status degrades.
             assert hass.states.get("sensor.home_status").state == "degraded"
             state_after_timeout = entry.runtime_data.optimizer_state
-            with pytest.raises(PlanningStageError, match="still running"):
-                await _run_optimize(hass)
+            assert completed.is_set()
             assert optimizer_calls == 1
-            release.set()
-            await completed.wait()
             await hass.async_block_till_done()
             assert entry.runtime_data.optimizer_state == state_after_timeout
+            # The timed-out call is gone: a fresh attempt runs immediately.
             await _run_optimize(hass)
             assert optimizer_calls == 2
         finally:

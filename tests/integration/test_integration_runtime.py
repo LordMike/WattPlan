@@ -2384,8 +2384,8 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
     await store.async_save(
         {
             "schema_id": snapshot_schema_id(),
-            "planner_preset": "highs",
             "config_fingerprint": config_fingerprint(entry),
+            "planner_preset": "highs",
             "snapshot": {
                 "created_at": plan_start.isoformat(),
                 "planner_status": "planned",
@@ -2591,10 +2591,10 @@ async def _setup_with_cached_snapshot(
     await store.async_save(
         {
             "schema_id": snapshot_schema_id(),
-            "planner_preset": "highs",
             "config_fingerprint": (
                 config_fingerprint(entry) if fingerprint is _MATCHING else fingerprint
             ),
+            "planner_preset": "highs",
             "snapshot": {
                 "created_at": span_start.isoformat(),
                 "planner_status": "planned",
@@ -3204,7 +3204,7 @@ async def test_plan_details_sensor_exposes_horizon_length_arrays(
         "Optional entity build: optional",
         "Request assembly",
         "Optimizer input validation",
-        "Optimizer executor job",
+        "Optimizer process",
         "Historical price retention",
         "Planner output mapping",
         "Plan details payload build",

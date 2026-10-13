@@ -16,14 +16,19 @@ Policy searches penalize end-of-slot minimum-energy shortfalls and seed or order
 early recovery actions. This affects optimization preference, never tariff
 accounting. Self-consumption keeps passive battery actions and reports shortfalls.
 
-The live caller's timeout still cannot terminate native executor work. A
-shielded per-entry future remains owned in HA data across reloads; another call
-is rejected while that work runs, and a late result never replaces the accepted
-plan or runtime state. The simulator separately uses killable worker processes
-and its existing hard 120-second limit for each complete replay.
-Planning also retains the owning entry runtime across source acquisition and
-execution awaits. Reloading a preset or shutting down invalidates that ownership;
-obsolete results are discarded before they update the active runtime or plan.
+Live planning runs in a fresh worker process with a 120-second whole-call limit,
+including startup, solving, shared reporting and result transfer. Cancellation
+kills and reaps that process, even during a native solve. A new planning request
+supersedes the previous request; reload and shutdown drain old work before a
+replacement runtime starts. Battery target changes also abort stale work and
+invalidate cached recommendations, even when immediate replanning is disabled.
+The simulator independently bounds each complete replay at 120 seconds.
+
+Planning retains the owning entry runtime across source acquisition and execution
+awaits. Obsolete results cannot update active state. Snapshot commits share an
+entry-scoped lock across reloads; an in-flight disk write finishes before a newer
+commit can start, and ownership is checked after acquiring the lock. This prevents
+old runtimes from overwriting a replacement runtime's cache.
 
 ## Plan Outlook
 
@@ -342,7 +347,7 @@ Interchangeable implementations live in `optimizer/planners/`. A lazy factory bo
 selects HiGHS, self-consumption, greedy, local search, beam search, dynamic
 programming, charge-window search, genetic search, cross-entropy search, or a separate
 `module:factory`. HA selects a finite configuration from `planners/presets.py`
-and runs it through that same registry in its executor. Missing preset options
+and runs it through that same registry in its worker process. Missing preset options
 select legacy HiGHS and retain its existing lookahead and preference settings.
 Fixed HiGHS preset suffixes count slots; alternative planners own their search
 settings. Preset identity and fixed options accompany the effective input in

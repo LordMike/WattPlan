@@ -295,6 +295,8 @@ async def async_handle_set_target_service(hass: HomeAssistant, call: ServiceCall
             )
     for runtime_data, subentry_id in _iter_target_runtime_data(loaded, matches):
         set_battery_target(runtime_data, subentry_id, target)
+    for entry_id in {eid for eid, _ in matches}:
+        await loaded[entry_id].runtime_data.coordinator.async_invalidate_plan()
     if call.data[ATTR_RUN_OPTIMIZE]:
         for entry_id in {eid for eid, _ in matches}:
             entry = loaded[entry_id]
@@ -310,6 +312,8 @@ async def async_handle_clear_target_service(hass: HomeAssistant, call: ServiceCa
         cleared_any = clear_battery_target(runtime_data, subentry_id) or cleared_any
     if not cleared_any:
         raise ServiceValidationError("No active battery targets matched the provided selectors")
+    for entry_id in {eid for eid, _ in matches}:
+        await loaded[entry_id].runtime_data.coordinator.async_invalidate_plan()
     if call.data[ATTR_RUN_OPTIMIZE]:
         for entry_id in {eid for eid, _ in matches}:
             entry = loaded[entry_id]
