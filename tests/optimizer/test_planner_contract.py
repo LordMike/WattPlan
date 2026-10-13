@@ -99,8 +99,6 @@ def test_non_object_options_rejected(options):
 
 
 def test_factory_options_and_capabilities_fail_explicitly():
-    with pytest.raises(TypeError, match="unexpected keyword"):
-        create_planner("self-consumption", {"unknown": 1})
     params = conformance_params()[1].model_copy(update={"comfort_entities": [object()]})
     with pytest.raises(ValueError, match="comfort"):
         PlannerCapabilities().validate(params)

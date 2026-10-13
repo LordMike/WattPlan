@@ -2,6 +2,7 @@
 
 import json
 import importlib
+from datetime import timedelta
 
 import pytest
 
@@ -10,7 +11,7 @@ from custom_components.wattplan.optimizer.planners.presets import PRESETS, run_p
 from custom_components.wattplan.optimizer.planners.registry import BUILTINS, create_planner
 from custom_components.wattplan.optimizer.planners.comfort import prepare_comfort
 from custom_components.wattplan.optimizer.planners.evaluation import evaluate_schedule
-from tests.optimizer.planner_conformance import battery_policies
+from tests.optimizer.planner_conformance import assert_public_result, battery_policies
 
 
 def preset_capabilities(name):
@@ -89,12 +90,46 @@ def assert_live_result(params, result):
     assert result["state"]
 
 
+@pytest.mark.parametrize("name", BUILTINS)
+def test_replanning_uses_current_inputs_and_preserves_comfort_commitments(name):
+    params = request()
+    heater = params.comfort_entities[0]
+    heater.on_history = [False, False, False]
+    heater.off_streak_slots_now = 3
+    heater.min_consecutive_on_slots = 3
+    planner = create_planner(name)
+    first = planner(params)
+    first_heat = next(e for e in first["entities"] if e["type"] == "comfort")
+    assert all(p["enabled"] for p in first_heat["schedule"][:3])
+    following = params.model_copy(deep=True)
+    following.state = first["state"]
+    following.plan_start += timedelta(minutes=params.slot_minutes)
+    following.usage_kwh = [0.7] * 8
+    following.solar_input_kwh = [0.0] * 8
+    following.grid_import_price_per_kwh = [2.0] * 8
+    following.battery_entities[0].initial_kwh = 0.2
+    following.comfort_entities[0].on_history = [False, False, True]
+    following.comfort_entities[0].is_on_now = True
+    following.comfort_entities[0].off_streak_slots_now = 0
+    before = following.model_dump(mode="json")
+    second = planner(following)
+    assert_public_result(following, second)
+    assert following.model_dump(mode="json") == before
+    second_heat = next(e for e in second["entities"] if e["type"] == "comfort")
+    assert all(p["enabled"] for p in second_heat["schedule"][:2])
+    # No solar or charging incentive: observed inventory, not the previous plan,
+    # bounds every future battery level. Comfort demand must still be included.
+    assert all(p["level"] <= 0.2 + 1e-6 for e in second["entities"]
+               if e["type"] == "battery" for p in e["schedule"])
+
+
 @pytest.mark.parametrize("preset", PRESETS)
 def test_all_presets_have_complete_outputs_and_account_for_comfort(preset):
     params = request()
     before = params.model_dump(mode="json")
     result = run_preset(params, preset)
     assert params.model_dump(mode="json") == before
+    assert_public_result(params, result)
     assert result["diagnostics"]["planner"]["preset"] == preset
     assert_live_result(params, result)
     assert not result["suboptimal"], result["suboptimal_reasons"]
@@ -120,6 +155,7 @@ def test_direct_factories_and_registry_have_the_same_live_features(name, constra
     direct = direct_planner(params)
     registered = create_planner(name)(params)
     assert params.model_dump(mode="json") == before
+    assert_public_result(params, registered)
     for result in (direct, registered):
         assert_live_result(params, result)
     for field in ("entities", "projections", "energy_flows", "optional_entity_options",

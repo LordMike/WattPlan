@@ -64,28 +64,35 @@ and user-facing summaries in [Planner Configurations](optimizer-profiles.md).
 Store experiment notes, tuning ledgers, and benchmark reports in ignored `.tmp/`
 or outside the repository.
 
-Planner tests separate shared behavior from algorithm-specific regressions:
+Planner tests focus on the shared public contract. Algorithms may change their
+search mechanics and choose different valid schedules:
 
 - `tests/optimizer/test_planner_contract.py` runs every registered algorithm
   through the common battery contract, physical projections, input isolation,
   factory/state rules and solver-independent import checks.
+- `tests/optimizer/test_public_planner_contract.py` checks source permissions,
+  physical bounds, empty equipment, advisory loads and strict output validation.
+- `tests/optimizer/test_planner_mobility_contract.py` checks connection windows,
+  trip energy and honest service reporting for every mobility-capable algorithm.
 - `tests/optimizer/test_live_planner_parity.py` checks every named configuration's live
   outputs, comfort accounting, health, reserve recovery and immediate targets.
   It also compares direct factories with registry calls for every algorithm,
   including combined comfort, optional-appliance and battery-constraint inputs.
 - `tests/optimizer/test_policy_planner_search.py` shares discrete-search
-  economics, target modes, repeatability and budget tests. Explicit subsets
+  economics, target modes, repeatability and bounded-result tests. Explicit subsets
   distinguish candidate-count searches from beam/DP expansion budgets. HiGHS's
   continuous soft-target objective and passive self-consumption are not forced
   to behave like the discrete optimizing searches.
-- Shared comfort, reporting and physics helpers have focused unit tests.
-  Per-algorithm files retain regressions for their own mechanisms: DP state
-  aggregation and exhaustive oracles, beam pruning and tail completion, window
-  refinement, greedy target construction, stochastic operators and HiGHS cadence.
+- Shared request models, comfort, reporting and physics helpers have focused
+  unit tests. Published presets retain configuration and compatibility tests.
 
-Add a common-contract requirement to the parameterized suites, rather than
-copying it into each planner's file. Keep an algorithm-specific test when its
-fixture, budget, internal invariant or expected policy protects a distinct bug.
+Add user-visible requirements to the parameterized suites. Do not add tests for
+individual planners' search paths, internal counters, solver layouts, warm-start
+construction, value-table geometry or agreement with another implementation.
+Keep assertions about outcomes, physical accounting, capability support and
+complete results under configured budgets. Do not require identical schedules
+or global optimality. Evaluate planner-specific quality and runtime changes with
+the benchmark and simulation tools; these are outside the automated contract gate.
 The HA integration parity suite separately tests coordinator/entity wiring;
 optimizer-only contract tests cannot substitute for that boundary.
 

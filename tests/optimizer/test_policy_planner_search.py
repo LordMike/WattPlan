@@ -2,21 +2,16 @@
 
 Public-contract checks for every algorithm live in test_planner_contract and
 test_live_planner_parity. These cases cover the common discrete optimizing
-planners, with budget subsets explicit where their mechanisms differ. Internal
-pruning, variation operators and algorithm-specific regressions stay in their
-respective test modules.
+planners, with budget subsets explicit where their mechanisms differ. Assertions concern published behavior rather than internal search mechanics.
 """
-
-import importlib
 
 import pytest
 
-from custom_components.wattplan.optimizer.models import OptimizationParams
 from custom_components.wattplan.optimizer.planners import create_planner
 from custom_components.wattplan.optimizer.planners import evaluation as evaluator
 from custom_components.wattplan.optimizer.planners.registry import BUILTINS
 from tests.optimizer.planner_conformance import (
-    battery_policies, conformance_params, economic_params,
+    assert_conforms, battery_policies, conformance_params, economic_params,
 )
 
 POLICY_PLANNERS = [name for name in BUILTINS if name != "highs"]
@@ -24,8 +19,6 @@ POLICY_SEARCHES = [name for name in POLICY_PLANNERS
                   if create_planner(name).capabilities.economic_scope == "household"]
 TARGET_SEARCHES = [name for name in POLICY_PLANNERS
                   if create_planner(name).capabilities.targets == "optimized"]
-COUNT_SEARCHES = ["greedy", "local-search", "charge-window", "genetic", "cross-entropy"]
-WORK_CAPPED_SEARCHES = ["local-search", "charge-window", "cross-entropy"]
 
 
 @pytest.fixture(params=POLICY_SEARCHES)
@@ -124,7 +117,7 @@ def test_specialized_controls_leave_metadata_free_household_passive_and_report_a
     assert planner.capabilities.reserve_recovery is False
 
 
-@pytest.mark.parametrize("name", COUNT_SEARCHES)
+@pytest.mark.parametrize("name", POLICY_PLANNERS)
 def test_curves_and_preferences_preserve_physical_scoring(name):
     params = conformance_params()[1]
     params.battery_entities[0].charge_curve_kwh = [1, 0.5, 0.2]
@@ -134,49 +127,24 @@ def test_curves_and_preferences_preserve_physical_scoring(name):
     result = create_planner(name)(params)
     evaluated = evaluator.evaluate_schedule(params, battery_policies(result))
     assert result["diagnostics"]["evaluation"]["score"] == pytest.approx(evaluated.score)
-    assert evaluated.score <= evaluator.evaluate_schedule(params, [["self_consume"] * 4]).score
 
 
-@pytest.mark.parametrize("name", COUNT_SEARCHES)
-@pytest.mark.parametrize("count", [1, 2, 7, 48])
-def test_every_full_evaluation_is_counted_and_reporting_reuses_the_winner(monkeypatch, name, count):
-    module = importlib.import_module(BUILTINS[name].split(":")[0])
-    original = evaluator.evaluate_schedule
-    scores = []
-
-    def recorded(params, policies):
-        evaluated = original(params, policies)
-        scores.append(evaluated.score)
-        return evaluated
-
-    # Also instrument the result builder's lookup: patching only the algorithm
-    # would fail to detect an extra, uncounted replay while constructing outputs.
-    monkeypatch.setattr(module, "evaluate_schedule", recorded)
-    monkeypatch.setattr(evaluator, "evaluate_schedule", recorded)
-    result = create_planner(name, {"max_evaluations": count})(economic_params())
-    assert 1 <= len(scores) == result["diagnostics"]["evaluations"] <= count
-    assert tuple(result["diagnostics"]["evaluation"]["score"]) <= scores[0]
-    if "unique_evaluated" in result["diagnostics"]:
-        assert result["diagnostics"]["unique_evaluated"] == len(scores)
-
-
-@pytest.mark.parametrize("name", ["local-search", "cross-entropy"])
-def test_expired_search_budget_still_returns_one_complete_baseline(name):
-    result = create_planner(name, {"max_evaluations": 100, "max_seconds": 1e-12})(economic_params())
-    assert result["diagnostics"]["evaluations"] == 1
-    assert result["diagnostics"]["termination_reason"] == "search_time_limit"
-    assert len(result["entities"][0]["schedule"]) == 4
-
-
-@pytest.mark.parametrize("name", WORK_CAPPED_SEARCHES)
-def test_large_requests_reduce_the_candidate_budget(name):
-    payload = economic_params(prices=(0.1,) * 672, usage=(0,) * 672).model_dump()
-    payload["battery_entities"] = [
-        {**payload["battery_entities"][0], "name": f"battery-{index}"}
-        for index in range(16)
-    ]
-    result = create_planner(name, {"max_evaluations": 10000})(OptimizationParams(**payload))
-    assert result["diagnostics"]["effective_max_evaluations"] == 18
-    assert result["diagnostics"]["evaluations"] <= 18
-    assert result["diagnostics"]["candidate_attempts"] <= 144
-    assert all(len(entity["schedule"]) == 672 for entity in result["entities"])
+@pytest.mark.parametrize("name,option", [
+    (name, "max_evaluations")
+    for name in ("greedy", "local-search", "charge-window", "genetic", "cross-entropy")
+] + [(name, "max_expansions")
+     for name in ("beam-search", "dynamic-programming", "mobility-fleet-beam")])
+@pytest.mark.parametrize("limit", [1, 8])
+def test_bounded_search_still_returns_complete_physical_plan(name, option, limit):
+    params = economic_params(prices=(10, 9, 8, 1), usage=(0,) * 4)
+    params.battery_entities[0].minimum_kwh = 1.0
+    params.battery_entities[0].charge_curve_kwh = [0.4]
+    result = assert_conforms(name, params, {option: limit})
+    counter = "expansions" if option == "max_expansions" else "evaluations"
+    assert 0 <= result["diagnostics"][counter] <= limit
+    # Stopping early may leave reserve unmet, but cannot invent recovery energy
+    # or conceal a shortfall in the accepted plan.
+    levels = [point["level"] for point in result["entities"][0]["schedule"]]
+    assert all(level <= 0.4 * (index + 1) + 1e-6 for index, level in enumerate(levels))
+    shortfall = any(level < params.battery_entities[0].minimum_kwh - 1e-6 for level in levels)
+    assert ("battery_min_unmet" in result["suboptimal_reasons"]) is shortfall

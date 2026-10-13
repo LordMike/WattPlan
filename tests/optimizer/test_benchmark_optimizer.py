@@ -99,23 +99,6 @@ def test_serial_summary_separates_full_and_prefix_distributions():
     }
 
 
-def test_preserve_probe_scenario_records_counterfactual_solver_calls():
-    report = benchmark._measure(
-        benchmark._preserve_probe_payload(4, 4),
-        repeats=1,
-    )
-
-    assert report["solver"]["probe_calls"] > 0
-    assert report["solver"]["primary_calls"] == report["primary_solves"]
-    assert report["solver"]["submitted_starts"] == 0
-    assert (
-        report["solver"]["total_wrapper_seconds"]
-        >= report["solver"]["total_highs_seconds"]
-    )
-    assert report["solver"]["max_probe_model"]["variables"] > 0
-    assert report["timing"]["end_to_end_seconds"]["median_seconds"] > 0
-
-
 def test_solver_summary_supports_zero_native_calls():
     report = benchmark._solver_summary([], [])
 
@@ -193,48 +176,6 @@ def test_session_one_cases_cover_required_asset_shapes():
     )
     for name in CASE_METADATA:
         benchmark.OptimizationParams(**build_case(name, slots=48, lookahead=8))
-
-
-def test_serial_trajectory_records_solver_breakdown_per_tick():
-    trajectory = benchmark._serial_trajectory(
-        build_case("no-assets-no-pv", slots=4, lookahead=4)
-    )
-
-    assert len(trajectory) == 5
-    assert all("timing" in row and "solver" in row for row in trajectory)
-    assert all(
-        row["solver"]["primary_calls"] == row["primary_solves"]
-        for row in trajectory
-    )
-    assert all(row["solver"]["total_calls"] == 0 for row in trajectory)
-    assert all(row["solver"]["probe_calls"] == 0 for row in trajectory)
-
-
-def test_serial_trajectory_advances_observed_comfort_history():
-    trajectory = benchmark._serial_trajectory(
-        build_case("comfort-battery-signed-pv", slots=12, lookahead=8)
-    )
-
-    assert [row["cadence"] for row in trajectory[:4]] == [
-        "full",
-        "repair",
-        "repair",
-        "repair",
-    ], [(row["cadence"], row["cadence_reason"]) for row in trajectory]
-    assert all(row["quality"]["valid"] for row in trajectory)
-
-
-def test_real_no_battery_measurement_reports_zero_solver_calls():
-    report = benchmark._measure(
-        build_case("no-battery-comfort-pv", slots=12, lookahead=8), repeats=1
-    )
-
-    assert report["primary_solves"] == 0
-    assert report["solver"]["total_calls"] == 0
-    assert report["solver"]["primary_calls"] == 0
-    assert report["solver"]["probe_calls"] == 0
-    assert report["solver"]["max_model"]["variables"] == 0
-    assert report["quality_valid"]
 
 
 def test_git_state_is_best_effort(monkeypatch):

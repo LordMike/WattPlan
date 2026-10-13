@@ -2,14 +2,12 @@
 
 import pytest
 
-from custom_components.wattplan.optimizer import optimize
 from custom_components.wattplan.optimizer.models import OptimizationParams, normalize_calculation_input
 from custom_components.wattplan.optimizer.physics import transition, transition_at
 from custom_components.wattplan.optimizer.planners.contract import PlannerCapabilities
 from custom_components.wattplan.optimizer.planners.evaluation import build_result, evaluate_schedule
-from custom_components.wattplan.optimizer.planners.registry import create_planner
-from custom_components.wattplan.optimizer.planners.self_consumption import factory
-from tests.optimizer.test_dynamic_programming_planner import request
+from custom_components.wattplan.optimizer.planners.registry import BUILTINS, create_planner
+from tests.optimizer.planner_conformance import battery_params as request
 
 
 def mobility_request(**fields):
@@ -114,10 +112,10 @@ def test_inactive_arrays_keep_transition_score_and_result_identical(monkeypatch)
     PlannerCapabilities().validate(inert)
 
 
-@pytest.mark.parametrize("planner", [factory(), create_planner("self-consumption"), optimize])
-def test_unadapted_direct_and_registered_planners_reject_active_inputs(planner):
+@pytest.mark.parametrize("name", [name for name in BUILTINS if not create_planner(name).capabilities.mobility])
+def test_unsupported_planners_reject_active_inputs(name):
     with pytest.raises(ValueError, match="mobility"):
-        planner(mobility_request(connected_slots=[False] * 4))
+        create_planner(name)(mobility_request(connected_slots=[False] * 4))
 
 
 def test_internal_conversion_preserves_mobility_metadata():

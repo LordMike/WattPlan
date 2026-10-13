@@ -5,6 +5,7 @@ import pytest
 from custom_components.wattplan.optimizer.models import BatteryEntityParams, OptimizationParams
 from custom_components.wattplan.optimizer.physics import transition
 from custom_components.wattplan.optimizer.planners import create_planner
+from custom_components.wattplan.optimizer.planners.registry import BUILTINS
 from custom_components.wattplan.optimizer.planners.evaluation import build_result, evaluate_schedule
 from custom_components.wattplan.optimizer.planners.reporting import optional_entity_options
 
@@ -95,7 +96,7 @@ def test_opposed_battery_policies_only_discharge_for_household_load(usage, expec
     assert_conservation(step, usage=usage, pv=0)
 
 
-@pytest.mark.parametrize("planner", ["highs", "dynamic-programming", "charge-window", "cross-entropy"])
+@pytest.mark.parametrize("planner", BUILTINS)
 def test_forbidden_surplus_charge_cannot_falsely_satisfy_target(planner):
     raw = battery().model_dump()
     raw["target"] = {"timeslot": 0, "soc_kwh": 1}

@@ -453,7 +453,7 @@ contain only tariffs. This score is not comparable with HiGHS's internal
 objective. Search budgets must count evaluated candidates; algorithms using a
 shorter search horizon must still return complete schedules and disclose ignored
 preferences. Registry-wide tests cover the shared contract; see
-[test organization](development.md#testing) for algorithm-specific regressions.
+[test organization](development.md#testing) for coverage and planner-quality evaluation.
 
 The registry namespaces returned state by implementation, options, and state
 version. A mismatch resets it. Stateless battery searches return `None`, though
