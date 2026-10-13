@@ -651,6 +651,14 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Menu for options."""
+        preset_name = self._options.get(CONF_PLANNER_PRESET, DEFAULT_PRESET)
+        try:
+            get_preset(preset_name)
+        except ValueError:
+            self._options[CONF_PLANNER_PRESET] = DEFAULT_PRESET
+            self.hass.config_entries.async_update_entry(
+                self.config_entry, options=self._options
+            )
         menu_options = [
             "planner_core",
             "planner_timers",

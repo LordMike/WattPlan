@@ -2384,6 +2384,7 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
     await store.async_save(
         {
             "schema_id": snapshot_schema_id(),
+            "planner_preset": "highs",
             "config_fingerprint": config_fingerprint(entry),
             "snapshot": {
                 "created_at": plan_start.isoformat(),
@@ -2590,6 +2591,7 @@ async def _setup_with_cached_snapshot(
     await store.async_save(
         {
             "schema_id": snapshot_schema_id(),
+            "planner_preset": "highs",
             "config_fingerprint": (
                 config_fingerprint(entry) if fingerprint is _MATCHING else fingerprint
             ),

@@ -130,6 +130,22 @@ async def test_hidden_current_experimental_preset_remains_selectable(
     assert choices == {"highs", "self-consumption", "local-search-3", "beam-2"}
 
 
+async def test_options_recovers_unknown_preset_without_loaded_runtime(
+    hass, mock_setup_entry
+):
+    entry = await _create_basic_entry(hass)
+    hass.config_entries.async_update_entry(
+        entry,
+        options={**entry.options, CONF_PLANNER_PRESET: "removed-preset"},
+    )
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert entry.options[CONF_PLANNER_PRESET] == "highs"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "planner_core"}
+    )
+    assert _schema_default(result, CONF_PLANNER_PRESET) == "highs"
+
+
 def test_experimental_preset_filter_keeps_hidden_current_selection():
     stable = available_preset_names()
     assert stable == ("highs", "self-consumption", "local-search-3")

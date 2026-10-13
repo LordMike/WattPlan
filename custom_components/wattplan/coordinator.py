@@ -20,6 +20,7 @@ from homeassistant.helpers.event import (
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
+from .config_identity import config_fingerprint
 from .const import DOMAIN
 from .coordinator_parts import (
     CoordinatorSnapshot,
@@ -84,6 +85,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         planner_reproduction_retention_days: int = 14,
         integration_version: str = "unknown",
         config_fingerprint: str | None = None,
+        planner_preset: str = DEFAULT_PRESET,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
@@ -138,6 +140,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             schema_id=self._snapshot_schema_id,
             logger=_LOGGER,
             config_fingerprint=config_fingerprint,
+            planner_preset=planner_preset,
         )
         self._config_fingerprint = config_fingerprint
         self._projection = PlannerProjectionBuilder(
@@ -556,6 +559,10 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         return (
             not self._shutting_down
             and entry is not None
+            and (
+                self._config_fingerprint is None
+                or config_fingerprint(entry) == self._config_fingerprint
+            )
             and getattr(entry, "runtime_data", None) is runtime_data
             and runtime_data.coordinator is self
         )

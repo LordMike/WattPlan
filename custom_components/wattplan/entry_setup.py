@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 from datetime import UTC, datetime, timedelta
 from functools import partial
@@ -17,6 +15,7 @@ from .const import (
     CONF_ACTION_EMISSION_ENABLED,
     CONF_HISTORICAL_COST_TRACKING_ENABLED,
     CONF_PLANNER_REPRODUCTION_RETENTION_DAYS,
+    CONF_PLANNER_PRESET,
     CONF_OUTLOOK_LANGUAGES,
     CONF_PLANNING_ENABLED,
     CONF_RECORD_PLANNER_REPRODUCTIONS,
@@ -26,8 +25,10 @@ from .const import (
     DEFAULT_PLANNER_REPRODUCTION_RETENTION_DAYS,
     MAX_PLANNER_REPRODUCTION_RETENTION_DAYS,
 )
+from .config_identity import config_fingerprint
 from .coordinator import CycleTrigger, WattPlanCoordinator
 from .historical_cost.tracker import HistoricalCostTracker
+from .optimizer.planners.presets import DEFAULT_PRESET, get_preset
 from .outlook_languages import resolve_outlook_languages
 from .plan_outlook_renderer import preload_plan_outlook_catalogs
 from .runtime import WattPlanConfigEntry, WattPlanRuntimeData, mark_runtime_updated
@@ -40,20 +41,6 @@ DATA_ENTRY_COUNT = "entry_count"
 DATA_SERVICE_REGISTERED = "service_registered"
 
 _LOGGER = logging.getLogger(__name__)
-
-
-def config_fingerprint(entry: WattPlanConfigEntry) -> str:
-    """Return a stable hash of everything the plan is computed from."""
-    payload = {
-        "data": dict(entry.data),
-        "options": dict(entry.options),
-        "subentries": {
-            subentry_id: [subentry.subentry_type, dict(subentry.data)]
-            for subentry_id, subentry in entry.subentries.items()
-        },
-    }
-    encoded = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
-    return hashlib.sha256(encoded.encode()).hexdigest()
 
 
 async def async_try_initial_plan(entry: WattPlanConfigEntry) -> None:
@@ -72,6 +59,24 @@ async def async_try_initial_plan(entry: WattPlanConfigEntry) -> None:
 
 async def async_setup_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) -> bool:
     """Set up WattPlan from a config entry."""
+    configured_preset = entry.options.get(CONF_PLANNER_PRESET, DEFAULT_PRESET)
+    try:
+        get_preset(configured_preset)
+    except ValueError:
+        _LOGGER.warning(
+            "Unknown planner preset %r for entry %s; using %s",
+            configured_preset,
+            entry.entry_id,
+            DEFAULT_PRESET,
+        )
+        # Repair stale or manually edited options before constructing the
+        # coordinator so runtime selection, cache identity and the next options
+        # form all agree on one supported preset.
+        hass.config_entries.async_update_entry(
+            entry,
+            options={**entry.options, CONF_PLANNER_PRESET: DEFAULT_PRESET},
+        )
+
     domain_data = hass.data.setdefault(DOMAIN, {})
     if not domain_data.get(DATA_SERVICE_REGISTERED, False):
         for service, handler, schema, supports_response in SERVICE_SPECS:
@@ -107,6 +112,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) -> 
         entry_id=entry.entry_id,
         config_entry=entry,
         config_fingerprint=config_fingerprint(entry),
+        planner_preset=entry.options.get(CONF_PLANNER_PRESET, DEFAULT_PRESET),
         update_interval=timedelta(minutes=int(entry.data[CONF_SLOT_MINUTES])),
         planning_enabled=bool(entry.options.get(CONF_PLANNING_ENABLED, True)),
         action_emission_enabled=bool(entry.options.get(CONF_ACTION_EMISSION_ENABLED, True)),
