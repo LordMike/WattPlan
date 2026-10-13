@@ -60,12 +60,27 @@ def _initial_locks(params, prior):
             # Ordered observations can establish an unfinished ON run even if
             # this is the first planner invocation or the preset has changed.
             streak = 0
-            for value in reversed(entity.on_history or []):
+            history = entity.on_history
+            for value in reversed(history or []):
                 if not value:
                     break
                 streak += 1
-            lock = max(entity.min_consecutive_on_slots - streak, 0) if streak else 0
+            if streak:
+                lock = max(entity.min_consecutive_on_slots - streak, 0)
+            elif history:
+                # The latest complete observation was OFF while the current
+                # runtime is ON, so the ON run began after that observation.
+                # No full ON slots have elapsed yet; preserve the complete
+                # minimum run in the forecast schedule.
+                lock = entity.min_consecutive_on_slots
+            else:
+                # With no ordered observations, the current ON run's age is
+                # unknown. Keep the legacy behavior instead of restarting its
+                # minimum-run timer on every forecast refresh.
+                lock = 0
         else:
+            # The integration supplies the current OFF streak directly. It
+            # already includes any transition from a trailing ON history slot.
             lock = max(entity.min_consecutive_off_slots - entity.off_streak_slots_now, 0)
         modes.append(mode)
         remaining.append(lock)

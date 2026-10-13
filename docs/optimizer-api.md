@@ -210,10 +210,17 @@ and simulator API support, not a Home Assistant vehicle-source configuration.
 | `power_usage_kwh` | `float` | Yes | - | Finite, `> 0` | Energy draw when ON (kWh per slot). |
 | `is_on_now` | `bool` | Yes | - | - | Current ON/OFF runtime state. |
 | `on_slots_last_rolling_window` | `int` | No | `0` | `>= 0`, `<= rolling_window_slots` | Deprecated aggregate retained for compatibility when ordered history is unavailable. |
-| `on_history` | `list[bool] \| null` | No | `null` | Exactly `rolling_window_slots - 1` values when present | Ordered observed states, oldest first, immediately before forecast slot 0. Used by the deterministic scheduler to enforce rolling demand. |
+| `on_history` | `list[bool] \| null` | No | `null` | Exactly `rolling_window_slots - 1` values when present | Ordered observed states, oldest first, immediately before forecast slot 0. Used by the deterministic scheduler to enforce rolling demand and infer an unfinished ON run. |
 | `off_streak_slots_now` | `int` | Yes | - | `>= 0` | Current OFF streak (slots). |
 | `measured_power_source` | `str \| null` | No | `null` | - | Optional source of observed power telemetry. |
 | `recent_avg_on_power_kw` | `float \| null` | No | `null` | Finite, `> 0` | Optional observed ON power average. |
+
+With ordered history, a trailing OFF observation followed by `is_on_now=true`
+is treated as a newly started ON run. The planner keeps that run ON for the
+configured minimum duration. While currently OFF, `off_streak_slots_now` supplies
+the completed OFF duration and determines the remaining minimum-OFF commitment.
+If ordered ON history is unavailable, the age of a currently ON run cannot be
+inferred, so the planner does not restart its minimum-ON timer on each refresh.
 
 ## Optional Entity Model (`OptionalEntityParams`)
 Optional entities provide advisory start-time suggestions and do not change the published battery/comfort schedule. Each candidate is valued by replaying the supplied forecast horizon from the original battery state under the unchanged published battery modes and comfort schedule. The replay applies the candidate load to physical PV, battery, import, and export flows, including later tariff cost caused by changed battery state, and compares it with the same fixed-policy replay without the load. Signed import and export tariffs are used in both replays. Heuristic throughput and mode-switch weights are not added to replay costs or used to rank optional-load starts.
