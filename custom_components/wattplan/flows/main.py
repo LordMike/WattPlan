@@ -22,7 +22,11 @@ from ..const import (
     SUPPORTED_OUTLOOK_LANGUAGES,
 )
 from ..historical_cost.tracker import validate_energy_sensor
-from ..optimizer.planners.presets import DEFAULT_PRESET, get_preset
+from ..optimizer.planners.presets import (
+    DEFAULT_PRESET,
+    LEGACY_DEFAULT_PRESET,
+    get_preset,
+)
 from ..source_providers import CONF_WATTPLAN_ENTITY_ID, source_mode, source_providers
 from .forms import _validate_core_lookahead_for_comforts
 from .source_shared import (
@@ -319,7 +323,7 @@ class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
     """Handle a config flow for WattPlan."""
 
     VERSION = 1
-    MINOR_VERSION = 2
+    MINOR_VERSION = 3
 
     _core: dict[str, Any]
     _entry_options: dict[str, Any]
@@ -601,7 +605,10 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
         self._options = deepcopy(dict(config_entry.options))
         self._options.setdefault(CONF_PLANNING_ENABLED, True)
         self._options.setdefault(CONF_ACTION_EMISSION_ENABLED, True)
-        self._options.setdefault(CONF_PLANNER_PRESET, DEFAULT_PRESET)
+        self._options.setdefault(
+            CONF_PLANNER_PRESET,
+            LEGACY_DEFAULT_PRESET if config_entry.minor_version < 3 else DEFAULT_PRESET,
+        )
         self._options.setdefault(CONF_RECORD_PLANNER_REPRODUCTIONS, False)
         self._options.setdefault(CONF_SHOW_EXPERIMENTAL_PLANNERS, False)
         self._options.setdefault(

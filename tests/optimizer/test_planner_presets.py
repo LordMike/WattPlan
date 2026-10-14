@@ -30,7 +30,7 @@ def test_highs_presets_apply_slots_and_discard_incompatible_state(monkeypatch):
 
     monkeypatch.setattr(optimizer, "optimize", fake)
     params = conformance_params()[1].model_copy(update={"lookahead_slots": 22})
-    first = run_preset(params)
+    first = run_preset(params, "highs")
     second = run_preset(params.model_copy(update={"state": first["state"]}), "highs-16")
     run_preset(params.model_copy(update={"state": second["state"]}), "highs-16")
     run_preset(params.model_copy(update={"state": second["state"]}), "highs-24")

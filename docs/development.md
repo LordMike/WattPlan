@@ -46,8 +46,9 @@ symlink is required for these in-repo tests.
 
 For offline planner evaluation, activate the development environment and run
 `python scripts/simulate_planner.py /path/to/snapshots --validate-only`, then use
-`--planners highs-16 self-consumption --rounds 3 --output /path/to/report` to
-execute. `--list-planners` lists configurations; `--planners all` compares every configuration.
+`--planners charge-window-96 self-consumption --rounds 3 --output /path/to/report`
+to compare Charge-window search with Self-consumption. `--list-planners` lists
+configuration names and IDs; `--planners all` includes experimental configurations.
 Input arguments accept multiple export files, globs, or directories. See the
 [simulator walkthrough](simulator.md) for collection, downloads, variants, and
 reports. Tests use independent hand-calculated physics
@@ -84,7 +85,7 @@ search mechanics and choose different valid schedules:
   continuous soft-target objective and passive self-consumption are not forced
   to behave like the discrete optimizing searches.
 - Shared request models, comfort, reporting and physics helpers have focused
-  unit tests. Published presets retain configuration and compatibility tests.
+  unit tests. Named configurations retain configuration and compatibility tests.
 
 Add user-visible requirements to the parameterized suites. Do not add tests for
 individual planners' search paths, internal counters, solver layouts, warm-start

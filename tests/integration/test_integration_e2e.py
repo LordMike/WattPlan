@@ -420,7 +420,7 @@ async def test_legacy_lookahead_is_ignored_by_runtime_and_options_flow(
         "custom_components.wattplan.optimizer.optimize", side_effect=capture_params
     ):
         await _setup_entry(hass, entry)
-        assert entry.minor_version == 2
+        assert entry.minor_version == 3
         assert entry.options[CONF_OPTIMIZER_LOOKAHEAD_SLOTS] == 5
         effective_lookahead = 22
         assert captured[-1].lookahead_slots == effective_lookahead

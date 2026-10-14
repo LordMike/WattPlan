@@ -25,7 +25,8 @@ class PlannerPreset:
     experimental: bool = True
 
 
-DEFAULT_PRESET = "highs"
+DEFAULT_PRESET = "charge-window-96"
+LEGACY_DEFAULT_PRESET = "highs"
 PRESETS = {
     "mobility-baseline": PlannerPreset(
         "mobility-baseline", "Mobility — first-available service baseline"
@@ -34,8 +35,8 @@ PRESETS = {
         "mobility-tariff-seeds", "Mobility — two service/tariff seed candidates"
     ),
     "mobility-hybrid-seeds-4-grid4": PlannerPreset(
-        "mobility-hybrid-seeds", "Mobility — four joint hybrid/service seeds, grid 4",
-        {"energy_intervals": 4},
+        "mobility-hybrid-seeds", "Joint seed search",
+        {"energy_intervals": 4}, experimental=False,
     ),
     **{
         f"mobility-fleet-beam-{width}-exp{expansions}-joint27": PlannerPreset(
@@ -46,7 +47,7 @@ PRESETS = {
     },
     "highs": PlannerPreset(
         "highs", "HiGHS — 22 lookahead slots",
-        {"lookahead_slots": DEFAULT_LOOKAHEAD_SLOTS}, experimental=False,
+        {"lookahead_slots": DEFAULT_LOOKAHEAD_SLOTS},
     ),
     **{
         f"highs-{slots}": PlannerPreset(
@@ -55,7 +56,7 @@ PRESETS = {
         for slots in (8, 16, 24)
     },
     "self-consumption": PlannerPreset(
-        "self-consumption", "Self-consumption — baseline (observes targets)",
+        "self-consumption", "Self-consumption",
         experimental=False,
     ),
     **{
@@ -68,7 +69,6 @@ PRESETS = {
         f"local-search-{count}": PlannerPreset(
             "local-search", f"Local search — {count} evaluations",
             {"max_evaluations": count, "seed": 0},
-            experimental=count != 3,
         )
         for count in (3, 96)
     },
@@ -91,8 +91,8 @@ PRESETS = {
          "max_joint_actions": 81, "value_horizon_slots": 144},
     ),
     "charge-window-96": PlannerPreset(
-        "charge-window", "Charge window — 96 evaluations",
-        {"max_evaluations": 96, "window_candidates": 3},
+        "charge-window", "Charge-window search",
+        {"max_evaluations": 96, "window_candidates": 3}, experimental=False,
     ),
     **{
         f"genetic-{name}": PlannerPreset(
@@ -404,12 +404,12 @@ PRESETS = {
          "include_initial_knot": True, "prerefill_guard": True},
     ),
     "value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12-initialknot1-prerefill1": PlannerPreset(
-        "hybrid-policy", "Value policy — paired demand spread 25% for 12 slots, exact initial energy knot, pre-refill guard",
+        "hybrid-policy", "Guarded value policy",
         {"surplus_ratio": 1.5, "energy_intervals": 6,
          "terminal_value_fraction": 0.0, "pv_scenario_spread": 1.0,
          "grid_charge_premium_per_kwh": 0.03,
          "paired_demand_scenario_spread": 0.25, "paired_demand_scenario_slots": 12,
-         "include_initial_knot": True, "prerefill_guard": True},
+         "include_initial_knot": True, "prerefill_guard": True}, experimental=False,
     ),
 }
 
@@ -418,11 +418,14 @@ def available_preset_names(
     *, show_experimental: bool = False, current: str | None = None
 ) -> tuple[str, ...]:
     """Return picker choices, retaining a hidden experimental current choice."""
-    return tuple(
+    names = (
         name
         for name, preset in PRESETS.items()
         if show_experimental or not preset.experimental or name == current
     )
+    return tuple(sorted(
+        names, key=lambda name: (PRESETS[name].experimental, PRESETS[name].label)
+    ))
 
 
 def get_preset(name: str = DEFAULT_PRESET) -> PlannerPreset:

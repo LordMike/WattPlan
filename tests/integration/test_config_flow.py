@@ -278,7 +278,7 @@ async def test_form(hass: HomeAssistant, mock_setup_entry: AsyncMock) -> None:
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "planner_setup"
-    assert _schema_default(result, CONF_PLANNER_PRESET) == "highs"
+    assert _schema_default(result, CONF_PLANNER_PRESET) == "charge-window-96"
     schema_fields = {getattr(field, "schema", None) for field in result["data_schema"].schema}
     assert "optimizer_lookahead_hours" not in schema_fields
     assert "optimizer_profile" not in schema_fields
@@ -352,7 +352,7 @@ async def test_form(hass: HomeAssistant, mock_setup_entry: AsyncMock) -> None:
     assert result["title"] == "Home"
     assert len(mock_setup_entry.mock_calls) == 1
     entry = hass.config_entries.async_entries(DOMAIN)[0]
-    assert entry.options[CONF_PLANNER_PRESET] == "highs"
+    assert entry.options[CONF_PLANNER_PRESET] == "charge-window-96"
     assert CONF_OPTIMIZER_LOOKAHEAD_SLOTS not in entry.options
 
 
@@ -1112,7 +1112,11 @@ async def test_options_rejects_preset_that_shortens_existing_comfort_horizon(
     entry = await _create_basic_entry(hass)
     hass.config_entries.async_update_entry(
         entry,
-        options={**entry.options, CONF_OPTIMIZER_LOOKAHEAD_SLOTS: 22},
+        options={
+            **entry.options,
+            CONF_PLANNER_PRESET: "highs",
+            CONF_OPTIMIZER_LOOKAHEAD_SLOTS: 22,
+        },
     )
     result = await hass.config_entries.subentries.async_init(
         (entry.entry_id, SUBENTRY_TYPE_COMFORT), context={"source": "user"}
@@ -1159,6 +1163,9 @@ async def test_comfort_flow_rejects_minimum_equal_to_effective_lookahead(
 ) -> None:
     """Comfort edits should fail before they can break later planning."""
     entry = await _create_basic_entry(hass)
+    hass.config_entries.async_update_entry(
+        entry, options={**entry.options, CONF_PLANNER_PRESET: "highs"}
+    )
     result = await hass.config_entries.subentries.async_init(
         (entry.entry_id, SUBENTRY_TYPE_COMFORT), context={"source": "user"}
     )

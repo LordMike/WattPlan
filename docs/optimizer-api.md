@@ -6,8 +6,14 @@ Interchangeable planners use this API through built-in names or a
 `module:factory` adapter. See [Planner factories](#planner-factories) for the
 extension interface and [Planner simulator](simulator.md) for causal execution.
 Home Assistant selects a finite named configuration through
-`optimizer.planners.presets.run_preset(params, name)`. The default `highs`
-configuration fixes the legacy 22-slot lookahead; `highs-8`, `highs-16`, and `highs-24`
+`optimizer.planners.presets.run_preset(params, name)`. Its default configuration
+is **Charge-window search** (`charge-window-96`). The other normal Home Assistant
+choices are **Guarded value policy**, **Joint seed search**, and **Self-consumption**;
+see [Planner configurations](optimizer-profiles.md#choosing-a-configuration) for
+their IDs and behavior. Existing Home Assistant entries keep their stored
+selection; entries that relied on the old implicit default are migrated to an
+explicit `highs` selection. The `highs` configuration fixes the legacy 22-slot
+lookahead; `highs-8`, `highs-16`, and `highs-24`
 select fixed lookahead **slots**. Every named configuration fixes algorithm tuning,
 including zero throughput, deadband, and mode-switch penalties, a 20-second
 HiGHS solve limit, and preserve-policy inference. These settings are applied

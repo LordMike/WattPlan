@@ -353,9 +353,17 @@ Interchangeable implementations live in `optimizer/planners/`. A lazy factory bo
 selects HiGHS, self-consumption, greedy, local search, beam search, dynamic
 programming, charge-window search, genetic search, cross-entropy search, or a separate
 `module:factory`. HA selects a finite configuration from `planners/presets.py`
-and runs it through that same registry in its worker process. Missing configuration options
-select the default HiGHS configuration with its fixed 22-slot lookahead. Old profile
-and lookahead options are ignored. Fixed HiGHS configuration suffixes count slots;
+and runs it through that same registry in its worker process. New setups default
+to `charge-window-96`. Config-entry migration to version 1.3 preserves explicit
+selections and records `highs` for older entries that relied on the implicit
+22-slot HiGHS default. Matching HiGHS cache fingerprints are updated when that
+implicit selection becomes explicit; mismatched cached plans remain rejected.
+The normal picker shows **Charge-window search**, **Guarded value policy**,
+**Joint seed search**, and **Self-consumption**; see
+[Planner configurations](optimizer-profiles.md#choosing-a-configuration) for their
+IDs and behavior. Experimental configurations remain available on request, and
+a currently selected experimental configuration stays visible. Old profile and
+lookahead options are ignored. Fixed HiGHS configuration suffixes count slots;
 alternative planners own their search settings. Configuration identity and fixed options
 accompany the effective input in reproductions, results and HA diagnostics. The
 factory validates capabilities and owns the implementation/options/version state

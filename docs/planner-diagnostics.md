@@ -34,7 +34,10 @@ New records use schema version 2. Plan records (`record_type: plan`) preserve
 `request.optimizer_params` and `result`, adding setup ID, timezone, currency,
 `input_captured_at`, actuals status and available preceding completed intervals.
 Plan requests also record `planner_preset`, underlying `planner`, and
-`planner_options`. Preserve these fields when reproducing a selected algorithm;
+`planner_options`. The `planner_preset` field holds the configuration ID, such as
+`charge-window-96` for **Charge-window search**, rather than its dropdown name.
+See [Planner configurations](optimizer-profiles.md) to match IDs to names.
+Preserve these fields when reproducing a selected algorithm;
 the numeric input model alone does not identify it. Older records without this
 metadata use the original HiGHS planner and empty factory options.
 With historical tracking, independent `record_type: actuals` updates append

@@ -131,6 +131,12 @@ See the [complete configuration catalog](optimizer-profiles.md) for all configur
 Home Assistant dropdown labels, and experimental status. Use configuration IDs in
 `--planners`, including when the dropdown shows a descriptive label.
 
+The normal Home Assistant choices are **Charge-window search**, **Guarded value
+policy**, **Joint seed search**, and **Self-consumption**. Start with
+[Choosing a configuration](optimizer-profiles.md#choosing-a-configuration), then
+use each planner's configuration table to find its ID. Charge-window search is the default
+for new Home Assistant setups.
+
 List the available configurations and labels from your checkout, including experimental
 configurations (the command does not print experimental status):
 
@@ -138,11 +144,12 @@ configurations (the command does not print experimental status):
 python scripts/simulate_planner.py --list-planners
 ```
 
-Compare selected configurations, with three complete rounds each:
+Compare Charge-window search, Joint seed search, and Self-consumption, with three
+complete rounds each:
 
 ```bash
 python scripts/simulate_planner.py .tmp/simulator/exports \
-  --planners highs-16 beam-16 dynamic-programming-strong self-consumption \
+  --planners charge-window-96 mobility-hybrid-seeds-4-grid4 self-consumption \
   --rounds 3 --output .tmp/simulator/comparison-1
 ```
 
@@ -164,14 +171,15 @@ Bare algorithms such as `beam-search` use factory
 defaults; `beam-16` selects the fixed configuration available in HA. Named configurations apply
 their fixed algorithm settings to recorded inputs, just as HA does: `highs` uses
 22 lookahead slots, while `highs-16` uses 16. Without
-`--planners` or `--config`, the comparison is HiGHS versus self-consumption,
-regardless of which planner originally recorded the data.
+`--planners` or `--config`, the simulator retains its HiGHS versus Self-consumption
+comparison, regardless of which planner originally recorded the data. Supply
+explicit configuration IDs to compare the current Home Assistant choices.
 
 One round replays the entire selected time range once per configuration, starting
 each from the same observed battery levels. Rounds do not append days or carry
 battery state between runs. Repeats help compare timing; fixed-seed planners
-normally produce identical schedules from identical inputs. Four configurations
-with three rounds produce 12 runs.
+normally produce identical schedules from identical inputs. The three
+configurations above with three rounds produce nine runs.
 
 Select individual exports or quoted patterns instead of a whole folder:
 

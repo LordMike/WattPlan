@@ -11,7 +11,7 @@
         "description": "Create one WattPlan setup for your home.",
         "submit": "Next",
         "data": {
-          "planner_preset": "Planner preset",
+          "planner_preset": "Planner configuration",
           "name": "Setup name",
           "slot_minutes": "Resolution (minutes)",
           "hours_to_plan": "How many hours ahead should the plan cover"
@@ -25,7 +25,7 @@
       },
       "setup_complete": {
         "title": "Setup complete",
-        "description": "You have now set up the **{setup_name}** WattPlan planner.\n\nCurrent planner settings:\n- Resolution: **{slot_minutes} minutes**\n- Planning horizon: **{plan_hours} hours**\n- Planner preset: **{planner_preset}**\n- Price source: **{price_source}**\n- Usage source: **{usage_source}**\n- PV source: **{pv_source}**\n- Export price source: **{export_price_source}**\n\nWattPlan will now begin producing plans on its schedule and after relevant setup changes.\n\n**Does this work?** WattPlan continuously pulls the configured forecast data, updates its plan, and exposes the current integration health through the `status` sensors. If something goes wrong, degraded and failed states are shown there and actionable source issues appear in Home Assistant Repairs. [Read more about error handling](https://github.com/LordMike/WattPlan/blob/main/docs/error-handling.md)\n\nPlanning and optimization are only part of the setup. To really benefit, WattPlan needs something that can shift load away from expensive periods and into cheaper ones.\n\nGood next steps:\n- Add a **battery** if you want WattPlan to plan charging and discharging\n- Add **optional loads** such as a washing machine if you want WattPlan to suggest when people should start them\n- Add **comfort loads** to maintain required runtime, without price-based shifting\n- Create automations that translate WattPlan action entities into real device commands\n\nBatteries and optional loads turn price forecasts into savings. Comfort loads provide basic runtime scheduling.\n\nClick **Finish** to complete the integration setup and give the new planner device a name and/or area.",
+        "description": "You have now set up the **{setup_name}** WattPlan planner.\n\nCurrent planner settings:\n- Resolution: **{slot_minutes} minutes**\n- Planning horizon: **{plan_hours} hours**\n- Planner configuration: **{planner_preset}**\n- Price source: **{price_source}**\n- Usage source: **{usage_source}**\n- PV source: **{pv_source}**\n- Export price source: **{export_price_source}**\n\nWattPlan will now begin producing plans on its schedule and after relevant setup changes.\n\n**Does this work?** WattPlan continuously pulls the configured forecast data, updates its plan, and exposes the current integration health through the `status` sensors. If something goes wrong, degraded and failed states are shown there and actionable source issues appear in Home Assistant Repairs. [Read more about error handling](https://github.com/LordMike/WattPlan/blob/main/docs/error-handling.md)\n\nPlanning and optimization are only part of the setup. To really benefit, WattPlan needs something that can shift load away from expensive periods and into cheaper ones.\n\nGood next steps:\n- Add a **battery** if you want WattPlan to plan charging and discharging\n- Add **optional loads** such as a washing machine if you want WattPlan to suggest when people should start them\n- Add **comfort loads** to maintain required runtime, without price-based shifting\n- Create automations that translate WattPlan action entities into real device commands\n\nBatteries and optional loads turn price forecasts into savings. Comfort loads provide basic runtime scheduling.\n\nClick **Finish** to complete the integration setup and give the new planner device a name and/or area.",
         "submit": "Finish"
       },
       "source_price": {
@@ -637,8 +637,8 @@
       "source_fetch_error": "Source data could not be fetched. Check entity/template settings and try again.",
       "energy_provider_none_available": "No loaded Home Assistant Energy solar forecast providers were found.",
       "energy_provider_unavailable": "The selected Energy solar forecast provider is unavailable or returned no forecast data.",
-      "unknown_planner_preset": "Choose a supported planner preset.",
-      "optimizer_lookahead_too_short_for_comfort": "The selected planner preset's effective solve horizon must be longer than each comfort minimum and fit inside the plan coverage. Choose another preset or reduce the comfort minimum duration."
+      "unknown_planner_preset": "Choose a supported planner configuration.",
+      "optimizer_lookahead_too_short_for_comfort": "The selected planner configuration's effective solve horizon must be longer than each comfort minimum and fit inside the plan coverage. Choose another configuration or reduce the comfort minimum duration."
     }
   },
   "options": {
@@ -663,7 +663,7 @@
         "title": "General settings",
         "description": "Set interval size and planning horizon. These values define how many forecast values are required.",
         "data": {
-          "planner_preset": "Planner preset",
+          "planner_preset": "Planner configuration",
           "slot_minutes": "Resolution (minutes)",
           "hours_to_plan": "How many hours ahead should the plan cover"
         },
@@ -687,12 +687,12 @@
         "title": "Troubleshooting",
         "description": "Capture complete plans to local-day JSONL files for later diagnosis. Recording is off by default.",
         "data": {
-          "show_experimental_planners": "Show experimental planners",
+          "show_experimental_planners": "Show experimental configurations",
           "record_planner_reproductions": "Record planner reproductions to disk",
           "planner_reproduction_retention_days": "Keep files for this many days"
         },
         "data_description": {
-          "show_experimental_planners": "Expose planner configurations that remain experimental because annual and cross-environment results are scenario-dependent. This only changes the picker; it does not change the selected planner or planning behavior.",
+          "show_experimental_planners": "Show additional experimental configurations in the planner picker. Turning this off keeps your current selection available and does not change planning behavior.",
           "record_planner_reproductions": "Warning: Every successful scheduled or manual plan writes its full optimizer request and result to disk. Enable temporarily when investigating a problem.",
           "planner_reproduction_retention_days": "Keep 1 to 730 local calendar days (default: 14). Old daily files are deleted after the next recorded plan. Recording uses roughly 10 MB of disk per day at 15-minute planning intervals."
         }
@@ -1371,8 +1371,8 @@
       "template_invalid_structure": "Template returned text. Return a native list of objects or numeric values.",
       "source_fetch_error": "Source data could not be fetched. Check entity/template settings and try again.",
       "comfort_duration_exceeds_lookahead": "Set this duration shorter than the planner's effective economic lookahead and plan coverage, or increase economic lookahead in General settings.",
-      "unknown_planner_preset": "Choose a supported planner preset.",
-      "optimizer_lookahead_too_short_for_comfort": "The selected planner preset's effective solve horizon must be longer than each comfort minimum and fit inside the plan coverage. Choose another preset or reduce the comfort minimum duration.",
+      "unknown_planner_preset": "Choose a supported planner configuration.",
+      "optimizer_lookahead_too_short_for_comfort": "The selected planner configuration's effective solve horizon must be longer than each comfort minimum and fit inside the plan coverage. Choose another configuration or reduce the comfort minimum duration.",
       "planner_reproduction_whole_days": "Retention must be a whole number of days.",
       "required": "Please fill in this field.",
       "invalid_energy_sensor": "Select a cumulative kWh energy sensor with state class total or total_increasing.",

@@ -1,22 +1,38 @@
 # Planner configurations
 
 Each entry in Home Assistant's planner dropdown is a complete **configuration**
-that you can choose and run. The dropdown currently calls this field **Planner
-preset**; this guide uses **configuration** throughout. Related configurations
+that you can choose and run. The dropdown calls this field **Planner
+configuration**. Related configurations
 are grouped below by their underlying planner so you can compare their behavior.
 
 There are **19 planners and 112 configurations**. The dropdown displays the
-**configuration name**; exports and simulator commands use its **Id**. Only
-**`highs`**, **`self-consumption`**, and **`local-search-3`** are **non-experimental**.
-`highs` is the default. Enable **Show experimental planners** under **Options →
+**configuration name**; exports and simulator commands use its **Id**. The four
+normal choices below are **non-experimental**. **Charge-window search** is the
+default for new setups. Existing setups keep their algorithm, including those
+that used the previous implicit HiGHS default. Enable **Show experimental configurations** under **Options →
 Troubleshooting** to see the rest. A selected experimental configuration stays
-visible if experimental planners are hidden again.
+visible if experimental configurations are hidden again.
 
 ## Choosing a configuration
 
 Choose a configuration in WattPlan's General settings. Battery reserve, targets,
 and charging permissions remain separate battery settings. Configurations use
 fixed neutral switching and wear preferences.
+
+| Configuration | How it plans |
+| --- | --- |
+| [Charge-window search](#charge-window-search) | Searches and refines charging, preservation, and discharging blocks. |
+| [Guarded value policy](#solar-gated-value-policy) | Uses forecast energy value and guards to decide when to intervene. |
+| [Joint seed search](#joint-seed-search) | Compares complete joint battery plans, including supplied availability and departure constraints. |
+| [Self-consumption](#self-consumption) | Stores permitted surplus energy and uses it for demand, without economic grid charging. |
+
+Each algorithm receives all batteries configured in WattPlan. Availability,
+external energy withdrawals, and departure requirements are battery constraints,
+not separate types of home or a way to select which batteries are managed.
+Algorithms differ in how they search and which constraints they support; see
+their behavior and limits below. Comfort scheduling and optional-appliance
+recommendations are shared features, so their counts do not require separate
+configuration choices.
 
 Configurations of the same planner share its core features. For example,
 `highs-16` and `highs-24` both use HiGHS with different lookahead lengths.
@@ -39,7 +55,7 @@ highlighted.
 | [Local search](#local-search) | `local-search` | 2 | Improves a complete schedule by changing individual actions or charging blocks. | Fast price-aware planning with `local-search-3`. |
 | [Beam search](#beam-search) | `beam-search` | 4 | Retains several promising schedules while advancing through the forecast. | Balancing search depth and runtime with a small beam. |
 | [Dynamic programming](#dynamic-programming) | `dynamic-programming` | 2 | Searches grouped battery states with bounded transitions and future-value guidance. | Price optimization for one or a few batteries. |
-| [Charge-window search](#charge-window-search) | `charge-window` | 1 | Moves and refines blocks of charging, preservation, and discharging. | - |
+| [Charge-window search](#charge-window-search) | `charge-window` | 1 | Moves and refines blocks of charging, preservation, and discharging. | Searching improvements across complete charging and discharging periods. |
 | [Genetic search](#genetic-search) | `genetic` | 2 | Combines and mutates complete candidate schedules. | - |
 | [Cross-entropy search](#cross-entropy-search) | `cross-entropy` | 1 | Samples schedules and increases the probability of successful actions. | - |
 | [Local refinement](#local-refinement) | `local-refinement` | 12 | Compares complete schedules using charging margins and price quantiles. | - |
@@ -50,7 +66,7 @@ highlighted.
 | [Adaptive solar policy](#adaptive-solar-policy) | `adaptive-solar-policy` | 6 | Adjusts value-dispatch uncertainty and charging premium from forecast surplus. | Low-solar price shifting with forecast-dependent uncertainty. |
 | [Mobility service baseline](#mobility-service-baseline) | `mobility-baseline` | 1 | Charges a connected mobile battery at its first opportunity to cover service needs. | Simple mobile-battery service scheduling. |
 | [Mobility tariff seeds](#mobility-tariff-seeds) | `mobility-tariff-seeds` | 1 | Compares immediate mobile charging with a cheaper connected-slot schedule. | Shifting EV charging to cheaper connected slots. |
-| [Mobility hybrid seeds](#mobility-hybrid-seeds) | `mobility-hybrid-seeds` | 1 | Compares four combinations of household value control and mobile charging. | Price-aware household and EV coordination. |
+| [Joint seed search](#joint-seed-search) | `mobility-hybrid-seeds` | 1 | Compares four complete joint battery plans with supplied availability and service constraints. | Comparing complete plans while accounting for intermittent battery availability. |
 | [Mobility fleet beam](#mobility-fleet-beam) | `mobility-fleet-beam` | 2 | Searches joint household and mobile-battery actions within service constraints. | Joint household/EV dispatch with surplus solar. |
 
 All planners share the [features and limits](#shared-features-and-limits) described below.
@@ -71,7 +87,7 @@ Each configuration changes only the lookahead length; it still returns a schedul
 
 | Configuration name (UI) | Id | What distinguishes this configuration | Status |
 | --- | --- | --- | --- |
-| HiGHS — 22 lookahead slots | `highs` | 22 lookahead slots; default configuration. | **Non-experimental** |
+| HiGHS — 22 lookahead slots | `highs` | 22 lookahead slots; retained for existing selections. | Experimental |
 | HiGHS — 8 lookahead slots | `highs-8` | 8 lookahead slots. | Experimental |
 | HiGHS — 16 lookahead slots | `highs-16` | 16 lookahead slots. | Experimental |
 | HiGHS — 24 lookahead slots | `highs-24` | 24 lookahead slots. | Experimental |
@@ -93,7 +109,7 @@ Passive baseline: permitted surplus PV is stored automatically. Battery targets 
 
 | Configuration name (UI) | Id | What distinguishes this configuration | Status |
 | --- | --- | --- | --- |
-| Self-consumption — baseline (observes targets) | `self-consumption` | Baseline solar storage and passive battery use; no economic grid charging. | **Non-experimental** |
+| Self-consumption | `self-consumption` | Baseline solar storage and passive battery use; no economic grid charging. | **Non-experimental** |
 
 ### Behavior and limits
 
@@ -130,7 +146,7 @@ Both configurations use random seed 0; the candidate evaluation budget distingui
 
 | Configuration name (UI) | Id | What distinguishes this configuration | Status |
 | --- | --- | --- | --- |
-| Local search — 3 evaluations | `local-search-3` | At most 3 candidate evaluations. | **Non-experimental** |
+| Local search — 3 evaluations | `local-search-3` | At most 3 candidate evaluations. | Experimental |
 | Local search — 96 evaluations | `local-search-96` | At most 96 candidate evaluations. | Experimental |
 
 ### Behavior and limits
@@ -190,7 +206,7 @@ Searches charging/preservation windows with a fixed candidate budget.
 
 | Configuration name (UI) | Id | What distinguishes this configuration | Status |
 | --- | --- | --- | --- |
-| Charge window — 96 evaluations | `charge-window-96` | 96 evaluations; 3 candidate windows. | Experimental |
+| Charge-window search | `charge-window-96` | 96 evaluations; 3 candidate windows; default for new setups. | **Non-experimental** |
 
 ### Behavior and limits
 
@@ -436,7 +452,7 @@ Base settings for comparison: solar gate ratio 1.5, 4 energy intervals, no termi
 | Value policy — exact initial knot, pre-refill guard, nominal joint mixture for 6 slots | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12-initialknot1-prerefill1-nominalmix50-h6` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for 12 slots; exact initial-energy knot; pre-refill opportunity guard; nominal joint scenario weighted 50% for 6 slots. | Experimental |
 | Value policy — exact initial knot, pre-refill guard, per-slot discharge budget knot | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12-initialknot1-prerefill1-dischargebudgetknot1` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for 12 slots; exact initial-energy knot; pre-refill opportunity guard; per-slot discharge-budget knot. | Experimental |
 | Value policy — grid-charge premium 0.05, paired demand spread 25% for 12 slots, exact initial knot, pre-refill guard | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.05-demand25-h12-initialknot1-prerefill1` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.05/kWh; paired demand scenarios +/-25% for 12 slots; exact initial-energy knot; pre-refill opportunity guard. | Experimental |
-| Value policy — paired demand spread 25% for 12 slots, exact initial energy knot, pre-refill guard | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12-initialknot1-prerefill1` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for 12 slots; exact initial-energy knot; pre-refill opportunity guard. | Experimental |
+| Guarded value policy | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12-initialknot1-prerefill1` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for 12 slots; exact initial-energy knot; pre-refill opportunity guard. | **Non-experimental** |
 
 ### Behavior and limits
 
@@ -618,15 +634,19 @@ Requires supplied mobile-battery constraints. Household batteries remain passive
 | --- | --- | --- | --- |
 | Mobility — two service/tariff seed candidates | `mobility-tariff-seeds-2` | Two complete candidates: first-available and tariff-delayed mobile charging. | Experimental |
 
-## Mobility hybrid seeds
+## Joint seed search
 
-Compares four combinations of household value control and mobile charging.
+Compares four complete joint battery plans.
 
-Requires supplied mobile-battery constraints. Four joint candidates combine passive or grid4 hybrid household control with first-available or tariff mobile charging.
+Four joint candidates combine passive or grid4 value control with first-available
+or tariff-aware charging for batteries with supplied connection and departure
+constraints. All configured batteries are included, and connection constraints
+are optional. Batteries are identified by their supplied constraints rather
+than by a vehicle or home label.
 
 | Configuration name (UI) | Id | What distinguishes this configuration | Status |
 | --- | --- | --- | --- |
-| Mobility — four joint hybrid/service seeds, grid 4 | `mobility-hybrid-seeds-4-grid4` | Four joint household/mobile seed schedules; household value grid has 4 energy intervals. | Experimental |
+| Joint seed search | `mobility-hybrid-seeds-4-grid4` | Four complete joint candidate schedules; value grid has 4 energy intervals; supplied availability and service constraints are included. | **Non-experimental** |
 
 ## Mobility fleet beam
 
