@@ -41,6 +41,34 @@ not guarantee greater savings. Forecast accuracy and equipment also affect the
 result. Switching configurations reloads the integration and replaces the
 previous plan.
 
+### Relative timing and savings
+
+The four normal choices compare as follows, using **Self-consumption** as the
+baseline. Figures are rounded, indicative comparisons of individual forecast
+plans.
+
+| Configuration | Planning time vs baseline | Savings vs baseline |
+| --- | ---: | ---: |
+| [Charge-window search](#charge-window-search) | About 25× | About 23% lower net electricity cost |
+| [Guarded value policy](#solar-gated-value-policy) | About 11× | About 22% lower net electricity cost |
+| [Joint seed search](#joint-seed-search) | About 6× | About 21% lower net electricity cost |
+| [Self-consumption](#self-consumption) | 1× (baseline) | No additional savings (baseline) |
+
+Planning time is the median multiple of Self-consumption's time on matching
+inputs; a larger multiple means more computation. Savings compare average net
+electricity costs on the same inputs, including export credits. Self-consumption
+already benefits from storing solar energy; this column shows the additional
+reduction from changing algorithms.
+
+Tariffs, forecasts, battery constraints, planning horizon, and energy left in
+batteries at the end affect the cost comparison. Planning time also depends on
+the number of batteries, comfort loads, and optional loads. Optional-load
+suggestions contribute to timing; their execution is excluded from savings.
+These percentages describe modeled plans and do not predict annual bill savings.
+Small differences between the optimizing choices should not be treated as a
+fixed ranking. Use the [simulator](simulator.md) to compare them with your own
+recordings.
+
 ## Planners
 
 Click a planner name for its complete configuration table. **Good for**
