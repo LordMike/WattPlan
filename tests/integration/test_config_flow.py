@@ -278,7 +278,7 @@ async def test_form(hass: HomeAssistant, mock_setup_entry: AsyncMock) -> None:
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "planner_setup"
-    assert _schema_default(result, CONF_PLANNER_PRESET) == "charge-window-96"
+    assert _schema_default(result, CONF_PLANNER_PRESET) == "local-search-3"
     schema_fields = {getattr(field, "schema", None) for field in result["data_schema"].schema}
     assert "optimizer_lookahead_hours" not in schema_fields
     assert "optimizer_profile" not in schema_fields
@@ -352,7 +352,7 @@ async def test_form(hass: HomeAssistant, mock_setup_entry: AsyncMock) -> None:
     assert result["title"] == "Home"
     assert len(mock_setup_entry.mock_calls) == 1
     entry = hass.config_entries.async_entries(DOMAIN)[0]
-    assert entry.options[CONF_PLANNER_PRESET] == "charge-window-96"
+    assert entry.options[CONF_PLANNER_PRESET] == "local-search-3"
     assert CONF_OPTIMIZER_LOOKAHEAD_SLOTS not in entry.options
 
 

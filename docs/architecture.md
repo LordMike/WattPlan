@@ -354,11 +354,13 @@ selects HiGHS, self-consumption, greedy, local search, beam search, dynamic
 programming, charge-window search, genetic search, cross-entropy search, or a separate
 `module:factory`. HA selects a finite configuration from `planners/presets.py`
 and runs it through that same registry in its worker process. New setups default
-to `charge-window-96`. Config-entry migration to version 1.3 preserves explicit
+to `local-search-3`, labeled **Recommended — Local search** only in initial
+setup. The concrete configuration ID is stored, so later recommendation changes
+do not switch an existing setup's algorithm. Config-entry migration to version 1.3 preserves explicit
 selections and records `highs` for older entries that relied on the implicit
 22-slot HiGHS default. Matching HiGHS cache fingerprints are updated when that
 implicit selection becomes explicit; mismatched cached plans remain rejected.
-The normal picker shows **Charge-window search**, **Guarded value policy**,
+The normal picker shows **Local search**, **Charge-window search**, **Guarded value policy**,
 **Joint seed search**, and **Self-consumption**; see
 [Planner configurations](optimizer-profiles.md#choosing-a-configuration) for their
 IDs and behavior. Experimental configurations remain available on request, and

@@ -7,8 +7,9 @@ Interchangeable planners use this API through built-in names or a
 extension interface and [Planner simulator](simulator.md) for causal execution.
 Home Assistant selects a finite named configuration through
 `optimizer.planners.presets.run_preset(params, name)`. Its default configuration
-is **Charge-window search** (`charge-window-96`). The other normal Home Assistant
-choices are **Guarded value policy**, **Joint seed search**, and **Self-consumption**;
+is **Local search** (`local-search-3`), presented as **Recommended — Local search**
+in initial Home Assistant setup. The other normal choices are **Charge-window
+search**, **Guarded value policy**, **Joint seed search**, and **Self-consumption**;
 see [Planner configurations](optimizer-profiles.md#choosing-a-configuration) for
 their IDs and behavior. Existing Home Assistant entries keep their stored
 selection; entries that relied on the old implicit default are migrated to an

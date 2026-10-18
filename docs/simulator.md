@@ -135,11 +135,11 @@ See the [complete configuration catalog](optimizer-profiles.md) for all configur
 Home Assistant dropdown labels, and experimental status. Use configuration IDs in
 `--planners`, including when the dropdown shows a descriptive label.
 
-The normal Home Assistant choices are **Charge-window search**, **Guarded value
-policy**, **Joint seed search**, and **Self-consumption**. Start with
+The normal Home Assistant choices are **Local search**, **Charge-window search**,
+**Guarded value policy**, **Joint seed search**, and **Self-consumption**. Start with
 [Choosing a configuration](optimizer-profiles.md#choosing-a-configuration), then
-use each planner's configuration table to find its ID. Charge-window search is the default
-for new Home Assistant setups.
+use each planner's configuration table to find its ID. Initial Home Assistant
+setup recommends Local search (`local-search-3`); the simulator uses the exact ID.
 
 List the available configurations and labels from your checkout, including experimental
 configurations (the command does not print experimental status):

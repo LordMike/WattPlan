@@ -27,10 +27,11 @@ For many homes, these are sensible starter values:
 
 - **Resolution:** `15 minutes`
 - **Planning horizon:** `48 hours`
-- **Planner configuration:** **Charge-window search**, the default for new setups.
+- **Planner configuration:** **Recommended — Local search**, the default for new setups.
 
 See [Planner configurations](optimizer-profiles.md#choosing-a-configuration) for
-Guarded value policy, Joint seed search, Self-consumption, and experimental choices.
+Charge-window search, Guarded value policy, Joint seed search, Self-consumption,
+and experimental choices.
 
 Why `15 minutes`:
 - many Home Assistant energy and forecast integrations naturally expose hourly or quarter-hourly data
@@ -64,7 +65,7 @@ Use:
 - **Setup name:** `WattPlan Home` or another name that makes sense in your installation
 - **Resolution:** `15 minutes`
 - **Planning horizon:** `48 hours`
-- **Planner configuration:** **Charge-window search**
+- **Planner configuration:** **Recommended — Local search**
 
 ## Step 2: Configure The Price Source
 

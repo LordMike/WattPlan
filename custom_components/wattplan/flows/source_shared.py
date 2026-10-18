@@ -1071,24 +1071,31 @@ def _core_schema(
     defaults: dict[str, Any] | None = None,
     *,
     include_name: bool = False,
+    recommend_default: bool = False,
 ) -> vol.Schema:
     """Build schema for the core planner settings."""
     defaults = defaults or {}
     slot_default = str(defaults.get(CONF_SLOT_MINUTES, 15))
     hours_default = str(defaults.get(CONF_HOURS_TO_PLAN, 48))
+    choices = available_preset_names(
+        show_experimental=bool(defaults.get(CONF_SHOW_EXPERIMENTAL_PLANNERS, False)),
+        current=defaults.get(CONF_PLANNER_PRESET),
+    )
+    if recommend_default:
+        choices = (DEFAULT_PRESET, *(name for name in choices if name != DEFAULT_PRESET))
     schema: dict[Any, Any] = {
         vol.Required(
             CONF_PLANNER_PRESET, default=defaults.get(CONF_PLANNER_PRESET, DEFAULT_PRESET)
         ): selector.SelectSelector(
             selector.SelectSelectorConfig(
                 options=[
-                    selector.SelectOptionDict(value=name, label=PRESETS[name].label)
-                    for name in available_preset_names(
-                        show_experimental=bool(
-                            defaults.get(CONF_SHOW_EXPERIMENTAL_PLANNERS, False)
-                        ),
-                        current=defaults.get(CONF_PLANNER_PRESET),
+                    selector.SelectOptionDict(
+                        value=name,
+                        label=(f"Recommended — {PRESETS[name].label}"
+                               if recommend_default and name == DEFAULT_PRESET
+                               else PRESETS[name].label),
                     )
+                    for name in choices
                 ],
                 mode=selector.SelectSelectorMode.DROPDOWN,
             )

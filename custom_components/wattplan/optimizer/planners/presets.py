@@ -25,7 +25,7 @@ class PlannerPreset:
     experimental: bool = True
 
 
-DEFAULT_PRESET = "charge-window-96"
+DEFAULT_PRESET = "local-search-3"
 LEGACY_DEFAULT_PRESET = "highs"
 PRESETS = {
     "mobility-baseline": PlannerPreset(
@@ -67,8 +67,9 @@ PRESETS = {
     },
     **{
         f"local-search-{count}": PlannerPreset(
-            "local-search", f"Local search — {count} evaluations",
+            "local-search", "Local search" if count == 3 else f"Local search — {count} evaluations",
             {"max_evaluations": count, "seed": 0},
+            experimental=count != 3,
         )
         for count in (3, 96)
     },

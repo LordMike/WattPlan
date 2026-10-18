@@ -17,7 +17,7 @@
           "hours_to_plan": "How many hours ahead should the plan cover"
         },
         "data_description": {
-          "planner_preset": "Each configuration selects one algorithm with fixed search settings. Charge-window search is the default for new setups. Self-consumption reports battery target misses without actively pursuing targets. Enable additional experimental configurations under Options → Troubleshooting.",
+          "planner_preset": "Recommended — Local search is a quick price-aware starting choice. Each configuration selects one algorithm with fixed search settings. Your selected algorithm is saved and can be changed later in General settings. Self-consumption reports battery target misses without actively pursuing targets.",
           "name": "This name will identify this WattPlan setup in Home Assistant.",
           "slot_minutes": "This is the plan resolution. A lower value means more detailed plans and more required forecast values.",
           "hours_to_plan": "WattPlan needs forecasts that cover the full selected period."
@@ -668,7 +668,7 @@
           "hours_to_plan": "How many hours ahead should the plan cover"
         },
         "data_description": {
-          "planner_preset": "Each configuration selects one algorithm with fixed search settings. Charge-window search is the default for new setups. Self-consumption reports battery target misses without actively pursuing targets. Enable additional experimental configurations under Options → Troubleshooting.",
+          "planner_preset": "Each configuration selects one algorithm with fixed search settings. Initial setup recommends Local search. Self-consumption reports battery target misses without actively pursuing targets. Enable additional experimental configurations under Options → Troubleshooting.",
           "slot_minutes": "This is the plan resolution. A lower value means more detailed plans and more required forecast values.",
           "hours_to_plan": "WattPlan needs forecasts that cover the full selected period."
         }

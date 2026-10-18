@@ -397,7 +397,7 @@ class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="planner_setup",
             data_schema=self.add_suggested_values_to_schema(
-                _core_schema(include_name=True), user_input or {}
+                _core_schema(include_name=True, recommend_default=True), user_input or {}
             ),
             errors=errors,
             last_step=False,

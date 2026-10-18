@@ -41,14 +41,30 @@ NORMAL_CHOICES = {
     "charge-window-96": "Charge-window search",
     "value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12-initialknot1-prerefill1": "Guarded value policy",
     "mobility-hybrid-seeds-4-grid4": "Joint seed search",
+    "local-search-3": "Local search",
     "self-consumption": "Self-consumption",
 }
 
 
-async def test_normal_picker_has_four_neutral_choices_and_new_default(hass, mock_setup_entry):
+async def test_initial_picker_recommends_one_concrete_configuration(hass):
+    from homeassistant import config_entries
+    from custom_components.wattplan.const import DOMAIN
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    options = _serialized_schema_field(result, CONF_PLANNER_PRESET)["selector"]["select"]["options"]
+    assert _schema_default(result, CONF_PLANNER_PRESET) == DEFAULT_PRESET == "local-search-3"
+    assert options[0] == {"value": "local-search-3", "label": "Recommended — Local search"}
+    assert len(options) == len({option["value"] for option in options}) == 5
+    assert {option["value"] for option in options} == set(NORMAL_CHOICES)
+
+
+async def test_normal_picker_has_five_neutral_choices_and_new_default(hass, mock_setup_entry):
     entry = await _create_basic_entry(hass)
     assert entry.minor_version == 3
-    assert entry.options[CONF_PLANNER_PRESET] == DEFAULT_PRESET == "charge-window-96"
+    assert entry.options[CONF_PLANNER_PRESET] == DEFAULT_PRESET == "local-search-3"
     result = await hass.config_entries.options.async_init(entry.entry_id)
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {"next_step_id": "planner_core"}
@@ -56,6 +72,21 @@ async def test_normal_picker_has_four_neutral_choices_and_new_default(hass, mock
     options = _serialized_schema_field(result, CONF_PLANNER_PRESET)["selector"]["select"]["options"]
     assert {option["value"]: option["label"] for option in options} == NORMAL_CHOICES
     assert _schema_default(result, CONF_PLANNER_PRESET) == DEFAULT_PRESET
+
+
+async def test_existing_selection_is_kept_when_setup_recommendation_changes(
+    hass, mock_setup_entry,
+):
+    entry = await _create_basic_entry(hass)
+    hass.config_entries.async_update_entry(
+        entry, options={**entry.options, CONF_PLANNER_PRESET: "charge-window-96"}
+    )
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "planner_core"}
+    )
+    assert _schema_default(result, CONF_PLANNER_PRESET) == "charge-window-96"
+    assert entry.options[CONF_PLANNER_PRESET] == "charge-window-96"
 
 
 async def test_options_save_preset_and_keep_it_selected(hass, mock_setup_entry):
@@ -127,7 +158,7 @@ async def test_options_save_preset_and_keep_it_selected(hass, mock_setup_entry):
     assert choices == {*NORMAL_CHOICES, "beam-2"}
 
 
-@pytest.mark.parametrize("preset", ["beam-2", "highs", "local-search-3"])
+@pytest.mark.parametrize("preset", ["beam-2", "highs", "local-search-96"])
 async def test_hidden_current_experimental_preset_remains_selectable(
     hass, mock_setup_entry, preset
 ):
@@ -172,7 +203,7 @@ def test_experimental_preset_filter_keeps_hidden_current_selection():
     stable = available_preset_names()
     assert stable == tuple(NORMAL_CHOICES)
     assert "highs" not in stable
-    assert "local-search-3" not in stable
+    assert "local-search-96" not in stable
     assert "beam-2" not in stable
     assert "beam-2" in available_preset_names(current="beam-2")
     assert set(available_preset_names(show_experimental=True)) == set(PRESETS)

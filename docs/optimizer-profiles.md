@@ -6,9 +6,11 @@ configuration**. Related configurations
 are grouped below by their underlying planner so you can compare their behavior.
 
 There are **19 planners and 112 configurations**. The dropdown displays the
-**configuration name**; exports and simulator commands use its **Id**. The four
-normal choices below are **non-experimental**. **Charge-window search** is the
-default for new setups. Existing setups keep their algorithm, including those
+**configuration name**; exports and simulator commands use its **Id**. The five
+normal choices below are **non-experimental**. Initial setup preselects
+**Recommended — Local search**, a quick price-aware starting choice. This stores
+the concrete `local-search-3` configuration; General settings calls it **Local
+search**. Existing setups keep their algorithm, including those
 that used the previous implicit HiGHS default. Enable **Show experimental configurations** under **Options →
 Troubleshooting** to see the rest. A selected experimental configuration stays
 visible if experimental configurations are hidden again.
@@ -21,6 +23,7 @@ fixed neutral switching and wear preferences.
 
 | Configuration | How it plans |
 | --- | --- |
+| [Local search](#local-search) — recommended for initial setup | Quickly improves a complete schedule with a small search budget. |
 | [Charge-window search](#charge-window-search) | Searches and refines charging, preservation, and discharging blocks. |
 | [Guarded value policy](#solar-gated-value-policy) | Uses forecast energy value and guards to decide when to intervene. |
 | [Joint seed search](#joint-seed-search) | Compares complete joint battery plans, including supplied availability and departure constraints. |
@@ -43,7 +46,7 @@ previous plan.
 
 ### Relative timing and savings
 
-The four normal choices compare as follows, using **Self-consumption** as the
+The five normal choices compare as follows, using **Self-consumption** as the
 baseline. Figures are rounded, indicative comparisons of individual forecast
 plans.
 
@@ -52,6 +55,7 @@ plans.
 | [Charge-window search](#charge-window-search) | About 25× | About 23% lower net electricity cost |
 | [Guarded value policy](#solar-gated-value-policy) | About 11× | About 22% lower net electricity cost |
 | [Joint seed search](#joint-seed-search) | About 6× | About 21% lower net electricity cost |
+| [Local search](#local-search) | About 1.5× | About 16% lower net electricity cost |
 | [Self-consumption](#self-consumption) | 1× (baseline) | No additional savings (baseline) |
 
 Planning time is the median multiple of Self-consumption's time on matching
@@ -228,7 +232,7 @@ Both configurations use random seed 0; the candidate evaluation budget distingui
 
 | Configuration name (UI) | Id | What distinguishes this configuration | Status |
 | --- | --- | --- | --- |
-| Local search — 3 evaluations | `local-search-3` | At most 3 candidate evaluations. | Experimental |
+| Local search | `local-search-3` | At most 3 candidate evaluations; recommended default for new setups. | **Non-experimental** |
 | Local search — 96 evaluations | `local-search-96` | At most 96 candidate evaluations. | Experimental |
 
 ### Behavior and limits
@@ -288,7 +292,7 @@ Searches charging/preservation windows with a fixed candidate budget.
 
 | Configuration name (UI) | Id | What distinguishes this configuration | Status |
 | --- | --- | --- | --- |
-| Charge-window search | `charge-window-96` | 96 evaluations; 3 candidate windows; default for new setups. | **Non-experimental** |
+| Charge-window search | `charge-window-96` | 96 evaluations; 3 candidate windows. | **Non-experimental** |
 
 ### Behavior and limits
 
