@@ -26,6 +26,8 @@ from homeassistant.core import HomeAssistant
 
 from tests.common import MockConfigEntry
 
+from .test_integration_e2e import _fake_optimize
+
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
 
@@ -52,38 +54,6 @@ def _entry() -> MockConfigEntry:
     )
 
 
-def _optimizer_result(_params: object) -> dict[str, object]:
-    """Return a small valid result for plan projection."""
-    return {
-        "execution_time": 0.01,
-        "fitness": 1.0,
-        "avg_price": 0.25,
-        "projections": {
-            "baseline_cost": 1.0,
-            "projected_cost": 0.8,
-            "projected_savings_cost": 0.2,
-            "projected_savings_pct": 20.0,
-            "per_slot": [
-                {
-                    "baseline_cost": 0.25,
-                    "projected_cost": 0.2,
-                    "projected_savings_cost": 0.05,
-                    "projected_savings_pct": 20.0,
-                }
-                for _ in range(4)
-            ],
-        },
-        "suboptimal": False,
-        "suboptimal_reasons": [],
-        "problems": [],
-        "successful_solves": 1,
-        "reused_steps": 0,
-        "entities": [],
-        "optional_entity_options": [],
-        "state": None,
-    }
-
-
 async def test_outlook_generation_failure_keeps_plan_usable_and_sensor_unavailable(
     hass: HomeAssistant, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -91,7 +61,7 @@ async def test_outlook_generation_failure_keeps_plan_usable_and_sensor_unavailab
     entry = _entry()
     entry.add_to_hass(hass)
 
-    with patch("custom_components.wattplan.optimizer.optimize", _optimizer_result):
+    with patch("custom_components.wattplan.optimizer.optimize", _fake_optimize):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
         with caplog.at_level(logging.ERROR):
@@ -122,7 +92,7 @@ async def test_outlook_render_failure_makes_only_outlook_sensor_unavailable(
     entry = _entry()
     entry.add_to_hass(hass)
 
-    with patch("custom_components.wattplan.optimizer.optimize", _optimizer_result):
+    with patch("custom_components.wattplan.optimizer.optimize", _fake_optimize):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
         await hass.services.async_call(
@@ -176,7 +146,7 @@ async def test_restored_unvalidated_plan_without_outlook_remains_a_status_report
     entry = _entry()
     entry.add_to_hass(hass)
 
-    with patch("custom_components.wattplan.optimizer.optimize", _optimizer_result):
+    with patch("custom_components.wattplan.optimizer.optimize", _fake_optimize):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
         await hass.services.async_call(

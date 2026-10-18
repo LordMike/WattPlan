@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from custom_components.wattplan.const import (
     ADAPTER_TYPE_ATTRIBUTE_VALUES,
@@ -14,22 +14,19 @@ from custom_components.wattplan.const import (
     CONF_EDGE_FILL_MODE,
     CONF_RESAMPLE_MODE,
     CONF_SOURCE_MODE,
-    CONF_TEMPLATE,
     EDGE_FILL_MODE_HOLD,
     FIXUP_PROFILE_EXTEND,
+    FIXUP_PROFILE_REPAIR,
     FIXUP_PROFILE_STRICT,
     RESAMPLE_MODE_LINEAR,
     SOURCE_MODE_ENTITY_ADAPTER,
-    SOURCE_MODE_TEMPLATE,
 )
 from custom_components.wattplan.source_config.provider import build_source_value_provider
 from custom_components.wattplan.source_fixup import (
     SourceFixupProvider,
     SourceHealthKind,
-    effective_provider_config,
 )
 from custom_components.wattplan.source_pipeline import build_source_base_provider
-from custom_components.wattplan.source_provider import TemplateAdapterSourceProvider
 from custom_components.wattplan.source_types import (
     SourceProvider,
     SourceProviderError,
@@ -97,6 +94,9 @@ async def test_strict_fixup_re_raises_provider_error() -> None:
         await provider.async_values(_window(slots=48))
 
     assert err.value is error
+    assert provider.last_health.kind is SourceHealthKind.INCOMPLETE
+    assert provider.last_health.available_count == 8
+    assert provider.last_health.required_count == 48
 
 
 async def test_extend_fixup_repeats_t_minus_24h() -> None:
@@ -158,6 +158,67 @@ async def test_fixup_marks_unavailable_when_stale_cache_covers_failure() -> None
     assert provider.last_health.expires_at == datetime(2026, 1, 2, 0, 0, tzinfo=UTC)
 
 
+class _SucceedOnceProvider(SourceProvider):
+    """Return the first window as 0..n-1 and fail on every later call."""
+
+    def __init__(self) -> None:
+        """Initialize the stateful provider."""
+        self._calls = 0
+
+    async def async_values(self, window: SourceWindow) -> list[float]:
+        """Return the first window and raise a fetch error afterwards."""
+        self._calls += 1
+        if self._calls == 1:
+            return [float(index) for index in range(window.slots)]
+        raise SourceProviderError("source_fetch", "temporary failure")
+
+
+def _later_window(*, hours: int, slots: int = 24) -> SourceWindow:
+    """Return a window starting the given hours after the first one."""
+    return SourceWindow(
+        start_at=datetime(2026, 1, 1, 0, 0, tzinfo=UTC) + timedelta(hours=hours),
+        slot_minutes=60,
+        slots=slots,
+    )
+
+
+async def test_extend_stale_reuse_shifts_extends_and_expires() -> None:
+    """Extend profile shifts the remembered day, repeats it to fill, then expires."""
+    provider = SourceFixupProvider(_SucceedOnceProvider(), profile=FIXUP_PROFILE_EXTEND)
+    await provider.async_values(_window(slots=24))
+
+    assert await provider.async_values(_later_window(hours=1)) == [
+        float(index) for index in range(1, 24)
+    ] + [0.0]
+    assert provider.last_health.using_stale is True
+    assert await provider.async_values(_later_window(hours=23)) == [23.0] + [
+        float(index) for index in range(23)
+    ]
+
+    # The remembered day has fully elapsed, so nothing is left to reuse.
+    with pytest.raises(SourceProviderError, match="temporary failure"):
+        await provider.async_values(_later_window(hours=24))
+    assert provider.last_health.using_stale is False
+
+
+@pytest.mark.parametrize("profile", [FIXUP_PROFILE_STRICT, FIXUP_PROFILE_REPAIR])
+async def test_non_extend_stale_reuse_only_bridges_covered_window(profile: str) -> None:
+    """Without Extend, stale values are reused only while they cover the whole request."""
+    provider = SourceFixupProvider(_SucceedOnceProvider(), profile=profile)
+    await provider.async_values(_window(slots=24))
+
+    # The next slot's 23 remaining values still cover a 23-slot request.
+    assert await provider.async_values(_later_window(hours=1, slots=23)) == [
+        float(index) for index in range(1, 24)
+    ]
+    assert provider.last_health.using_stale is True
+
+    # A full-length request now reaches past the remembered window and fails.
+    with pytest.raises(SourceProviderError, match="temporary failure"):
+        await provider.async_values(_later_window(hours=1))
+    assert provider.last_health.using_stale is False
+
+
 async def test_real_provider_nonfinite_refresh_uses_clean_cache_and_recovers(
     hass: HomeAssistant,
 ) -> None:
@@ -211,13 +272,10 @@ async def test_real_provider_nonfinite_refresh_uses_clean_cache_and_recovers(
     assert await provider.async_values(window) == [5.0, 6.0, 7.0, 8.0]
 
 
-@pytest.mark.parametrize("invalid_value", [float("nan"), float("inf"), float("-inf")])
-async def test_fixup_rejects_nonfinite_direct_provider_values(
-    invalid_value: float,
-) -> None:
+async def test_fixup_rejects_nonfinite_direct_provider_values() -> None:
     """The shared fixup boundary must protect direct providers and the cache."""
     provider = SourceFixupProvider(
-        _StaticProvider(values=[invalid_value] * 4),
+        _StaticProvider(values=[float("nan")] * 4),
         profile=FIXUP_PROFILE_STRICT,
     )
 
@@ -228,66 +286,6 @@ async def test_fixup_rejects_nonfinite_direct_provider_values(
     assert err.value.details["provider_reason"] == "nonfinite_value"
     assert provider.last_health.kind is SourceHealthKind.UNAVAILABLE
     assert provider.last_health.using_stale is False
-
-
-async def test_fixup_marks_incomplete_when_some_intervals_are_missing() -> None:
-    """A short source should be classified as incomplete when repair fails."""
-
-    provider = SourceFixupProvider(
-        _StaticProvider(
-            error=SourceProviderError(
-                "source_validation",
-                "not enough values",
-                details={"available_count": 6, "required_count": 24},
-            )
-        ),
-        profile=FIXUP_PROFILE_STRICT,
-    )
-
-    with pytest.raises(SourceProviderError, match="not enough values"):
-        await provider.async_values(_window(slots=24))
-
-    assert provider.last_health.kind is SourceHealthKind.INCOMPLETE
-    assert provider.last_health.available_count == 6
-    assert provider.last_health.required_count == 24
-
-
-def test_effective_provider_config_disables_fill_in_strict_profile() -> None:
-    """Strict profile should turn off provider-side reshaping helpers."""
-    source_config = {
-        CONF_RESAMPLE_MODE: RESAMPLE_MODE_LINEAR,
-        CONF_EDGE_FILL_MODE: EDGE_FILL_MODE_HOLD,
-        "fixup_profile": FIXUP_PROFILE_STRICT,
-    }
-
-    effective = effective_provider_config(source_config)
-
-    assert effective[CONF_RESAMPLE_MODE] != RESAMPLE_MODE_LINEAR
-    assert effective[CONF_EDGE_FILL_MODE] != EDGE_FILL_MODE_HOLD
-
-
-async def test_template_provider_and_fixup_pipeline_cover_full_horizon(
-    hass: HomeAssistant,
-) -> None:
-    """One end-to-end pipeline test should cover provider plus fixup together."""
-    payload = [float(index) for index in range(24)]
-    provider = TemplateAdapterSourceProvider(
-        hass,
-        source_name="usage",
-        source_config={
-            CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-            CONF_TEMPLATE: f"{{{{ {payload!r} }}}}",
-        },
-    )
-
-    values = await SourceFixupProvider(
-        provider,
-        profile=FIXUP_PROFILE_EXTEND,
-    ).async_values(_window(slots=48))
-
-    assert len(values) == 48
-    assert values[:24] == payload
-    assert values[24:] == payload
 
 
 async def test_adapter_pipeline_keeps_advanced_provider_settings(

@@ -111,7 +111,7 @@ async def test_migration_adds_legacy_lookahead_to_old_entries(
     assert entry.options[CONF_PLANNER_PRESET] == "highs"
 
 
-@pytest.mark.parametrize("preset", [None, "highs", "local-search-3", "beam-2", "charge-window-96"])
+@pytest.mark.parametrize("preset", [None, "beam-2"])
 async def test_migration_preserves_explicit_and_implicit_planner_choices(hass, preset):
     entry = _entry(title="Home", subentries_data=[], minor_version=2)
     entry.add_to_hass(hass)

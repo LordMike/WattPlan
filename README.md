@@ -68,6 +68,7 @@ Use [Historical Cost Tracking](docs/historical-cost-tracking.md) to compare meas
 - [Development](docs/development.md) - Local setup with `uv`, local test env caveats, optional symlink workflow, packaging
 - [Architecture](docs/architecture.md) - Code layout, runtime boundaries, planning flow
 - [Release Skill](.agents/skills/wattplan-release/SKILL.md) - Scripted version preparation, CI gates, tags, and release notes
+- [Test Review Skill](.agents/skills/test-review/SKILL.md) - Propose test deletions, merges, and coverage gaps
 - [Optimizer API](docs/optimizer-api.md) - Direct optimizer API notes
 
 ## Limitations

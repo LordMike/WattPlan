@@ -21,6 +21,7 @@ Prefer updating the integration, tests, and docs together when behavior changes.
 - Build: `python scripts/build_hacs_zip.py`
 - Test: `pytest`
 - Run: `./scripts/run_tests.sh` from Linux/WSL, or `PYTHONPATH=. pytest tests` in a prepared Linux environment. See `docs/development.md` for venv setup.
+- Test review: use the `test-review` skill in `.agents/skills/test-review/SKILL.md` when tests are added or changed, or to trim the suite.
 - Release: use the `wattplan-release` skill in `.agents/skills/wattplan-release/SKILL.md`; its colocated PowerShell script owns version preparation, CI gates, tags, publication checks, and release notes.
 
 ## Testing in Codex

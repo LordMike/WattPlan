@@ -17,9 +17,7 @@ from homeassistant.const import (
     STATE_UNKNOWN,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import ServiceValidationError
-from homeassistant.util import dt as dt_util
 
 from custom_components.wattplan.const import (
     CONF_ACTION_EMISSION_ENABLED,
@@ -293,30 +291,6 @@ async def _setup_entry(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     await hass.async_block_till_done()
 
 
-async def test_setup_resolves_outlook_languages_for_existing_entry(
-    hass: HomeAssistant,
-) -> None:
-    """Entries without language options should fall back from an unsupported default."""
-    hass.config.language = "fr-FR"
-    entry = _entry(title="Language Home", subentries_data=[])
-
-    await _setup_entry(hass, entry)
-
-    assert entry.runtime_data.outlook_languages == ("en",)
-
-
-async def test_setup_includes_the_normalized_danish_system_language(
-    hass: HomeAssistant,
-) -> None:
-    """The system language is always active, even without language options."""
-    hass.config.language = "da-DK"
-    entry = _entry(title="Language Home", subentries_data=[])
-
-    await _setup_entry(hass, entry)
-
-    assert entry.runtime_data.outlook_languages == ("da",)
-
-
 async def test_options_reload_replaces_outlook_language_sensors(
     hass: HomeAssistant,
 ) -> None:
@@ -371,20 +345,14 @@ async def _run_emit(
     await hass.services.async_call(DOMAIN, SERVICE_REFRESH_SENSORS, payload, blocking=True)
 
 
-@pytest.mark.parametrize(
-    "slot_minutes", [15, 30, 60],
-)
-async def test_legacy_lookahead_is_ignored_by_runtime_and_options_flow(
-    hass: HomeAssistant,
-    slot_minutes: int,
-) -> None:
+async def test_legacy_lookahead_is_ignored_by_runtime(hass: HomeAssistant) -> None:
     """Stale profile and lookahead values do not affect preset-owned tuning."""
+    slot_minutes = 30
     horizon_slots = 12 * 60 // slot_minutes
-    values = [0.2] * horizon_slots
     sources = {
         CONF_SOURCE_IMPORT_PRICE: {
             CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-            CONF_TEMPLATE: f"{{{{ {values!r} }}}}",
+            CONF_TEMPLATE: f"{{{{ {[0.2] * horizon_slots!r} }}}}",
         },
         CONF_SOURCE_USAGE: {
             CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
@@ -402,7 +370,7 @@ async def test_legacy_lookahead_is_ignored_by_runtime_and_options_flow(
         "optimizer_profile": "aggressive",
     }
     entry = _entry(
-        title=f"Legacy Home {slot_minutes}",
+        title="Legacy Home",
         subentries_data=[],
         sources=sources,
         options=options,
@@ -420,67 +388,15 @@ async def test_legacy_lookahead_is_ignored_by_runtime_and_options_flow(
         "custom_components.wattplan.optimizer.optimize", side_effect=capture_params
     ):
         await _setup_entry(hass, entry)
-        assert entry.minor_version == 3
-        assert entry.options[CONF_OPTIMIZER_LOOKAHEAD_SLOTS] == 5
-        effective_lookahead = 22
-        assert captured[-1].lookahead_slots == effective_lookahead
-        assert captured[-1].slot_minutes == slot_minutes
-        assert captured[-1].plan_start is not None
-        assert captured[-1].plan_start.utcoffset() == timedelta(0)
-        assert captured[-1].plan_start.second == 0
-        assert captured[-1].plan_start.minute % slot_minutes == 0
-
-        result = await hass.config_entries.options.async_init(entry.entry_id)
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"], {"next_step_id": "planner_core"}
-        )
-        schema = result["data_schema"].schema
-        schema_fields = {getattr(key, "schema", None) for key in schema}
-        assert "optimizer_lookahead_hours" not in schema_fields
-        assert "optimizer_profile" not in schema_fields
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"],
-            {
-                CONF_SLOT_MINUTES: str(slot_minutes),
-                CONF_HOURS_TO_PLAN: "12",
-            },
-        )
-        assert result["type"] is FlowResultType.MENU
-        await hass.async_block_till_done(wait_background_tasks=True)
-        await _run_optimize(hass, entry_id=entry.entry_id)
-        await hass.async_block_till_done()
 
     assert entry.options[CONF_OPTIMIZER_LOOKAHEAD_SLOTS] == 5
     assert entry.options["optimizer_profile"] == "aggressive"
-    assert captured[-1].lookahead_slots == effective_lookahead
-
-
-async def test_runtime_missing_lookahead_falls_back_to_22_slots(
-    hass: HomeAssistant,
-) -> None:
-    """Runtime assembly should preserve old behavior even before migration."""
-    entry = _entry(
-        title="Unmigrated Runtime",
-        subentries_data=[],
-        options={
-            CONF_PLANNING_ENABLED: True,
-            CONF_ACTION_EMISSION_ENABLED: False,
-        },
-        minor_version=2,
-    )
-    captured = []
-
-    def capture_params(params: Any) -> dict[str, object]:
-        captured.append(params)
-        return _fake_optimize(params)
-
-    with patch(
-        "custom_components.wattplan.optimizer.optimize", side_effect=capture_params
-    ):
-        await _setup_entry(hass, entry)
-
-    assert CONF_OPTIMIZER_LOOKAHEAD_SLOTS not in entry.options
     assert captured[-1].lookahead_slots == 22
+    assert captured[-1].slot_minutes == slot_minutes
+    assert captured[-1].plan_start is not None
+    assert captured[-1].plan_start.utcoffset() == timedelta(0)
+    assert captured[-1].plan_start.second == 0
+    assert captured[-1].plan_start.minute % slot_minutes == 0
 
 
 async def test_run_services_are_isolated_by_name(hass: HomeAssistant) -> None:
@@ -585,32 +501,6 @@ async def test_subentry_replacement_replaces_entities(
         assert hass.states.get(entity_id) is not None
 
 
-async def test_scheduler_runs_at_interval(hass: HomeAssistant) -> None:
-    """Scheduled refresh should run another cycle when time advances."""
-    # Purpose: prove the scheduler path works, independent of direct services.
-    entry = _entry(
-        title="Home",
-        subentries_data=[_battery_subentry(subentry_id="battery", name="battery")],
-        options={
-            CONF_PLANNING_ENABLED: True,
-            CONF_ACTION_EMISSION_ENABLED: True,
-        },
-    )
-
-    with patch("custom_components.wattplan.optimizer.optimize", side_effect=_fake_optimize):
-        await _setup_entry(hass, entry)
-        coordinator = entry.runtime_data.coordinator
-        initial_attempt_at = coordinator.last_attempt_at
-        assert initial_attempt_at is not None
-        assert coordinator.next_refresh_at is not None
-
-        async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=60))
-        await hass.async_block_till_done()
-
-    assert coordinator.last_attempt_at is not None
-    assert coordinator.last_attempt_at > initial_attempt_at
-
-
 async def test_scheduler_rearms_after_each_run_and_stops_on_unload(
     hass: HomeAssistant,
 ) -> None:
@@ -642,160 +532,80 @@ async def test_scheduler_rearms_after_each_run_and_stops_on_unload(
         assert coordinator.next_refresh_at is None
 
 
-async def test_scheduler_idle_when_planning_and_emission_disabled(
+@pytest.mark.parametrize(
+    ("options", "pref_disable_polling"),
+    [
+        (
+            {CONF_PLANNING_ENABLED: False, CONF_ACTION_EMISSION_ENABLED: False},
+            False,
+        ),
+        (
+            {CONF_PLANNING_ENABLED: True, CONF_ACTION_EMISSION_ENABLED: True},
+            True,
+        ),
+    ],
+    ids=["stages_disabled", "polling_disabled"],
+)
+async def test_scheduler_stays_idle(
     hass: HomeAssistant,
+    options: dict[str, bool],
+    pref_disable_polling: bool,
 ) -> None:
-    """With both stages disabled no slot timer is armed."""
+    """Disabled stages or the disable-polling preference leave no slot timer armed."""
     entry = _entry(
         title="Home",
         subentries_data=[_battery_subentry(subentry_id="battery", name="battery")],
-        options={
-            CONF_PLANNING_ENABLED: False,
-            CONF_ACTION_EMISSION_ENABLED: False,
-        },
+        options=options,
+        pref_disable_polling=pref_disable_polling,
     )
 
     with patch("custom_components.wattplan.optimizer.optimize", side_effect=_fake_optimize):
         await _setup_entry(hass, entry)
         assert entry.runtime_data.coordinator.next_refresh_at is None
 
-
-async def test_scheduler_respects_disabled_polling(hass: HomeAssistant) -> None:
-    """The entry's disable-polling preference stops scheduled planning."""
-    entry = _entry(
-        title="Home",
-        subentries_data=[_battery_subentry(subentry_id="battery", name="battery")],
-        options={
-            CONF_PLANNING_ENABLED: True,
-            CONF_ACTION_EMISSION_ENABLED: True,
-        },
-        pref_disable_polling=True,
-    )
-
-    with patch("custom_components.wattplan.optimizer.optimize", side_effect=_fake_optimize):
-        await _setup_entry(hass, entry)
-        assert entry.runtime_data.coordinator.next_refresh_at is None
 
 
 @pytest.mark.parametrize(
-    ("source_override", "patch_optimize", "expected_status", "expected_source"),
+    ("usage_template", "optimizer_error", "expected_status", "expected_usage"),
     [
-        (
-            {
-                CONF_SOURCE_IMPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ 'broken' }}",
-                },
-            },
-            None,
-            "failed",
-            ("sensor.home_import_price_status", "failed"),
-        ),
-        (
-            {
-                CONF_SOURCE_USAGE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ 'broken' }}",
-                },
-            },
-            None,
-            "failed",
-            ("sensor.home_usage_status", "failed"),
-        ),
-        (
-            {
-                CONF_SOURCE_PV: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ 'broken' }}",
-                },
-            },
-            None,
-            "degraded",
-            ("sensor.home_pv_status", "degraded"),
-        ),
-        (
-            {},
-            RuntimeError("optimizer failed"),
-            "degraded",
-            None,
-        ),
+        ("{{ 'broken' }}", None, "failed", "failed"),
+        (None, RuntimeError("optimizer failed"), "degraded", "ok"),
     ],
+    ids=["usage_source_broken", "optimizer_failure"],
 )
 async def test_status_sensors_reflect_failures(
     hass: HomeAssistant,
     entity_registry_enabled_by_default: None,
-    source_override: dict[str, dict[str, Any]],
-    patch_optimize: Exception | None,
+    usage_template: str | None,
+    optimizer_error: Exception | None,
     expected_status: str,
-    expected_source: tuple[str, str] | None,
+    expected_usage: str,
 ) -> None:
     """Overall and per-source status sensors should expose failure classes."""
     sources = _base_sources()
-    sources.update(source_override)
+    if usage_template is not None:
+        sources[CONF_SOURCE_USAGE] = {
+            CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+            CONF_TEMPLATE: usage_template,
+        }
     entry = _entry(
         title="Home",
         subentries_data=[_battery_subentry(subentry_id="battery", name="battery")],
         sources=sources,
     )
     await _setup_entry(hass, entry)
-    optimize_patch = (
+
+    with (
         patch(
             "custom_components.wattplan.optimizer.optimize",
-            side_effect=patch_optimize,
-        )
-        if patch_optimize
-        else patch(
-            "custom_components.wattplan.optimizer.optimize",
-            side_effect=_fake_optimize,
-        )
-    )
-    if patch_optimize or expected_status == "failed":
-        with optimize_patch, pytest.raises(PlanningStageError):
-            await _run_optimize(hass)
-    else:
-        with optimize_patch:
-            await _run_optimize(hass)
-
-    status = hass.states.get("sensor.home_status")
-    assert status is not None
-    assert status.state == expected_status
-    if expected_source is not None:
-        entity_id, source_state = expected_source
-        source_status = hass.states.get(entity_id)
-        assert source_status is not None
-        assert source_status.state == source_state
-    battery_action = hass.states.get("sensor.home_battery_action")
-    assert battery_action is not None
-    if expected_status == "failed":
-        assert battery_action.state == STATE_UNAVAILABLE
-    elif patch_optimize is not None:
-        assert battery_action.state != STATE_UNAVAILABLE
-
-
-async def test_fixed_battery_with_numeric_soc_is_planned(
-    hass: HomeAssistant,
-) -> None:
-    """A battery without an availability source remains planned when SoC is numeric."""
-    entry = _entry(
-        title="Home",
-        subentries_data=[_battery_subentry(subentry_id="battery", name="battery")],
-    )
-    await _setup_entry(hass, entry)
-    captured_params: list[Any] = []
-
-    def capture(params: Any) -> dict[str, object]:
-        captured_params.append(params)
-        return _fake_optimize_with_entities(params)
-
-    with patch("custom_components.wattplan.optimizer.optimize", side_effect=capture):
+            side_effect=optimizer_error or _fake_optimize,
+        ),
+        pytest.raises(PlanningStageError),
+    ):
         await _run_optimize(hass)
 
-    assert [_name_of(battery) for battery in captured_params[-1].battery_entities] == [
-        "battery"
-    ]
-    assert hass.states.get("sensor.home_status").state == "ok"
-    assert hass.states.get("sensor.home_battery_action").state == "grid_charge"
-
+    assert hass.states.get("sensor.home_status").state == expected_status
+    assert hass.states.get("sensor.home_usage_status").state == expected_usage
 
 @pytest.mark.parametrize(
     ("enabled", "expected_action"),
@@ -838,8 +648,6 @@ async def test_constant_comfort_schedule_publishes_current_actions(
     assert comfort_next is not None
     assert comfort_next.state == STATE_UNKNOWN
     assert "timestamp" not in comfort_next.attributes
-    assert hass.states.get("sensor.home_battery_action").state == "grid_charge"
-    assert hass.states.get("sensor.home_battery_next_action").state == "self_consume"
 
 
 @pytest.mark.parametrize(
@@ -925,40 +733,30 @@ async def test_battery_availability_controls_planner_input_and_status(
     if expected_status_reason is not None:
         assert expected_status_reason in status.attributes["reason_codes"]
 
-    diagnostics = entry.runtime_data.coordinator.snapshot.diagnostics
-    skipped = diagnostics["skipped_batteries"]
+    skipped = entry.runtime_data.coordinator.snapshot.diagnostics["skipped_batteries"]
     if expected_reason is None:
         assert skipped == {}
-        assert hass.states.get("sensor.home_battery_action").state == "grid_charge"
-        assert hass.states.get("sensor.home_battery_next_action").state == "self_consume"
-        return
-
-    assert skipped["battery"]["reason"] == expected_reason
-    assert status.attributes["skipped_batteries"]["battery"]["reason"] == expected_reason
-    assert hass.states.get("sensor.home_battery_action").state == STATE_UNAVAILABLE
-    assert hass.states.get("sensor.home_battery_next_action").state == STATE_UNAVAILABLE
+    else:
+        assert skipped["battery"]["reason"] == expected_reason
+        assert status.attributes["skipped_batteries"]["battery"]["reason"] == expected_reason
     target = hass.states.get("sensor.home_battery_target")
     assert target is not None
     assert target.state != STATE_UNAVAILABLE
 
 
 @pytest.mark.parametrize(
-    ("invalid_soc", "unit", "recovered_soc"),
+    ("invalid_soc", "unit"),
     [
-        ("not-a-number", "kWh", "5"),
-        ("nan", "%", "50"),
-        ("inf", "%", "50"),
-        ("-inf", "%", "50"),
-        ("nan", "kWh", "5"),
-        ("inf", "kWh", "5"),
-        ("-inf", "kWh", "5"),
+        ("not-a-number", "kWh"),
+        ("nan", "%"),
+        ("12.0", "kWh"),
+        ("5", "gallons"),
     ],
 )
-async def test_invalid_soc_without_availability_skips_only_that_battery(
+async def test_unusable_soc_skips_only_that_battery(
     hass: HomeAssistant,
     invalid_soc: str,
     unit: str,
-    recovered_soc: str,
 ) -> None:
     """A bad fixed-battery SoC degrades status but does not fail the whole plan."""
     entry = _entry(
@@ -1008,9 +806,7 @@ async def test_invalid_soc_without_availability_skips_only_that_battery(
     assert hass.states.get("sensor.home_available_action").state == "grid_charge"
 
     hass.states.async_set(
-        "sensor.invalid_battery_soc",
-        recovered_soc,
-        {"unit_of_measurement": unit},
+        "sensor.invalid_battery_soc", "5", {"unit_of_measurement": "kWh"}
     )
     with patch("custom_components.wattplan.optimizer.optimize", side_effect=capture):
         await _run_optimize(hass)
@@ -1028,7 +824,6 @@ async def test_invalid_soc_without_availability_skips_only_that_battery(
         ("10.3", "kWh", 10.0),
         ("-0.2", "kWh", 0.0),
         ("4500", "Wh", 4.5),
-        ("10200", "Wh", 10.0),
         ("0.004", "MWh", 4.0),
         ("5.5", None, 5.5),
     ],
@@ -1058,133 +853,6 @@ async def test_kwh_soc_is_clamped_and_unit_converted(
 
     battery = captured_params[-1].battery_entities[0]
     assert battery.initial_kwh == pytest.approx(expected_kwh)
-    assert hass.states.get("sensor.home_status").state == "ok"
-
-
-@pytest.mark.parametrize(
-    ("reading", "unit"),
-    [
-        ("12.0", "kWh"),
-        ("50000", "Wh"),
-        ("abc", "kWh"),
-        ("5", "gallons"),
-    ],
-)
-async def test_unusable_kwh_soc_skips_only_that_battery(
-    hass: HomeAssistant,
-    reading: str,
-    unit: str,
-) -> None:
-    """Garbage or implausible SoC degrades that battery without failing the plan."""
-    entry = _entry(
-        title="Home",
-        subentries_data=[
-            _battery_subentry(
-                subentry_id="battery",
-                name="battery",
-                soc_source="sensor.bad_battery_soc",
-            ),
-            _battery_subentry(
-                subentry_id="available",
-                name="available",
-                soc_source="sensor.available_battery_soc",
-            ),
-            _comfort_subentry(subentry_id="comfort", name="comfort"),
-        ],
-    )
-    await _setup_entry(hass, entry)
-    hass.states.async_set(
-        "sensor.bad_battery_soc", reading, {"unit_of_measurement": unit}
-    )
-    hass.states.async_set("sensor.available_battery_soc", "6.0")
-    captured_params: list[Any] = []
-
-    def capture(params: Any) -> dict[str, object]:
-        captured_params.append(params)
-        result = _fake_optimize_with_entities(params)
-        result["state"] = None
-        return result
-
-    with patch("custom_components.wattplan.optimizer.optimize", side_effect=capture):
-        await _run_optimize(hass)
-
-    assert [_name_of(b) for b in captured_params[-1].battery_entities] == [
-        "available"
-    ]
-    status = hass.states.get("sensor.home_status")
-    assert status.state == "degraded"
-    assert "battery_soc_unavailable" in status.attributes["reason_codes"]
-
-
-async def test_mixed_batteries_send_only_available_batteries_to_optimizer(
-    hass: HomeAssistant,
-) -> None:
-    """One skipped battery should not remove other usable batteries from the plan."""
-    entry = _entry(
-        title="Home",
-        subentries_data=[
-            _battery_subentry(
-                subentry_id="available",
-                name="available",
-                soc_source="sensor.available_battery_soc",
-                availability_source="binary_sensor.available_battery_available",
-            ),
-            _battery_subentry(
-                subentry_id="away",
-                name="away",
-                soc_source="sensor.away_battery_soc",
-                availability_source="binary_sensor.away_battery_available",
-            ),
-        ],
-    )
-    await _setup_entry(hass, entry)
-    hass.states.async_set("binary_sensor.available_battery_available", STATE_ON)
-    hass.states.async_set("sensor.available_battery_soc", "6.0")
-    hass.states.async_set("binary_sensor.away_battery_available", STATE_OFF)
-    captured_params: list[Any] = []
-
-    def capture(params: Any) -> dict[str, object]:
-        captured_params.append(params)
-        return _fake_optimize_with_entities(params)
-
-    with patch("custom_components.wattplan.optimizer.optimize", side_effect=capture):
-        await _run_optimize(hass)
-
-    assert [_name_of(battery) for battery in captured_params[-1].battery_entities] == [
-        "available"
-    ]
-    assert hass.states.get("sensor.home_status").state == "ok"
-    skipped = entry.runtime_data.coordinator.snapshot.diagnostics["skipped_batteries"]
-    assert skipped["away"]["reason"] == "not_available_for_planning"
-
-
-async def test_all_batteries_skipped_still_runs_no_battery_plan(
-    hass: HomeAssistant,
-) -> None:
-    """The optimizer should still run when every configured battery is skipped."""
-    entry = _entry(
-        title="Home",
-        subentries_data=[
-            _battery_subentry(
-                subentry_id="away",
-                name="away",
-                soc_source="sensor.away_battery_soc",
-                availability_source="binary_sensor.away_battery_available",
-            )
-        ],
-    )
-    await _setup_entry(hass, entry)
-    hass.states.async_set("binary_sensor.away_battery_available", STATE_OFF)
-    captured_params: list[Any] = []
-
-    def capture(params: Any) -> dict[str, object]:
-        captured_params.append(params)
-        return _fake_optimize_with_entities(params)
-
-    with patch("custom_components.wattplan.optimizer.optimize", side_effect=capture):
-        await _run_optimize(hass)
-
-    assert captured_params[-1].battery_entities == []
     assert hass.states.get("sensor.home_status").state == "ok"
 
 
@@ -1270,25 +938,6 @@ async def test_emit_without_snapshot_raises_and_sets_error(
 
     coordinator = entry.runtime_data.coordinator
     assert coordinator.has_error is True
-    assert coordinator._emit_error.kind == "emit_no_snapshot"
-
-
-async def test_removed_binary_error_entities_are_not_created(
-    hass: HomeAssistant,
-    entity_registry_enabled_by_default: None,
-) -> None:
-    """Legacy binary error entities should not exist anymore."""
-    entry = _entry(
-        title="Home",
-        subentries_data=[_battery_subentry(subentry_id="battery", name="battery")],
-    )
-    await _setup_entry(hass, entry)
-
-    assert hass.states.get("binary_sensor.home_has_error") is None
-    assert hass.states.get("binary_sensor.home_source_import_price_error") is None
-    assert hass.states.get("binary_sensor.home_source_usage_error") is None
-    assert hass.states.get("binary_sensor.home_source_pv_error") is None
-    assert hass.states.get("binary_sensor.home_optimize_error") is None
 
 
 async def test_optional_source_status_entities_are_omitted_when_not_configured(

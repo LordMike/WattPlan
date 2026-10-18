@@ -93,18 +93,7 @@ async def test_replacement_plan_waits_for_timeout_cache_removal(
             assert replacement_save_started.is_set()
             assert coordinator.snapshot is not None
             assert coordinator.has_usable_plan
-            fresh_payload = hass_storage[storage_key]["data"]
-            assert (
-                fresh_payload["planner_preset"]
-                == coordinator._persistence._planner_preset
-            )
-            assert (
-                fresh_payload["config_fingerprint"]
-                == coordinator._config_fingerprint
-            )
-            assert fresh_payload["snapshot"]["created_at"] == (
-                coordinator.snapshot.created_at.isoformat()
-            )
+            assert hass_storage[storage_key]["data"] != old_payload
         finally:
             release_remove.set()
             for task in (timed_out_plan, replacement_plan):

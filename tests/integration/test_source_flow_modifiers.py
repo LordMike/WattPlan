@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import AsyncMock
 
 from custom_components.wattplan.const import (
@@ -87,126 +88,112 @@ async def _finish_config_entry_creation(
     return result
 
 
-async def _create_entry_with_price_template(hass: HomeAssistant) -> config_entries.ConfigEntry:
-    """Create one config entry with price template and optional sources disabled."""
+_TEMPLATE_ADVANCED = {
+    CONF_AGGREGATION_MODE: AGGREGATION_MODE_MIN,
+    CONF_CLAMP_MODE: CLAMP_MODE_NEAREST,
+    CONF_RESAMPLE_MODE: RESAMPLE_MODE_FORWARD_FILL,
+    CONF_EDGE_FILL_MODE: EDGE_FILL_MODE_HOLD,
+}
+_AUTO_DETECT_MAPPING = {CONF_NAME: "", "time_key": "", "value_key": ""}
+
+
+async def _start_config_flow(
+    hass: HomeAssistant,
+    name: str,
+    *,
+    hours: str = "12",
+    price_mode: str = SOURCE_MODE_TEMPLATE,
+) -> dict[str, Any]:
+    """Walk the config flow to the import price form for the given source mode."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
-    assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "requirements"
 
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
-    assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "planner_setup"
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        {
-            CONF_NAME: "Flow test",
-            CONF_SLOT_MINUTES: "60",
-            CONF_HOURS_TO_PLAN: "12",
-        },
+        {CONF_NAME: name, CONF_SLOT_MINUTES: "60", CONF_HOURS_TO_PLAN: hours},
     )
-    assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "source_price"
 
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE}
+    return await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_SOURCE_MODE: price_mode}
     )
-    assert result["type"] is FlowResultType.FORM
+
+
+async def _start_flow_at_template_review(
+    hass: HomeAssistant, name: str, *, hours: str = "12", count: int = 12
+) -> dict[str, Any]:
+    """Walk the config flow through a numeric template price up to its review."""
+    result = await _start_config_flow(hass, name, hours=hours)
     assert result["step_id"] == "source_price_template"
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {
-            CONF_TEMPLATE: _numeric_template(12),
+            CONF_TEMPLATE: _numeric_template(count),
             CONF_FIXUP_PROFILE: FIXUP_PROFILE_REPAIR,
-            "advanced": {
-                CONF_AGGREGATION_MODE: AGGREGATION_MODE_MIN,
-                CONF_CLAMP_MODE: CLAMP_MODE_NEAREST,
-                CONF_RESAMPLE_MODE: RESAMPLE_MODE_FORWARD_FILL,
-                CONF_EDGE_FILL_MODE: EDGE_FILL_MODE_HOLD,
-            },
+            "advanced": _TEMPLATE_ADVANCED,
         },
     )
-    assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "source_review"
+    return result
 
-    result = await hass.config_entries.flow.async_configure(
+
+async def _accept_review(hass: HomeAssistant, result: dict[str, Any]) -> dict[str, Any]:
+    """Accept the source review step of the config flow."""
+    return await hass.config_entries.flow.async_configure(
         result["flow_id"], {"accept_source_summary": True}
     )
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "source_usage"
 
+
+async def _finish_with_unused_optional_sources(
+    hass: HomeAssistant, result: dict[str, Any]
+) -> dict[str, Any]:
+    """Accept a price review, skip usage and PV, and create the entry."""
+    result = await _accept_review(hass, result)
+    assert result["step_id"] == "source_usage"
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED}
     )
-    assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "source_pv"
-
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED}
     )
     result = await _finish_config_entry_creation(hass, result)
     assert result["type"] is FlowResultType.CREATE_ENTRY
+    return result
 
+
+async def _open_price_options(
+    hass: HomeAssistant, entry: config_entries.ConfigEntry, mode: str
+) -> dict[str, Any]:
+    """Open the options flow import price form for the given source mode."""
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "source_price"}
+    )
+    return await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_SOURCE_MODE: mode}
+    )
+
+
+async def _create_entry_with_price_template(hass: HomeAssistant) -> config_entries.ConfigEntry:
+    """Create one config entry with price template and optional sources disabled."""
+    result = await _start_flow_at_template_review(hass, "Flow test")
+    await _finish_with_unused_optional_sources(hass, result)
     return hass.config_entries.async_entries(DOMAIN)[0]
-
-
-async def test_config_flow_persists_price_template_modifiers(
-    hass: HomeAssistant,
-) -> None:
-    """Test that source modifiers persist from config flow template step."""
-    entry = await _create_entry_with_price_template(hass)
-
-    price = entry.data[CONF_SOURCES][CONF_SOURCE_IMPORT_PRICE]
-    assert price[CONF_SOURCE_MODE] == SOURCE_MODE_TEMPLATE
-    assert price[CONF_AGGREGATION_MODE] == AGGREGATION_MODE_MIN
-    assert price[CONF_CLAMP_MODE] == CLAMP_MODE_NEAREST
-    assert price[CONF_RESAMPLE_MODE] == RESAMPLE_MODE_FORWARD_FILL
-    assert price[CONF_EDGE_FILL_MODE] == EDGE_FILL_MODE_HOLD
 
 
 async def test_source_review_shows_raw_and_adjusted_coverage(
     hass: HomeAssistant,
 ) -> None:
     """Review should distinguish native coverage from repaired planner coverage."""
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": config_entries.SOURCE_USER}
-    )
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "requirements"
-
-    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
-    assert result["step_id"] == "planner_setup"
-
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {
-            CONF_NAME: "Coverage review",
-            CONF_SLOT_MINUTES: "60",
-            CONF_HOURS_TO_PLAN: "24",
-        },
-    )
-    assert result["step_id"] == "source_price"
-
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE}
-    )
-    assert result["step_id"] == "source_price_template"
-
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {
-            CONF_TEMPLATE: _numeric_template(12),
-            CONF_FIXUP_PROFILE: FIXUP_PROFILE_REPAIR,
-            "advanced": {
-                CONF_AGGREGATION_MODE: AGGREGATION_MODE_MIN,
-                CONF_CLAMP_MODE: CLAMP_MODE_NEAREST,
-                CONF_RESAMPLE_MODE: RESAMPLE_MODE_FORWARD_FILL,
-                CONF_EDGE_FILL_MODE: EDGE_FILL_MODE_HOLD,
-            },
-        },
+    result = await _start_flow_at_template_review(
+        hass, "Coverage review", hours="24"
     )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "source_review"
@@ -231,18 +218,7 @@ async def test_options_flow_persists_price_adapter_modifiers(
 
     hass.states.async_set("sensor.price_provider", "ok", {"prices": [1.0] * 12})
 
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    assert result["type"] is FlowResultType.MENU
-
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"next_step_id": "source_price"}
-    )
-    assert result["type"] is FlowResultType.FORM
-
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER}
-    )
-    assert result["type"] is FlowResultType.FORM
+    result = await _open_price_options(hass, entry, SOURCE_MODE_ENTITY_ADAPTER)
     assert result["step_id"] == "source_price_adapter"
 
     result = await hass.config_entries.options.async_configure(
@@ -326,19 +302,8 @@ async def test_config_flow_auto_detects_entity_adapter(
         },
     )
 
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": config_entries.SOURCE_USER}
-    )
-    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_NAME: "Auto entity", CONF_SLOT_MINUTES: "60", CONF_HOURS_TO_PLAN: "12"},
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {
-            CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
-        },
+    result = await _start_config_flow(
+        hass, "Auto entity", price_mode=SOURCE_MODE_ENTITY_ADAPTER
     )
     assert result["step_id"] == "source_price_adapter"
 
@@ -347,18 +312,9 @@ async def test_config_flow_auto_detects_entity_adapter(
         {
             "entity_id": ["sensor.first", "sensor.second"],
             CONF_ADAPTER_TYPE: ADAPTER_TYPE_AUTO_DETECT,
-            SECTION_SOURCE_MANUAL: {
-                CONF_NAME: "",
-                "time_key": "",
-                "value_key": "",
-            },
+            SECTION_SOURCE_MANUAL: _AUTO_DETECT_MAPPING,
             CONF_FIXUP_PROFILE: FIXUP_PROFILE_REPAIR,
-            "advanced": {
-                CONF_AGGREGATION_MODE: AGGREGATION_MODE_MIN,
-                CONF_CLAMP_MODE: CLAMP_MODE_NEAREST,
-                CONF_RESAMPLE_MODE: RESAMPLE_MODE_FORWARD_FILL,
-                CONF_EDGE_FILL_MODE: EDGE_FILL_MODE_HOLD,
-            },
+            "advanced": _TEMPLATE_ADVANCED,
         },
     )
     assert result["step_id"] == "source_review"
@@ -377,19 +333,7 @@ async def test_config_flow_auto_detects_entity_adapter(
         "`starts_at` for time and `amount` for value."
         in diagnostic_text
     )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {"accept_source_summary": True}
-    )
-    assert result["step_id"] == "source_usage"
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED}
-    )
-    assert result["step_id"] == "source_pv"
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED}
-    )
-    result = await _finish_config_entry_creation(hass, result)
-    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await _finish_with_unused_optional_sources(hass, result)
 
     entry = hass.config_entries.async_entries(DOMAIN)[0]
     price = entry.data[CONF_SOURCES][CONF_SOURCE_IMPORT_PRICE]
@@ -440,16 +384,8 @@ async def test_config_flow_persists_explicit_multi_entity_adapter(
         },
     )
 
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": config_entries.SOURCE_USER}
-    )
-    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_NAME: "Multi entity", CONF_SLOT_MINUTES: "60", CONF_HOURS_TO_PLAN: "12"},
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER}
+    result = await _start_config_flow(
+        hass, "Multi entity", price_mode=SOURCE_MODE_ENTITY_ADAPTER
     )
     assert result["step_id"] == "source_price_adapter"
 
@@ -464,28 +400,11 @@ async def test_config_flow_persists_explicit_multi_entity_adapter(
                 "value_key": "pv_estimate",
             },
             CONF_FIXUP_PROFILE: FIXUP_PROFILE_REPAIR,
-            "advanced": {
-                CONF_AGGREGATION_MODE: AGGREGATION_MODE_MIN,
-                CONF_CLAMP_MODE: CLAMP_MODE_NEAREST,
-                CONF_RESAMPLE_MODE: RESAMPLE_MODE_FORWARD_FILL,
-                CONF_EDGE_FILL_MODE: EDGE_FILL_MODE_HOLD,
-            },
+            "advanced": _TEMPLATE_ADVANCED,
         },
     )
     assert result["step_id"] == "source_review"
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {"accept_source_summary": True}
-    )
-    assert result["step_id"] == "source_usage"
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED}
-    )
-    assert result["step_id"] == "source_pv"
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED}
-    )
-    result = await _finish_config_entry_creation(hass, result)
-    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await _finish_with_unused_optional_sources(hass, result)
 
     entry = hass.config_entries.async_entries(DOMAIN)[0]
     price = entry.data[CONF_SOURCES][CONF_SOURCE_IMPORT_PRICE]
@@ -496,61 +415,6 @@ async def test_config_flow_persists_explicit_multi_entity_adapter(
     assert {provider[CONF_NAME] for provider in price[CONF_PROVIDERS]} == {"detailedForecast"}
     assert {provider["time_key"] for provider in price[CONF_PROVIDERS]} == {"period_start"}
     assert {provider["value_key"] for provider in price[CONF_PROVIDERS]} == {"pv_estimate"}
-
-
-async def test_config_flow_routes_failed_entity_auto_detect_to_review(
-    hass: HomeAssistant,
-) -> None:
-    """Entity adapter semantic failures should be reported on review."""
-    hass.states.async_set("sensor.bad_prices", "ok", {"prices": [{"foo": "bar"}]})
-
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": config_entries.SOURCE_USER}
-    )
-    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {
-            CONF_NAME: "Auto detect failure",
-            CONF_SLOT_MINUTES: "60",
-            CONF_HOURS_TO_PLAN: "12",
-        },
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER},
-    )
-    assert result["step_id"] == "source_price_adapter"
-
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {
-            "entity_id": ["sensor.bad_prices"],
-            CONF_ADAPTER_TYPE: ADAPTER_TYPE_AUTO_DETECT,
-            SECTION_SOURCE_MANUAL: {
-                CONF_NAME: "",
-                "time_key": "",
-                "value_key": "",
-            },
-            CONF_FIXUP_PROFILE: FIXUP_PROFILE_REPAIR,
-        },
-    )
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "source_review"
-    assert result["errors"] == {"base": "auto_detect_no_match"}
-    assert result["data_schema"].schema == {}
-    assert (
-        result["description_placeholders"]["diagnostic_text"]
-        == "**Auto-detect**\n\n"
-        "- WattPlan could not build a usable forecast source from the selected input.\n\n"
-        "- ❌ Not usable: `sensor.bad_prices`. Found list data in `prices`, but no "
-        "timestamp field WattPlan can use. Ensure you picked an entity with forecast "
-        "data in its attributes, or switch to manual mapping."
-    )
-
-    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "source_price_adapter"
 
 
 async def test_config_flow_failed_entity_auto_detect_previews_usable_providers(
@@ -575,21 +439,8 @@ async def test_config_flow_failed_entity_auto_detect_previews_usable_providers(
     )
     hass.states.async_set("sensor.bad_prices", "ok", {"prices": [{"foo": "bar"}]})
 
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": config_entries.SOURCE_USER}
-    )
-    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {
-            CONF_NAME: "Partial auto detect preview",
-            CONF_SLOT_MINUTES: "60",
-            CONF_HOURS_TO_PLAN: "12",
-        },
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER},
+    result = await _start_config_flow(
+        hass, "Partial auto detect preview", price_mode=SOURCE_MODE_ENTITY_ADAPTER
     )
     assert result["step_id"] == "source_price_adapter"
 
@@ -598,11 +449,7 @@ async def test_config_flow_failed_entity_auto_detect_previews_usable_providers(
         {
             "entity_id": ["sensor.good_prices", "sensor.bad_prices"],
             CONF_ADAPTER_TYPE: ADAPTER_TYPE_AUTO_DETECT,
-            SECTION_SOURCE_MANUAL: {
-                CONF_NAME: "",
-                "time_key": "",
-                "value_key": "",
-            },
+            SECTION_SOURCE_MANUAL: _AUTO_DETECT_MAPPING,
             CONF_FIXUP_PROFILE: FIXUP_PROFILE_REPAIR,
         },
     )
@@ -618,74 +465,25 @@ async def test_config_flow_failed_entity_auto_detect_previews_usable_providers(
         "for time and `amount` for value."
         in result["description_placeholders"]["diagnostic_text"]
     )
-
-
-async def test_config_flow_auto_detect_accepts_native_datetime_attributes(
-    hass: HomeAssistant,
-) -> None:
-    """Entity auto-detect should accept attribute rows with native datetimes."""
-    start = datetime.now(tz=UTC).replace(minute=0, second=0, microsecond=0)
-    hass.states.async_set(
-        "sensor.native_datetime_prices",
-        "ok",
-        {
-            "prices": [
-                {"start": start, "price": 1.0},
-                {"start": start + timedelta(hours=1), "price": 2.0},
-                {"start": start + timedelta(hours=2), "price": 3.0},
-            ]
-        },
+    assert "Not usable: `sensor.bad_prices`." in (
+        result["description_placeholders"]["diagnostic_text"]
     )
+    assert result["data_schema"].schema == {}
 
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": config_entries.SOURCE_USER}
-    )
+    # The failed review has no accept action; continuing returns to the mapping form.
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {
-            CONF_NAME: "Native datetime auto detect",
-            CONF_SLOT_MINUTES: "60",
-            CONF_HOURS_TO_PLAN: "12",
-        },
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER},
-    )
     assert result["step_id"] == "source_price_adapter"
-
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {
-            "entity_id": ["sensor.native_datetime_prices"],
-            CONF_ADAPTER_TYPE: ADAPTER_TYPE_AUTO_DETECT,
-            SECTION_SOURCE_MANUAL: {
-                CONF_NAME: "",
-                "time_key": "",
-                "value_key": "",
-            },
-            CONF_FIXUP_PROFILE: FIXUP_PROFILE_REPAIR,
-        },
-    )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "source_review"
-    assert result["errors"] == {}
-    assert (
-        "✅ Looks usable. Found forecast data in `prices` "
-        "using `start` for time and `price` for value."
-        in result["description_placeholders"]["diagnostic_text"]
-    )
 
 
 async def test_options_flow_auto_detects_service_adapter(
     hass: HomeAssistant,
 ) -> None:
-    """Service adapter auto-detect should persist resolved explicit fields."""
+    """Service adapter auto-detect should persist resolved fields and fetch once."""
     start = datetime.now(tz=UTC).replace(minute=0, second=0, microsecond=0)
+    calls: list[str] = []
 
     async def _handle_prices(call: ServiceCall) -> dict[str, object]:
+        calls.append(call.service)
         return {
             "prices": {
                 "home": [
@@ -707,13 +505,7 @@ async def test_options_flow_auto_detects_service_adapter(
     )
     entry = await _create_entry_with_price_template(hass)
 
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"next_step_id": "source_price"}
-    )
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_SERVICE_ADAPTER}
-    )
+    result = await _open_price_options(hass, entry, SOURCE_MODE_SERVICE_ADAPTER)
     assert result["step_id"] == "source_price_service"
 
     result = await hass.config_entries.options.async_configure(
@@ -721,11 +513,7 @@ async def test_options_flow_auto_detects_service_adapter(
         {
             CONF_SERVICE: "test.prices",
             CONF_ADAPTER_TYPE: ADAPTER_TYPE_AUTO_DETECT,
-            SECTION_SOURCE_MANUAL: {
-                CONF_NAME: "",
-                "time_key": "",
-                "value_key": "",
-            },
+            SECTION_SOURCE_MANUAL: _AUTO_DETECT_MAPPING,
             CONF_FIXUP_PROFILE: FIXUP_PROFILE_EXTEND,
             "advanced": {
                 CONF_AGGREGATION_MODE: AGGREGATION_MODE_MAX,
@@ -733,67 +521,6 @@ async def test_options_flow_auto_detects_service_adapter(
                 CONF_RESAMPLE_MODE: RESAMPLE_MODE_NONE,
                 CONF_EDGE_FILL_MODE: EDGE_FILL_MODE_NONE,
             },
-        },
-    )
-    assert result["step_id"] == "source_review"
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"accept_source_summary": True}
-    )
-    assert result["type"] is FlowResultType.MENU
-
-    updated = hass.config_entries.async_get_entry(entry.entry_id)
-    assert updated is not None
-    price = updated.data[CONF_SOURCES][CONF_SOURCE_IMPORT_PRICE]
-    provider = price[CONF_PROVIDERS][0]
-    assert price[CONF_SOURCE_MODE] == SOURCE_MODE_SERVICE_ADAPTER
-    assert provider[CONF_SERVICE] == "test.prices"
-    assert provider[CONF_ADAPTER_TYPE] == ADAPTER_TYPE_SERVICE_RESPONSE
-    assert provider[CONF_NAME] == "prices.home"
-    assert provider["time_key"] == "start_time"
-    assert provider["value_key"] == "price"
-
-
-async def test_service_adapter_review_and_accept_call_service_once(
-    hass: HomeAssistant,
-) -> None:
-    """Reviewing and accepting a service source should fetch from it only once."""
-    start = datetime.now(tz=UTC).replace(minute=0, second=0, microsecond=0)
-    calls: list[str] = []
-
-    async def _handle_prices(call: ServiceCall) -> dict[str, object]:
-        calls.append(call.service)
-        return {
-            "prices": [
-                {
-                    "start": (start + timedelta(hours=hour)).isoformat(),
-                    "price": float(hour + 1),
-                }
-                for hour in range(12)
-            ]
-        }
-
-    hass.services.async_register(
-        "test",
-        "counted_prices",
-        _handle_prices,
-        supports_response=SupportsResponse.ONLY,
-    )
-    entry = await _create_entry_with_price_template(hass)
-
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"next_step_id": "source_price"}
-    )
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_SERVICE_ADAPTER}
-    )
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        {
-            CONF_SERVICE: "test.counted_prices",
-            CONF_ADAPTER_TYPE: ADAPTER_TYPE_AUTO_DETECT,
-            SECTION_SOURCE_MANUAL: {CONF_NAME: "", "time_key": "", "value_key": ""},
-            CONF_FIXUP_PROFILE: FIXUP_PROFILE_REPAIR,
         },
     )
     assert result["step_id"] == "source_review"
@@ -805,6 +532,17 @@ async def test_service_adapter_review_and_accept_call_service_once(
     )
     assert result["type"] is FlowResultType.MENU
     assert len(calls) == 1
+
+    updated = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated is not None
+    price = updated.data[CONF_SOURCES][CONF_SOURCE_IMPORT_PRICE]
+    provider = price[CONF_PROVIDERS][0]
+    assert price[CONF_SOURCE_MODE] == SOURCE_MODE_SERVICE_ADAPTER
+    assert provider[CONF_SERVICE] == "test.prices"
+    assert provider[CONF_ADAPTER_TYPE] == ADAPTER_TYPE_SERVICE_RESPONSE
+    assert provider[CONF_NAME] == "prices.home"
+    assert provider["time_key"] == "start_time"
+    assert provider["value_key"] == "price"
 
 
 async def test_options_flow_routes_failed_service_auto_detect_to_review(
@@ -823,13 +561,7 @@ async def test_options_flow_routes_failed_service_auto_detect_to_review(
     )
     entry = await _create_entry_with_price_template(hass)
 
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"next_step_id": "source_price"}
-    )
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_SERVICE_ADAPTER}
-    )
+    result = await _open_price_options(hass, entry, SOURCE_MODE_SERVICE_ADAPTER)
     assert result["step_id"] == "source_price_service"
 
     result = await hass.config_entries.options.async_configure(
@@ -837,11 +569,7 @@ async def test_options_flow_routes_failed_service_auto_detect_to_review(
         {
             CONF_SERVICE: "test.bad_prices",
             CONF_ADAPTER_TYPE: ADAPTER_TYPE_AUTO_DETECT,
-            SECTION_SOURCE_MANUAL: {
-                CONF_NAME: "",
-                "time_key": "",
-                "value_key": "",
-            },
+            SECTION_SOURCE_MANUAL: _AUTO_DETECT_MAPPING,
             CONF_FIXUP_PROFILE: FIXUP_PROFILE_REPAIR,
         },
     )
@@ -870,46 +598,10 @@ async def test_config_flow_persists_usage_built_in_source(
         },
     )
     monkeypatch.setattr(
-        "custom_components.wattplan.forecast_provider.ForecastProvider.async_debug_payload",
-        AsyncMock(
-            return_value={
-                "forecast_values": [1.0] * 12,
-                "raw_history_states": [
-                    {"last_changed": "2026-02-20T00:00:00+00:00", "state": "1.0"},
-                    {"last_changed": "2026-03-01T00:00:00+00:00", "state": "2.0"},
-                ],
-            }
-        ),
-    )
-    monkeypatch.setattr(
         "custom_components.wattplan.forecast_provider.ForecastProvider.async_values",
         AsyncMock(side_effect=lambda window: [1.0] * window.slots),
     )
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": config_entries.SOURCE_USER}
-    )
-    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_NAME: "Built in usage", CONF_SLOT_MINUTES: "60", CONF_HOURS_TO_PLAN: "12"},
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE}
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {
-            CONF_TEMPLATE: _numeric_template(12),
-            CONF_FIXUP_PROFILE: FIXUP_PROFILE_REPAIR,
-            "advanced": {
-                CONF_AGGREGATION_MODE: AGGREGATION_MODE_MIN,
-                CONF_CLAMP_MODE: CLAMP_MODE_NEAREST,
-                CONF_RESAMPLE_MODE: RESAMPLE_MODE_FORWARD_FILL,
-                CONF_EDGE_FILL_MODE: EDGE_FILL_MODE_HOLD,
-            },
-        },
-    )
-    assert result["step_id"] == "source_review"
+    result = await _start_flow_at_template_review(hass, "Built in usage")
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {"accept_source_summary": True}
@@ -977,31 +669,7 @@ async def test_built_in_usage_source_shows_sensor_validation_error(
         },
     )
 
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": config_entries.SOURCE_USER}
-    )
-    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_NAME: "Built in usage", CONF_SLOT_MINUTES: "60", CONF_HOURS_TO_PLAN: "12"},
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE}
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {
-            CONF_TEMPLATE: _numeric_template(12),
-            CONF_FIXUP_PROFILE: FIXUP_PROFILE_REPAIR,
-            "advanced": {
-                CONF_AGGREGATION_MODE: AGGREGATION_MODE_MIN,
-                CONF_CLAMP_MODE: CLAMP_MODE_NEAREST,
-                CONF_RESAMPLE_MODE: RESAMPLE_MODE_FORWARD_FILL,
-                CONF_EDGE_FILL_MODE: EDGE_FILL_MODE_HOLD,
-            },
-        },
-    )
-    assert result["step_id"] == "source_review"
+    result = await _start_flow_at_template_review(hass, "Built in usage")
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {"accept_source_summary": True}
@@ -1059,33 +727,10 @@ async def test_config_flow_persists_pv_energy_provider_source(
         ),
     )
 
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    result = await _start_flow_at_template_review(
+        hass, "Energy PV", hours="48", count=48
     )
-    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_NAME: "Energy PV", CONF_SLOT_MINUTES: "60", CONF_HOURS_TO_PLAN: "48"},
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE}
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {
-            CONF_TEMPLATE: _numeric_template(48),
-            CONF_FIXUP_PROFILE: FIXUP_PROFILE_REPAIR,
-            "advanced": {
-                CONF_AGGREGATION_MODE: AGGREGATION_MODE_MIN,
-                CONF_CLAMP_MODE: CLAMP_MODE_NEAREST,
-                CONF_RESAMPLE_MODE: RESAMPLE_MODE_FORWARD_FILL,
-                CONF_EDGE_FILL_MODE: EDGE_FILL_MODE_HOLD,
-            },
-        },
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {"accept_source_summary": True}
-    )
+    result = await _accept_review(hass, result)
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED}
     )

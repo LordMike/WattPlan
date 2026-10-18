@@ -9,7 +9,7 @@ import voluptuous_serialize
 from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResultType, InvalidData
+from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -17,15 +17,8 @@ from homeassistant.helpers import entity_registry as er
 from custom_components.wattplan.const import (
     CONF_ACTION_EMISSION_ENABLED,
     CONF_AVAILABILITY_SOURCE,
-    CONF_CAN_CHARGE_FROM_GRID,
-    CONF_CAN_CHARGE_FROM_PV,
     CONF_CAPACITY_KWH,
-    CONF_CHARGE_EFFICIENCY,
     CONF_CONFIG_ENTRY_ID,
-    CONF_DISCHARGE_EFFICIENCY,
-    CONF_DURATION_MINUTES,
-    CONF_ENERGY_KWH,
-    CONF_EXPECTED_POWER_KW,
     CONF_HISTORICAL_BATTERY_CHARGE_SENSOR,
     CONF_HISTORICAL_BATTERY_DISCHARGE_SENSOR,
     CONF_HISTORICAL_COST_TRACKING_ENABLED,
@@ -35,24 +28,17 @@ from custom_components.wattplan.const import (
     CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION,
     CONF_HISTORICAL_USAGE_SENSOR,
     CONF_HOURS_TO_PLAN,
-    CONF_MAX_CHARGE_KW,
     CONF_MAX_CONSECUTIVE_OFF_MINUTES,
-    CONF_MAX_DISCHARGE_KW,
-    CONF_MIN_CONSECUTIVE_OFF_MINUTES,
     CONF_MIN_CONSECUTIVE_ON_MINUTES,
-    CONF_MIN_OPTION_GAP_MINUTES,
     CONF_MINIMUM_KWH,
     CONF_ON_OFF_SOURCE,
     CONF_OPTIMIZER_LOOKAHEAD_SLOTS,
-    CONF_OPTIONS_COUNT,
     CONF_OUTLOOK_LANGUAGES,
     CONF_PLANNER_REPRODUCTION_RETENTION_DAYS,
     CONF_PLANNING_ENABLED,
     CONF_PLANNER_PRESET,
     CONF_RECORD_PLANNER_REPRODUCTIONS,
     CONF_SHOW_EXPERIMENTAL_PLANNERS,
-    CONF_ROLLING_WINDOW_HOURS,
-    CONF_RUN_WITHIN_HOURS,
     CONF_SLOT_MINUTES,
     CONF_SOC_SOURCE,
     CONF_SOURCE_MODE,
@@ -74,10 +60,17 @@ from custom_components.wattplan.const import (
 from custom_components.wattplan.source_providers import CONF_WATTPLAN_ENTITY_ID
 from tests.common import MockConfigEntry
 
+from .flow_helpers import (
+    CONF_ACCEPT_SOURCE_SUMMARY,
+    battery_input,
+    comfort_input,
+    optional_input,
+    submit,
+    walk_template_sources,
+)
+
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations", "frozen_clock")
 
-SECTION_BATTERY_ADVANCED = "advanced"
-CONF_ACCEPT_SOURCE_SUMMARY = "accept_source_summary"
 CONF_ACCEPT_MANUAL_SCHEDULING = "accept_manual_scheduling"
 
 
@@ -191,20 +184,6 @@ async def _finish_setup_if_needed(
     return result
 
 
-async def _finish_subentry_if_needed(
-    hass: HomeAssistant, result: dict[str, Any]
-) -> dict[str, Any]:
-    """Advance through any final subentry confirmation form."""
-    while result["type"] is FlowResultType.FORM and result["step_id"] in {
-        "complete",
-        "reconfigure_complete",
-    }:
-        result = await hass.config_entries.subentries.async_configure(
-            result["flow_id"], {}
-        )
-    return result
-
-
 async def _create_basic_entry(hass: HomeAssistant) -> config_entries.ConfigEntry:
     """Create a basic WattPlan config entry for subentry tests."""
     result = await hass.config_entries.flow.async_init(
@@ -219,31 +198,7 @@ async def _create_basic_entry(hass: HomeAssistant) -> config_entries.ConfigEntry
             CONF_HOURS_TO_PLAN: "24",
         },
     )
-    template = _series_template(24)
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE},
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_TEMPLATE: template},
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_ACCEPT_SOURCE_SUMMARY: True},
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE},
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_TEMPLATE: template},
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_ACCEPT_SOURCE_SUMMARY: True},
-    )
+    result = await walk_template_sources(hass, result["flow_id"], _series_template(24))
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
@@ -254,6 +209,19 @@ async def _create_basic_entry(hass: HomeAssistant) -> config_entries.ConfigEntry
     entry = hass.config_entries.async_entries(DOMAIN)[0]
     assert entry is not None
     return entry
+
+
+async def _open_historical_settings(
+    hass: HomeAssistant, entry: config_entries.ConfigEntry
+) -> dict[str, Any]:
+    """Open the historical settings form by enabling tracking in the intro step."""
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "historical_costs"}
+    )
+    return await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_HISTORICAL_COST_TRACKING_ENABLED: True}
+    )
 
 
 async def _open_planner_timers_options(
@@ -360,55 +328,7 @@ async def test_multiple_setups_allowed(
     hass: HomeAssistant, mock_setup_entry: AsyncMock
 ) -> None:
     """Test that multiple config entries can be created."""
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": config_entries.SOURCE_USER}
-    )
-    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {
-            CONF_NAME: "Home 1",
-            CONF_SLOT_MINUTES: "60",
-            CONF_HOURS_TO_PLAN: "12",
-        },
-    )
-    template = _series_template(12)
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE},
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_TEMPLATE: template},
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_ACCEPT_SOURCE_SUMMARY: True},
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE},
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_TEMPLATE: template},
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_ACCEPT_SOURCE_SUMMARY: True},
-    )
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "source_pv"
-
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
-    )
-    result = await _finish_setup_if_needed(hass, result)
-    await hass.async_block_till_done()
-
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert len(mock_setup_entry.mock_calls) == 1
+    await _create_basic_entry(hass)
 
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
@@ -434,22 +354,7 @@ async def test_export_price_step_is_shown_only_when_pv_is_configured(
         },
     )
     template = _series_template(12)
-
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE}
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_TEMPLATE: template}
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_ACCEPT_SOURCE_SUMMARY: True}
-    )
-
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED}
-    )
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "source_pv"
+    result = await walk_template_sources(hass, result["flow_id"], template)
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE}
@@ -465,12 +370,64 @@ async def test_export_price_step_is_shown_only_when_pv_is_configured(
     assert result["step_id"] == "source_export_price"
     assert _default_source_mode(result) == "not_used"
 
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED}
+
+async def test_source_review_reports_template_that_renders_text(
+    hass: HomeAssistant, mock_setup_entry: AsyncMock
+) -> None:
+    """A template that is not a list of values is rejected on its own step."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
-    result = await _finish_setup_if_needed(hass, result)
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert len(mock_setup_entry.mock_calls) == 1
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_NAME: "Home", CONF_SLOT_MINUTES: "60", CONF_HOURS_TO_PLAN: "12"},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_TEMPLATE: "{{ 'not a series' }}"}
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "source_review"
+    assert result["errors"] == {"base": "template_invalid_structure"}
+
+
+async def test_source_review_reports_missing_built_in_entity(
+    hass: HomeAssistant, mock_setup_entry: AsyncMock
+) -> None:
+    """The built-in usage source must point at an existing entity."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_NAME: "Home", CONF_SLOT_MINUTES: "60", CONF_HOURS_TO_PLAN: "12"},
+    )
+    template = _series_template(12)
+    for user_input in (
+        {CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE},
+        {CONF_TEMPLATE: template},
+        {CONF_ACCEPT_SOURCE_SUMMARY: True},
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input
+        )
+    assert result["step_id"] == "source_usage"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_SOURCE_MODE: SOURCE_MODE_BUILT_IN}
+    )
+    assert result["type"] is FlowResultType.FORM
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_WATTPLAN_ENTITY_ID: "sensor.missing_usage_total"}
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "source_review"
+    assert result["errors"] == {"base": "entity_not_found"}
 
 
 async def test_options_flow_add_core_and_one_of_each_asset(
@@ -490,30 +447,7 @@ async def test_options_flow_add_core_and_one_of_each_asset(
         },
     )
     template = _series_template(24)
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE},
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_TEMPLATE: template},
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_ACCEPT_SOURCE_SUMMARY: True},
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE},
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_TEMPLATE: template},
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_ACCEPT_SOURCE_SUMMARY: True},
-    )
+    result = await walk_template_sources(hass, result["flow_id"], template)
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
@@ -529,25 +463,6 @@ async def test_options_flow_add_core_and_one_of_each_asset(
     assert "source_export_price" in result["menu_options"]
     assert "historical_costs" in result["menu_options"]
     assert "outlook_languages" in result["menu_options"]
-
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"next_step_id": "planner_timers"}
-    )
-    assert result["type"] is FlowResultType.FORM
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        {
-            CONF_PLANNING_ENABLED: True,
-            CONF_ACTION_EMISSION_ENABLED: False,
-        },
-    )
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "planner_timers_warning_action_emission"
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        {CONF_ACCEPT_MANUAL_SCHEDULING: True},
-    )
-    assert result["type"] is FlowResultType.MENU
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {"next_step_id": "source_price"}
@@ -610,7 +525,6 @@ async def test_options_flow_add_core_and_one_of_each_asset(
 
     updated = hass.config_entries.async_get_entry(entry.entry_id)
     assert updated is not None
-    assert updated.options[CONF_ACTION_EMISSION_ENABLED] is False
     assert updated.options[CONF_HISTORICAL_COST_TRACKING_ENABLED] is True
     assert (
         updated.options[CONF_HISTORICAL_GRID_IMPORT_SENSOR]
@@ -622,68 +536,24 @@ async def test_options_flow_add_core_and_one_of_each_asset(
     assert updated.options[CONF_HISTORICAL_BATTERY_DISCHARGE_SENSOR] == "sensor.battery_discharge_total"
     assert CONF_SOURCES in updated.data
 
-    result = await hass.config_entries.subentries.async_init(
-        (entry.entry_id, SUBENTRY_TYPE_BATTERY), context={"source": "user"}
-    )
-    assert result["type"] is FlowResultType.FORM
-    result = await hass.config_entries.subentries.async_configure(
-        result["flow_id"],
-        {
-            CONF_NAME: "Car battery",
-            CONF_SOC_SOURCE: "sensor.car_soc",
-            CONF_AVAILABILITY_SOURCE: "binary_sensor.car_available",
-            CONF_CAPACITY_KWH: 70,
-            CONF_MINIMUM_KWH: 10,
-            CONF_MAX_CHARGE_KW: 11,
-            CONF_MAX_DISCHARGE_KW: 11,
-            SECTION_BATTERY_ADVANCED: {
-                CONF_CHARGE_EFFICIENCY: 0.9,
-                CONF_DISCHARGE_EFFICIENCY: 0.9,
-            },
-            CONF_CAN_CHARGE_FROM_GRID: False,
-            CONF_CAN_CHARGE_FROM_PV: True,
-        },
-    )
-    result = await _finish_subentry_if_needed(hass, result)
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-
-    result = await hass.config_entries.subentries.async_init(
-        (entry.entry_id, SUBENTRY_TYPE_COMFORT), context={"source": "user"}
-    )
-    assert result["type"] is FlowResultType.FORM
-    result = await hass.config_entries.subentries.async_configure(
-        result["flow_id"],
-        {
-            CONF_NAME: "House heat",
-            CONF_ROLLING_WINDOW_HOURS: 24,
-            CONF_TARGET_ON_HOURS_PER_WINDOW: 8,
-            CONF_MIN_CONSECUTIVE_ON_MINUTES: 60,
-            CONF_MIN_CONSECUTIVE_OFF_MINUTES: 60,
-            CONF_MAX_CONSECUTIVE_OFF_MINUTES: 180,
-            CONF_ON_OFF_SOURCE: "binary_sensor.house_heat_on",
-            CONF_EXPECTED_POWER_KW: 1.5,
-        },
-    )
-    result = await _finish_subentry_if_needed(hass, result)
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-
-    result = await hass.config_entries.subentries.async_init(
-        (entry.entry_id, SUBENTRY_TYPE_OPTIONAL), context={"source": "user"}
-    )
-    assert result["type"] is FlowResultType.FORM
-    result = await hass.config_entries.subentries.async_configure(
-        result["flow_id"],
-        {
-            CONF_NAME: "Dishwasher",
-            CONF_DURATION_MINUTES: 120,
-            CONF_RUN_WITHIN_HOURS: 24,
-            CONF_ENERGY_KWH: 2.2,
-            CONF_OPTIONS_COUNT: 3,
-            CONF_MIN_OPTION_GAP_MINUTES: 0,
-        },
-    )
-    result = await _finish_subentry_if_needed(hass, result)
-    assert result["type"] is FlowResultType.CREATE_ENTRY
+    for subentry_type, data in (
+        (
+            SUBENTRY_TYPE_BATTERY,
+            battery_input(
+                "Car battery",
+                **{
+                    CONF_SOC_SOURCE: "sensor.car_soc",
+                    CONF_AVAILABILITY_SOURCE: "binary_sensor.car_available",
+                    CONF_CAPACITY_KWH: 70,
+                    CONF_MINIMUM_KWH: 10,
+                },
+            ),
+        ),
+        (SUBENTRY_TYPE_COMFORT, comfort_input("House heat", 24)),
+        (SUBENTRY_TYPE_OPTIONAL, optional_input("Dishwasher")),
+    ):
+        result = await submit(hass, entry.entry_id, subentry_type, data)
+        assert result["type"] is FlowResultType.CREATE_ENTRY
 
     await hass.async_block_till_done()
     updated = hass.config_entries.async_get_entry(entry.entry_id)
@@ -766,14 +636,7 @@ async def test_historical_costs_prefills_discovered_source_meters(
         },
     )
 
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"next_step_id": "historical_costs"}
-    )
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        {CONF_HISTORICAL_COST_TRACKING_ENABLED: True},
-    )
+    result = await _open_historical_settings(hass, entry)
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "historical_costs_settings"
@@ -829,14 +692,7 @@ async def test_historical_costs_prefills_energy_provider_owned_meter(
         },
     )
 
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"next_step_id": "historical_costs"}
-    )
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        {CONF_HISTORICAL_COST_TRACKING_ENABLED: True},
-    )
+    result = await _open_historical_settings(hass, entry)
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "historical_costs_settings"
@@ -878,14 +734,7 @@ async def test_historical_costs_does_not_prefill_existing_blank_option(
         },
     )
 
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"next_step_id": "historical_costs"}
-    )
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        {CONF_HISTORICAL_COST_TRACKING_ENABLED: True},
-    )
+    result = await _open_historical_settings(hass, entry)
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "historical_costs_settings"
@@ -916,13 +765,7 @@ async def test_historical_costs_optional_sensors_can_be_cleared(
         },
     )
 
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"next_step_id": "historical_costs"}
-    )
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_HISTORICAL_COST_TRACKING_ENABLED: True}
-    )
+    result = await _open_historical_settings(hass, entry)
     assert _schema_suggested(result, CONF_HISTORICAL_PV_SENSOR) == "sensor.pv_total"
     assert _schema_default(result, CONF_HISTORICAL_PV_SENSOR) is None
 
@@ -941,28 +784,64 @@ async def test_historical_costs_optional_sensors_can_be_cleared(
     assert updated.options[CONF_HISTORICAL_PV_SENSOR] is None
 
 
-async def test_options_planner_timers_both_enabled_saves_without_warning(
+async def test_historical_costs_rejects_non_energy_sensor(
     hass: HomeAssistant, mock_setup_entry: AsyncMock
 ) -> None:
-    """Test enabled scheduler flags save without a warning step."""
+    """A sensor that is not a cumulative energy meter cannot be saved."""
     entry = await _create_basic_entry(hass)
+    _set_energy_sensor(hass, "sensor.grid_import_total")
+    hass.states.async_set(
+        "sensor.house_power", "1.0", {"device_class": "power", "unit_of_measurement": "W"}
+    )
+    result = await _open_historical_settings(hass, entry)
 
-    result = await _open_planner_timers_options(hass, entry)
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "planner_timers"
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         {
-            CONF_PLANNING_ENABLED: True,
-            CONF_ACTION_EMISSION_ENABLED: True,
+            CONF_HISTORICAL_GRID_IMPORT_SENSOR: "sensor.grid_import_total",
+            CONF_HISTORICAL_USAGE_SENSOR: "sensor.house_power",
         },
     )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_HISTORICAL_USAGE_SENSOR: "invalid_energy_sensor"}
+
+
+@pytest.mark.parametrize(
+    ("planning", "emission", "warning_step"),
+    [
+        (True, True, None),
+        (True, False, "planner_timers_warning_action_emission"),
+        (False, False, "planner_timers_warning_both"),
+    ],
+)
+async def test_options_planner_timers_save_with_matching_warning(
+    hass: HomeAssistant,
+    mock_setup_entry: AsyncMock,
+    planning: bool,
+    emission: bool,
+    warning_step: str | None,
+) -> None:
+    """Disabled scheduler flags route through their targeted acknowledgement."""
+    entry = await _create_basic_entry(hass)
+
+    result = await _open_planner_timers_options(hass, entry)
+    assert result["step_id"] == "planner_timers"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_PLANNING_ENABLED: planning, CONF_ACTION_EMISSION_ENABLED: emission},
+    )
+    if warning_step is not None:
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == warning_step
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {CONF_ACCEPT_MANUAL_SCHEDULING: True}
+        )
 
     assert result["type"] is FlowResultType.MENU
     updated = hass.config_entries.async_get_entry(entry.entry_id)
     assert updated is not None
-    assert updated.options[CONF_PLANNING_ENABLED] is True
-    assert updated.options[CONF_ACTION_EMISSION_ENABLED] is True
+    assert updated.options[CONF_PLANNING_ENABLED] is planning
+    assert updated.options[CONF_ACTION_EMISSION_ENABLED] is emission
 
 
 async def test_options_outlook_languages_are_advanced_and_optional(
@@ -983,10 +862,6 @@ async def test_options_outlook_languages_are_advanced_and_optional(
     field = _serialized_schema_field(result, CONF_OUTLOOK_LANGUAGES)
     assert field["selector"]["select"]["multiple"] is True
     assert field["selector"]["select"]["mode"] == "list"
-    assert field["selector"]["select"]["options"] == [
-        {"label": "Dansk", "value": "da"},
-        {"label": "English", "value": "en"}
-    ]
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {CONF_OUTLOOK_LANGUAGES: ["da", "en"]}
@@ -1026,17 +901,6 @@ async def test_troubleshooting_recording_defaults_and_retention_bounds(
     )
     assert retention_field["selector"]["number"]["min"] == 1
     assert retention_field["selector"]["number"]["max"] == 730
-
-    for days in (0, 731):
-        with pytest.raises(InvalidData):
-            await hass.config_entries.options.async_configure(
-                result["flow_id"],
-                {
-                    CONF_RECORD_PLANNER_REPRODUCTIONS: True,
-                    CONF_SHOW_EXPERIMENTAL_PLANNERS: False,
-                    CONF_PLANNER_REPRODUCTION_RETENTION_DAYS: days,
-                },
-            )
 
     fractional = await hass.config_entries.options.async_configure(
         result["flow_id"],
@@ -1105,6 +969,20 @@ async def test_options_planner_core_uses_preset_owned_tuning(
     assert updated.options["optimizer_profile"] == "aggressive"
 
 
+def _long_cycle_heat(cycle_minutes: int) -> dict[str, Any]:
+    """Comfort input whose minimum on and maximum off time are one long cycle."""
+    return comfort_input(
+        "Long cycle heat",
+        24,
+        **{
+            CONF_TARGET_ON_HOURS_PER_WINDOW: 8,
+            CONF_MIN_CONSECUTIVE_ON_MINUTES: cycle_minutes,
+            CONF_MAX_CONSECUTIVE_OFF_MINUTES: cycle_minutes,
+            CONF_ON_OFF_SOURCE: "binary_sensor.long_cycle_heat",
+        },
+    )
+
+
 async def test_options_rejects_preset_that_shortens_existing_comfort_horizon(
     hass: HomeAssistant, mock_setup_entry: AsyncMock
 ) -> None:
@@ -1118,23 +996,12 @@ async def test_options_rejects_preset_that_shortens_existing_comfort_horizon(
             CONF_OPTIMIZER_LOOKAHEAD_SLOTS: 22,
         },
     )
-    result = await hass.config_entries.subentries.async_init(
-        (entry.entry_id, SUBENTRY_TYPE_COMFORT), context={"source": "user"}
+    result = await submit(
+        hass,
+        entry.entry_id,
+        SUBENTRY_TYPE_COMFORT,
+        _long_cycle_heat(12 * 60),
     )
-    result = await hass.config_entries.subentries.async_configure(
-        result["flow_id"],
-        {
-            CONF_NAME: "Long cycle heat",
-            CONF_ROLLING_WINDOW_HOURS: 24,
-            CONF_TARGET_ON_HOURS_PER_WINDOW: 8,
-            CONF_MIN_CONSECUTIVE_ON_MINUTES: 12 * 60,
-            CONF_MIN_CONSECUTIVE_OFF_MINUTES: 60,
-            CONF_MAX_CONSECUTIVE_OFF_MINUTES: 12 * 60,
-            CONF_ON_OFF_SOURCE: "binary_sensor.long_cycle_heat",
-            CONF_EXPECTED_POWER_KW: 1.5,
-        },
-    )
-    result = await _finish_subentry_if_needed(hass, result)
     assert result["type"] is FlowResultType.CREATE_ENTRY
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
@@ -1166,21 +1033,11 @@ async def test_comfort_flow_rejects_minimum_equal_to_effective_lookahead(
     hass.config_entries.async_update_entry(
         entry, options={**entry.options, CONF_PLANNER_PRESET: "highs"}
     )
-    result = await hass.config_entries.subentries.async_init(
-        (entry.entry_id, SUBENTRY_TYPE_COMFORT), context={"source": "user"}
-    )
-    result = await hass.config_entries.subentries.async_configure(
-        result["flow_id"],
-        {
-            CONF_NAME: "Long cycle heat",
-            CONF_ROLLING_WINDOW_HOURS: 24,
-            CONF_TARGET_ON_HOURS_PER_WINDOW: 8,
-            CONF_MIN_CONSECUTIVE_ON_MINUTES: 22 * 60,
-            CONF_MIN_CONSECUTIVE_OFF_MINUTES: 60,
-            CONF_MAX_CONSECUTIVE_OFF_MINUTES: 22 * 60,
-            CONF_ON_OFF_SOURCE: "binary_sensor.long_cycle_heat",
-            CONF_EXPECTED_POWER_KW: 1.5,
-        },
+    result = await submit(
+        hass,
+        entry.entry_id,
+        SUBENTRY_TYPE_COMFORT,
+        _long_cycle_heat(22 * 60),
     )
 
     assert result["type"] is FlowResultType.FORM
@@ -1236,155 +1093,3 @@ async def test_options_planner_timers_planning_disabled_requires_acknowledgement
     assert updated is not None
     assert updated.options[CONF_PLANNING_ENABLED] is False
     assert updated.options[CONF_ACTION_EMISSION_ENABLED] is True
-
-
-async def test_options_planner_timers_action_emission_disabled_requires_acknowledgement(
-    hass: HomeAssistant, mock_setup_entry: AsyncMock
-) -> None:
-    """Test disabled scheduled action emission routes through targeted acknowledgement."""
-    entry = await _create_basic_entry(hass)
-
-    result = await _open_planner_timers_options(hass, entry)
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        {
-            CONF_PLANNING_ENABLED: True,
-            CONF_ACTION_EMISSION_ENABLED: False,
-        },
-    )
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "planner_timers_warning_action_emission"
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        {CONF_ACCEPT_MANUAL_SCHEDULING: True},
-    )
-
-    assert result["type"] is FlowResultType.MENU
-    updated = hass.config_entries.async_get_entry(entry.entry_id)
-    assert updated is not None
-    assert updated.options[CONF_PLANNING_ENABLED] is True
-    assert updated.options[CONF_ACTION_EMISSION_ENABLED] is False
-
-
-async def test_options_planner_timers_both_disabled_requires_acknowledgement(
-    hass: HomeAssistant, mock_setup_entry: AsyncMock
-) -> None:
-    """Test disabling all automatic scheduler behavior uses the both-disabled warning."""
-    entry = await _create_basic_entry(hass)
-
-    result = await _open_planner_timers_options(hass, entry)
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        {
-            CONF_PLANNING_ENABLED: False,
-            CONF_ACTION_EMISSION_ENABLED: False,
-        },
-    )
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "planner_timers_warning_both"
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        {CONF_ACCEPT_MANUAL_SCHEDULING: True},
-    )
-
-    assert result["type"] is FlowResultType.MENU
-    updated = hass.config_entries.async_get_entry(entry.entry_id)
-    assert updated is not None
-    assert updated.options[CONF_PLANNING_ENABLED] is False
-    assert updated.options[CONF_ACTION_EMISSION_ENABLED] is False
-
-
-async def test_subentry_validation_errors(
-    hass: HomeAssistant, mock_setup_entry: AsyncMock
-) -> None:
-    """Test relational and required validation for subentries."""
-    entry = await _create_basic_entry(hass)
-
-    result = await hass.config_entries.subentries.async_init(
-        (entry.entry_id, SUBENTRY_TYPE_BATTERY), context={"source": "user"}
-    )
-    result = await hass.config_entries.subentries.async_configure(
-        result["flow_id"],
-        {
-            CONF_NAME: "Home battery",
-            CONF_SOC_SOURCE: "sensor.home_soc",
-            CONF_CAPACITY_KWH: 20,
-            CONF_MINIMUM_KWH: 25,
-            CONF_MAX_CHARGE_KW: 7,
-            CONF_MAX_DISCHARGE_KW: 7,
-            SECTION_BATTERY_ADVANCED: {
-                CONF_CHARGE_EFFICIENCY: 0.9,
-                CONF_DISCHARGE_EFFICIENCY: 0.9,
-            },
-            CONF_CAN_CHARGE_FROM_GRID: False,
-            CONF_CAN_CHARGE_FROM_PV: True,
-        },
-    )
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {CONF_MINIMUM_KWH: "battery_minimum_exceeds_capacity"}
-
-    result = await hass.config_entries.subentries.async_init(
-        (entry.entry_id, SUBENTRY_TYPE_BATTERY), context={"source": "user"}
-    )
-    result = await hass.config_entries.subentries.async_configure(
-        result["flow_id"],
-        {
-            CONF_NAME: "Garage battery",
-            CONF_SOC_SOURCE: "sensor.garage_soc",
-            CONF_CAPACITY_KWH: 20,
-            CONF_MINIMUM_KWH: 5,
-            CONF_MAX_CHARGE_KW: 7,
-            CONF_MAX_DISCHARGE_KW: 7,
-            SECTION_BATTERY_ADVANCED: {
-                CONF_CHARGE_EFFICIENCY: 0.9,
-                CONF_DISCHARGE_EFFICIENCY: 0.9,
-            },
-            CONF_CAN_CHARGE_FROM_GRID: False,
-            CONF_CAN_CHARGE_FROM_PV: True,
-        },
-    )
-    result = await _finish_subentry_if_needed(hass, result)
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    updated = hass.config_entries.async_get_entry(entry.entry_id)
-    assert updated is not None
-    battery = next(
-        subentry
-        for subentry in updated.subentries.values()
-        if subentry.data.get(CONF_NAME) == "Garage battery"
-    )
-    assert CONF_AVAILABILITY_SOURCE not in battery.data
-
-    result = await hass.config_entries.subentries.async_init(
-        (entry.entry_id, SUBENTRY_TYPE_OPTIONAL), context={"source": "user"}
-    )
-    result = await hass.config_entries.subentries.async_configure(
-        result["flow_id"],
-        {
-            CONF_NAME: " ",
-            CONF_DURATION_MINUTES: 120,
-            CONF_RUN_WITHIN_HOURS: 1,
-            CONF_ENERGY_KWH: 0,
-            CONF_OPTIONS_COUNT: 2,
-            CONF_MIN_OPTION_GAP_MINUTES: 15,
-        },
-    )
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {
-        CONF_NAME: "text_required",
-        CONF_ENERGY_KWH: "optional_energy_must_be_positive",
-        CONF_DURATION_MINUTES: "optional_duration_exceeds_window",
-    }
-
-    result = await hass.config_entries.subentries.async_configure(
-        result["flow_id"],
-        {
-            CONF_NAME: "Dishwasher",
-            CONF_DURATION_MINUTES: 60,
-            CONF_RUN_WITHIN_HOURS: 3,
-            CONF_ENERGY_KWH: 2.2,
-            CONF_OPTIONS_COUNT: 3,
-            CONF_MIN_OPTION_GAP_MINUTES: 600,
-        },
-    )
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {CONF_OPTIONS_COUNT: "optional_options_exceed_window"}

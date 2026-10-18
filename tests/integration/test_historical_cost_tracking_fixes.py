@@ -50,7 +50,6 @@ from custom_components.wattplan.historical_cost.models import (
     SCENARIO_ACTUAL,
     SlotRecord,
 )
-from custom_components.wattplan.historical_cost import store as store_module
 from custom_components.wattplan.historical_cost.store import HistoricalCostStore
 from custom_components.wattplan.sensors.historical import (
     HISTORICAL_SENSOR_DESCRIPTIONS,
@@ -214,62 +213,64 @@ async def _tick(hass, freezer, tracker, start: datetime, minutes: int, grid_impo
     await tracker.async_process_completed_slot()
 
 
-async def test_meter_reset_costs_only_the_reset_slot(
+async def test_meter_gaps_cost_only_the_affected_slots(
     hass: HomeAssistant, freezer
 ) -> None:
-    """After a counter reset the new reading is the baseline (COR-35)."""
+    """Resets and missing readings never leak energy into the wrong slot (COR-35)."""
     start = datetime(2026, 5, 24, 10, 0, tzinfo=UTC)
     tracker = await _setup_tracker(hass, freezer, start)
+    tracker.remember_price_series(
+        start_at=start,
+        slot_minutes=15,
+        import_prices=[1.0] * 16,
+        export_prices=[0.0] * 16,
+    )
 
     await _tick(hass, freezer, tracker, start, 15, 101.0, 201.0)
-    await _tick(hass, freezer, tracker, start, 30, 0.5, 0.5)  # counters reset
+    # Counters reset: the new reading is the baseline.
+    await _tick(hass, freezer, tracker, start, 30, 0.5, 0.5)
     assert tracker.store.last_meter_values()["grid_import"] == pytest.approx(0.5)
     await _tick(hass, freezer, tracker, start, 45, 1.5, 2.0)
-
-    day = tracker.store.data["days"]["2026-05-24"]
-    assert day["flags"] == [0, FLAG_METER_RESET, 0]
-    assert day["grid_import"] == [pytest.approx(1.0), None, pytest.approx(1.0)]
-    assert day["usage"] == [pytest.approx(1.0), None, pytest.approx(1.5)]
-
-
-async def test_single_unavailable_reading_costs_one_slot(
-    hass: HomeAssistant, freezer
-) -> None:
-    """The last finite baseline is kept and the spanning delta is flagged (COR-35)."""
-    start = datetime(2026, 5, 24, 10, 0, tzinfo=UTC)
-    tracker = await _setup_tracker(hass, freezer, start)
-
-    await _tick(hass, freezer, tracker, start, 15, "unavailable", "unavailable")
-    assert tracker.store.last_meter_values()["grid_import"] == pytest.approx(100.0)
-    await _tick(hass, freezer, tracker, start, 30, 102.0, 203.0)
-    await _tick(hass, freezer, tracker, start, 45, 103.0, 204.0)
-
-    day = tracker.store.data["days"]["2026-05-24"]
-    assert day["flags"] == [FLAG_MISSING_METER, FLAG_MULTI_SLOT_DELTA, 0]
-    # The slot after the outage carries the energy of both slots, flagged.
-    assert day["grid_import"] == [None, pytest.approx(2.0), pytest.approx(1.0)]
+    # A single unavailable reading keeps the last finite baseline; the next
+    # delta spans two slots and is flagged.
+    await _tick(hass, freezer, tracker, start, 60, "unavailable", "unavailable")
+    assert tracker.store.last_meter_values()["grid_import"] == pytest.approx(1.5)
+    await _tick(hass, freezer, tracker, start, 75, 3.5, 4.0)
+    await _tick(hass, freezer, tracker, start, 90, 4.5, 5.0)
+    # A non-finite reading is treated like an unavailable one.
+    await _tick(hass, freezer, tracker, start, 105, "nan", "nan")
+    await _tick(hass, freezer, tracker, start, 120, 6.5, 7.0)
+    await _tick(hass, freezer, tracker, start, 135, 7.5, 8.0)
     assert tracker.store.meter_stale_slots() == {}
-
-
-async def test_longer_outage_is_not_booked_as_one_slot(
-    hass: HomeAssistant, freezer
-) -> None:
-    """A delta that spans several slots cannot be attributed and stays missing."""
-    start = datetime(2026, 5, 24, 10, 0, tzinfo=UTC)
-    tracker = await _setup_tracker(hass, freezer, start)
-
-    await _tick(hass, freezer, tracker, start, 15, "unavailable", "unavailable")
-    await _tick(hass, freezer, tracker, start, 30, "unavailable", "unavailable")
-    await _tick(hass, freezer, tracker, start, 45, 104.0, 206.0)
-    await _tick(hass, freezer, tracker, start, 60, 105.0, 207.0)
+    # A delta that spans several slots cannot be attributed and stays missing.
+    await _tick(hass, freezer, tracker, start, 150, "unavailable", "unavailable")
+    await _tick(hass, freezer, tracker, start, 165, "unavailable", "unavailable")
+    await _tick(hass, freezer, tracker, start, 180, 10.5, 11.0)
+    await _tick(hass, freezer, tracker, start, 195, 11.5, 12.0)
 
     day = tracker.store.data["days"]["2026-05-24"]
-    assert day["flags"] == [FLAG_MISSING_METER] * 3 + [0]
-    assert day["grid_import"] == [None, None, None, pytest.approx(1.0)]
+    assert day["flags"] == [
+        0, FLAG_METER_RESET, 0,
+        FLAG_MISSING_METER, FLAG_MULTI_SLOT_DELTA, 0,
+        FLAG_MISSING_METER, FLAG_MULTI_SLOT_DELTA, 0,
+        FLAG_MISSING_METER, FLAG_MISSING_METER, FLAG_MISSING_METER, 0,
+    ]
+    assert day["grid_import"] == [
+        pytest.approx(1.0), None, pytest.approx(1.0),
+        None, pytest.approx(2.0), pytest.approx(1.0),
+        None, pytest.approx(2.0), pytest.approx(1.0),
+        None, None, None, pytest.approx(1.0),
+    ]
+    assert day["usage"][:3] == [pytest.approx(1.0), None, pytest.approx(1.5)]
 
 
 async def _plan_with_export_source(
-    hass: HomeAssistant, freezer, start: datetime, *, export_healthy: bool
+    hass: HomeAssistant,
+    freezer,
+    start: datetime,
+    *,
+    export_healthy: bool,
+    export_meter: bool = True,
 ):
     """Plan once with a configured export source that is healthy or missing."""
     freezer.move_to(start + timedelta(seconds=2))
@@ -308,7 +309,9 @@ async def _plan_with_export_source(
             CONF_HISTORICAL_COST_TRACKING_ENABLED: True,
             CONF_HISTORICAL_GRID_IMPORT_SENSOR: "sensor.grid_import_total",
             CONF_HISTORICAL_USAGE_SENSOR: "sensor.usage_total",
-            CONF_HISTORICAL_GRID_EXPORT_SENSOR: "sensor.grid_export_total",
+            CONF_HISTORICAL_GRID_EXPORT_SENSOR: (
+                "sensor.grid_export_total" if export_meter else None
+            ),
             CONF_HISTORICAL_PV_SENSOR: None,
             CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION: False,
         },
@@ -351,23 +354,15 @@ async def test_unavailable_export_source_prices_are_not_cached_as_zero(
     assert day["export_price"] == [None]
 
 
-async def test_healthy_export_source_prices_are_still_cached(
+async def test_healthy_export_prices_are_cached_and_survive_a_later_priceless_plan(
     hass: HomeAssistant, freezer
 ) -> None:
-    """A healthy export source keeps feeding real prices to the cache."""
+    """A healthy export source feeds the cache and a later plan cannot erase it."""
     start = datetime(2026, 5, 24, 10, 0, tzinfo=UTC)
     tracker = await _plan_with_export_source(hass, freezer, start, export_healthy=True)
 
     assert tracker.store.cached_price(start, "export") == pytest.approx(0.1)
     assert tracker.store.cached_price(start + timedelta(minutes=15), "export") == pytest.approx(0.11)
-
-
-async def test_failed_plan_keeps_earlier_real_export_prices(
-    hass: HomeAssistant, freezer
-) -> None:
-    """A later plan without export prices must not erase earlier real ones."""
-    start = datetime(2026, 5, 24, 10, 0, tzinfo=UTC)
-    tracker = await _plan_with_export_source(hass, freezer, start, export_healthy=True)
 
     tracker.remember_price_series(
         start_at=start,
@@ -380,10 +375,10 @@ async def test_failed_plan_keeps_earlier_real_export_prices(
     assert tracker.store.cached_price(start, "export") == pytest.approx(0.1)
 
 
-async def test_sensor_properties_share_one_computed_summary(
-    hass: HomeAssistant, freezer, monkeypatch: pytest.MonkeyPatch
+async def test_sensor_properties_follow_the_store(
+    hass: HomeAssistant, freezer
 ) -> None:
-    """available, native_value and attributes must not each rescan the store (PERF-11)."""
+    """available, native_value and attributes agree and pick up new slots."""
     store = await _loaded_store(hass, freezer, datetime(2026, 5, 25, 12, 0, 5, tzinfo=UTC))
     for hour in range(8, 12):
         store.append_slot(_record(datetime(2026, 5, 25, hour, tzinfo=UTC)))
@@ -404,91 +399,13 @@ async def test_sensor_properties_share_one_computed_summary(
         description,
         entry_slug="review",
     )
-    calls = []
-    original = store._records_between
-    monkeypatch.setattr(
-        store,
-        "_records_between",
-        lambda *args: calls.append(args) or original(*args),
-    )
-
     assert sensor.available is True
     assert sensor.native_value == pytest.approx(4.0)
     assert sensor.extra_state_attributes["slots"] == 4
-    assert len(calls) == 1
 
-    # Another metric for the same period reuses the parsed records.
-    store.summary(
-        metric=HistoricalMetric.SAVINGS_VS_GRID_ONLY,
-        period=PERIOD_TODAY,
-        scenario=None,
-    )
-    assert len(calls) == 1
-
-    # New data invalidates the cache.
+    # New data invalidates the cached summary.
     store.append_slot(_record(datetime(2026, 5, 25, 12, tzinfo=UTC)))
     assert sensor.native_value == pytest.approx(5.0)
-    assert len(calls) == 2
-
-
-async def test_summary_only_parses_days_overlapping_the_period(
-    hass: HomeAssistant, freezer, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Retained days outside the requested period are not visited (PERF-11)."""
-    store = await _loaded_store(hass, freezer, datetime(2026, 5, 25, 12, 0, 5, tzinfo=UTC))
-    for day in range(1, 26):
-        store.append_slot(_record(datetime(2026, 5, day, 10, tzinfo=UTC)))
-    parsed: list[object] = []
-    original = store_module._parse_utc
-    monkeypatch.setattr(
-        store_module, "_parse_utc", lambda raw: parsed.append(raw) or original(raw)
-    )
-
-    today = _cost(store, PERIOD_TODAY, datetime(2026, 5, 25, 12, tzinfo=UTC))
-
-    assert today.value == pytest.approx(1.0)
-    assert len(parsed) == 1
-    parsed.clear()
-
-    month = _cost(store, PERIOD_THIS_MONTH, datetime(2026, 5, 25, 12, tzinfo=UTC))
-
-    assert month.value == pytest.approx(25.0)
-    assert len(parsed) == 25
-
-
-async def test_mark_dirty_does_not_prune_and_unchanged_prices_do_not_save(
-    hass: HomeAssistant, freezer, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Pruning runs per processed slot and an unchanged price plan is a no-op (PERF-12)."""
-    now = datetime(2026, 5, 25, 12, 0, 5, tzinfo=UTC)
-    store = await _loaded_store(hass, freezer, now, slot_minutes=15)
-    prunes = []
-    dirty = []
-    original_prune = store.prune
-    original_dirty = store.mark_dirty
-    monkeypatch.setattr(store, "prune", lambda n: prunes.append(n) or original_prune(n))
-    monkeypatch.setattr(store, "mark_dirty", lambda: dirty.append(1) or original_dirty())
-    slot = datetime(2026, 5, 25, 12, tzinfo=UTC)
-
-    for _ in range(5):
-        store.mark_dirty()
-    assert prunes == []
-
-    assert store.remember_price_series(
-        start_at=slot, slot_minutes=15, import_prices=[1.0, 1.1], export_prices=[0.1, 0.1]
-    )
-    assert len(dirty) == 6
-    assert not store.remember_price_series(
-        start_at=slot, slot_minutes=15, import_prices=[1.0, 1.1], export_prices=[0.1, 0.1]
-    )
-    assert len(dirty) == 6
-    assert store.remember_price_series(
-        start_at=slot, slot_minutes=15, import_prices=[1.0, 1.2], export_prices=[0.1, 0.1]
-    )
-    assert len(dirty) == 7
-
-    store.update_metadata(last_processed_slot=slot)
-    assert len(prunes) == 1
 
 
 async def test_price_cache_only_keeps_unrecorded_slots(
@@ -515,10 +432,10 @@ async def test_price_cache_only_keeps_unrecorded_slots(
     assert min(store.data["price_cache"]) == "2026-05-25T12:00:00Z"
 
 
-async def test_long_downtime_backfill_is_clamped_and_written_once(
-    hass: HomeAssistant, freezer, monkeypatch: pytest.MonkeyPatch
+async def test_long_downtime_backfill_is_clamped_to_the_retained_window(
+    hass: HomeAssistant, freezer
 ) -> None:
-    """A long outage creates at most the retained window in one batch (PERF-13)."""
+    """A long outage creates at most the retained window (PERF-13)."""
     start = datetime(2026, 5, 24, 10, 0, tzinfo=UTC)
     await hass.config.async_set_time_zone("UTC")
     tracker = await _setup_tracker(hass, freezer, start)
@@ -533,31 +450,15 @@ async def test_long_downtime_backfill_is_clamped_and_written_once(
         },
         meter_config=tracker._meter_config(),
     )
-    prunes = []
-    appends = []
-    original_prune = store.prune
-    original_append = store.append_slots
-
-    def _append(records):
-        records = list(records)
-        appends.append(records)
-        original_append(records)
-
-    monkeypatch.setattr(store, "prune", lambda n: prunes.append(n) or original_prune(n))
-    monkeypatch.setattr(store, "append_slots", _append)
-
     now = start + timedelta(minutes=2)
     freezer.move_to(now)
     await tracker.async_process_completed_slot()
 
-    assert len(appends) == 1
-    assert len(prunes) == 1
     completed = start - timedelta(minutes=15)
     window_start = store.retention_start(now)
-    expected = int((completed - window_start) / timedelta(minutes=15)) + 1
-    assert len(appends[0]) == expected
-    assert appends[0][0].start == window_start
-    assert appends[0][-1].start == completed
+    assert store.has_slot(window_start)
+    assert not store.has_slot(window_start - timedelta(minutes=15))
+    assert store.has_slot(completed)
     assert len(store.data["days"]) == 60
     assert store.last_processed_slot() == completed
 

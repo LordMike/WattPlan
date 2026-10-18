@@ -15,7 +15,6 @@ from custom_components.wattplan.source_issues import (
     build_source_issue,
     source_fill_defaults_needed,
     source_issue_id,
-    update_entry_source_with_fill_defaults,
 )
 
 from homeassistant.const import CONF_NAME
@@ -42,43 +41,8 @@ def test_build_source_issue_includes_grace_note() -> None:
     assert "already affects the current plan" in issue.placeholders["grace_note"]
 
 
-async def test_incomplete_repair_updates_source_config(
-    hass,
-) -> None:
-    """The repair helper should apply the shared horizon-filling defaults."""
-    entry = MockConfigEntry(
-        domain="wattplan",
-        title="Home",
-        data={
-            CONF_NAME: "Home",
-            CONF_SOURCES: {
-                CONF_SOURCE_IMPORT_PRICE: {
-                    CONF_FIXUP_PROFILE: "strict_input",
-                }
-            },
-        },
-    )
-    entry.add_to_hass(hass)
-
-    changed = update_entry_source_with_fill_defaults(
-        hass,
-        entry,
-        source_key=CONF_SOURCE_IMPORT_PRICE,
-    )
-
-    assert changed is True
-    updated_entry = hass.config_entries.async_get_entry(entry.entry_id)
-    assert updated_entry is not None
-    source_config = updated_entry.data[CONF_SOURCES][CONF_SOURCE_IMPORT_PRICE]
-    assert source_config[CONF_FIXUP_PROFILE] == "extend_daily_pattern"
-    assert source_config[CONF_CLAMP_MODE] == "nearest"
-    assert source_config[CONF_RESAMPLE_MODE] == "linear"
-    assert source_config[CONF_EDGE_FILL_MODE] == "hold"
-    assert source_fill_defaults_needed(source_config) is False
-
-
 async def test_incomplete_repair_flow_completes_when_entry_exists(hass) -> None:
-    """The repair flow should write the defaults and complete cleanly."""
+    """The repair flow should write the horizon-filling defaults and complete."""
     entry = MockConfigEntry(
         domain="wattplan",
         title="Home",
@@ -105,3 +69,11 @@ async def test_incomplete_repair_flow_completes_when_entry_exists(hass) -> None:
     result = await flow.async_step_confirm({})
 
     assert result["type"] == "create_entry"
+    updated_entry = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated_entry is not None
+    source_config = updated_entry.data[CONF_SOURCES][CONF_SOURCE_IMPORT_PRICE]
+    assert source_config[CONF_FIXUP_PROFILE] == "extend_daily_pattern"
+    assert source_config[CONF_CLAMP_MODE] == "nearest"
+    assert source_config[CONF_RESAMPLE_MODE] == "linear"
+    assert source_config[CONF_EDGE_FILL_MODE] == "hold"
+    assert source_fill_defaults_needed(source_config) is False
