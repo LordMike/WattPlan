@@ -67,7 +67,7 @@ Use [Historical Cost Tracking](docs/historical-cost-tracking.md) to compare meas
 - [Error Handling](docs/error-handling.md) - Health states, degraded operation, and what `ok`, `degraded`, and `failed` mean
 - [Development](docs/development.md) - Local setup with `uv`, local test env caveats, optional symlink workflow, packaging
 - [Architecture](docs/architecture.md) - Code layout, runtime boundaries, planning flow
-- [Release Process](docs/release.md) - Versioned tags and managed GitHub releases
+- [Release Skill](.agents/skills/wattplan-release/SKILL.md) - Scripted version preparation, CI gates, tags, and release notes
 - [Optimizer API](docs/optimizer-api.md) - Direct optimizer API notes
 
 ## Limitations
