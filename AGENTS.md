@@ -21,7 +21,7 @@ Prefer updating the integration, tests, and docs together when behavior changes.
 - Build: `python scripts/build_hacs_zip.py`
 - Test: `pytest`
 - Run: `./scripts/run_tests.sh` from Linux/WSL, or `PYTHONPATH=. pytest tests` in a prepared Linux environment. See `docs/development.md` for venv setup.
-- Release: use `docs/release.md` as the authoritative runbook for all release questions, preparation, tag handling, release text, and artifact publication.
+- Release: use the `wattplan-release` skill in `.agents/skills/wattplan-release/SKILL.md`; its colocated PowerShell script owns version preparation, CI gates, tags, publication checks, and release notes.
 
 ## Testing in Codex
 - When running pytest from Codex, request elevated execution for each test run instead of using the default sandbox.
@@ -46,7 +46,7 @@ Prefer updating the integration, tests, and docs together when behavior changes.
 - `README.md` — keep quickstart, release flow, and repo purpose aligned with the current structure
 - `docs/development.md` — update when local workflow, symlink setup, or test commands change
 - `docs/architecture.md` — update when code boundaries or planning/runtime flow changes
-- `docs/release.md` — update when tag, prerelease, or artifact behavior changes
+- `.agents/skills/wattplan-release/` — update when tag, prerelease, or artifact behavior changes
 - `docs/optimizer-api.md` — update when optimizer import paths or request/response models change
 
 ## When to split
