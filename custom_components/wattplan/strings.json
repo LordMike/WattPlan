@@ -8,7 +8,7 @@
       },
       "planner_setup": {
         "title": "Add new WattPlan setup",
-        "description": "Create one WattPlan setup for your home.",
+        "description": "Create one WattPlan setup for your home.\n\n[Compare planner features and differences](https://github.com/LordMike/WattPlan/blob/main/docs/optimizer-profiles.md#feature-support) · [Compare relative timing and savings](https://github.com/LordMike/WattPlan/blob/main/docs/optimizer-profiles.md#relative-timing-and-savings).",
         "submit": "Next",
         "data": {
           "planner_preset": "Planner configuration",
@@ -17,7 +17,7 @@
           "hours_to_plan": "How many hours ahead should the plan cover"
         },
         "data_description": {
-          "planner_preset": "Each preset selects one algorithm and fixed search settings. `highs` uses a 22-slot lookahead; numeric HiGHS suffixes count slots, not hours. Self-consumption observes targets without actively pursuing them. Other presets can be shown later from Options → Troubleshooting.",
+          "planner_preset": "Each configuration selects one algorithm with fixed search settings. Charge-window search is the default for new setups. Self-consumption reports battery target misses without actively pursuing targets. Enable additional experimental configurations under Options → Troubleshooting.",
           "name": "This name will identify this WattPlan setup in Home Assistant.",
           "slot_minutes": "This is the plan resolution. A lower value means more detailed plans and more required forecast values.",
           "hours_to_plan": "WattPlan needs forecasts that cover the full selected period."
@@ -661,14 +661,14 @@
       },
       "planner_core": {
         "title": "General settings",
-        "description": "Set interval size and planning horizon. These values define how many forecast values are required.",
+        "description": "Set interval size and planning horizon. These values define how many forecast values are required.\n\n[Compare planner features and differences](https://github.com/LordMike/WattPlan/blob/main/docs/optimizer-profiles.md#feature-support) · [Compare relative timing and savings](https://github.com/LordMike/WattPlan/blob/main/docs/optimizer-profiles.md#relative-timing-and-savings).",
         "data": {
           "planner_preset": "Planner configuration",
           "slot_minutes": "Resolution (minutes)",
           "hours_to_plan": "How many hours ahead should the plan cover"
         },
         "data_description": {
-          "planner_preset": "Each preset selects one algorithm and fixed search settings. `highs` uses a 22-slot lookahead; numeric HiGHS suffixes count slots, not hours. Self-consumption observes targets without actively pursuing them. Other presets can be shown from Options → Troubleshooting.",
+          "planner_preset": "Each configuration selects one algorithm with fixed search settings. Charge-window search is the default for new setups. Self-consumption reports battery target misses without actively pursuing targets. Enable additional experimental configurations under Options → Troubleshooting.",
           "slot_minutes": "This is the plan resolution. A lower value means more detailed plans and more required forecast values.",
           "hours_to_plan": "WattPlan needs forecasts that cover the full selected period."
         }

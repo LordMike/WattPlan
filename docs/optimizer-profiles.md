@@ -107,6 +107,60 @@ uncertainty, and terminal credits below affect search; reported costs use origin
 inputs without terminal search credit. Larger search budgets do not guarantee a
 better result.
 
+## Feature support
+
+**All 19 built-in planners support multiple ordinary batteries, comfort loads,
+and optional-load recommendations.** This applies to every named configuration
+of each planner. The differences below concern battery search and constraints,
+rather than whether you can add those loads.
+
+| Planner | Multiple batteries | Comfort loads | Optional loads | Ordinary battery targets | Future connection / departure schedules |
+| --- | --- | --- | --- | --- | --- |
+| [HiGHS](#highs) | Yes | Yes | Yes | Pursued | No |
+| [Self-consumption](#self-consumption) | Yes | Yes | Yes | Observed only | No |
+| [Greedy](#greedy) | Yes | Yes | Yes | Pursued | No |
+| [Local search](#local-search) | Yes | Yes | Yes | Pursued | No |
+| [Beam search](#beam-search) | Yes | Yes | Yes | Pursued | No |
+| [Dynamic programming](#dynamic-programming) | Yes | Yes | Yes | Pursued | No |
+| [Charge-window search](#charge-window-search) | Yes | Yes | Yes | Pursued | No |
+| [Genetic search](#genetic-search) | Yes | Yes | Yes | Pursued | No |
+| [Cross-entropy search](#cross-entropy-search) | Yes | Yes | Yes | Pursued | No |
+| [Local refinement](#local-refinement) | Yes | Yes | Yes | Pursued | No |
+| [Price reserve](#price-reserve) | Yes | Yes | Yes | Pursued | No |
+| [Value policy](#value-policy) | Yes; bounded joint DP | Yes | Yes | Pursued | No |
+| [Linear dispatch](#linear-dispatch) | Yes; physical seed fallback | Yes | Yes | Pursued through physical seed | No |
+| [Solar-gated value policy](#solar-gated-value-policy) | Yes; bounded joint DP | Yes | Yes | Pursued | No |
+| [Adaptive solar policy](#adaptive-solar-policy) | Yes; bounded joint DP | Yes | Yes | Pursued | No |
+| [Mobility service baseline](#mobility-service-baseline) | Yes | Yes | Yes | Observed only | Yes |
+| [Mobility tariff seeds](#mobility-tariff-seeds) | Yes | Yes | Yes | Observed only | Yes |
+| [Joint seed search](#joint-seed-search) | Yes | Yes | Yes | Pursued | Yes |
+| [Mobility fleet beam](#mobility-fleet-beam) | Yes | Yes | Yes | Pursued | Yes |
+
+**Pursued** means the planner tries to meet ordinary battery targets; it does not
+guarantee they can be met. **Observed only** means misses are reported without an
+ordinary target search. Departure requirements are separate service constraints;
+the service baseline and tariff seeds do actively prepare for those departures.
+
+The value-policy family, including **Guarded value policy**, switches to bounded
+joint dynamic programming for multiple batteries. Its single-battery uncertainty
+and interpolation refinements are not applied to that search. Linear dispatch
+uses a physical deadline/reserve seed instead of its linear optimization for
+multiple batteries or requests with targets. The service baseline and tariff
+seeds project all batteries but leave batteries without mobility constraints on
+passive control. Supported battery counts do not imply identical optimization
+depth or runtime; see each planner's limits.
+
+Future connection windows, external energy withdrawals, and departure schedules
+refer to explicit optimizer API inputs. The four planners marked **Yes** accept
+them; the others reject active mobility inputs. This differs from the Home
+Assistant availability sensor: every planner can be used with that sensor, which
+skips a battery while it is currently unavailable.
+
+Comfort minimum ON/OFF durations must fit inside the planning/search horizon;
+short HiGHS lookaheads can impose tighter limits. Optional loads are advisory
+start recommendations, not automatically executed or jointly reserved schedules.
+See [shared features and limits](#shared-features-and-limits).
+
 ## HiGHS
 
 Optimizes variable battery charge and discharge power with a mixed-integer solver.

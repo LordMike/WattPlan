@@ -483,11 +483,25 @@ def load_dataset(
                 records.append(item)
     if not records:
         raise ValueError("No reproduction records found")
-    if any(
-        not isinstance(r, dict) or r.get("schema_version") not in {1, 2}
-        for r in records
-    ):
-        raise ValueError("Expected version 1 or 2 reproduction records")
+    for record in records:
+        if (
+            not isinstance(record, dict)
+            or type(record.get("schema_version")) is not int
+            or record["schema_version"] not in {1, 2}
+        ):
+            raise ValueError("Expected version 1 or 2 reproduction records")
+        if record.get("record_type") not in (None, "plan", "actuals"):
+            raise ValueError("Unknown reproduction record type")
+        if "request" in record and (
+            not isinstance(record["request"], dict)
+            or not isinstance(record["request"].get("optimizer_params"), dict)
+        ):
+            raise ValueError("Planner request must contain an optimizer_params object")
+        actuals = record.get("actuals", [])
+        if not isinstance(actuals, list) or any(
+            not isinstance(actual, dict) for actual in actuals
+        ):
+            raise ValueError("Actuals must be a list of interval objects")
     identities = {r["setup_id"] for r in records if r.get("setup_id")}
     if setup_id is None:
         if len(identities) > 1:

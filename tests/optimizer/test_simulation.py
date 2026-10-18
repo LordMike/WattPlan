@@ -458,6 +458,57 @@ def test_loader_fails_closed_on_ambiguous_or_invalid_inputs(tmp_path, change, er
         load_dataset(tmp_path)
 
 
+@pytest.mark.parametrize(
+    "change,error",
+    [
+        (lambda r: r[0].update(schema_version=True), "version 1 or 2"),
+        (lambda r: r[0].update(schema_version=2.0), "version 1 or 2"),
+        (lambda r: r[0].update(schema_version=[2]), "version 1 or 2"),
+        (lambda r: r[0].update(record_type="unknown"), "record type"),
+        (lambda r: r[0].update(request=None), "optimizer_params object"),
+        (lambda r: r[0].update(request=[]), "optimizer_params object"),
+        (lambda r: r[0].update(request={"optimizer_params": []}), "optimizer_params object"),
+        (lambda r: r[-1].update(actuals=None), "list of interval objects"),
+        (lambda r: r[-1].update(actuals={"start": "invalid"}), "list of interval objects"),
+        (lambda r: r[-1].update(actuals=[False]), "list of interval objects"),
+    ],
+)
+def test_cli_rejects_malformed_record_shapes_before_running_planners(
+    tmp_path, capsys, monkeypatch, change, error,
+):
+    from scripts import simulate_planner
+
+    records = _records(dataset())
+    change(records)
+    source = tmp_path / "recording.jsonl"
+    source.write_text("\n".join(json.dumps(r) for r in records))
+    output = tmp_path / "report"
+
+    def unexpected_worker(*args, **kwargs):
+        pytest.fail("Invalid recordings must be rejected before starting a worker")
+
+    monkeypatch.setattr(simulate_planner, "PlannerWorker", unexpected_worker)
+    assert simulate_planner.main([str(source), "--output", str(output)]) == 2
+    assert error in capsys.readouterr().err
+    assert not output.exists()
+
+
+def test_failed_reference_is_not_replaced_by_a_successful_alternative():
+    from custom_components.wattplan.optimizer.simulation.reporting import comparisons
+
+    good = simulate(dataset(), Variant("reference"), LocalPlanner())
+    good.update(run="reference")
+    alternative = deepcopy(good)
+    alternative.update(run="alternative")
+    later = deepcopy(good)
+    later.update(run="later")
+    # Confirm these are comparable trajectories before invalidating the reference.
+    assert len(comparisons([good, alternative, later])) == 2
+    failed = deepcopy(good)
+    failed.update(status="failed", totals=None, failure="Timed out")
+    assert comparisons([failed, alternative, later]) == []
+
+
 def test_variant_cannot_change_physical_world():
     with pytest.raises(ValueError, match="physical"):
         Variant("bad", settings={"battery_entities": []})

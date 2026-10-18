@@ -5,6 +5,10 @@ using the forecasts WattPlan actually had?** It replays exported planning inputs
 against measured household consumption, solar production, and tariffs. It runs
 locally and does not control devices or contact Home Assistant during replay.
 
+For an existing export, start with the [comparison workflow for users and
+agents](#comparison-workflow-for-users-and-agents). The numbered sections explain
+how to collect the recordings first.
+
 ## 1. Enable recording in Home Assistant
 
 Open **Settings → Devices & services → WattPlan → Configure** for your setup.
@@ -149,7 +153,7 @@ complete rounds each:
 
 ```bash
 python scripts/simulate_planner.py .tmp/simulator/exports \
-  --planners charge-window-96 mobility-hybrid-seeds-4-grid4 self-consumption \
+  --planners self-consumption charge-window-96 mobility-hybrid-seeds-4-grid4 \
   --rounds 3 --output .tmp/simulator/comparison-1
 ```
 
@@ -249,6 +253,46 @@ equipment/cadence boundaries. Prefer a complete day of measured data.
 
 Exit codes: `0` successful validation or complete runs; `1` a failed planner run;
 `2` invalid inputs/configuration, including coverage gaps.
+
+## Comparison workflow for users and agents
+
+1. Use the [development environment](development.md#setup) and keep recordings,
+   custom configuration files, and generated reports under ignored `.tmp/` or
+   outside the repository. Household exports are private data. The synthetic
+   generator is for development; keep its labeled outputs separate from actual
+   household recordings.
+2. Validate the original exports with `--validate-only` before running planners.
+   Read the inferred date range, coverage, and warnings. The loader rejects
+   unsupported schemas, malformed record/request/actual shapes, unknown record
+   types, conflicting duplicates, overlapping intervals, invalid measurements,
+   and ambiguous setups. Coverage validation also rejects missing or unusable
+   actuals, missing planning cycles, mixed cadence, and incomplete boundaries.
+   An incomplete trailing JSONL record is explicitly warned about and omitted;
+   remaining records must still pass coverage validation.
+3. Resolve rejected inputs at their source. Collect a complete day with the
+   required meters and forecasts. Do not replace missing measurements with
+   forecasts or zeros, remove comfort loads from an export to bypass the
+   battery-only replay restriction, or silently shorten the comparison period.
+   The explicit one-slot repair described above is the only built-in repair and
+   records what was copied.
+4. Select exact configuration IDs from [Planner configurations](optimizer-profiles.md),
+   keeping inputs, equipment, targets, and initial observations identical. Put
+   **`self-consumption` first** when it should be the reference. Report cost
+   deltas use the first run as their reference; a failed or service-infeasible
+   reference leaves comparison deltas empty. An alternative is never silently
+   promoted to reference.
+5. Start with one full day and one round, writing to a new report folder outside
+   the input directory. `--validate-only` checks recording coverage and variant
+   structure without running algorithms; factory-option and capability errors
+   can still fail execution. Each failed or timed-out run is unscored. Do not
+   treat a partial trajectory as a completed result or extrapolate it into
+   annual savings.
+6. Check run status, coverage, service feasibility, target misses, segment resets,
+   and final stored energy before comparing net cost. Optional suggestions are
+   not executed. The electricity cost excludes wear and gives no separate credit
+   for leftover battery energy. Repeat identical inputs to compare timing, then
+   use additional complete days to explore different conditions. Retain the
+   report's configuration, file hashes, and provenance alongside the results.
 
 ## Advanced configurations
 

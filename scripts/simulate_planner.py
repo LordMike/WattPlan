@@ -69,7 +69,13 @@ def _provenance() -> dict:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog=(
+            "Workflow and input requirements: docs/simulator.md "
+            "(https://github.com/LordMike/WattPlan/blob/main/docs/simulator.md)"
+        ),
+    )
     parser.add_argument(
         "input",
         nargs="*",
@@ -96,7 +102,10 @@ def main(argv=None) -> int:
         type=Path,
         help="New or empty report folder outside the input folder",
     )
-    parser.add_argument("--validate-only", action="store_true")
+    parser.add_argument(
+        "--validate-only", action="store_true",
+        help="Check recording coverage and variant structure without executing planners",
+    )
     parser.add_argument(
         "--patch-one-slot",
         choices=("previous", "next"),

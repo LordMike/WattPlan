@@ -20,15 +20,15 @@ def latency_summary(cycles: list[dict], key: str) -> dict:
 
 def comparisons(runs: list[dict]) -> list[dict]:
     """Compare completed service-feasible runs against the original reference."""
-    complete = [run for run in runs if run["status"] == "complete"]
-    if not complete:
+    if not runs or runs[0]["status"] != "complete":
         return []
-    baseline = complete[0]
+    baseline = runs[0]
+    complete = [run for run in runs[1:] if run["status"] == "complete"]
     if not baseline["totals"].get("service_feasible", True):
         # Never silently promote an alternative into the configured control.
         return []
     result = []
-    for run in complete[1:]:
+    for run in complete:
         if not run["totals"].get("service_feasible", True):
             continue
         deltas = [

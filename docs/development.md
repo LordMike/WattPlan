@@ -55,6 +55,11 @@ reports. Tests use independent hand-calculated physics
 cases and explicitly synthetic datasets; real recordings are needed to assess
 real-world coverage.
 
+For users and agents running comparisons, follow the simulator's
+[comparison workflow](simulator.md#comparison-workflow-for-users-and-agents):
+validate exports first, select an explicit reference, and keep household data
+and reports out of tracked files.
+
 Before a complete real recording is available, generate a reproducible full day
 with `python scripts/generate_simulation_data.py /tmp/wattplan-synthetic`.
 Run the same simulator against that directory. These records explicitly label
