@@ -278,6 +278,8 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             return
         self._scheduler_started = True
         self._arm_schedule()
+        # The initial plan has already published; expose the armed run time.
+        self.async_update_listeners()
 
     @callback
     def _cancel_schedule(self) -> None:
@@ -305,9 +307,14 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
 
     @callback
     def _async_handle_schedule(self, _now: datetime) -> None:
-        """Start one scheduled run on the HA event loop."""
+        """Arm the next boundary, then start this scheduled run on the HA loop.
+
+        Arming first lets the run's own entity update publish the next run time.
+        """
         self._unsub_schedule = None
         self._next_refresh_at = None
+        if self._scheduler_started:
+            self._arm_schedule()
         if self.config_entry is not None:
             self.config_entry.async_create_background_task(
                 self.hass, self._async_run_scheduled(), f"{self.name} scheduled run"
@@ -318,12 +325,8 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             )
 
     async def _async_run_scheduled(self) -> None:
-        """Run one scheduled tick, then arm the next slot boundary."""
-        try:
-            await self.async_refresh()
-        finally:
-            if self._scheduler_started:
-                self._arm_schedule()
+        """Run one scheduled tick."""
+        await self.async_refresh()
 
     async def async_shutdown(self) -> None:
         """Stop the scheduler, heartbeat and other background callbacks."""
