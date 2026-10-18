@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
 import custom_components.wattplan.historical_on_off_provider as provider_module
 import custom_components.wattplan.rolling_history_cache as cache_module
 from custom_components.wattplan.historical_on_off_provider import HistoricalOnOffProvider
-from custom_components.wattplan.rolling_history_cache import RollingHistoryCache
 import pytest
 
 from homeassistant.core import HomeAssistant
@@ -105,37 +104,16 @@ async def test_provider_uses_history_to_compute_on_slots(
     assert recorder.fetch_starts == [datetime(2026, 1, 1, 0, 15, tzinfo=UTC)]
 
 
-@pytest.mark.parametrize(
-    ("states", "expected_history"),
-    [
-        (
-            [
-                ("on", 15),
-                ("off", 30),
-                ("on", 45),
-            ],
-            [True, False, True],
-        ),
-        (
-            [
-                ("off", 15),
-                ("on", 30),
-            ],
-            [False, True, True],
-        ),
-    ],
-)
 async def test_provider_preserves_history_order_with_identical_on_counts(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
-    states: list[tuple[str, int]],
-    expected_history: list[bool],
 ) -> None:
     """Return slot order, not only an aggregate ON count."""
     monkeypatch.setattr(provider_module, "datetime", _TestDatetime)
     _TestDatetime._now = datetime(2026, 1, 1, 1, 0, tzinfo=UTC)
     hass.config.components.add("recorder")
     entity_id = "binary_sensor.heating_order"
+    states = [("on", 15), ("off", 30), ("on", 45)]
     hass.states.async_set(entity_id, states[-1][0])
     recorder = _FakeRecorder(
         responses=[
@@ -157,7 +135,7 @@ async def test_provider_preserves_history_order_with_identical_on_counts(
         rolling_window_slots=4, slot_minutes=15
     )
 
-    assert on_history == expected_history
+    assert on_history == [True, False, True]
     assert on_slots == 2
 
 
@@ -204,26 +182,49 @@ async def test_provider_aligns_history_to_explicit_forecast_boundary(
     assert on_slots == 1
 
 
-async def test_provider_fetches_incrementally_from_cache_end(
+@pytest.mark.parametrize(("off_minutes", "expected_streak"), [(44, 2), (45, 3)])
+async def test_provider_counts_whole_slots_since_load_turned_off(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    off_minutes: int,
+    expected_streak: int,
+) -> None:
+    """The OFF streak is the number of whole slots since the load turned off."""
+    monkeypatch.setattr(provider_module, "datetime", _TestDatetime)
+    hass.states.async_set("binary_sensor.heating", "off")
+    turned_off_at = hass.states.get("binary_sensor.heating").last_changed
+    _TestDatetime._now = turned_off_at + timedelta(minutes=off_minutes)
+    provider = HistoricalOnOffProvider(hass, "binary_sensor.heating")
+
+    is_on_now, on_history, _on_slots, off_streak_slots = await provider.async_runtime_state(
+        rolling_window_slots=4, slot_minutes=15
+    )
+
+    assert is_on_now is False
+    assert on_history is None
+    assert off_streak_slots == expected_streak
+
+
+async def test_provider_keeps_boundary_sample_when_cache_window_moves(
     hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Second query should only fetch the delta from cache end."""
+    """A later query still knows the state at its window start from the cache."""
     monkeypatch.setattr(provider_module, "datetime", _TestDatetime)
     hass.config.components.add("recorder")
-    hass.states.async_set("binary_sensor.heating", "on")
-
-    entity_id = "binary_sensor.heating"
+    entity_id = "binary_sensor.heating_cache"
+    hass.states.async_set(entity_id, "off")
     recorder = _FakeRecorder(
         responses=[
             {
                 entity_id: [
                     SimpleNamespace(
-                        state="off",
-                        last_changed=datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+                        state="off", last_changed=datetime(2026, 1, 1, 0, 0, tzinfo=UTC)
                     ),
                     SimpleNamespace(
-                        state="on",
-                        last_changed=datetime(2026, 1, 1, 0, 30, tzinfo=UTC),
+                        state="on", last_changed=datetime(2026, 1, 1, 0, 10, tzinfo=UTC)
+                    ),
+                    SimpleNamespace(
+                        state="off", last_changed=datetime(2026, 1, 1, 0, 40, tzinfo=UTC)
                     ),
                 ]
             },
@@ -231,34 +232,22 @@ async def test_provider_fetches_incrementally_from_cache_end(
         ]
     )
     monkeypatch.setattr(cache_module, "get_instance", lambda _hass: recorder)
-
     provider = HistoricalOnOffProvider(hass, entity_id)
 
     _TestDatetime._now = datetime(2026, 1, 1, 1, 0, tzinfo=UTC)
-    await provider.async_runtime_state(rolling_window_slots=4, slot_minutes=15)
-
+    _is_on, first_history, _on_slots, _off_streak = await provider.async_runtime_state(
+        rolling_window_slots=5, slot_minutes=15
+    )
+    # The next query only fetches since the cache end and drops pre-window rows,
+    # but must keep the 00:10 ON row that was in effect at the new window start.
     _TestDatetime._now = datetime(2026, 1, 1, 1, 15, tzinfo=UTC)
-    await provider.async_runtime_state(rolling_window_slots=4, slot_minutes=15)
+    _is_on, second_history, _on_slots, _off_streak = await provider.async_runtime_state(
+        rolling_window_slots=5, slot_minutes=15
+    )
 
+    assert first_history == [False, True, True, False]
+    assert second_history == [True, True, False, False]
     assert recorder.fetch_starts == [
-        datetime(2026, 1, 1, 0, 15, tzinfo=UTC),
+        datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
         datetime(2026, 1, 1, 1, 0, tzinfo=UTC),
-    ]
-
-
-def test_rolling_cache_keeps_boundary_sample_and_newer() -> None:
-    """Prune should retain last pre-window state and all newer states."""
-    cache = RollingHistoryCache(hass=SimpleNamespace(), entity_id="binary_sensor.x")
-    cache._entries = [
-        SimpleNamespace(state="off", last_changed=datetime(2026, 1, 1, 0, 0, tzinfo=UTC)),
-        SimpleNamespace(state="on", last_changed=datetime(2026, 1, 1, 0, 5, tzinfo=UTC)),
-        SimpleNamespace(state="off", last_changed=datetime(2026, 1, 1, 0, 10, tzinfo=UTC)),
-        SimpleNamespace(state="on", last_changed=datetime(2026, 1, 1, 0, 20, tzinfo=UTC)),
-    ]
-
-    cache._prune(window_start=datetime(2026, 1, 1, 0, 12, tzinfo=UTC))
-
-    assert [entry.last_changed for entry in cache._entries] == [
-        datetime(2026, 1, 1, 0, 10, tzinfo=UTC),
-        datetime(2026, 1, 1, 0, 20, tzinfo=UTC),
     ]

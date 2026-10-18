@@ -15,37 +15,6 @@ from homeassistant.helpers import event
 from homeassistant.util import dt as dt_util, ulid as ulid_util
 from homeassistant.util.async_ import get_scheduled_timer_handles
 
-SubentryData = getattr(config_entries, "ConfigSubentryData", dict[str, Any])
-
-
-def make_subentry_data(
-    *,
-    subentry_id: str,
-    subentry_type: str,
-    title: str,
-    unique_id: str,
-    data: dict[str, Any],
-) -> Any:
-    """Build subentry payloads across Home Assistant API versions."""
-    subentry_cls = getattr(config_entries, "ConfigSubentryData", None)
-    if subentry_cls is not None:
-        return subentry_cls(
-            subentry_id=subentry_id,
-            subentry_type=subentry_type,
-            title=title,
-            unique_id=unique_id,
-            data=data,
-        )
-
-    return {
-        "subentry_id": subentry_id,
-        "subentry_type": subentry_type,
-        "title": title,
-        "unique_id": unique_id,
-        "data": data,
-    }
-
-
 @callback
 def async_fire_time_changed(
     hass: HomeAssistant, datetime_: datetime | None = None, fire_all: bool = False

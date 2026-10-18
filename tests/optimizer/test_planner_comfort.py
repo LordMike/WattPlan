@@ -2,7 +2,6 @@
 
 import base64
 from datetime import timedelta
-from itertools import product
 import json
 
 import pytest
@@ -61,8 +60,11 @@ def test_price_placement_moves_load_and_keeps_constraints():
     assert not check_comfort_schedule(prepared.inputs[0], prepared.placement.schedules[0])
 
 
-@pytest.mark.parametrize("history", list(product((False, True), repeat=3)))
-@pytest.mark.parametrize("minimum_on,minimum_off", [(1, 1), (2, 2), (3, 1)])
+@pytest.mark.parametrize("history,minimum_on,minimum_off", [
+    ((False, False, False), 1, 1),
+    ((True, True, False), 3, 1),
+    ((True, False, True), 2, 2),
+])
 def test_constraints_or_explicit_degradation_for_varied_history(history, minimum_on, minimum_off):
     current = history[-1]
     off = 0

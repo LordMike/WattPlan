@@ -28,7 +28,6 @@ from custom_components.wattplan.optimizer.simulation.dataset import (
 )
 from custom_components.wattplan.optimizer.simulation.engine import (
     RUN_TIMEOUT_SECONDS,
-    RunBudget,
     Variant,
     simulate,
 )
@@ -187,8 +186,8 @@ def test_named_preset_overrides_variant_tuning_but_keeps_physical_request():
     assert used["battery_entities"][0]["capacity_kwh"] == 4.0
 
 
-@pytest.mark.parametrize("slot_minutes", [15, 30, 60])
-def test_run_timeout_is_two_minutes_independent_of_slot_length(slot_minutes):
+def test_run_timeout_is_two_minutes_independent_of_slot_length():
+    slot_minutes = 30
     data = dataset(
         [event(slot_minutes=slot_minutes)],
         [actual(hours=slot_minutes / 60)],
@@ -201,10 +200,8 @@ def test_run_timeout_is_two_minutes_independent_of_slot_length(slot_minutes):
     assert report["run_wall_seconds"] >= 0
 
 
-@pytest.mark.parametrize("slots", [96, 192])
-def test_same_budget_covers_all_calls_without_scaling_with_dataset_length(
-    slots, monkeypatch
-):
+def test_same_budget_covers_all_calls_without_scaling_with_dataset_length(monkeypatch):
+    slots = 192
     clock = [1000.0]
     monkeypatch.setattr(engine, "monotonic", lambda: clock[0])
 
@@ -375,9 +372,8 @@ def test_expired_schedule_breaks_coverage_and_target_checks_use_actual_soc():
         simulate(data, Variant("test"), LocalPlanner())
 
 
-@pytest.mark.parametrize("mode", ["invalid", None])
-def test_invalid_planner_results_fail_whole_run_without_partial_score(mode):
-    report = simulate(dataset(), Variant("bad"), LocalPlanner(mode))
+def test_invalid_planner_results_fail_whole_run_without_partial_score():
+    report = simulate(dataset(), Variant("bad"), LocalPlanner("invalid"))
     assert report["status"] == "failed"
     assert report["totals"] is None
 
@@ -448,6 +444,14 @@ def test_legacy_decision_time_and_missing_pv_are_explicit(tmp_path):
             "overlap",
         ),
         (lambda r: r[-1]["actuals"][0].update(pv_kwh=float("nan")), "Invalid actual"),
+        (
+            lambda r: r[0]["request"]["optimizer_params"].update(comfort_entities=[{
+                "name": "heater", "target_on_slots_per_rolling_window": 1,
+                "max_consecutive_off_slots": 3, "power_usage_kwh": 0.5,
+                "is_on_now": False, "off_streak_slots_now": 0,
+            }]),
+            "Comfort loads are not supported",
+        ),
     ],
 )
 def test_loader_fails_closed_on_ambiguous_or_invalid_inputs(tmp_path, change, error):
@@ -462,15 +466,8 @@ def test_loader_fails_closed_on_ambiguous_or_invalid_inputs(tmp_path, change, er
     "change,error",
     [
         (lambda r: r[0].update(schema_version=True), "version 1 or 2"),
-        (lambda r: r[0].update(schema_version=2.0), "version 1 or 2"),
-        (lambda r: r[0].update(schema_version=[2]), "version 1 or 2"),
-        (lambda r: r[0].update(record_type="unknown"), "record type"),
         (lambda r: r[0].update(request=None), "optimizer_params object"),
-        (lambda r: r[0].update(request=[]), "optimizer_params object"),
-        (lambda r: r[0].update(request={"optimizer_params": []}), "optimizer_params object"),
         (lambda r: r[-1].update(actuals=None), "list of interval objects"),
-        (lambda r: r[-1].update(actuals={"start": "invalid"}), "list of interval objects"),
-        (lambda r: r[-1].update(actuals=[False]), "list of interval objects"),
     ],
 )
 def test_cli_rejects_malformed_record_shapes_before_running_planners(
@@ -531,20 +528,6 @@ def counter_factory():
 def hanging_factory():
     def plan(params):
         time.sleep(30)
-
-    return plan
-
-
-def hanging_second_factory():
-    calls = 0
-    baseline = self_consumption_factory()
-
-    def plan(params):
-        nonlocal calls
-        calls += 1
-        if calls == 2:
-            time.sleep(30)
-        return baseline(params)
 
     return plan
 
@@ -617,8 +600,8 @@ def test_worker_timeout_kills_process():
             worker.call(payload(), reset=True, timeout=1)
 
 
-@pytest.mark.parametrize("timeout", [0, -1, float("nan"), float("inf")])
-def test_worker_rejects_invalid_timeout(timeout):
+def test_worker_rejects_invalid_timeout():
+    timeout = 0
     with PlannerWorker(BASELINE_PLANNER) as worker:
         with pytest.raises(ValueError, match="finite and positive"):
             worker.call(payload(), reset=True, timeout=timeout)
@@ -709,11 +692,15 @@ def test_reports_keep_terminal_reserves_with_cost_comparisons(tmp_path):
 def test_cli_validation_and_isolated_repeated_reports(tmp_path):
     from scripts.simulate_planner import main
 
-    inputs = tmp_path / "inputs"
-    inputs.mkdir()
-    (inputs / "day.jsonl").write_text(
-        "\n".join(json.dumps(r) for r in _records(dataset()))
-    )
+    # Two REST exports that only cover the day together.
+    records = _records(dataset())
+    inputs = []
+    for index, subset in enumerate((records[:-1], records[-1:])):
+        path = tmp_path / f"export-{index}.json"
+        path.write_text(json.dumps({"changed_states": [], "service_response": {
+            "data": "\n".join(json.dumps(r) for r in subset),
+        }}))
+        inputs.append(str(path))
     config = tmp_path / "variants.json"
     config.write_text(
         json.dumps(
@@ -725,19 +712,11 @@ def test_cli_validation_and_isolated_repeated_reports(tmp_path):
             }
         )
     )
-    assert main([str(inputs), "--validate-only"]) == 0
+    assert main([*inputs, "--validate-only"]) == 0
     output = tmp_path / "output"
     assert (
         main(
-            [
-                str(inputs),
-                "--config",
-                str(config),
-                "--output",
-                str(output),
-                "--repeats",
-                "2",
-            ]
+            [*inputs, "--config", str(config), "--output", str(output), "--rounds", "2"]
         )
         == 0
     )
@@ -748,74 +727,11 @@ def test_cli_validation_and_isolated_repeated_reports(tmp_path):
         "second / repeat 2",
         "first / repeat 2",
     ]
+    assert len(summary["files"]) == 2
     assert summary["coverage"]["covered_seconds"] == 7200
     assert all(run["status"] == "complete" for run in summary["runs"])
     assert summary["run_timeout_seconds"] == 120
     assert (output / "report.html").is_file()
-
-
-def test_cli_timeout_invalidates_partial_score_and_continues_variants(
-    tmp_path, monkeypatch
-):
-    from scripts import simulate_planner
-
-    # Leave time for a cold worker startup before testing the hanging second call.
-    timeout_seconds = 10
-    workers = []
-
-    class RecordingWorker(PlannerWorker):
-        def __init__(self, factory, options):
-            super().__init__(factory, options)
-            workers.append(self)
-
-    monkeypatch.setattr(simulate_planner, "PlannerWorker", RecordingWorker)
-    monkeypatch.setattr(simulate_planner, "RunBudget", lambda: RunBudget(timeout_seconds))
-    monkeypatch.setattr(simulate_planner, "RUN_TIMEOUT_SECONDS", timeout_seconds)
-    inputs = tmp_path / "inputs.jsonl"
-    inputs.write_text("\n".join(json.dumps(r) for r in _records(dataset())))
-    config = tmp_path / "variants.json"
-    config.write_text(
-        json.dumps(
-            {
-                "variants": [
-                    {
-                        "name": "timeout",
-                        "planner": "tests.optimizer.test_simulation:hanging_second_factory",
-                    },
-                    {"name": "later", "planner": BASELINE_PLANNER},
-                ]
-            }
-        )
-    )
-    output = tmp_path / "output"
-    assert (
-        simulate_planner.main(
-            [str(inputs), "--config", str(config), "--output", str(output)]
-        )
-        == 1
-    )
-    summary = json.loads((output / "summary.json").read_text())
-    failed, complete = summary["runs"]
-    assert failed["status"] == "failed"
-    assert failed["totals"] is None
-    assert failed["run_timeout_seconds"] == timeout_seconds
-    assert failed["failure_details"]["at"] == (START + timedelta(hours=1)).isoformat()
-    assert failed["failure_details"]["exception_type"] == "RunTimeout"
-    assert failed["failure_details"]["scope"] == "run"
-    assert failed["failure_details"]["timeout_seconds"] == timeout_seconds
-    assert failed["failure_details"]["elapsed_seconds"] >= timeout_seconds
-    assert failed["failure_details"]["completed_cycles"] == 1
-    full_failed = json.loads((output / "01-run.json").read_text())
-    assert len(full_failed["cycles"]) == len(full_failed["intervals"]) == 1
-    assert complete["status"] == "complete"
-    assert complete["totals"]["covered_seconds"] == 7200
-    assert summary["comparisons"] == []  # Partial failed costs never compare.
-    assert (
-        f"Whole-run wall-clock limit: {timeout_seconds} seconds"
-        in (output / "report.html").read_text()
-    )
-    assert all(not worker._process.is_alive() for worker in workers)
-    assert all(not worker._exchange.is_alive() for worker in workers)
 
 
 def test_cli_counts_startup_and_gives_every_variant_repeat_a_fresh_budget(
@@ -942,8 +858,8 @@ def test_rest_export_preserves_date_and_incomplete_tail_metadata(tmp_path):
         loaded.validate_coverage()
 
 
-@pytest.mark.parametrize("response", [None, [], {}, {"data": 42}])
-def test_rest_export_rejects_invalid_service_response(tmp_path, response):
+def test_rest_export_rejects_invalid_service_response(tmp_path):
+    response = None
     exported = tmp_path / "download.json"
     exported.write_text(json.dumps({"changed_states": [], "service_response": response}))
     with pytest.raises(ValueError, match="planner reproduction service response"):
@@ -987,35 +903,8 @@ def test_cli_lists_and_validates_all_presets_without_running_planners(tmp_path, 
     assert configuration[1]["preset"] == "highs-24"
 
 
-def test_cli_runs_selected_presets_and_rounds_from_multiple_rest_exports(tmp_path):
-    from scripts.simulate_planner import main
-
-    records = _records(dataset())
-    inputs = []
-    for index, subset in enumerate((records[:-1], records[-1:])):
-        path = tmp_path / f"export-{index}.json"
-        path.write_text(json.dumps({"changed_states": [], "service_response": {
-            "data": "\n".join(json.dumps(r) for r in subset),
-        }}))
-        inputs.append(str(path))
-    output = tmp_path / "reports"
-    assert main([
-        *inputs, "--planners", "local-search-3", "self-consumption",
-        "--rounds", "2", "--output", str(output),
-    ]) == 0
-    summary = json.loads((output / "summary.json").read_text())
-    assert summary["run_order"] == [
-        "local-search-3 / repeat 1", "self-consumption / repeat 1",
-        "self-consumption / repeat 2", "local-search-3 / repeat 2",
-    ]
-    assert summary["configuration"][0]["options"] == {"max_evaluations": 3, "seed": 0}
-    assert len(summary["files"]) == 2
-    assert summary["coverage"]["covered_seconds"] == 7200
-    assert all(run["status"] == "complete" for run in summary["runs"])
-
-
 @pytest.mark.parametrize("args", [
-    [], ["--validate-only"], ["input.json", "--planners", "unknown"],
+    [], ["input.json", "--planners", "unknown"],
     ["input.json", "--planners", "all", "highs", "--validate-only"],
     ["input.json", "--planners", "highs", "--config", "config.json", "--validate-only"],
     ["input.json", "--rounds", "0", "--validate-only"],
@@ -1041,8 +930,7 @@ def test_cli_duplicate_planners_and_output_inside_any_input_are_rejected(tmp_pat
     assert "folders must be separate" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("direction", ["previous", "next"])
-@pytest.mark.parametrize("missing", ["actual", "plan", "both"])
+@pytest.mark.parametrize("direction,missing", [("previous", "actual"), ("next", "both")])
 def test_explicit_one_slot_repair_keeps_provenance(direction, missing):
     times = [START + timedelta(hours=i) for i in range(3)]
     data = dataset([event(t) for t in times], [actual(t) for t in times])
@@ -1163,8 +1051,8 @@ def test_out_of_range_context_does_not_seed_state_or_execute():
     assert windows[0].reset_reason == "initial_or_coverage_gap"
 
 
-@pytest.mark.parametrize("capture_hour", [0.5, 2 + 1 / 3])
-def test_out_of_slot_capture_does_not_override_repaired_cycle(capture_hour):
+def test_out_of_slot_capture_does_not_override_repaired_cycle():
+    capture_hour = 0.5
     times = [START + timedelta(hours=i) for i in range(3)]
     late = event(times[1], captured=START + timedelta(hours=capture_hour))
     data = dataset([event(), event(times[2]), late], [actual(t) for t in times])

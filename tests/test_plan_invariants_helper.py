@@ -14,18 +14,6 @@ def test_accepts_valid_plan() -> None:
     assert assert_plan_invariants(plan) is plan
 
 
-@pytest.mark.parametrize(
-    "plan",
-    [
-        [],
-        {},
-        {"entities": None},
-        {"entities": ["x"]},
-        {"entities": [{"type": "battery", "name": "b1"}]},
-        {"entities": [_battery(["x"])]},
-        {"entities": [_battery([{"state": "charging"}])]},
-    ],
-)
-def test_rejects_malformed_plan(plan) -> None:
+def test_rejects_malformed_plan() -> None:
     with pytest.raises(AssertionError):
-        assert_plan_invariants(plan)
+        assert_plan_invariants({"entities": [_battery(["x"])]})

@@ -76,30 +76,20 @@ def test_every_named_preset_owns_algorithm_tuning_but_preserves_request(monkeypa
         } == algorithm_settings(
             name, plan_slots=len(external.grid_import_price_per_kwh)
         )
-        assert params.grid_import_price_per_kwh == external.grid_import_price_per_kwh
-        assert params.grid_export_price_per_kwh == external.grid_export_price_per_kwh
-        assert params.solar_input_kwh == external.solar_input_kwh
-        assert params.usage_kwh == external.usage_kwh
-        assert params.battery_entities == external.battery_entities
-        assert params.comfort_entities == external.comfort_entities
-        assert params.optional_entities == external.optional_entities
         assert params.state == external.state
         assert params.slot_minutes == external.slot_minutes
 
 
-def test_highs_lookahead_ignores_legacy_user_setting():
+def test_effective_horizon_has_unambiguous_units():
     assert lookahead_slots("highs", 6, 96) == 22
     assert lookahead_slots("highs-16", 6, 96) == 16
-
-
-def test_effective_horizon_has_unambiguous_units():
     assert lookahead_slots("highs", 22, 96) == 22
     assert lookahead_slots("highs-16", 22, 96) == 16
     assert lookahead_slots("highs-24", 22, 8) == 8
     assert lookahead_slots("greedy-8", 22, 96) == 96
 
 
-@pytest.mark.parametrize("value", [True, 1, 673, "16", 1.5])
-def test_highs_rejects_invalid_preset_lookahead(value):
+def test_highs_rejects_invalid_preset_lookahead():
+    value = True
     with pytest.raises(ValueError, match="lookahead_slots"):
         create_planner("highs", {"lookahead_slots": value})

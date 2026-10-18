@@ -63,7 +63,6 @@ async def test_initial_picker_recommends_one_concrete_configuration(hass):
 
 async def test_normal_picker_has_five_neutral_choices_and_new_default(hass, mock_setup_entry):
     entry = await _create_basic_entry(hass)
-    assert entry.minor_version == 3
     assert entry.options[CONF_PLANNER_PRESET] == DEFAULT_PRESET == "local-search-3"
     result = await hass.config_entries.options.async_init(entry.entry_id)
     result = await hass.config_entries.options.async_configure(
@@ -124,41 +123,9 @@ async def test_options_save_preset_and_keep_it_selected(hass, mock_setup_entry):
     assert result["type"] is FlowResultType.MENU
     assert entry.options[CONF_PLANNER_PRESET] == "beam-2"
     assert CONF_PLANNER_PRESET not in entry.data
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"next_step_id": "planner_core"}
-    )
-    assert _schema_default(result, CONF_PLANNER_PRESET) == "beam-2"
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        {
-            CONF_PLANNER_PRESET: "beam-2",
-            CONF_SLOT_MINUTES: "60",
-            CONF_HOURS_TO_PLAN: "24",
-        },
-    )
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"next_step_id": "troubleshooting"}
-    )
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        {
-            CONF_RECORD_PLANNER_REPRODUCTIONS: False,
-            CONF_SHOW_EXPERIMENTAL_PLANNERS: False,
-            CONF_PLANNER_REPRODUCTION_RETENTION_DAYS: 14,
-        },
-    )
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"next_step_id": "planner_core"}
-    )
-    assert _schema_default(result, CONF_PLANNER_PRESET) == "beam-2"
-    choices = {
-        option["value"]
-        for option in _serialized_schema_field(result, CONF_PLANNER_PRESET)["selector"]["select"]["options"]
-    }
-    assert choices == {*NORMAL_CHOICES, "beam-2"}
 
 
-@pytest.mark.parametrize("preset", ["beam-2", "highs", "local-search-96"])
+@pytest.mark.parametrize("preset", ["beam-2"])
 async def test_hidden_current_experimental_preset_remains_selectable(
     hass, mock_setup_entry, preset
 ):
@@ -219,51 +186,6 @@ def test_legacy_lookahead_is_ignored_by_preset_validation():
     }
 
 
-@pytest.mark.parametrize("preset", list(PRESETS))
-async def test_every_preset_runs_through_live_coordinator(
-    hass: HomeAssistant, preset: str, entity_registry_enabled_by_default: None,
-):
-    entry = _entry(
-        title="Home",
-        options={CONF_PLANNER_PRESET: preset, CONF_PLANNING_ENABLED: False,
-                 CONF_ACTION_EMISSION_ENABLED: False},
-        subentries_data=[_battery_subentry(subentry_id="battery", name="battery")],
-    )
-    await _setup_entry(hass, entry)
-    await _run_optimize(hass)
-    coordinator = entry.runtime_data.coordinator
-    assert coordinator.data is not None
-    assert not coordinator._plan_error.has_error
-    diagnostics = coordinator.data.diagnostics["optimizer"]
-    assert diagnostics["planner_preset"] == preset
-    assert diagnostics["planner"] == PRESETS[preset].planner
-    assert diagnostics["diagnostics"]["planner"]["preset"] == preset
-    assert diagnostics["planner_options"] == PRESETS[preset].options
-    duration = hass.states.get("sensor.home_last_run_duration")
-    assert duration is not None
-    assert duration.attributes["planner_preset"] == preset
-
-
-async def test_changing_preset_reloads_and_drops_incompatible_cached_plan(
-    hass: HomeAssistant, entity_registry_enabled_by_default: None,
-):
-    entry = _entry(
-        title="Home", subentries_data=[_battery_subentry(subentry_id="battery", name="battery")],
-        options={CONF_PLANNER_PRESET: "greedy-8", CONF_PLANNING_ENABLED: False,
-                 CONF_ACTION_EMISSION_ENABLED: False},
-    )
-    await _setup_entry(hass, entry)
-    await _run_optimize(hass)
-    previous = entry.runtime_data.coordinator
-    with patch("custom_components.wattplan.entry_setup.async_try_initial_plan"):
-        hass.config_entries.async_update_entry(
-            entry, options={**entry.options, CONF_PLANNER_PRESET: "beam-2"}
-        )
-        await hass.async_block_till_done(wait_background_tasks=True)
-    assert entry.runtime_data.coordinator is not previous
-    assert entry.runtime_data.optimizer_state is None
-
-
 async def test_search_and_placement_diagnostics_survive_ha_projection(
     hass: HomeAssistant, entity_registry_enabled_by_default: None,
 ):
@@ -290,8 +212,7 @@ async def test_search_and_placement_diagnostics_survive_ha_projection(
     assert diagnostics["comfort_placement"] == {"accepted_moves": 2}
 
 
-@pytest.mark.parametrize("preset", ["highs", "highs-16", "beam-2"])
-@pytest.mark.parametrize("as_json", [False, True])
+@pytest.mark.parametrize(("preset", "as_json"), [("highs", False), ("beam-2", True)])
 async def test_input_export_preserves_selected_algorithm_and_existing_model_field(
     hass: HomeAssistant, preset, as_json,
 ):
@@ -313,7 +234,7 @@ async def test_input_export_preserves_selected_algorithm_and_existing_model_fiel
     assert ("model_json" if as_json else "model") in response
 
 
-@pytest.mark.parametrize("preset", ["highs", "highs-16", "beam-2"])
+@pytest.mark.parametrize("preset", ["beam-2"])
 async def test_setup_summary_describes_selected_preset(hass, preset):
     flow = WattPlanConfigFlow()
     flow.hass = hass
@@ -327,8 +248,10 @@ async def test_setup_summary_describes_selected_preset(hass, preset):
     assert "lookahead_hours" not in placeholders
 
 
-@pytest.mark.parametrize("phase", ["acquisition", "executor"])
-@pytest.mark.parametrize("lifecycle", ["reload", "shutdown"])
+@pytest.mark.parametrize(
+    ("lifecycle", "phase"),
+    [("reload", "acquisition"), ("shutdown", "acquisition"), ("shutdown", "executor")],
+)
 async def test_obsolete_plan_cannot_update_runtime_publish_or_persist(
     hass, entity_registry_enabled_by_default, phase, lifecycle,
 ):

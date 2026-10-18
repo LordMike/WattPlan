@@ -45,7 +45,7 @@ async def _setup_battery_entry(hass: HomeAssistant):
     return entry
 
 
-async def test_set_target_rejects_soc_above_capacity(hass: HomeAssistant) -> None:
+async def test_set_target_rejects_soc_above_capacity_and_accepts_full_capacity(hass: HomeAssistant) -> None:
     entry = await _setup_battery_entry(hass)  # capacity is 10 kWh
 
     with pytest.raises(ServiceValidationError, match="exceeds the capacity"):
@@ -56,6 +56,15 @@ async def test_set_target_rejects_soc_above_capacity(hass: HomeAssistant) -> Non
         )
 
     assert entry.runtime_data.battery_targets == {}
+
+    # Exactly the capacity is still accepted.
+    await _set_target(
+        hass,
+        soc_kwh=10.0,
+        reach_at=dt_util.utcnow() + timedelta(hours=2),
+    )
+
+    assert entry.runtime_data.battery_targets["battery"].soc_kwh == 10.0
 
 
 async def test_set_target_rejects_deadline_in_the_past(hass: HomeAssistant) -> None:
@@ -71,56 +80,33 @@ async def test_set_target_rejects_deadline_in_the_past(hass: HomeAssistant) -> N
     assert entry.runtime_data.battery_targets == {}
 
 
-async def test_set_target_accepts_full_capacity(hass: HomeAssistant) -> None:
-    entry = await _setup_battery_entry(hass)
-
-    await _set_target(
-        hass,
-        soc_kwh=10.0,
-        reach_at=dt_util.utcnow() + timedelta(hours=2),
-    )
-
-    assert entry.runtime_data.battery_targets["battery"].soc_kwh == 10.0
-
-
-async def test_battery_target_survives_reload(hass: HomeAssistant) -> None:
+async def test_battery_target_survives_reload_until_cleared(
+    hass: HomeAssistant,
+) -> None:
     entry = await _setup_battery_entry(hass)
     reach_at = dt_util.utcnow() + timedelta(hours=3)
     await _set_target(hass, soc_kwh=7.5, reach_at=reach_at)
 
-    with patch(
-        "custom_components.wattplan.optimizer.optimize",
-        side_effect=_fake_optimize_with_entities,
-    ):
-        assert await hass.config_entries.async_reload(entry.entry_id)
-        await hass.async_block_till_done()
+    async def reload() -> None:
+        with patch(
+            "custom_components.wattplan.optimizer.optimize",
+            side_effect=_fake_optimize_with_entities,
+        ):
+            assert await hass.config_entries.async_reload(entry.entry_id)
+            await hass.async_block_till_done()
 
+    await reload()
     restored = entry.runtime_data.battery_targets["battery"]
     assert restored.soc_kwh == 7.5
     assert restored.reach_at == reach_at
 
-
-async def test_cleared_battery_target_stays_cleared_after_reload(
-    hass: HomeAssistant,
-) -> None:
-    entry = await _setup_battery_entry(hass)
-    await _set_target(
-        hass, soc_kwh=7.5, reach_at=dt_util.utcnow() + timedelta(hours=3)
-    )
     await hass.services.async_call(
         DOMAIN,
         "clear_target",
         {"battery": "battery", "run_optimize": False},
         blocking=True,
     )
-
-    with patch(
-        "custom_components.wattplan.optimizer.optimize",
-        side_effect=_fake_optimize_with_entities,
-    ):
-        assert await hass.config_entries.async_reload(entry.entry_id)
-        await hass.async_block_till_done()
-
+    await reload()
     assert entry.runtime_data.battery_targets == {}
 
 

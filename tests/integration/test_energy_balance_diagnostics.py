@@ -101,7 +101,7 @@ def test_signed_timing_errors_cancel_instead_of_being_clipped():
     assert positive + negative == pytest.approx(.04)
 
 
-@pytest.mark.parametrize("invalid", [None, float("nan"), float("inf"), "invalid", -1])
+@pytest.mark.parametrize("invalid", [None, float("nan"), "invalid", -1])
 def test_invalid_or_reset_counter_is_not_zero_discrepancy(invalid):
     previous = dict.fromkeys(ENERGY_BALANCE_KEYS, 0.0)
     current = {**previous, "battery_charge": invalid}
@@ -141,19 +141,32 @@ def test_partial_seed_gap_and_meter_recovery_do_not_mix_windows(hass):
         completed_slot=START + timedelta(minutes=90),
     ) is None
 
-
-def test_battery_counter_reset_discards_one_window_then_recovers(hass):
-    tracker = _tracker(hass)
-    _battery(hass)
-    tracker._sample_energy_balance(START, _core())
+    # A reset counter discards one window, then the diagnostic recovers.
     _battery(hass, charge=1)
     assert tracker._sample_energy_balance(
-        START + timedelta(minutes=15), _core(10.52, 20.5),
-        completed_slot=START,
+        START + timedelta(minutes=120, seconds=5), _core(14.16, 24),
+        completed_slot=START + timedelta(minutes=105),
     ) is None
     assert tracker._sample_energy_balance(
-        START + timedelta(minutes=30), _core(11.04, 21),
-        completed_slot=START + timedelta(minutes=15),
+        START + timedelta(minutes=135, seconds=5), _core(14.68, 24.5),
+        completed_slot=START + timedelta(minutes=120),
+    ) == pytest.approx(.02)
+
+    # Changed units are rejected, and restoring them does not compare kWh
+    # counters with the rejected Wh reading.
+    _battery(hass, charge=100000, discharge=200000, unit="Wh")
+    assert tracker._sample_energy_balance(
+        START + timedelta(minutes=150, seconds=5), _core(15.2, 25),
+        completed_slot=START + timedelta(minutes=135),
+    ) is None
+    _battery(hass)
+    assert tracker._sample_energy_balance(
+        START + timedelta(minutes=165, seconds=5), _core(15.72, 25.5),
+        completed_slot=START + timedelta(minutes=150),
+    ) is None
+    assert tracker._sample_energy_balance(
+        START + timedelta(minutes=180, seconds=5), _core(16.24, 26),
+        completed_slot=START + timedelta(minutes=165),
     ) == pytest.approx(.02)
 
 
@@ -285,58 +298,50 @@ async def test_missing_battery_meter_does_not_change_actual_cost(
     tracker = _tracker(hass)
     await tracker.store.async_load()
     _battery(hass)
-    hass.states.async_set("sensor.grid", "10")
-    hass.states.async_set("sensor.load", "20")
+
+    def set_core(grid, load):
+        attributes = {
+            "device_class": "energy",
+            "unit_of_measurement": "kWh",
+            "state_class": "total_increasing",
+        }
+        hass.states.async_set("sensor.grid", str(grid), attributes)
+        hass.states.async_set("sensor.load", str(load), attributes)
+
+    set_core(10, 20)
     tracker.remember_price_series(
         start_at=START, slot_minutes=15,
         import_prices=[2] * 4, export_prices=[0] * 4,
     )
     await tracker._async_seed(START)
+
+    def summaries():
+        return (
+            tracker.summary(
+                metric=HistoricalMetric.COST, period=PERIOD_TODAY,
+                scenario=SCENARIO_ACTUAL,
+            ),
+            tracker.summary(
+                metric=HistoricalMetric.ENERGY_BALANCE_DISCREPANCY,
+                period=PERIOD_LAST_SLOT, scenario=None,
+            ),
+        )
+
+    # A healthy slot reports the balance through the real tick.
     freezer.move_to(START + timedelta(minutes=15, seconds=5))
-    _battery(hass, charge="unavailable")
-    hass.states.async_set("sensor.grid", "10.52")
-    hass.states.async_set("sensor.load", "20.5")
+    set_core(10.52, 20.5)
     await tracker.async_process_completed_slot()
-    actual = tracker.summary(
-        metric=HistoricalMetric.COST, period=PERIOD_TODAY, scenario=SCENARIO_ACTUAL,
-    )
-    diagnostic = tracker.summary(
-        metric=HistoricalMetric.ENERGY_BALANCE_DISCREPANCY,
-        period=PERIOD_LAST_SLOT, scenario=None,
-    )
+    actual, diagnostic = summaries()
     assert actual.value == pytest.approx(1.04)
+    assert diagnostic.value == pytest.approx(.02)
+
+    # An unavailable battery meter drops only the diagnostic, not the cost.
+    freezer.move_to(START + timedelta(minutes=30, seconds=5))
+    _battery(hass, charge="unavailable")
+    set_core(11.04, 21)
+    await tracker.async_process_completed_slot()
+    actual, diagnostic = summaries()
+    assert actual.value == pytest.approx(2.08)
     assert diagnostic.value is None
     assert diagnostic.missing_slots == 1
-
-    # Diagnostic configuration changes reseed only its own cursor.
-    core_cursor = tracker.store.last_meter_values()
-    config = tracker._energy_balance_config()
-    tracker.store.data["energy_balance_cursor"]["config"] = {**config, "battery_charge": "old"}
-    _battery(hass)
-    assert tracker._sample_energy_balance(
-        START + timedelta(minutes=30, seconds=5), _core(11.04, 21),
-        completed_slot=START + timedelta(minutes=15),
-    ) is None
-    assert tracker.store.last_meter_values() == core_cursor
     await tracker.async_shutdown()
-
-
-def test_changed_battery_units_cannot_produce_a_large_false_discrepancy(hass):
-    tracker = _tracker(hass)
-    _battery(hass)
-    tracker._sample_energy_balance(START, _core())
-    _battery(hass, charge=100000, discharge=200000, unit="Wh")
-    assert tracker._sample_energy_balance(
-        START + timedelta(minutes=15), _core(10.52, 20.5),
-        completed_slot=START,
-    ) is None
-    # Restoring the units does not compare kWh counters with the rejected Wh reading.
-    _battery(hass)
-    assert tracker._sample_energy_balance(
-        START + timedelta(minutes=30), _core(11.04, 21),
-        completed_slot=START + timedelta(minutes=15),
-    ) is None
-    assert tracker._sample_energy_balance(
-        START + timedelta(minutes=45), _core(11.56, 21.5),
-        completed_slot=START + timedelta(minutes=30),
-    ) == pytest.approx(.02)

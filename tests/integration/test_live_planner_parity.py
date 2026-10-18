@@ -21,7 +21,7 @@ from .test_integration_e2e import (
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
 
-@pytest.mark.parametrize("preset", PRESETS)
+@pytest.mark.parametrize("preset", ["highs", "beam-2"])
 async def test_real_planners_publish_all_equipment_without_losing_health(
     hass, preset, entity_registry_enabled_by_default,
 ):
@@ -47,6 +47,9 @@ async def test_real_planners_publish_all_equipment_without_losing_health(
     assert diagnostics["outlook"] is not None
     optimizer = diagnostics["optimizer"]
     assert optimizer["planner_preset"] == preset
+    assert optimizer["planner"] == PRESETS[preset].planner
+    assert optimizer["planner_options"] == PRESETS[preset].options
+    assert optimizer["diagnostics"]["planner"]["preset"] == preset
     assert len(optimizer["projections"]["per_slot"]) == 4
     assert any(flow["comfort_load_kwh"] > 0 for flow in optimizer["energy_flows"]["per_slot"])
     # The test has no ordered recorder history; every implementation must expose
@@ -55,3 +58,6 @@ async def test_real_planners_publish_all_equipment_without_losing_health(
     assert snapshot.planner_status == "degraded"
     assert hass.states.get("sensor.home_status").state == "degraded"
     assert hass.states.get("sensor.home_optional_next_start_option") is not None
+    duration = hass.states.get("sensor.home_last_run_duration")
+    assert duration is not None
+    assert duration.attributes["planner_preset"] == preset

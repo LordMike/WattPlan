@@ -53,3 +53,17 @@ def test_two_vehicles_cannot_share_the_same_pv_energy(name):
     assert sum(entity["schedule"][0]["level"] for entity in result["entities"]) <= 1 + 1e-6
     assert sum(row["miss_kwh"] for row in result["projections"]["departure_checks"]) >= 1 - 1e-6
     assert result["projections"]["service_feasible"] is False
+
+
+@pytest.mark.parametrize("name,targets,scope,recovery", [
+    ("mobility-baseline", "observed", "none", False),
+    ("mobility-tariff-seeds", "observed", "mobility", False),
+    ("mobility-hybrid-seeds", "optimized", "household", True),
+    ("mobility-fleet-beam", "optimized", "household", True),
+])
+def test_mobility_planners_declare_documented_capabilities(name, targets, scope, recovery):
+    capabilities = create_planner(name).capabilities
+    assert capabilities.mobility
+    assert (capabilities.targets, capabilities.economic_scope, capabilities.reserve_recovery) == (
+        targets, scope, recovery,
+    )

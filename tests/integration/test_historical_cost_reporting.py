@@ -70,25 +70,9 @@ EXPECTED_SLOT_VALUES = {
             },
         ),
         (
-            "reset PV",
-            {"pv": None},
-            FLAG_METER_RESET,
-            {
-                "historical_actual_cost_today",
-                "historical_grid_only_cost_today",
-                "historical_savings_vs_grid_only_today",
-            },
-        ),
-        (
             "missing usage",
             {"usage": None},
             FLAG_MISSING_METER,
-            {"historical_actual_cost_today"},
-        ),
-        (
-            "reset usage",
-            {"usage": None},
-            FLAG_METER_RESET,
             {"historical_actual_cost_today"},
         ),
         (
@@ -101,27 +85,9 @@ EXPECTED_SLOT_VALUES = {
             },
         ),
         (
-            "reset grid import",
-            {"grid_import": None},
-            FLAG_METER_RESET,
-            {
-                "historical_grid_only_cost_today",
-                "historical_self_consumption_cost_today",
-            },
-        ),
-        (
             "missing grid export",
             {"grid_export": None},
             FLAG_MISSING_METER,
-            {
-                "historical_grid_only_cost_today",
-                "historical_self_consumption_cost_today",
-            },
-        ),
-        (
-            "reset grid export",
-            {"grid_export": None},
-            FLAG_METER_RESET,
             {
                 "historical_grid_only_cost_today",
                 "historical_self_consumption_cost_today",

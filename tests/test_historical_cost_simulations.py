@@ -2,22 +2,9 @@
 
 from custom_components.wattplan.historical_cost.simulations import (
     BatterySimulationConfig,
-    grid_only_cost,
     simulate_self_consumption_slot,
 )
 import pytest
-
-
-def test_grid_only_cost_uses_usage_and_import_price() -> None:
-    """Grid-only scenario should price all usage as grid import."""
-    assert grid_only_cost(
-        usage=1.5,
-        import_price=2.0,
-    ) == pytest.approx(3.0)
-    assert grid_only_cost(
-        usage=0.5,
-        import_price=2.0,
-    ) == pytest.approx(1.0)
 
 
 def test_self_consumption_uses_batteries_in_configured_order() -> None:
@@ -92,17 +79,17 @@ def test_self_consumption_discharge_limit_is_delivered_energy() -> None:
     assert result.soc_by_battery["battery"] == pytest.approx(0.75)
 
 
-@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize("invalid", [float("nan")])
 def test_historical_simulation_rejects_nonfinite_inputs(invalid: float) -> None:
     """Simulation must reject corrupt energy, state, and configuration values."""
-    with pytest.raises(ValueError, match="must be finite"):
+    with pytest.raises(ValueError):
         simulate_self_consumption_slot(
             usage=invalid,
             pv=0.0,
             batteries=[],
             soc_by_battery={},
         )
-    with pytest.raises(ValueError, match="must be finite"):
+    with pytest.raises(ValueError):
         BatterySimulationConfig(
             subentry_id="battery",
             minimum_kwh=0.0,

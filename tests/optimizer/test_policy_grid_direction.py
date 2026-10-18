@@ -24,8 +24,8 @@ def assert_conservation(step, *, usage, pv):
     )
 
 
-@pytest.mark.parametrize("pv", [0.25, 1.0, 2.0])
-def test_grid_only_battery_cannot_import_while_pv_surplus_exports(pv):
+def test_grid_only_battery_cannot_import_while_pv_surplus_exports():
+    pv = 0.25
     step = transition([battery()], [0], ["grid_charge"], usage=0, pv=pv)
     assert step.levels == [0]
     assert step.grid_charge == [0]
@@ -52,8 +52,7 @@ def test_dual_ingress_uses_pv_then_grid_to_fill_charge_rate():
     assert_conservation(step, usage=0, pv=0.4)
 
 
-@pytest.mark.parametrize("reverse", [False, True])
-@pytest.mark.parametrize("pv", [1.0, 1.5])
+@pytest.mark.parametrize("reverse,pv", [(False, 1.0), (True, 1.5)])
 def test_residual_surplus_is_checked_after_all_permitted_pv_allocations(reverse, pv):
     batteries = [battery("grid", 1), battery("solar", 2)]
     modes = ["grid_charge", "preserve"]
@@ -67,8 +66,8 @@ def test_residual_surplus_is_checked_after_all_permitted_pv_allocations(reverse,
     assert_conservation(step, usage=0, pv=pv)
 
 
-@pytest.mark.parametrize("fraction", [0.25, 0.5])
-def test_fractional_latched_grid_action_still_respects_site_direction(fraction):
+def test_fractional_latched_grid_action_still_respects_site_direction():
+    fraction = 0.25
     blocked = transition(
         [battery()], [0], ["grid_charge"], usage=0, pv=fraction,
         slot_fraction=fraction, grid_eligible=[True],

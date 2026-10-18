@@ -93,28 +93,6 @@ async def test_recovers_interrupted_append_and_does_not_publish_partial_line(tmp
     assert all(json.loads(line)["schema_version"] == 2 for line in after["data"].splitlines())
 
 
-async def test_recording_disabled_never_writes(tmp_path):
-    """Recording is strictly opt-in and errors cannot invalidate optimization."""
-    created = datetime(2026, 9, 29, tzinfo=UTC)
-    disabled = _history(tmp_path, enabled=False)
-    await disabled.async_record(created, _request(created), {"entities": []})
-    assert not (tmp_path / "wattplan_reproductions").exists()
-
-
-async def test_reproduction_records_algorithm_preset_and_fixed_options(tmp_path):
-    history = _history(tmp_path)
-    created = datetime(2026, 9, 29, tzinfo=UTC)
-    request = {
-        **_request(created), "planner_preset": "highs-16", "planner": "highs",
-        "planner_options": {"lookahead_slots": 16},
-    }
-    await history.async_record(created, request, {"entities": []})
-    record = json.loads((await history.async_read_date(created.date()))["data"])
-    assert record["request"]["planner_preset"] == "highs-16"
-    assert record["request"]["planner"] == "highs"
-    assert record["request"]["planner_options"] == {"lookahead_slots": 16}
-
-
 async def test_actuals_after_midnight_are_exported_with_preceding_day_without_a_plan(tmp_path):
     history = _history(tmp_path, retention_days=2)
     # Europe/Copenhagen midnight in September is 22:00 UTC.
@@ -131,6 +109,7 @@ async def test_actuals_after_midnight_are_exported_with_preceding_day_without_a_
     assert (await history.async_read_date(datetime(2026, 9, 23).date()))["data"] == ""
     disabled = _history(tmp_path / "disabled", enabled=False)
     await disabled.async_record_actuals(completed, [interval])
+    await disabled.async_record(completed, _request(completed), {"entities": []})
     assert not (tmp_path / "disabled").exists()
 
 

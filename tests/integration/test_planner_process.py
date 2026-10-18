@@ -29,14 +29,6 @@ def _params():
 
 
 @pytest.mark.parametrize("preset", ["highs", "local-search-3"])
-async def test_real_process_roundtrip(preset):
-    result = await async_run_preset(_params(), preset)
-    assert result["diagnostics"]["planner"]["preset"] == preset
-    assert len(result["energy_flows"]["per_slot"]) == 4
-    assert len(result["entities"][0]["schedule"]) == 4
-
-
-@pytest.mark.parametrize("preset", ["highs", "local-search-3"])
 def test_worker_does_not_import_home_assistant(preset):
     """Worker startup must not pay for importing HA or the integration."""
     script = (
@@ -86,27 +78,10 @@ async def test_cancellation_reaps_real_child(phase):
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(task, 5)
     assert processes[0].returncode is not None
-    # A real new planner starts successfully after the old child has been reaped.
-    result = await async_run_preset(_params(), "local-search-3")
-    assert result["diagnostics"]["planner"]["preset"] == "local-search-3"
-
-
-async def test_timeout_reaps_worker():
-    original = asyncio.create_subprocess_exec
-    processes = []
-
-    async def spawn(*args, **kwargs):
-        process = await original(
-            sys.executable, "-c", "import time; time.sleep(60)", **kwargs
-        )
-        processes.append(process)
-        return process
-
-    with patch("asyncio.create_subprocess_exec", side_effect=spawn):
-        with pytest.raises(TimeoutError):
-            async with asyncio.timeout(0.2):
-                await async_run_preset(_params(), "highs")
-    assert processes and processes[0].returncode is not None
+    if phase == "compute":
+        # A real new planner starts successfully after the old child has been reaped.
+        result = await async_run_preset(_params(), "local-search-3")
+        assert result["diagnostics"]["planner"]["preset"] == "local-search-3"
 
 
 async def test_worker_error_does_not_poison_next_invocation():

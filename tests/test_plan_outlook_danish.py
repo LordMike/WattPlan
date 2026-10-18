@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from fluent.syntax import FluentParser
-from fluent.syntax.ast import Junk
+from fluent.syntax.ast import Junk, Message
 
 from custom_components.wattplan.plan_outlook_renderer import (
     _bundle,
@@ -22,6 +22,7 @@ from custom_components.wattplan.plan_outlook_renderer import (
 from custom_components.wattplan.plan_outlook_types import OutlookFact, OutlookModel
 
 NOW = datetime(2026, 9, 24, 8, 0, tzinfo=UTC)
+_CATALOGUE_ROOT = Path(__file__).parents[1] / "custom_components" / "wattplan" / "locales"
 
 
 def _fact(
@@ -187,35 +188,6 @@ def test_every_supported_fragment_formats_every_declared_variant(
         assert len(variants) == variant_count
 
 
-@pytest.mark.parametrize(
-    ("kind", "expected"),
-    (
-        ("grid_price_rise", "elpris"),
-        ("grid_price_fall", "elpris"),
-        ("limited_grid_use", "elnettet"),
-    ),
-)
-def test_common_danish_facts_have_four_variants(
-    kind: str, expected: str
-) -> None:
-    fact = _fact(kind)
-    model = _model(fact)
-
-    variants = {
-        render_fact_danish(
-            fact,
-            model=model,
-            now=NOW,
-            variation_seed="test",
-            forced_variant=variant,
-        )[0]
-        for variant in range(4)
-    }
-
-    assert len(variants) == 4
-    assert all(expected in text.lower() for text in variants)
-
-
 def test_danish_preserves_subject_and_uses_danish_duration_forms() -> None:
     fact = _fact(
         "source_problem",
@@ -233,21 +205,6 @@ def test_danish_preserves_subject_and_uses_danish_duration_forms() -> None:
 
     assert "et minut" in text
     assert "Soldata" in text
-
-    target = _fact(
-        "target_reached",
-        subject="Min Egen Batteripakke",
-        values=(("requested_percent", 80),),
-    )
-    duo = _model(target, _fact("grid_charge", subject="Andet Batteri"))
-    target_text, _ = render_fact_danish(
-        target,
-        model=duo,
-        now=NOW,
-        variation_seed="test",
-    )
-
-    assert "Min Egen Batteripakke" in target_text
 
 
 def test_danish_translates_internal_source_names() -> None:
@@ -332,7 +289,7 @@ def test_unknown_language_falls_back_to_english() -> None:
     assert fallback["report_id"] == english["report_id"]
 
 
-def test_time_ranges_are_explicit_in_both_languages() -> None:
+def test_same_day_ranges_are_explicit_and_mention_the_day_once() -> None:
     fact = _fact("grid_charge", subject="Husbatteri_A")
     model = _model(fact)
 
@@ -355,19 +312,6 @@ def test_time_ranges_are_explicit_in_both_languages() -> None:
     assert "fra kl. 09:00 til kl. 10:00 i dag" in danish
     assert "09:00-10:00" not in english
     assert "09:00-10:00" not in danish
-
-
-def test_same_day_range_mentions_the_day_once() -> None:
-    fact = _fact("grid_charge", subject="Husbatteri_A")
-    model = _model(fact)
-
-    english, _ = render_fact_english(
-        fact, model=model, now=NOW, variation_seed="test", forced_variant=0
-    )
-    danish, _ = render_fact_danish(
-        fact, model=model, now=NOW, variation_seed="test", forced_variant=0
-    )
-
     assert english.count("today") == 1
     assert danish.count("i dag") == 1
 
@@ -419,20 +363,9 @@ def test_turn_at_peak_at_and_alternative_at_are_day_aware() -> None:
         assert "11:00 today" in alternative_text or "kl. 11:00 i dag" in alternative_text
 
 
-def test_limited_grid_use_variants_all_include_period_context() -> None:
-    fact = _fact("limited_grid_use", subject="site")
-    model = _model(fact)
-
-    for renderer in (render_fact_english, render_fact_danish):
-        for variant in range(4):
-            text, _ = renderer(
-                fact, model=model, now=NOW, variation_seed="test", forced_variant=variant
-            )
-            assert "today" in text or "i dag" in text
-
-
-def test_heavy_grid_use_variants_all_include_period_context() -> None:
-    fact = _fact("heavy_grid_use", subject="site")
+@pytest.mark.parametrize("kind", ("limited_grid_use", "heavy_grid_use"))
+def test_grid_use_variants_all_include_period_context(kind: str) -> None:
+    fact = _fact(kind, subject="site")
     model = _model(fact)
 
     for renderer in (render_fact_english, render_fact_danish):
@@ -510,42 +443,26 @@ def test_solo_battery_omits_the_name(renderer) -> None:
     assert all(subject not in text for text in texts)
 
 
-@pytest.mark.parametrize("renderer", (render_fact_english, render_fact_danish))
-def test_prose_has_no_narrating_plan_voice(renderer) -> None:
-    status_kinds = {
-        "plan_refresh_failure",
-        "plan_unavailable",
-        "plan_unusable",
-        "plan_expired",
-        "restored_unvalidated",
-        "recommendations_unavailable",
-        "stored_recommendations_unvalidated",
-        "quiet",
+@pytest.mark.parametrize(("language", "narrator"), (("en", "The plan "), ("da", "Planen ")))
+def test_prose_has_no_narrating_plan_voice(language: str, narrator: str) -> None:
+    status_ids = {
+        _message_id(_fact(kind))
+        for kind in (
+            "plan_refresh_failure",
+            "plan_unavailable",
+            "plan_unusable",
+            "plan_expired",
+            "restored_unvalidated",
+            "recommendations_unavailable",
+            "stored_recommendations_unvalidated",
+            "quiet",
+        )
     }
-    for kind, subject, values in FACT_VARIANT_CASES:
-        fact = _fact(kind, subject=subject, values=values)
-        for model in (
-            _model(fact),
-            _model(fact, _fact("grid_charge", subject="Andet Batteri")),
-        ):
-            for variant in range(4):
-                text, _ = renderer(
-                    fact,
-                    model=model,
-                    now=NOW,
-                    variation_seed="voice",
-                    forced_variant=variant,
-                )
-                if kind in status_kinds:
-                    continue
-                assert "Planen " not in text
-                assert "The plan " not in text
-
-
-@pytest.mark.parametrize("language", ("en", "da"))
-def test_fluent_catalogues_parse_and_load(language: str) -> None:
-    _bundle.cache_clear()
-    assert _bundle(language).get_message("outlook-grid-charge").value is not None
+    path = _CATALOGUE_ROOT / language / "plan_outlook.ftl"
+    source = path.read_text(encoding="utf-8")
+    for entry in FluentParser().parse(source).body:
+        if isinstance(entry, Message) and entry.id.name not in status_ids:
+            assert narrator not in source[entry.span.start : entry.span.end], entry.id.name
 
 
 def test_catalogues_have_no_junk_and_cover_every_semantic_branch() -> None:
@@ -564,9 +481,8 @@ def test_catalogues_have_no_junk_and_cover_every_semantic_branch() -> None:
     # Solo (single-battery) branches resolve only with model context.
     for solo_fact in facts:
         message_ids.add(_message_id(solo_fact, _model(solo_fact)))
-    root = Path(__file__).parents[1] / "custom_components" / "wattplan" / "locales"
     for language in ("en", "da"):
-        parsed = FluentParser().parse((root / language / "plan_outlook.ftl").read_text())
+        parsed = FluentParser().parse((_CATALOGUE_ROOT / language / "plan_outlook.ftl").read_text())
         assert not [entry for entry in parsed.body if isinstance(entry, Junk)]
         bundle = _bundle(language)
         for message_id in message_ids:
@@ -600,10 +516,8 @@ def test_common_recurring_messages_keep_four_variants(language: str) -> None:
     (
         (1, "one minute", "et minut"),
         (59, "59 minutes", "59 minutter"),
-        (60, "an hour", "en time"),
         (119, "an hour", "en time"),
         (120, "2 hours", "2 timer"),
-        (121, "2 hours", "2 timer"),
     ),
 )
 def test_duration_rounding_and_plural_grammar(

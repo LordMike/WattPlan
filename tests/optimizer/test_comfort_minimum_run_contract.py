@@ -75,8 +75,6 @@ def test_all_planners_preserve_observed_runtime_minimums(kind, name):
 
 def test_current_on_with_unknown_history_keeps_legacy_lock_behavior():
     """Missing ordered history cannot safely infer how long ON has run."""
-    from custom_components.wattplan.optimizer.planners.comfort import prepare_comfort
-
     params = OptimizationParams(
         plan_start=datetime(2026, 10, 13, tzinfo=UTC),
         grid_import_price_per_kwh=[1.0] * 8,
@@ -99,5 +97,6 @@ def test_current_on_with_unknown_history_keeps_legacy_lock_behavior():
         rolling_window_slots=4,
     )
 
-    prepared = prepare_comfort(params)
-    assert prepared.inputs[0].lock_remaining == 0
+    schedule = create_planner("greedy")(params)["entities"][0]["schedule"]
+    # No lock is inferred, so the heater may stop right after the current slot.
+    assert [point["enabled"] for point in schedule[:2]] == [True, False]
