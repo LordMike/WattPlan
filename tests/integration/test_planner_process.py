@@ -1,11 +1,15 @@
 """Real child-process execution and cancellation at every IPC boundary."""
 
 import asyncio
+import json
+from pathlib import Path
+import subprocess
 import sys
 from unittest.mock import patch
 
 import pytest
 
+from custom_components.wattplan import planner_process
 from custom_components.wattplan.optimizer import OptimizationParams
 from custom_components.wattplan.planner_process import async_run_preset
 
@@ -30,6 +34,29 @@ async def test_real_process_roundtrip(preset):
     assert result["diagnostics"]["planner"]["preset"] == preset
     assert len(result["energy_flows"]["per_slot"]) == 4
     assert len(result["entities"][0]["schedule"]) == 4
+
+
+@pytest.mark.parametrize("preset", ["highs", "local-search-3"])
+def test_worker_does_not_import_home_assistant(preset):
+    """Worker startup must not pay for importing HA or the integration."""
+    script = (
+        "import io, json, runpy, sys\n"
+        "sys.stdin = io.StringIO(sys.argv[1])\n"
+        "sys.stdout = io.StringIO()\n"
+        "runpy.run_module('optimizer.worker', run_name='__main__')\n"
+        "loaded = [m for m in sys.modules\n"
+        "          if m.split('.')[0] in {'homeassistant', 'custom_components'}]\n"
+        "sys.__stdout__.write(json.dumps(loaded))\n"
+    )
+    payload = json.dumps({"preset": preset, "params": _params().model_dump(mode="json")})
+    completed = subprocess.run(
+        [sys.executable, "-c", script, payload],
+        cwd=Path(planner_process.__file__).parent,
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    assert json.loads(completed.stdout) == []
 
 
 @pytest.mark.parametrize("phase", ["startup", "compute", "output"])

@@ -34,6 +34,16 @@ ALIASES = {
     "custom_components.wattplan.optimizer.simulation.adapters:highs_factory": "highs",
     "custom_components.wattplan.optimizer.simulation.adapters:self_consumption_factory": "self-consumption",
 }
+# Factory paths above are persisted identities. The live worker imports this
+# package as top-level ``optimizer`` to avoid loading the HA integration.
+_CANONICAL_PACKAGE = "custom_components.wattplan.optimizer"
+_PACKAGE = __name__.removesuffix(".planners.registry")
+
+
+def _import_module(module: str):
+    if module == _CANONICAL_PACKAGE or module.startswith(f"{_CANONICAL_PACKAGE}."):
+        module = _PACKAGE + module.removeprefix(_CANONICAL_PACKAGE)
+    return importlib.import_module(module)
 
 
 def resolve_factory(name: str) -> str:
@@ -58,7 +68,7 @@ def create_planner(name: str, options: dict | None = None) -> Callable:
     """
     path = resolve_factory(name)
     module, attribute = path.split(":")
-    factory = getattr(importlib.import_module(module), attribute)
+    factory = getattr(_import_module(module), attribute)
     options = {} if options is None else options
     if not isinstance(options, dict):
         raise ValueError("Planner options must be an object")

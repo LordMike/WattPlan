@@ -17,7 +17,10 @@ early recovery actions. This affects optimization preference, never tariff
 accounting. Self-consumption keeps passive battery actions and reports shortfalls.
 
 Live planning runs in a fresh worker process with a 180-second whole-call limit,
-including startup, solving, shared reporting and result transfer. Cancellation
+including startup, solving, shared reporting and result transfer. The worker
+imports `optimizer` as a top-level package so its startup never loads Home
+Assistant or the integration; planner factory paths keep their canonical
+`custom_components.wattplan.optimizer` identity in state and exports. Cancellation
 kills and reaps that process, even during a native solve. A new planning request
 supersedes the previous request; reload and shutdown drain old work before a
 replacement runtime starts. Battery target changes also abort stale work and

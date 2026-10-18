@@ -32,14 +32,16 @@ async def async_run_preset(params: OptimizationParams, preset: str) -> dict:
     The coordinator owns the whole-call timeout. A fresh interpreter isolates
     native solver state and permits interruption even inside a native solve.
     Preserve HA's import paths, including its optional dependency directory.
+    The worker imports ``optimizer`` as a top-level package: importing it via
+    ``custom_components.wattplan`` would load HA and this integration on every run.
     """
     payload = json.dumps(
         {"preset": preset, "params": params.model_dump(mode="json")},
         allow_nan=False,
     ).encode()
     start = asyncio.create_task(asyncio.create_subprocess_exec(
-        sys.executable, "-m", "custom_components.wattplan.optimizer.worker",
-        cwd=str(Path(__file__).parents[2]),
+        sys.executable, "-m", "optimizer.worker",
+        cwd=str(Path(__file__).parent),
         env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
