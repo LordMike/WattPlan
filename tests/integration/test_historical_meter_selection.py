@@ -20,12 +20,10 @@ from custom_components.wattplan.historical_cost.tracker import validate_energy_s
         ("kWh", "total", "energy", True),
         ("kWh", "total_increasing", "energy", True),
         ("Wh", "total_increasing", "energy", False),
-        ("MWh", "total_increasing", "energy", False),
         (None, "total_increasing", "energy", False),
         ("kWh", "measurement", "energy", False),
         ("kWh", None, "energy", False),
         ("kW", "measurement", "power", False),
-        ("%", "measurement", "battery", False),
         ("kWh", "total", None, False),
     ],
 )

@@ -30,6 +30,10 @@ async def test_completed_actuals_record_without_planning_and_preserve_missing_pv
     records = [json.loads(line) for line in response["data"].splitlines()]
     updates = [record for record in records if record.get("record_type") == "actuals"]
     assert len(updates) == 2
+    plans = [record for record in records if record.get("record_type") == "plan"]
+    assert plans
+    assert all(record["actuals_status"] == "tracking_enabled" for record in plans)
+    assert response["actuals_status"] == "tracking_enabled"
     first, second = [record["actuals"][0] for record in updates]
     assert "partial_interval" in first["quality"]
     assert "partial_interval" not in second["quality"]
@@ -58,13 +62,20 @@ def test_legacy_zero_export_without_meter_has_unknown_counterfactual_price():
 
 
 async def test_configured_export_tariff_survives_absent_export_meter(
-    hass, freezer, monkeypatch
+    hass, freezer
 ):
     start = datetime(2026, 5, 24, 10, tzinfo=UTC)
-    tracker = await _plan_with_export_source(hass, freezer, start, export_healthy=True)
-    roles = {**tracker._meter_config(), "grid_export": None}
-    monkeypatch.setattr(tracker, "_meter_config", lambda: roles)
-    assert await tracker._async_export_price(start) == pytest.approx(0.1)
+    tracker = await _plan_with_export_source(
+        hass, freezer, start, export_healthy=True, export_meter=False
+    )
+    tracker.store.update_metadata(
+        last_processed_slot=start - timedelta(minutes=15),
+        last_meter_values={"grid_import": 100.0, "usage": 200.0, "pv": 0.0},
+        meter_config=tracker._meter_config(),
+    )
+    await _tick(hass, freezer, tracker, start, 15, 101.0, 201.0)
+    [actual] = tracker.store.export_actuals(start, start + timedelta(minutes=15))
+    assert actual["export_price"] == pytest.approx(0.1)
 
 
 async def test_actuals_retain_interval_duration_and_currency_after_configuration_change(

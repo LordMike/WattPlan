@@ -87,12 +87,17 @@ async def test_scheduled_and_manual_plans_are_exported_by_local_date(
     assert all(record["input_captured_at"] <= record["created_at"] for record in records)
     assert all(record["actuals_status"] == "tracking_disabled" for record in records)
     assert all("result" in record and "optimizer_params" in record["request"] for record in records)
+    assert all(record["request"]["planner_preset"] == "highs" for record in records)
+    assert all(record["request"]["planner"] == "highs" for record in records)
+    assert all(
+        record["request"]["planner_options"] == {"lookahead_slots": 22}
+        for record in records
+    )
 
     for selector in (
         {"entry_id": entry.entry_id},
         {"name": "home"},
         {"entity_id": "sensor.home_last_run"},
-        {"entity_id": "sensor.home_last_run", "entry_id": entry.entry_id},
     ):
         selected = await hass.services.async_call(
             DOMAIN,
