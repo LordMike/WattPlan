@@ -46,32 +46,20 @@ previous plan.
 
 ### Relative timing and savings
 
-The five normal choices compare as follows, using **Self-consumption** as the
-baseline. Figures are rounded, indicative comparisons of individual forecast
-plans.
+Each configuration table rates **Speed** and **Savings** from **1 (worst)** to
+**5 (best)**. Higher is better. Scores are rounded relative to the worst and best
+across the entire scored catalog on matching planning inputs:
 
-| Configuration | Planning time vs baseline | Savings vs baseline |
-| --- | ---: | ---: |
-| [Charge-window search](#charge-window-search) | About 25× | About 23% lower net electricity cost |
-| [Guarded value policy](#solar-gated-value-policy) | About 11× | About 22% lower net electricity cost |
-| [Joint seed search](#joint-seed-search) | About 6× | About 21% lower net electricity cost |
-| [Local search](#local-search) | About 1.5× | About 16% lower net electricity cost |
-| [Self-consumption](#self-consumption) | 1× (baseline) | No additional savings (baseline) |
+- **Speed:** shorter median planning time scores higher, on a logarithmic scale
+  spanning the observed runtime range.
+- **Savings:** lower average net electricity cost scores higher, on a linear
+  scale spanning the observed cost range.
 
-Planning time is the median multiple of Self-consumption's time on matching
-inputs; a larger multiple means more computation. Savings compare average net
-electricity costs on the same inputs, including export credits. Self-consumption
-already benefits from storing solar energy; this column shows the additional
-reduction from changing algorithms.
-
-Tariffs, forecasts, battery constraints, planning horizon, and energy left in
-batteries at the end affect the cost comparison. Planning time also depends on
-the number of batteries, comfort loads, and optional loads. Optional-load
-suggestions contribute to timing; their execution is excluded from savings.
-These percentages describe modeled plans and do not predict annual bill savings.
-Small differences between the optimizing choices should not be treated as a
-fixed ranking. Use the [simulator](simulator.md) to compare them with your own
-recordings.
+Self-consumption is excluded from both scales and receives **-** in both columns.
+Equal scores do not imply identical results. Ratings depend on tariffs, forecasts,
+equipment, planning horizon, and ending battery energy; they are not predicted
+annual bill savings or guarantees of constraint satisfaction. See [feature support](#feature-support)
+and use the [simulator](simulator.md) to compare your own recordings.
 
 ## Planners
 
@@ -171,12 +159,12 @@ Optimizes variable battery charge and discharge power with a mixed-integer solve
 
 Each configuration changes only the lookahead length; it still returns a schedule for the full planning horizon.
 
-| Configuration name (UI) | Id | What distinguishes this configuration | Status |
-| --- | --- | --- | --- |
-| HiGHS — 22 lookahead slots | `highs` | 22 lookahead slots; retained for existing selections. | Experimental |
-| HiGHS — 8 lookahead slots | `highs-8` | 8 lookahead slots. | Experimental |
-| HiGHS — 16 lookahead slots | `highs-16` | 16 lookahead slots. | Experimental |
-| HiGHS — 24 lookahead slots | `highs-24` | 24 lookahead slots. | Experimental |
+| Configuration name (UI) | Id | What distinguishes this configuration | Status | Speed | Savings |
+| --- | --- | --- | --- | ---: | ---: |
+| HiGHS — 22 lookahead slots | `highs` | 22 lookahead slots; retained for existing selections. | Experimental | 1 | 5 |
+| HiGHS — 8 lookahead slots | `highs-8` | 8 lookahead slots. | Experimental | 2 | 1 |
+| HiGHS — 16 lookahead slots | `highs-16` | 16 lookahead slots. | Experimental | 2 | 5 |
+| HiGHS — 24 lookahead slots | `highs-24` | 24 lookahead slots. | Experimental | 1 | 5 |
 
 ### Behavior and limits
 
@@ -193,9 +181,9 @@ Stores surplus solar and uses it for demand above reserve.
 
 Passive baseline: permitted surplus PV is stored automatically. Battery targets are observed, without active target charging.
 
-| Configuration name (UI) | Id | What distinguishes this configuration | Status |
-| --- | --- | --- | --- |
-| Self-consumption | `self-consumption` | Baseline solar storage and passive battery use; no economic grid charging. | **Non-experimental** |
+| Configuration name (UI) | Id | What distinguishes this configuration | Status | Speed | Savings |
+| --- | --- | --- | --- | ---: | ---: |
+| Self-consumption | `self-consumption` | Baseline solar storage and passive battery use; no economic grid charging. | **Non-experimental** | - | - |
 
 ### Behavior and limits
 
@@ -211,10 +199,10 @@ Accepts cheap-charge and later-use improvements in sequence.
 
 The evaluation limit is the maximum candidate budget, not a guarantee that every candidate is useful.
 
-| Configuration name (UI) | Id | What distinguishes this configuration | Status |
-| --- | --- | --- | --- |
-| Greedy — 8 evaluations | `greedy-8` | At most 8 candidate evaluations. | Experimental |
-| Greedy — 256 evaluations | `greedy-256` | At most 256 candidate evaluations. | Experimental |
+| Configuration name (UI) | Id | What distinguishes this configuration | Status | Speed | Savings |
+| --- | --- | --- | --- | ---: | ---: |
+| Greedy — 8 evaluations | `greedy-8` | At most 8 candidate evaluations. | Experimental | 5 | 2 |
+| Greedy — 256 evaluations | `greedy-256` | At most 256 candidate evaluations. | Experimental | 3 | 4 |
 
 ### Behavior and limits
 
@@ -230,10 +218,10 @@ Improves a complete schedule by changing individual actions or charging blocks.
 
 Both configurations use random seed 0; the candidate evaluation budget distinguishes them.
 
-| Configuration name (UI) | Id | What distinguishes this configuration | Status |
-| --- | --- | --- | --- |
-| Local search | `local-search-3` | At most 3 candidate evaluations; recommended default for new setups. | **Non-experimental** |
-| Local search — 96 evaluations | `local-search-96` | At most 96 candidate evaluations. | Experimental |
+| Configuration name (UI) | Id | What distinguishes this configuration | Status | Speed | Savings |
+| --- | --- | --- | --- | ---: | ---: |
+| Local search | `local-search-3` | At most 3 candidate evaluations; recommended default for new setups. | **Non-experimental** | 5 | 4 |
+| Local search — 96 evaluations | `local-search-96` | At most 96 candidate evaluations. | Experimental | 3 | 5 |
 
 ### Behavior and limits
 
@@ -249,12 +237,12 @@ Retains several promising schedules while advancing through the forecast.
 
 All configurations use 24-slot guidance at scale 1, a 30,000-expansion budget, and at most 81 joint actions. Only beam width changes.
 
-| Configuration name (UI) | Id | What distinguishes this configuration | Status |
-| --- | --- | --- | --- |
-| Beam search — width 1 | `beam-1` | Retains one schedule per step. | Experimental |
-| Beam search — width 2 | `beam-2` | Retains up to 2 schedules per step. | Experimental |
-| Beam search — width 8 | `beam-8` | Retains up to 8 schedules per step. | Experimental |
-| Beam search — width 16 | `beam-16` | Retains up to 16 schedules per step. | Experimental |
+| Configuration name (UI) | Id | What distinguishes this configuration | Status | Speed | Savings |
+| --- | --- | --- | --- | ---: | ---: |
+| Beam search — width 1 | `beam-1` | Retains one schedule per step. | Experimental | 4 | 4 |
+| Beam search — width 2 | `beam-2` | Retains up to 2 schedules per step. | Experimental | 4 | 5 |
+| Beam search — width 8 | `beam-8` | Retains up to 8 schedules per step. | Experimental | 4 | 5 |
+| Beam search — width 16 | `beam-16` | Retains up to 16 schedules per step. | Experimental | 3 | 5 |
 
 ### Behavior and limits
 
@@ -270,10 +258,10 @@ Searches grouped battery states with bounded transitions and future-value guidan
 
 Both configurations cap joint actions at 81; state grouping, retained states, expansion budget, and value horizon differ.
 
-| Configuration name (UI) | Id | What distinguishes this configuration | Status |
-| --- | --- | --- | --- |
-| Dynamic programming — fast | `dynamic-programming-fast` | 0.1 kWh state grouping; up to 8 states; 6,000 expansions; 24 value-guidance slots. | Experimental |
-| Dynamic programming — strong | `dynamic-programming-strong` | 0.25 kWh state grouping; up to 32 states; 20,000 expansions; 144 value-guidance slots. | Experimental |
+| Configuration name (UI) | Id | What distinguishes this configuration | Status | Speed | Savings |
+| --- | --- | --- | --- | ---: | ---: |
+| Dynamic programming — fast | `dynamic-programming-fast` | 0.1 kWh state grouping; up to 8 states; 6,000 expansions; 24 value-guidance slots. | Experimental | 4 | 5 |
+| Dynamic programming — strong | `dynamic-programming-strong` | 0.25 kWh state grouping; up to 32 states; 20,000 expansions; 144 value-guidance slots. | Experimental | 3 | 5 |
 
 ### Behavior and limits
 
@@ -290,9 +278,9 @@ Moves and refines blocks of charging, preservation, and discharging.
 
 Searches charging/preservation windows with a fixed candidate budget.
 
-| Configuration name (UI) | Id | What distinguishes this configuration | Status |
-| --- | --- | --- | --- |
-| Charge-window search | `charge-window-96` | 96 evaluations; 3 candidate windows. | **Non-experimental** |
+| Configuration name (UI) | Id | What distinguishes this configuration | Status | Speed | Savings |
+| --- | --- | --- | --- | ---: | ---: |
+| Charge-window search | `charge-window-96` | 96 evaluations; 3 candidate windows. | **Non-experimental** | 3 | 5 |
 
 ### Behavior and limits
 
@@ -308,10 +296,10 @@ Combines and mutates complete candidate schedules.
 
 Both use 8 generations, 2 elites, tournament size 3, mutation rate 0.9, crossover rate 0.8, seed 0, and no separate wall-time limit.
 
-| Configuration name (UI) | Id | What distinguishes this configuration | Status |
-| --- | --- | --- | --- |
-| Genetic — fast | `genetic-fast` | 16 evaluations; population 6; 24-slot guidance. | Experimental |
-| Genetic — standard | `genetic-standard` | 48 evaluations; population 8; 144-slot guidance. | Experimental |
+| Configuration name (UI) | Id | What distinguishes this configuration | Status | Speed | Savings |
+| --- | --- | --- | --- | ---: | ---: |
+| Genetic — fast | `genetic-fast` | 16 evaluations; population 6; 24-slot guidance. | Experimental | 4 | 5 |
+| Genetic — standard | `genetic-standard` | 48 evaluations; population 8; 144-slot guidance. | Experimental | 3 | 5 |
 
 ### Behavior and limits
 
@@ -327,9 +315,9 @@ Samples schedules and increases the probability of successful actions.
 
 Fixed-seed probabilistic search over coherent action blocks.
 
-| Configuration name (UI) | Id | What distinguishes this configuration | Status |
-| --- | --- | --- | --- |
-| Cross-entropy — 48 evaluations | `cem-48` | 48 evaluations; population 12; top 25% elites; smoothing 0.7; probability floor 0.02; 4-slot blocks; guidance 0.85; seed 0. | Experimental |
+| Configuration name (UI) | Id | What distinguishes this configuration | Status | Speed | Savings |
+| --- | --- | --- | --- | ---: | ---: |
+| Cross-entropy — 48 evaluations | `cem-48` | 48 evaluations; population 12; top 25% elites; smoothing 0.7; probability floor 0.02; 4-slot blocks; guidance 0.85; seed 0. | Experimental | 3 | 5 |
 
 ### Behavior and limits
 
@@ -344,20 +332,20 @@ Compares complete schedules using charging margins and price quantiles.
 
 Base settings: no extra grid-charge margin, no preservation quantile, and tariff quantile 0. The table shows the rule each configuration adds.
 
-| Configuration name (UI) | Id | What distinguishes this configuration | Status |
-| --- | --- | --- | --- |
-| Local refinement — grid margin 0.1/kWh | `local-margin-0.1` | Extra grid-charge margin 0.1/kWh. | Experimental |
-| Local refinement — grid margin 0.3/kWh | `local-margin-0.3` | Extra grid-charge margin 0.3/kWh. | Experimental |
-| Local refinement — grid margin 0.6/kWh | `local-margin-0.6` | Extra grid-charge margin 0.6/kWh. | Experimental |
-| Local refinement — preservation quantile 0 | `local-preserve-0.0` | Preservation price quantile 0. | Experimental |
-| Local refinement — preservation quantile 0.15 | `local-preserve-0.15` | Preservation price quantile 0.15. | Experimental |
-| Local refinement — preservation quantile 0.35 | `local-preserve-0.35` | Preservation price quantile 0.35. | Experimental |
-| Local refinement — preservation quantile 0.5 | `local-preserve-0.5` | Preservation price quantile 0.5. | Experimental |
-| Local refinement — preservation quantile 0.65 | `local-preserve-0.65` | Preservation price quantile 0.65. | Experimental |
-| Local refinement — preservation quantile 0.8 | `local-preserve-0.8` | Preservation price quantile 0.8. | Experimental |
-| Local refinement — preservation quantile 0.95 | `local-preserve-0.95` | Preservation price quantile 0.95. | Experimental |
-| Local refinement — tariff quantile 0.05, preservation 0.35 | `local-tariff-0.05-preserve-0.35` | Preservation price quantile 0.35; grid-charging tariff quantile 0.05. | Experimental |
-| Local refinement — tariff quantile 0.1, preservation 0.35 | `local-tariff-0.1-preserve-0.35` | Preservation price quantile 0.35; grid-charging tariff quantile 0.1. | Experimental |
+| Configuration name (UI) | Id | What distinguishes this configuration | Status | Speed | Savings |
+| --- | --- | --- | --- | ---: | ---: |
+| Local refinement — grid margin 0.1/kWh | `local-margin-0.1` | Extra grid-charge margin 0.1/kWh. | Experimental | 5 | 4 |
+| Local refinement — grid margin 0.3/kWh | `local-margin-0.3` | Extra grid-charge margin 0.3/kWh. | Experimental | 5 | 3 |
+| Local refinement — grid margin 0.6/kWh | `local-margin-0.6` | Extra grid-charge margin 0.6/kWh. | Experimental | 5 | 2 |
+| Local refinement — preservation quantile 0 | `local-preserve-0.0` | Preservation price quantile 0. | Experimental | 5 | 4 |
+| Local refinement — preservation quantile 0.15 | `local-preserve-0.15` | Preservation price quantile 0.15. | Experimental | 5 | 4 |
+| Local refinement — preservation quantile 0.35 | `local-preserve-0.35` | Preservation price quantile 0.35. | Experimental | 5 | 4 |
+| Local refinement — preservation quantile 0.5 | `local-preserve-0.5` | Preservation price quantile 0.5. | Experimental | 5 | 4 |
+| Local refinement — preservation quantile 0.65 | `local-preserve-0.65` | Preservation price quantile 0.65. | Experimental | 5 | 4 |
+| Local refinement — preservation quantile 0.8 | `local-preserve-0.8` | Preservation price quantile 0.8. | Experimental | 5 | 4 |
+| Local refinement — preservation quantile 0.95 | `local-preserve-0.95` | Preservation price quantile 0.95. | Experimental | 5 | 4 |
+| Local refinement — tariff quantile 0.05, preservation 0.35 | `local-tariff-0.05-preserve-0.35` | Preservation price quantile 0.35; grid-charging tariff quantile 0.05. | Experimental | 5 | 4 |
+| Local refinement — tariff quantile 0.1, preservation 0.35 | `local-tariff-0.1-preserve-0.35` | Preservation price quantile 0.35; grid-charging tariff quantile 0.1. | Experimental | 5 | 4 |
 
 ### Behavior and limits
 
@@ -374,23 +362,23 @@ Uses tariff quantiles and forecast solar or demand to decide when to charge or h
 
 The table spells out the charge/discharge tariff percentiles, charging margin, PV reserve, reserve horizon, and fill limit. Margins use the tariff currency per kWh.
 
-| Configuration name (UI) | Id | What distinguishes this configuration | Status |
-| --- | --- | --- | --- |
-| Price reserve — charge 5%, discharge 15%, margin 0.1 | `price-reserve-c5-d15-m10-p50-r12-f100` | Charge/discharge percentiles 5%/15%; margin 0.1/kWh; PV reserve 50%; 12-slot reserve; fill limit 100%. | Experimental |
-| Price reserve — charge 15%, discharge 35%, margin 0.1 | `price-reserve-c15-d35-m10-p50-r12-f100` | Charge/discharge percentiles 15%/35%; margin 0.1/kWh; PV reserve 50%; 12-slot reserve; fill limit 100%. | Experimental |
-| Price reserve — charge 25%, discharge 50%, margin 0.1 | `price-reserve-c25-d50-m10-p50-r12-f100` | Charge/discharge percentiles 25%/50%; margin 0.1/kWh; PV reserve 50%; 12-slot reserve; fill limit 100%. | Experimental |
-| Price reserve — charge 15%, discharge 35%, margin 0.3 | `price-reserve-c15-d35-m30-p100-r12-f100` | Charge/discharge percentiles 15%/35%; margin 0.3/kWh; PV reserve 100%; 12-slot reserve; fill limit 100%. | Experimental |
-| Price reserve — charge 15%, discharge 15%, margin 0.1 | `price-reserve-c15-d15-m10-p50-r12-f75` | Charge/discharge percentiles 15%/15%; margin 0.1/kWh; PV reserve 50%; 12-slot reserve; fill limit 75%. | Experimental |
-| Price reserve — charge 15%, discharge 0%, margin 0.1 | `price-reserve-c15-d0-m10-p50-r12-f100` | Charge/discharge percentiles 15%/0%; margin 0.1/kWh; PV reserve 50%; 12-slot reserve; fill limit 100%. | Experimental |
-| Price reserve — charge 0%, discharge 35%, margin 0 | `price-reserve-c0-d35-m0-p0-r12-f100` | Charge/discharge percentiles 0%/35%; margin 0/kWh; PV reserve 0%; 12-slot reserve; fill limit 100%. | Experimental |
-| Price reserve — charge 5%, discharge 65%, margin 0.1 | `price-reserve-c5-d65-m10-p50-r12-f100` | Charge/discharge percentiles 5%/65%; margin 0.1/kWh; PV reserve 50%; 12-slot reserve; fill limit 100%. | Experimental |
-| Price reserve — charge 15%, discharge 80%, margin 0.1 | `price-reserve-c15-d80-m10-p50-r12-f100` | Charge/discharge percentiles 15%/80%; margin 0.1/kWh; PV reserve 50%; 12-slot reserve; fill limit 100%. | Experimental |
-| Price reserve — charge 25%, discharge 65%, margin 0 | `price-reserve-c25-d65-m0-p0-r12-f100` | Charge/discharge percentiles 25%/65%; margin 0/kWh; PV reserve 0%; 12-slot reserve; fill limit 100%. | Experimental |
-| Price reserve — charge 5%, discharge 80%, margin 0.1 | `price-reserve-c5-d80-m10-p100-r12-f75` | Charge/discharge percentiles 5%/80%; margin 0.1/kWh; PV reserve 100%; 12-slot reserve; fill limit 75%. | Experimental |
-| Price reserve — demand reserve, 12 slots, spread 0 | `price-reserve-c15-d65-m10-p50-r12-f100-demand1-fm0-grid0` | Charge/discharge percentiles 15%/65%; margin 0.1/kWh; PV reserve 50%; 12-slot reserve; fill limit 100%; demand-based preservation; future price margin 0/kWh; economic grid charging disabled. | Experimental |
-| Price reserve — demand reserve, 24 slots, spread 0.2 | `price-reserve-c15-d65-m10-p50-r24-f100-demand1-fm20-grid0` | Charge/discharge percentiles 15%/65%; margin 0.1/kWh; PV reserve 50%; 24-slot reserve; fill limit 100%; demand-based preservation; future price margin 0.2/kWh; economic grid charging disabled. | Experimental |
-| Price reserve — demand reserve, 24 slots, spread 0 | `price-reserve-c15-d100-m10-p50-r24-f100-demand1-fm0-grid0` | Charge/discharge percentiles 15%/100%; margin 0.1/kWh; PV reserve 50%; 24-slot reserve; fill limit 100%; demand-based preservation; future price margin 0/kWh; economic grid charging disabled. | Experimental |
-| Price reserve — demand reserve, 12 slots, spread 0.2 | `price-reserve-c15-d100-m10-p50-r12-f100-demand1-fm20-grid0` | Charge/discharge percentiles 15%/100%; margin 0.1/kWh; PV reserve 50%; 12-slot reserve; fill limit 100%; demand-based preservation; future price margin 0.2/kWh; economic grid charging disabled. | Experimental |
+| Configuration name (UI) | Id | What distinguishes this configuration | Status | Speed | Savings |
+| --- | --- | --- | --- | ---: | ---: |
+| Price reserve — charge 5%, discharge 15%, margin 0.1 | `price-reserve-c5-d15-m10-p50-r12-f100` | Charge/discharge percentiles 5%/15%; margin 0.1/kWh; PV reserve 50%; 12-slot reserve; fill limit 100%. | Experimental | 5 | 2 |
+| Price reserve — charge 15%, discharge 35%, margin 0.1 | `price-reserve-c15-d35-m10-p50-r12-f100` | Charge/discharge percentiles 15%/35%; margin 0.1/kWh; PV reserve 50%; 12-slot reserve; fill limit 100%. | Experimental | 5 | 2 |
+| Price reserve — charge 25%, discharge 50%, margin 0.1 | `price-reserve-c25-d50-m10-p50-r12-f100` | Charge/discharge percentiles 25%/50%; margin 0.1/kWh; PV reserve 50%; 12-slot reserve; fill limit 100%. | Experimental | 5 | 2 |
+| Price reserve — charge 15%, discharge 35%, margin 0.3 | `price-reserve-c15-d35-m30-p100-r12-f100` | Charge/discharge percentiles 15%/35%; margin 0.3/kWh; PV reserve 100%; 12-slot reserve; fill limit 100%. | Experimental | 5 | 2 |
+| Price reserve — charge 15%, discharge 15%, margin 0.1 | `price-reserve-c15-d15-m10-p50-r12-f75` | Charge/discharge percentiles 15%/15%; margin 0.1/kWh; PV reserve 50%; 12-slot reserve; fill limit 75%. | Experimental | 5 | 2 |
+| Price reserve — charge 15%, discharge 0%, margin 0.1 | `price-reserve-c15-d0-m10-p50-r12-f100` | Charge/discharge percentiles 15%/0%; margin 0.1/kWh; PV reserve 50%; 12-slot reserve; fill limit 100%. | Experimental | 5 | 2 |
+| Price reserve — charge 0%, discharge 35%, margin 0 | `price-reserve-c0-d35-m0-p0-r12-f100` | Charge/discharge percentiles 0%/35%; margin 0/kWh; PV reserve 0%; 12-slot reserve; fill limit 100%. | Experimental | 5 | 2 |
+| Price reserve — charge 5%, discharge 65%, margin 0.1 | `price-reserve-c5-d65-m10-p50-r12-f100` | Charge/discharge percentiles 5%/65%; margin 0.1/kWh; PV reserve 50%; 12-slot reserve; fill limit 100%. | Experimental | 5 | 2 |
+| Price reserve — charge 15%, discharge 80%, margin 0.1 | `price-reserve-c15-d80-m10-p50-r12-f100` | Charge/discharge percentiles 15%/80%; margin 0.1/kWh; PV reserve 50%; 12-slot reserve; fill limit 100%. | Experimental | 5 | 3 |
+| Price reserve — charge 25%, discharge 65%, margin 0 | `price-reserve-c25-d65-m0-p0-r12-f100` | Charge/discharge percentiles 25%/65%; margin 0/kWh; PV reserve 0%; 12-slot reserve; fill limit 100%. | Experimental | 5 | 2 |
+| Price reserve — charge 5%, discharge 80%, margin 0.1 | `price-reserve-c5-d80-m10-p100-r12-f75` | Charge/discharge percentiles 5%/80%; margin 0.1/kWh; PV reserve 100%; 12-slot reserve; fill limit 75%. | Experimental | 5 | 3 |
+| Price reserve — demand reserve, 12 slots, spread 0 | `price-reserve-c15-d65-m10-p50-r12-f100-demand1-fm0-grid0` | Charge/discharge percentiles 15%/65%; margin 0.1/kWh; PV reserve 50%; 12-slot reserve; fill limit 100%; demand-based preservation; future price margin 0/kWh; economic grid charging disabled. | Experimental | 5 | 2 |
+| Price reserve — demand reserve, 24 slots, spread 0.2 | `price-reserve-c15-d65-m10-p50-r24-f100-demand1-fm20-grid0` | Charge/discharge percentiles 15%/65%; margin 0.1/kWh; PV reserve 50%; 24-slot reserve; fill limit 100%; demand-based preservation; future price margin 0.2/kWh; economic grid charging disabled. | Experimental | 5 | 2 |
+| Price reserve — demand reserve, 24 slots, spread 0 | `price-reserve-c15-d100-m10-p50-r24-f100-demand1-fm0-grid0` | Charge/discharge percentiles 15%/100%; margin 0.1/kWh; PV reserve 50%; 24-slot reserve; fill limit 100%; demand-based preservation; future price margin 0/kWh; economic grid charging disabled. | Experimental | 5 | 2 |
+| Price reserve — demand reserve, 12 slots, spread 0.2 | `price-reserve-c15-d100-m10-p50-r12-f100-demand1-fm20-grid0` | Charge/discharge percentiles 15%/100%; margin 0.1/kWh; PV reserve 50%; 12-slot reserve; fill limit 100%; demand-based preservation; future price margin 0.2/kWh; economic grid charging disabled. | Experimental | 5 | 2 |
 
 ### Behavior and limits
 
@@ -413,23 +401,23 @@ Estimates future energy value on a coarse battery-energy grid.
 
 Base settings for comparison: 4 energy intervals, 100% of supplied PV and usage, no terminal energy credit, deterministic PV, and no extra charging knots. Rows show changes to that base.
 
-| Configuration name (UI) | Id | What distinguishes this configuration | Status |
-| --- | --- | --- | --- |
-| Value policy — 4 energy intervals, PV 100% | `value-grid4-pv100-terminal0` | Base settings. | Experimental |
-| Value policy — 8 energy intervals, PV 100% | `value-grid8-pv100-terminal0` | 8 energy intervals. | Experimental |
-| Value policy — 4 energy intervals, PV 75% | `value-grid4-pv75-terminal0` | Search uses 75% of forecast PV. | Experimental |
-| Value policy — 4 energy intervals, PV 50% | `value-grid4-pv50-terminal0` | Search uses 50% of forecast PV. | Experimental |
-| Value policy — 2 energy intervals, PV 100% | `value-grid2-pv100-terminal0` | 2 energy intervals. | Experimental |
-| Value policy — 2 energy intervals, PV 50% | `value-grid2-pv50-terminal0` | 2 energy intervals; search uses 50% of forecast PV. | Experimental |
-| Value policy — 6 energy intervals, PV 100% | `value-grid6-pv100-terminal0` | 6 energy intervals. | Experimental |
-| Value policy — 4 energy intervals, terminal value 25% | `value-grid4-pv100-terminal25` | Terminal value credit 25%. | Experimental |
-| Value policy — 4 energy intervals, terminal value 50% | `value-grid4-pv100-terminal50` | Terminal value credit 50%. | Experimental |
-| Value policy — 2 energy intervals plus charging thresholds | `value-grid2-pv100-terminal0-chargeknots1` | 2 energy intervals; charging-threshold energy knots. | Experimental |
-| Value policy — 4 energy intervals plus charging thresholds | `value-grid4-pv100-terminal0-chargeknots1` | Charging-threshold energy knots. | Experimental |
-| Value policy — 4 energy intervals, demand 75%, terminal value 50% | `value-grid4-pv100-demand75-terminal50` | Search uses 75% of forecast usage; terminal value credit 50%. | Experimental |
-| Value policy — 4 energy intervals, demand 125%, terminal value 50% | `value-grid4-pv100-demand125-terminal50` | Search uses 125% of forecast usage; terminal value credit 50%. | Experimental |
-| Value policy — 4 intervals, terminal value 50%, PV spread 50% | `value-grid4-pv100-terminal50-scenario50` | Terminal value credit 50%; PV scenarios +/-50%. | Experimental |
-| Value policy — 4 intervals, terminal value 50%, PV spread 100% | `value-grid4-pv100-terminal50-scenario100` | Terminal value credit 50%; PV scenarios +/-100%. | Experimental |
+| Configuration name (UI) | Id | What distinguishes this configuration | Status | Speed | Savings |
+| --- | --- | --- | --- | ---: | ---: |
+| Value policy — 4 energy intervals, PV 100% | `value-grid4-pv100-terminal0` | Base settings. | Experimental | 4 | 5 |
+| Value policy — 8 energy intervals, PV 100% | `value-grid8-pv100-terminal0` | 8 energy intervals. | Experimental | 4 | 5 |
+| Value policy — 4 energy intervals, PV 75% | `value-grid4-pv75-terminal0` | Search uses 75% of forecast PV. | Experimental | 4 | 5 |
+| Value policy — 4 energy intervals, PV 50% | `value-grid4-pv50-terminal0` | Search uses 50% of forecast PV. | Experimental | 4 | 5 |
+| Value policy — 2 energy intervals, PV 100% | `value-grid2-pv100-terminal0` | 2 energy intervals. | Experimental | 4 | 5 |
+| Value policy — 2 energy intervals, PV 50% | `value-grid2-pv50-terminal0` | 2 energy intervals; search uses 50% of forecast PV. | Experimental | 4 | 5 |
+| Value policy — 6 energy intervals, PV 100% | `value-grid6-pv100-terminal0` | 6 energy intervals. | Experimental | 4 | 5 |
+| Value policy — 4 energy intervals, terminal value 25% | `value-grid4-pv100-terminal25` | Terminal value credit 25%. | Experimental | 4 | 5 |
+| Value policy — 4 energy intervals, terminal value 50% | `value-grid4-pv100-terminal50` | Terminal value credit 50%. | Experimental | 4 | 5 |
+| Value policy — 2 energy intervals plus charging thresholds | `value-grid2-pv100-terminal0-chargeknots1` | 2 energy intervals; charging-threshold energy knots. | Experimental | 4 | 5 |
+| Value policy — 4 energy intervals plus charging thresholds | `value-grid4-pv100-terminal0-chargeknots1` | Charging-threshold energy knots. | Experimental | 4 | 5 |
+| Value policy — 4 energy intervals, demand 75%, terminal value 50% | `value-grid4-pv100-demand75-terminal50` | Search uses 75% of forecast usage; terminal value credit 50%. | Experimental | 4 | 5 |
+| Value policy — 4 energy intervals, demand 125%, terminal value 50% | `value-grid4-pv100-demand125-terminal50` | Search uses 125% of forecast usage; terminal value credit 50%. | Experimental | 4 | 5 |
+| Value policy — 4 intervals, terminal value 50%, PV spread 50% | `value-grid4-pv100-terminal50-scenario50` | Terminal value credit 50%; PV scenarios +/-50%. | Experimental | 4 | 5 |
+| Value policy — 4 intervals, terminal value 50%, PV spread 100% | `value-grid4-pv100-terminal50-scenario100` | Terminal value credit 50%; PV scenarios +/-100%. | Experimental | 4 | 5 |
 
 ### Behavior and limits
 
@@ -468,12 +456,12 @@ Solves a continuous approximation and converts it into inverter actions.
 
 PV and terminal credit percentages affect search; reported electricity costs replay original inputs without a terminal credit.
 
-| Configuration name (UI) | Id | What distinguishes this configuration | Status |
-| --- | --- | --- | --- |
-| Linear dispatch — 24 slots, rounding 50% | `linear-dispatch-h24-round50-pv100-tv0` | 24-slot LP horizon; charging-rounding threshold 50%; search PV 100%; terminal credit 0%. | Experimental |
-| Linear dispatch — 36 slots, rounding 25% | `linear-dispatch-h36-round25-pv50-tv25` | 36-slot LP horizon; charging-rounding threshold 25%; search PV 50%; terminal credit 25%. | Experimental |
-| Linear dispatch — marginal value, 24 slots | `linear-dispatch-marginal-h24-pv100-tv0` | 24-slot LP horizon; chooses inverter actions using marginal future-energy value; 100% PV; no terminal credit. | Experimental |
-| Linear dispatch — marginal value, 36 slots | `linear-dispatch-marginal-h36-pv100-tv0` | 36-slot LP horizon; chooses inverter actions using marginal future-energy value; 100% PV; no terminal credit. | Experimental |
+| Configuration name (UI) | Id | What distinguishes this configuration | Status | Speed | Savings |
+| --- | --- | --- | --- | ---: | ---: |
+| Linear dispatch — 24 slots, rounding 50% | `linear-dispatch-h24-round50-pv100-tv0` | 24-slot LP horizon; charging-rounding threshold 50%; search PV 100%; terminal credit 0%. | Experimental | 5 | 2 |
+| Linear dispatch — 36 slots, rounding 25% | `linear-dispatch-h36-round25-pv50-tv25` | 36-slot LP horizon; charging-rounding threshold 25%; search PV 50%; terminal credit 25%. | Experimental | 5 | 2 |
+| Linear dispatch — marginal value, 24 slots | `linear-dispatch-marginal-h24-pv100-tv0` | 24-slot LP horizon; chooses inverter actions using marginal future-energy value; 100% PV; no terminal credit. | Experimental | 5 | 2 |
+| Linear dispatch — marginal value, 36 slots | `linear-dispatch-marginal-h36-pv100-tv0` | 36-slot LP horizon; chooses inverter actions using marginal future-energy value; 100% PV; no terminal credit. | Experimental | 5 | 2 |
 
 ### Behavior and limits
 
@@ -501,44 +489,44 @@ Switches between passive solar use and value dispatch using forecast surplus.
 
 Base settings for comparison: solar gate ratio 1.5, 4 energy intervals, no terminal credit, deterministic PV, zero grid-charge premium, and no extra guards or grid/rollout refinements. Rows show changes to that base. Premiums use the tariff currency per AC kWh.
 
-| Configuration name (UI) | Id | What distinguishes this configuration | Status |
-| --- | --- | --- | --- |
-| Value policy — solar surplus gate 1 | `value-solar-gate-1` | Solar gate ratio 1. | Experimental |
-| Value policy — solar surplus gate 1.5 | `value-solar-gate-1.5` | Base settings. | Experimental |
-| Value policy — solar surplus gate 2 | `value-solar-gate-2` | Solar gate ratio 2. | Experimental |
-| Value policy — solar surplus gate 1, 6 energy intervals | `value-solar-gate-1-grid6` | Solar gate ratio 1; 6 energy intervals. | Experimental |
-| Value policy — solar surplus gate 1.5, 6 energy intervals | `value-solar-gate-1.5-grid6` | 6 energy intervals. | Experimental |
-| Value policy — solar surplus gate 1.5, 8 energy intervals | `value-solar-gate-1.5-grid8` | 8 energy intervals. | Experimental |
-| Value policy — solar surplus gate 1.5, 6 intervals, terminal value 25% | `value-solar-gate-1.5-grid6-terminal25` | 6 energy intervals; terminal value credit 25%. | Experimental |
-| Value policy — solar surplus gate 1.5, 6 intervals, terminal value 50% | `value-solar-gate-1.5-grid6-terminal50` | 6 energy intervals; terminal value credit 50%. | Experimental |
-| Value policy — solar surplus gate 1.5, 6 intervals, PV spread 50% | `value-solar-gate-1.5-grid6-terminal0-scenario50` | 6 energy intervals; PV scenarios +/-50%. | Experimental |
-| Value policy — solar surplus gate 1.5, 6 intervals, PV spread 100% | `value-solar-gate-1.5-grid6-terminal0-scenario100` | 6 energy intervals; PV scenarios +/-100%. | Experimental |
-| Value policy — solar surplus gate 1.5, 8 intervals, PV spread 100% | `value-solar-gate-1.5-grid8-terminal0-scenario100` | 8 energy intervals; PV scenarios +/-100%. | Experimental |
-| Value policy — solar surplus gate 1.5, 6 intervals, pre-refill guard | `value-solar-gate-1.5-grid6-terminal0-scenario0-prerefill1` | 6 energy intervals; pre-refill opportunity guard. | Experimental |
-| Value policy — solar gate 1.5, PV spread 100%, grid charge premium 0.01/kWh | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.01` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.01/kWh. | Experimental |
-| Value policy — solar gate 1.5, PV spread 100%, grid charge premium 0.03/kWh | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh. | Experimental |
-| Value policy — solar gate 1.5, PV spread 100%, grid charge premium 0.1/kWh | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.1` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.1/kWh. | Experimental |
-| Value policy — solar gate 1.5, PV spread 100%, charging knots, grid premium 0/kWh | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargeknots1` | 6 energy intervals; PV scenarios +/-100%; charging-threshold energy knots. | Experimental |
-| Value policy — solar gate 1.5, PV spread 100%, charging knots, grid premium 0.03/kWh | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-chargeknots1` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; charging-threshold energy knots. | Experimental |
-| Value policy — solar gate 1.5, PV spread 100%, two-slot first-action rollout, grid premium 0/kWh | `value-solar-gate-1.5-grid6-terminal0-scenario100-rollout2` | 6 energy intervals; PV scenarios +/-100%; two-slot first-action rollout. | Experimental |
-| Value policy — solar gate 1.5, PV spread 100%, two-slot first-action rollout, grid premium 0.03/kWh | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-rollout2` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; two-slot first-action rollout. | Experimental |
-| Value policy — solar gate 1.5, PV spread 100%, two-slot first-action rollout, grid premium 0.1/kWh | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.1-rollout2` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.1/kWh; two-slot first-action rollout. | Experimental |
-| Value policy — solar gate 1.5, PV spread 100%, paired demand spread 25%, demand horizon 12 | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for 12 slots. | Experimental |
-| Value policy — solar gate 1.5, PV spread 100%, paired demand spread 25%, demand horizon full | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-hfull` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for the full horizon. | Experimental |
-| Value policy — paired demand spread 25% for 12 slots, two-slot first-action rollout | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12-rollout2` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for 12 slots; two-slot first-action rollout. | Experimental |
-| Value policy — paired demand spread 10% for 12 slots | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand10-h12` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-10% for 12 slots. | Experimental |
-| Value policy — paired demand spread 50% for 12 slots | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand50-h12` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-50% for 12 slots. | Experimental |
-| Value policy — paired demand spread 25% for 6 slots | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h6` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for 6 slots. | Experimental |
-| Value policy — paired demand spread 25% for 24 slots | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h24` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for 24 slots. | Experimental |
-| Value policy — two-slot first-action rollout with persistent PV uncertainty | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-rollout2-pvpersist2` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; two-slot first-action rollout; persistent PV uncertainty across both rollout slots. | Experimental |
-| Value policy — paired demand spread 25% for 12 slots, exact initial energy knot | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12-initialknot1` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for 12 slots; exact initial-energy knot. | Experimental |
-| Value policy — 8 intervals, paired demand spread 25% for 12 slots, exact initial energy knot | `value-solar-gate-1.5-grid8-terminal0-scenario100-chargepremium0.03-demand25-h12-initialknot1` | 8 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for 12 slots; exact initial-energy knot. | Experimental |
-| Value policy — exact initial knot, pre-refill guard, mean-preserving asymmetric PV tail | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12-initialknot1-prerefill1-pvtailq1of3` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for 12 slots; exact initial-energy knot; pre-refill opportunity guard; PV tail factors 0/1.5 weighted 1/3 and 2/3. | Experimental |
-| Value policy — exact initial knot, pre-refill guard, current-first preserve prefix | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12-initialknot1-prerefill1-preserveprefix24h` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for 12 slots; exact initial-energy knot; pre-refill opportunity guard; current-first preservation comparison over up to 24 hours. | Experimental |
-| Value policy — exact initial knot, pre-refill guard, nominal joint mixture for 6 slots | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12-initialknot1-prerefill1-nominalmix50-h6` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for 12 slots; exact initial-energy knot; pre-refill opportunity guard; nominal joint scenario weighted 50% for 6 slots. | Experimental |
-| Value policy — exact initial knot, pre-refill guard, per-slot discharge budget knot | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12-initialknot1-prerefill1-dischargebudgetknot1` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for 12 slots; exact initial-energy knot; pre-refill opportunity guard; per-slot discharge-budget knot. | Experimental |
-| Value policy — grid-charge premium 0.05, paired demand spread 25% for 12 slots, exact initial knot, pre-refill guard | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.05-demand25-h12-initialknot1-prerefill1` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.05/kWh; paired demand scenarios +/-25% for 12 slots; exact initial-energy knot; pre-refill opportunity guard. | Experimental |
-| Guarded value policy | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12-initialknot1-prerefill1` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for 12 slots; exact initial-energy knot; pre-refill opportunity guard. | **Non-experimental** |
+| Configuration name (UI) | Id | What distinguishes this configuration | Status | Speed | Savings |
+| --- | --- | --- | --- | ---: | ---: |
+| Value policy — solar surplus gate 1 | `value-solar-gate-1` | Solar gate ratio 1. | Experimental | 4 | 5 |
+| Value policy — solar surplus gate 1.5 | `value-solar-gate-1.5` | Base settings. | Experimental | 4 | 5 |
+| Value policy — solar surplus gate 2 | `value-solar-gate-2` | Solar gate ratio 2. | Experimental | 4 | 5 |
+| Value policy — solar surplus gate 1, 6 energy intervals | `value-solar-gate-1-grid6` | Solar gate ratio 1; 6 energy intervals. | Experimental | 4 | 5 |
+| Value policy — solar surplus gate 1.5, 6 energy intervals | `value-solar-gate-1.5-grid6` | 6 energy intervals. | Experimental | 4 | 5 |
+| Value policy — solar surplus gate 1.5, 8 energy intervals | `value-solar-gate-1.5-grid8` | 8 energy intervals. | Experimental | 4 | 5 |
+| Value policy — solar surplus gate 1.5, 6 intervals, terminal value 25% | `value-solar-gate-1.5-grid6-terminal25` | 6 energy intervals; terminal value credit 25%. | Experimental | 4 | 5 |
+| Value policy — solar surplus gate 1.5, 6 intervals, terminal value 50% | `value-solar-gate-1.5-grid6-terminal50` | 6 energy intervals; terminal value credit 50%. | Experimental | 4 | 5 |
+| Value policy — solar surplus gate 1.5, 6 intervals, PV spread 50% | `value-solar-gate-1.5-grid6-terminal0-scenario50` | 6 energy intervals; PV scenarios +/-50%. | Experimental | 4 | 5 |
+| Value policy — solar surplus gate 1.5, 6 intervals, PV spread 100% | `value-solar-gate-1.5-grid6-terminal0-scenario100` | 6 energy intervals; PV scenarios +/-100%. | Experimental | 4 | 5 |
+| Value policy — solar surplus gate 1.5, 8 intervals, PV spread 100% | `value-solar-gate-1.5-grid8-terminal0-scenario100` | 8 energy intervals; PV scenarios +/-100%. | Experimental | 4 | 5 |
+| Value policy — solar surplus gate 1.5, 6 intervals, pre-refill guard | `value-solar-gate-1.5-grid6-terminal0-scenario0-prerefill1` | 6 energy intervals; pre-refill opportunity guard. | Experimental | 4 | 5 |
+| Value policy — solar gate 1.5, PV spread 100%, grid charge premium 0.01/kWh | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.01` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.01/kWh. | Experimental | 4 | 5 |
+| Value policy — solar gate 1.5, PV spread 100%, grid charge premium 0.03/kWh | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh. | Experimental | 4 | 5 |
+| Value policy — solar gate 1.5, PV spread 100%, grid charge premium 0.1/kWh | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.1` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.1/kWh. | Experimental | 4 | 5 |
+| Value policy — solar gate 1.5, PV spread 100%, charging knots, grid premium 0/kWh | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargeknots1` | 6 energy intervals; PV scenarios +/-100%; charging-threshold energy knots. | Experimental | 4 | 5 |
+| Value policy — solar gate 1.5, PV spread 100%, charging knots, grid premium 0.03/kWh | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-chargeknots1` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; charging-threshold energy knots. | Experimental | 4 | 5 |
+| Value policy — solar gate 1.5, PV spread 100%, two-slot first-action rollout, grid premium 0/kWh | `value-solar-gate-1.5-grid6-terminal0-scenario100-rollout2` | 6 energy intervals; PV scenarios +/-100%; two-slot first-action rollout. | Experimental | 4 | 5 |
+| Value policy — solar gate 1.5, PV spread 100%, two-slot first-action rollout, grid premium 0.03/kWh | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-rollout2` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; two-slot first-action rollout. | Experimental | 4 | 5 |
+| Value policy — solar gate 1.5, PV spread 100%, two-slot first-action rollout, grid premium 0.1/kWh | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.1-rollout2` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.1/kWh; two-slot first-action rollout. | Experimental | 4 | 5 |
+| Value policy — solar gate 1.5, PV spread 100%, paired demand spread 25%, demand horizon 12 | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for 12 slots. | Experimental | 4 | 5 |
+| Value policy — solar gate 1.5, PV spread 100%, paired demand spread 25%, demand horizon full | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-hfull` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for the full horizon. | Experimental | 4 | 5 |
+| Value policy — paired demand spread 25% for 12 slots, two-slot first-action rollout | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12-rollout2` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for 12 slots; two-slot first-action rollout. | Experimental | 4 | 5 |
+| Value policy — paired demand spread 10% for 12 slots | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand10-h12` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-10% for 12 slots. | Experimental | 4 | 5 |
+| Value policy — paired demand spread 50% for 12 slots | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand50-h12` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-50% for 12 slots. | Experimental | 4 | 5 |
+| Value policy — paired demand spread 25% for 6 slots | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h6` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for 6 slots. | Experimental | 4 | 5 |
+| Value policy — paired demand spread 25% for 24 slots | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h24` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for 24 slots. | Experimental | 4 | 5 |
+| Value policy — two-slot first-action rollout with persistent PV uncertainty | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-rollout2-pvpersist2` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; two-slot first-action rollout; persistent PV uncertainty across both rollout slots. | Experimental | 4 | 5 |
+| Value policy — paired demand spread 25% for 12 slots, exact initial energy knot | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12-initialknot1` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for 12 slots; exact initial-energy knot. | Experimental | 4 | 5 |
+| Value policy — 8 intervals, paired demand spread 25% for 12 slots, exact initial energy knot | `value-solar-gate-1.5-grid8-terminal0-scenario100-chargepremium0.03-demand25-h12-initialknot1` | 8 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for 12 slots; exact initial-energy knot. | Experimental | 4 | 5 |
+| Value policy — exact initial knot, pre-refill guard, mean-preserving asymmetric PV tail | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12-initialknot1-prerefill1-pvtailq1of3` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for 12 slots; exact initial-energy knot; pre-refill opportunity guard; PV tail factors 0/1.5 weighted 1/3 and 2/3. | Experimental | 4 | 5 |
+| Value policy — exact initial knot, pre-refill guard, current-first preserve prefix | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12-initialknot1-prerefill1-preserveprefix24h` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for 12 slots; exact initial-energy knot; pre-refill opportunity guard; current-first preservation comparison over up to 24 hours. | Experimental | 4 | 5 |
+| Value policy — exact initial knot, pre-refill guard, nominal joint mixture for 6 slots | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12-initialknot1-prerefill1-nominalmix50-h6` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for 12 slots; exact initial-energy knot; pre-refill opportunity guard; nominal joint scenario weighted 50% for 6 slots. | Experimental | 3 | 5 |
+| Value policy — exact initial knot, pre-refill guard, per-slot discharge budget knot | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12-initialknot1-prerefill1-dischargebudgetknot1` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for 12 slots; exact initial-energy knot; pre-refill opportunity guard; per-slot discharge-budget knot. | Experimental | 4 | 5 |
+| Value policy — grid-charge premium 0.05, paired demand spread 25% for 12 slots, exact initial knot, pre-refill guard | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.05-demand25-h12-initialknot1-prerefill1` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.05/kWh; paired demand scenarios +/-25% for 12 slots; exact initial-energy knot; pre-refill opportunity guard. | Experimental | 4 | 5 |
+| Guarded value policy | `value-solar-gate-1.5-grid6-terminal0-scenario100-chargepremium0.03-demand25-h12-initialknot1-prerefill1` | 6 energy intervals; PV scenarios +/-100%; grid-charge premium 0.03/kWh; paired demand scenarios +/-25% for 12 slots; exact initial-energy knot; pre-refill opportunity guard. | **Non-experimental** | 4 | 5 |
 
 ### Behavior and limits
 
@@ -669,14 +657,14 @@ Adjusts value-dispatch uncertainty and charging premium from forecast surplus.
 
 All configurations use solar gate ratio 1.5, 6 energy intervals, and zero terminal credit. Below each switch ratio the low setting applies; at or above it the high setting applies. Premium switching is independent of PV-spread switching.
 
-| Configuration name (UI) | Id | What distinguishes this configuration | Status |
-| --- | --- | --- | --- |
-| Adaptive solar policy — switch ratio 0.5, PV spread 100%/0% | `adaptive-solar-gate1.5-grid6-switch0.5-low100-high0` | PV-spread switch ratio 0.5; low/high PV spreads 100%/0%; no grid-charge premium. | Experimental |
-| Adaptive solar policy — switch ratio 1, PV spread 100%/0% | `adaptive-solar-gate1.5-grid6-switch1-low100-high0` | PV-spread switch ratio 1; low/high PV spreads 100%/0%; no grid-charge premium. | Experimental |
-| Adaptive solar policy — switch ratio 0.5, PV spread 100%/50% | `adaptive-solar-gate1.5-grid6-switch0.5-low100-high50` | PV-spread switch ratio 0.5; low/high PV spreads 100%/50%; no grid-charge premium. | Experimental |
-| Adaptive solar policy — switch ratio 1, PV spread 100%/50% | `adaptive-solar-gate1.5-grid6-switch1-low100-high50` | PV-spread switch ratio 1; low/high PV spreads 100%/50%; no grid-charge premium. | Experimental |
-| Adaptive solar policy — PV spread 100%/100%, grid premium 0/0.03 at ratio 0.01 | `adaptive-solar-gate1.5-grid6-switch0.5-low100-high100-premiumswitch0.01-low0-high0.03` | PV-spread switch ratio 0.5; low/high PV spreads 100%/100%; premium switch ratio 0.01; low/high grid-charge premiums 0/0.03 per kWh. | Experimental |
-| Adaptive solar policy — PV spread 100%/50%, grid premium 0/0.03 at ratio 0.01 | `adaptive-solar-gate1.5-grid6-switch0.5-low100-high50-premiumswitch0.01-low0-high0.03` | PV-spread switch ratio 0.5; low/high PV spreads 100%/50%; premium switch ratio 0.01; low/high grid-charge premiums 0/0.03 per kWh. | Experimental |
+| Configuration name (UI) | Id | What distinguishes this configuration | Status | Speed | Savings |
+| --- | --- | --- | --- | ---: | ---: |
+| Adaptive solar policy — switch ratio 0.5, PV spread 100%/0% | `adaptive-solar-gate1.5-grid6-switch0.5-low100-high0` | PV-spread switch ratio 0.5; low/high PV spreads 100%/0%; no grid-charge premium. | Experimental | 4 | 5 |
+| Adaptive solar policy — switch ratio 1, PV spread 100%/0% | `adaptive-solar-gate1.5-grid6-switch1-low100-high0` | PV-spread switch ratio 1; low/high PV spreads 100%/0%; no grid-charge premium. | Experimental | 4 | 5 |
+| Adaptive solar policy — switch ratio 0.5, PV spread 100%/50% | `adaptive-solar-gate1.5-grid6-switch0.5-low100-high50` | PV-spread switch ratio 0.5; low/high PV spreads 100%/50%; no grid-charge premium. | Experimental | 4 | 5 |
+| Adaptive solar policy — switch ratio 1, PV spread 100%/50% | `adaptive-solar-gate1.5-grid6-switch1-low100-high50` | PV-spread switch ratio 1; low/high PV spreads 100%/50%; no grid-charge premium. | Experimental | 4 | 5 |
+| Adaptive solar policy — PV spread 100%/100%, grid premium 0/0.03 at ratio 0.01 | `adaptive-solar-gate1.5-grid6-switch0.5-low100-high100-premiumswitch0.01-low0-high0.03` | PV-spread switch ratio 0.5; low/high PV spreads 100%/100%; premium switch ratio 0.01; low/high grid-charge premiums 0/0.03 per kWh. | Experimental | 4 | 5 |
+| Adaptive solar policy — PV spread 100%/50%, grid premium 0/0.03 at ratio 0.01 | `adaptive-solar-gate1.5-grid6-switch0.5-low100-high50-premiumswitch0.01-low0-high0.03` | PV-spread switch ratio 0.5; low/high PV spreads 100%/50%; premium switch ratio 0.01; low/high grid-charge premiums 0/0.03 per kWh. | Experimental | 4 | 5 |
 
 ### Behavior and limits
 
@@ -706,9 +694,9 @@ Charges a connected mobile battery at its first opportunity to cover service nee
 
 Requires supplied connection windows and departure/withdrawal requirements. Household batteries remain passive.
 
-| Configuration name (UI) | Id | What distinguishes this configuration | Status |
-| --- | --- | --- | --- |
-| Mobility — first-available service baseline | `mobility-baseline` | One first-available service schedule with passive household batteries. | Experimental |
+| Configuration name (UI) | Id | What distinguishes this configuration | Status | Speed | Savings |
+| --- | --- | --- | --- | ---: | ---: |
+| Mobility — first-available service baseline | `mobility-baseline` | One first-available service schedule with passive household batteries. | Experimental | 5 | 2 |
 
 ## Mobility tariff seeds
 
@@ -716,9 +704,9 @@ Compares immediate mobile charging with a cheaper connected-slot schedule.
 
 Requires supplied mobile-battery constraints. Household batteries remain passive; the complete service baseline is retained as a candidate.
 
-| Configuration name (UI) | Id | What distinguishes this configuration | Status |
-| --- | --- | --- | --- |
-| Mobility — two service/tariff seed candidates | `mobility-tariff-seeds-2` | Two complete candidates: first-available and tariff-delayed mobile charging. | Experimental |
+| Configuration name (UI) | Id | What distinguishes this configuration | Status | Speed | Savings |
+| --- | --- | --- | --- | ---: | ---: |
+| Mobility — two service/tariff seed candidates | `mobility-tariff-seeds-2` | Two complete candidates: first-available and tariff-delayed mobile charging. | Experimental | 5 | 2 |
 
 ## Joint seed search
 
@@ -730,9 +718,9 @@ constraints. All configured batteries are included, and connection constraints
 are optional. Batteries are identified by their supplied constraints rather
 than by a vehicle or home label.
 
-| Configuration name (UI) | Id | What distinguishes this configuration | Status |
-| --- | --- | --- | --- |
-| Joint seed search | `mobility-hybrid-seeds-4-grid4` | Four complete joint candidate schedules; value grid has 4 energy intervals; supplied availability and service constraints are included. | **Non-experimental** |
+| Configuration name (UI) | Id | What distinguishes this configuration | Status | Speed | Savings |
+| --- | --- | --- | --- | ---: | ---: |
+| Joint seed search | `mobility-hybrid-seeds-4-grid4` | Four complete joint candidate schedules; value grid has 4 energy intervals; supplied availability and service constraints are included. | **Non-experimental** | 4 | 5 |
 
 ## Mobility fleet beam
 
@@ -740,10 +728,10 @@ Searches joint household and mobile-battery actions within service constraints.
 
 Requires supplied mobile-battery constraints. Both configurations cap joint actions at 27 and retain the complete service baseline as a candidate.
 
-| Configuration name (UI) | Id | What distinguishes this configuration | Status |
-| --- | --- | --- | --- |
-| Mobility fleet beam — width 4, 1500 expansions | `mobility-fleet-beam-4-exp1500-joint27` | Beam width 4; 1,500 transition expansions. | Experimental |
-| Mobility fleet beam — width 8, 6000 expansions | `mobility-fleet-beam-8-exp6000-joint27` | Beam width 8; 6,000 transition expansions. | Experimental |
+| Configuration name (UI) | Id | What distinguishes this configuration | Status | Speed | Savings |
+| --- | --- | --- | --- | ---: | ---: |
+| Mobility fleet beam — width 4, 1500 expansions | `mobility-fleet-beam-4-exp1500-joint27` | Beam width 4; 1,500 transition expansions. | Experimental | 4 | 4 |
+| Mobility fleet beam — width 8, 6000 expansions | `mobility-fleet-beam-8-exp6000-joint27` | Beam width 8; 6,000 transition expansions. | Experimental | 3 | 4 |
 
 ## Comparing configurations
 
