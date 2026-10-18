@@ -508,7 +508,7 @@ async def test_runtime_diagnostic_sensors_disabled_by_default(
     entry.add_to_hass(hass)
 
     with patch(
-        "custom_components.wattplan.coordinator.optimize",
+        "custom_components.wattplan.optimizer.optimize",
         side_effect=_fake_optimize,
     ):
         assert await hass.config_entries.async_setup(entry.entry_id)
@@ -628,7 +628,7 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
     hass.states.async_set("sensor.battery_soc", "5.0")
     hass.states.async_set("binary_sensor.comfort_on_off", "off")
 
-    with patch("custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize):
+    with patch("custom_components.wattplan.optimizer.optimize", side_effect=_fake_optimize):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
@@ -1213,7 +1213,7 @@ async def test_refresh_sensors_service_processes_historical_costs(
     _set_energy_meter(hass, "sensor.pv_total", 50.0)
 
     with patch(
-        "custom_components.wattplan.coordinator.optimize",
+        "custom_components.wattplan.optimizer.optimize",
         side_effect=_fake_optimize,
     ):
         assert await hass.config_entries.async_setup(entry.entry_id)
@@ -1507,7 +1507,7 @@ async def test_historical_cost_uses_cached_planner_prices_after_forecast_rolls(
     _set_energy_meter(hass, "sensor.pv_total", 50.0)
 
     with patch(
-        "custom_components.wattplan.coordinator.optimize",
+        "custom_components.wattplan.optimizer.optimize",
         side_effect=_fake_optimize,
     ):
         assert await hass.config_entries.async_setup(entry.entry_id)
@@ -2173,7 +2173,7 @@ async def test_battery_action_sensor_uses_source_specific_charge_state(
 
     hass.states.async_set("sensor.battery_soc", "5.0")
 
-    with patch("custom_components.wattplan.coordinator.optimize") as optimize_mock:
+    with patch("custom_components.wattplan.optimizer.optimize") as optimize_mock:
         optimize_mock.return_value = {
             **_fake_optimize(None),
             "entities": [
@@ -2262,7 +2262,7 @@ async def test_battery_next_action_sensor_exposes_timestamp_and_state(
         "homeassistant.helpers.entity.Entity.entity_registry_enabled_default",
         return_value=True,
     ):
-        with patch("custom_components.wattplan.coordinator.optimize") as optimize_mock:
+        with patch("custom_components.wattplan.optimizer.optimize") as optimize_mock:
             optimize_mock.return_value = {
                 **_fake_optimize(None),
                 "entities": [
@@ -2385,6 +2385,7 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
         {
             "schema_id": snapshot_schema_id(),
             "config_fingerprint": config_fingerprint(entry),
+            "planner_preset": "highs",
             "snapshot": {
                 "created_at": plan_start.isoformat(),
                 "planner_status": "planned",
@@ -2401,6 +2402,7 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
                         }
                     },
                     "optimizer": {
+                        "planner_preset": "highs",
                         "suboptimal": False,
                         "suboptimal_reasons": [],
                         "span_start": plan_start.isoformat(),
@@ -2460,6 +2462,7 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
     duration_state = hass.states.get("sensor.home_last_run_duration")
     assert duration_state is not None
     restored_timings = duration_state.attributes["timings"]
+    assert duration_state.attributes["planner_preset"] == "highs"
     assert isinstance(restored_timings, list)
     assert [entry[0] for entry in restored_timings] == [
         "Import price source fetch",
@@ -2524,7 +2527,7 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
         == STATE_UNAVAILABLE
     )
 
-    with patch("custom_components.wattplan.coordinator.optimize", _fake_optimize):
+    with patch("custom_components.wattplan.optimizer.optimize", _fake_optimize):
         await hass.services.async_call(
             DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True
         )
@@ -2591,6 +2594,7 @@ async def _setup_with_cached_snapshot(
             "config_fingerprint": (
                 config_fingerprint(entry) if fingerprint is _MATCHING else fingerprint
             ),
+            "planner_preset": "highs",
             "snapshot": {
                 "created_at": span_start.isoformat(),
                 "planner_status": "planned",
@@ -2686,7 +2690,7 @@ async def test_successful_plan_persists_completed_last_run(
     entry.add_to_hass(hass)
 
     with patch(
-        "custom_components.wattplan.coordinator.optimize",
+        "custom_components.wattplan.optimizer.optimize",
         side_effect=_fake_optimize,
     ):
         assert await hass.config_entries.async_setup(entry.entry_id)
@@ -2775,7 +2779,7 @@ async def test_failed_plan_advances_retained_actions_across_tariff_boundary(
             "homeassistant.helpers.entity.Entity.entity_registry_enabled_default",
             return_value=True,
         ),
-        patch("custom_components.wattplan.coordinator.optimize") as optimize_mock,
+        patch("custom_components.wattplan.optimizer.optimize") as optimize_mock,
     ):
         optimize_mock.return_value = {
             **_fake_optimize(None),
@@ -2955,7 +2959,7 @@ async def test_retained_plan_expires_and_plan_entities_become_unavailable(
     entry.add_to_hass(hass)
     hass.states.async_set("sensor.battery_soc", "5.0")
 
-    with patch("custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize):
+    with patch("custom_components.wattplan.optimizer.optimize", side_effect=_fake_optimize):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
         await hass.services.async_call(
@@ -3155,7 +3159,7 @@ async def test_plan_details_sensor_exposes_horizon_length_arrays(
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-    with patch("custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize):
+    with patch("custom_components.wattplan.optimizer.optimize", side_effect=_fake_optimize):
         await hass.services.async_call(
             DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True
         )
@@ -3200,7 +3204,7 @@ async def test_plan_details_sensor_exposes_horizon_length_arrays(
         "Optional entity build: optional",
         "Request assembly",
         "Optimizer input validation",
-        "Optimizer executor job",
+        "Optimizer process",
         "Historical price retention",
         "Planner output mapping",
         "Plan details payload build",
@@ -3258,7 +3262,7 @@ async def test_plan_details_timings_omit_unconfigured_sources(
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-    with patch("custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize):
+    with patch("custom_components.wattplan.optimizer.optimize", side_effect=_fake_optimize):
         await hass.services.async_call(
             DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True
         )
@@ -3351,7 +3355,7 @@ async def test_plan_details_timings_keep_merged_source_as_single_source_entry(
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-    with patch("custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize):
+    with patch("custom_components.wattplan.optimizer.optimize", side_effect=_fake_optimize):
         await hass.services.async_call(
             DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True
         )
@@ -3420,7 +3424,7 @@ async def test_battery_target_changes_plan_and_expires_after_deadline(
     hass.states.async_set("sensor.battery_soc", "5.0")
 
     with patch(
-        "custom_components.wattplan.coordinator.optimize",
+        "custom_components.wattplan.optimizer.optimize",
         side_effect=_fake_optimize_with_target_behavior,
     ):
         with patch(
@@ -3601,7 +3605,7 @@ async def test_button_entities_registered_and_pressable(hass: HomeAssistant) -> 
     )
     entry.add_to_hass(hass)
 
-    with patch("custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize):
+    with patch("custom_components.wattplan.optimizer.optimize", side_effect=_fake_optimize):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
@@ -3658,7 +3662,7 @@ async def test_button_optimize_raises_when_already_running(hass: HomeAssistant) 
     )
     entry.add_to_hass(hass)
 
-    with patch("custom_components.wattplan.coordinator.optimize", side_effect=_fake_optimize):
+    with patch("custom_components.wattplan.optimizer.optimize", side_effect=_fake_optimize):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 

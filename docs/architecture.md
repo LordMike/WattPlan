@@ -1,5 +1,41 @@
 # Architecture
 
+## Shared planner features
+
+The live coordinator routes named configurations through
+`optimizer/planners/presets.py` and the lazy registry. HiGHS retains its native
+pipeline. Every other factory wraps its battery search with `shared.py`:
+`comfort.py` constructs required load schedules, the algorithm searches using
+the resulting modeled demand, and `reporting.py` publishes projections, optional
+appliance recommendations and observed constraint violations from the accepted
+physical trajectory. Comfort continuity is stored separately from battery state
+inside the registry's configuration-owned envelope. `optimizer/` remains free
+of Home Assistant imports.
+
+Policy searches penalize end-of-slot minimum-energy shortfalls and seed or order
+early recovery actions. This affects optimization preference, never tariff
+accounting. Self-consumption keeps passive battery actions and reports shortfalls.
+
+Live planning runs in a fresh worker process with a 180-second whole-call limit,
+including startup, solving, shared reporting and result transfer. Cancellation
+kills and reaps that process, even during a native solve. A new planning request
+supersedes the previous request; reload and shutdown drain old work before a
+replacement runtime starts. Battery target changes also abort stale work and
+invalidate cached recommendations, even when immediate replanning is disabled.
+On timeout, the integration discards the plan, optimizer continuity state and
+disk cache. Plan-derived entities (including actions and Plan Outlook) become
+unavailable. Status and Status Message report the timeout and suggest picking
+another planner; Last Run Duration retains the elapsed time and timing checkpoints
+for the failed attempt. A successful retry restores plan availability without
+requiring a restart.
+The simulator independently bounds each complete replay at 120 seconds.
+
+Planning retains the owning entry runtime across source acquisition and execution
+awaits. Obsolete results cannot update active state. Snapshot commits share an
+entry-scoped lock across reloads; an in-flight disk write finishes before a newer
+commit can start, and ownership is checked after acquiring the lock. This prevents
+old runtimes from overwriting a replacement runtime's cache.
+
 ## Plan Outlook
 
 `plan_outlook.py` builds a language-neutral model from captured planner inputs
@@ -86,7 +122,7 @@ The repository is structured so the integration can be released as a normal HACS
 All paths are under `custom_components/wattplan/` unless noted.
 
 - Entry points and wiring
-  - `__init__.py`, `entry_setup.py`: setup and unload of a config entry (service registration, coordinator, platforms, scheduler start, snapshot restore). `runtime.py` holds the per-entry runtime data.
+  - `__init__.py`, `entry_setup.py`: setup and unload of a config entry (service registration, coordinator, platforms, scheduler start, snapshot restore). `config_identity.py` fingerprints the entry configuration for cached-plan validation, and `runtime.py` holds per-entry runtime data.
   - `config_flow.py` (thin entry) and `flows/`: config, options and subentry flows (`main.py`, `subentries.py`, `source_shared.py`, `forms.py`, `common.py`, `state.py`).
   - `repairs.py`, `source_issues.py`, `source_health_presenter.py`: Repairs issues and shared source-health presentation.
   - `services.py`, `services.yaml`: the `wattplan.*` services.
@@ -114,16 +150,24 @@ All paths are under `custom_components/wattplan/` unless noted.
     Signed slot differences are retained alongside cost facts and exposed as
     slot-average W and daily Wh, without optimizer or cost corrections.
   - `planner_history.py`: optional JSONL planner reproductions.
+    Version 2 retains input-capture times and completed actuals. The historical
+    tracker appends actuals independently of planner success; interval start
+    dates determine files. Exports enrich legacy files from retained history
+    without querying Recorder or changing forecasts.
   - `datetime_utils.py`, `utilities/`: shared helpers.
 - `optimizer/`
   - Pure Python optimization models and solver code, free of `homeassistant` imports.
+  - `simulation/`: dataset validation, isolated planner adapters, causal execution
+    and reports. Shared physics supports policy replay and historical simulation
+    (which retains sequential discharge). Production request/response models
+    remain unchanged. See [Planner simulator](simulator.md).
 - Repository level
   - `tests/integration/`: Home Assistant integration tests.
   - `tests/optimizer/`: optimizer-only tests that do not need Home Assistant runtime state.
 
 ## Runtime Model
 The main runtime center is the coordinator:
-- `entry_setup.py`: Creates the coordinator, loads the persisted battery targets, starts the optional historical tracker, forwards the `sensor` and `button` platforms, then starts the scheduler. On startup the cached snapshot is restored only if it was stored with the same configuration fingerprint (hash of entry data, options, and subentries) and its plan still covers the current time; otherwise it is discarded and the first plan is awaited during setup. A restored snapshot is trusted immediately and replaced by a plan that runs as a background task right after setup.
+- `entry_setup.py`: Creates the coordinator, loads the persisted battery targets, starts the optional historical tracker, forwards the `sensor` and `button` platforms, then starts the scheduler. On startup the cached snapshot is restored only if it was stored with the same configuration fingerprint (hash of entry data, options, and subentries), the same explicit planner configuration ID, and its plan still covers the current time; otherwise it is discarded and the first plan is awaited during setup. A restored snapshot is trusted immediately and replaced by a plan that runs as a background task right after setup. Unsupported stored configuration IDs are repaired to the default before the coordinator and configuration fingerprint are created, allowing the options picker to recover.
 - `coordinator.py`: Builds planner input, runs planning, tracks stage errors, and updates runtime entities. It subclasses `DataUpdateCoordinator` for listener handling but owns its scheduler: one `async_track_point_in_utc_time` timer aimed at the next slot boundary, re-armed after every run and cancelled on shutdown. It does not use the base class's refresh timer (`update_interval` is not set while the scheduler is enabled). A separate heartbeat drives the `scheduler_stale` status attribute.
 - `config_flow.py` / `flows/`: Collect source configuration and planner settings.
 - `sensor.py` / `sensors/` and `button.py`: Expose planning state, diagnostics, error scopes, actions and the manual run/refresh buttons.
@@ -162,7 +206,7 @@ After this, the coordinator holds four slot-aligned numeric arrays that are pass
 - `usage_kwh`
 - `solar_input_kwh`
 
-The integration keeps plan coverage separate from economic lookahead. Plan coverage determines the length of these arrays and the complete schedule returned to Home Assistant. Economic lookahead determines how many future slots may influence each current MPC action. Users edit lookahead in hours, while config entries persist the resulting whole-slot value so the optimizer boundary stays resolution-independent. New setups default to 12 hours. Entries created before configurable lookahead are migrated once to the historical 22-slot value, displayed as 5.5 hours at 15-minute resolution, 11 hours at 30-minute resolution, or 22 hours at 60-minute resolution. Planner and comfort flows reject changes whose effective solve horizon is not longer than each comfort load's minimum ON/OFF duration.
+The integration keeps plan coverage separate from economic lookahead. Plan coverage determines the length of these arrays and the complete schedule returned to Home Assistant. Economic lookahead determines how many future slots may influence each current MPC action. The selected planner configuration fixes algorithm tuning, including HiGHS lookahead; numeric HiGHS suffixes count slots. Direct optimizer callers may still supply their own request-level lookahead. Planner and comfort flows check that the selected configuration's effective solve horizon is longer than each comfort load's minimum ON/OFF duration.
 
 Comfort runtime acquisition samples recorder history into ordered ON/OFF values
 for the `rolling_window_slots - 1` completed slots immediately before the
@@ -229,7 +273,7 @@ flowchart LR
   Plan --> A
 ```
 
-The coordinator snapshot retains complete time-indexed battery and comfort action schedules separately from the optional plan-detail diagnostic sensors. Action emission selects the slot covering the current time. A plan successfully calculated in the current runtime session continues to advance after a later planning failure, but a snapshot restored without a matching configuration fingerprint is diagnostic-only until a fresh planning run succeeds; at startup such snapshots are discarded instead. A snapshot restored at startup with a matching fingerprint that still covers the current time is trusted immediately, and a background plan refreshes it. The plan becomes unusable at the end of its recorded coverage; WattPlan then publishes failed health and makes plan-dependent actions unavailable instead of inventing a fallback action. Scheduler-heartbeat staleness is exposed separately from this action-validation state.
+The coordinator snapshot retains complete time-indexed battery and comfort action schedules separately from the optional plan-detail diagnostic sensors. Action emission selects the slot covering the current time. A plan successfully calculated in the current runtime session continues to advance after a later planning failure, but a snapshot restored without a matching configuration fingerprint or planner configuration ID is diagnostic-only until a fresh planning run succeeds; at startup such snapshots are discarded instead. Configuration IDs are stable semantic identifiers: changing a configuration's algorithm or settings requires a new ID so snapshots created under the old behavior are not reused. A snapshot restored at startup with a matching fingerprint and configuration ID that still covers the current time is trusted immediately, and a background plan refreshes it. The plan becomes unusable at the end of its recorded coverage; WattPlan then publishes failed health and makes plan-dependent actions unavailable instead of inventing a fallback action. Scheduler-heartbeat staleness is exposed separately from this action-validation state.
 
 When troubleshooting recording is enabled, each accepted plan is additionally
 appended off the event loop to one JSONL file per HA local date and config
@@ -304,3 +348,30 @@ Each `optimize` call decodes the incoming state blob once and hands the decoded 
 The opaque state includes bounded clock/configuration metadata, published battery policies, and expiry receipts for first-slot comfort commitments. Same-slot requests do not shift the schedule or consume another cadence phase. Missing/incompatible timing and skipped/reversed windows fall back to a full calculation. Untimed direct API calls retain their full-plan timing/reuse behavior and use the same deterministic comfort scheduler. A comfort-scheduler version in state fingerprints prevents reusing controls from the previous tariff-optimized model. Cached battery controls are also rejected if recomputing comfort changes the demand they were solved for. Future-tail freshness and fallback reasons are exposed in optimizer results, while the integration still publishes a complete schedule on each successful call.
 
 That boundary is the main extraction seam if the optimizer is ever split into its own package later.
+
+Interchangeable implementations live in `optimizer/planners/`. A lazy factory boundary
+selects HiGHS, self-consumption, greedy, local search, beam search, dynamic
+programming, charge-window search, genetic search, cross-entropy search, or a separate
+`module:factory`. HA selects a finite configuration from `planners/presets.py`
+and runs it through that same registry in its worker process. New setups default
+to `local-search-3`, labeled **Recommended — Local search** only in initial
+setup. The concrete configuration ID is stored, so later recommendation changes
+do not switch an existing setup's algorithm. Config-entry migration to version 1.3 preserves explicit
+selections and records `highs` for older entries that relied on the implicit
+22-slot HiGHS default. Matching HiGHS cache fingerprints are updated when that
+implicit selection becomes explicit; mismatched cached plans remain rejected.
+The normal picker shows **Local search**, **Charge-window search**, **Guarded value policy**,
+**Joint seed search**, and **Self-consumption**; see
+[Planner configurations](optimizer-profiles.md#choosing-a-configuration) for their
+IDs and behavior. Experimental configurations remain available on request, and
+a currently selected experimental configuration stays visible. Old profile and
+lookahead options are ignored. Fixed HiGHS configuration suffixes count slots;
+alternative planners own their search settings. Configuration identity and fixed options
+accompany the effective input in reproductions, results and HA diagnostics. The
+factory validates capabilities and owns the implementation/options/version state
+envelope while HiGHS retains its
+legacy state internally. Shared policy physics lives in `optimizer/physics.py`,
+used by simulation, forecast schedule evaluation, historical accounting and
+production power/headroom helpers. `simulation/physics.py` is a compatibility
+shim. Forecast evaluation never receives replay actuals. See
+[planner factories](optimizer-api.md#planner-factories) for extension boundaries.

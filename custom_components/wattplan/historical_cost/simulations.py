@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 
+from ..optimizer.physics import transition
+
 
 @dataclass(frozen=True, slots=True)
 class BatterySimulationConfig:
@@ -18,6 +20,18 @@ class BatterySimulationConfig:
     charge_efficiency: float
     discharge_efficiency: float
     can_charge_from_pv: bool
+
+    @property
+    def charge_curve_kwh(self) -> tuple[float]:
+        return (self.max_charge_kwh,)
+
+    @property
+    def discharge_curve_kwh(self) -> tuple[float]:
+        return (self.max_discharge_kwh,)
+
+    @property
+    def can_charge_from(self) -> int:
+        return 2 if self.can_charge_from_pv else 0
 
     def __post_init__(self) -> None:
         """Reject invalid numeric configuration before simulation."""
@@ -98,54 +112,20 @@ def simulate_self_consumption_slot(
         for value in soc_by_battery.values()
     ):
         raise ValueError("Historical simulation state must be finite")
-    surplus = max(pv - usage, 0.0)
-    deficit = max(usage - pv, 0.0)
+    # Retain historical sequential discharge and its minimum-level seed/clamp.
+    # Planner counterfactuals use proportional discharge and do not clamp to reserve.
+    levels = [_clamp_soc(soc_by_battery.get(b.subentry_id, b.minimum_kwh), b) for b in batteries]
+    step = transition(batteries, levels, ["self_consume"] * len(batteries),
+                      usage=usage, pv=pv, allocation="sequential")
     next_soc = dict(soc_by_battery)
-
-    for battery in batteries:
-        if surplus <= 0.0 or not battery.can_charge_from_pv:
-            continue
-        current_soc = _clamp_soc(next_soc.get(battery.subentry_id, battery.minimum_kwh), battery)
-        efficiency = max(battery.charge_efficiency, 0.000001)
-        capacity_room_input = max(battery.capacity_kwh - current_soc, 0.0) / efficiency
-        charge_input = min(surplus, battery.max_charge_kwh, capacity_room_input)
-        if charge_input <= 0.0:
-            next_soc[battery.subentry_id] = current_soc
-            continue
-        next_soc[battery.subentry_id] = min(
-            battery.capacity_kwh,
-            current_soc + (charge_input * efficiency),
-        )
-        surplus -= charge_input
-
-    for battery in batteries:
-        if deficit <= 0.0:
-            break
-        current_soc = _clamp_soc(next_soc.get(battery.subentry_id, battery.minimum_kwh), battery)
-        efficiency = max(battery.discharge_efficiency, 0.000001)
-        available_output = max(current_soc - battery.minimum_kwh, 0.0) * efficiency
-        max_output = battery.max_discharge_kwh
-        output = min(deficit, available_output, max_output)
-        if output <= 0.0:
-            next_soc[battery.subentry_id] = current_soc
-            continue
-        next_soc[battery.subentry_id] = max(
-            battery.minimum_kwh,
-            current_soc - (output / efficiency),
-        )
-        deficit -= output
-
-    for battery in batteries:
-        if battery.subentry_id in next_soc:
-            next_soc[battery.subentry_id] = _clamp_soc(
-                next_soc[battery.subentry_id],
-                battery,
-            )
-
+    surplus, deficit = max(pv - usage, 0.0), max(usage - pv, 0.0)
+    for i, b in enumerate(batteries):
+        if b.subentry_id in next_soc or (surplus > 0 and b.can_charge_from_pv) or deficit > 0:
+            next_soc[b.subentry_id] = step.levels[i]
+        surplus = max(0.0, surplus - step.pv_charge[i])
+        deficit = max(0.0, deficit - step.discharge[i])
     return SelfConsumptionSimulationResult(
-        grid_import=max(deficit, 0.0),
-        grid_export=max(surplus, 0.0),
-        soc_by_battery=next_soc,
+        grid_import=step.grid_import, grid_export=step.grid_export, soc_by_battery=next_soc,
     )
 
 

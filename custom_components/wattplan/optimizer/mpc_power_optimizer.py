@@ -1,12 +1,51 @@
+"""Original HiGHS battery MPC engine and native load/reporting orchestration.
+
+``planners.highs`` adapts this implementation to the common planner registry;
+the public ``optimize`` entry point delegates cadence and state reuse to
+``prefix_planner``, which calls ``optimize_internal`` here. This is the native
+solver implementation, not another policy-search preset.
+
+Mixed-integer models coordinate batteries with continuous power variables and
+discrete operating constraints. Receding-horizon decisions, soft battery-target
+penalties, model approximations and per-solve limits distinguish its outcomes
+from the alternatives' full-horizon target-first policy scores. A solved local
+model is not a guarantee of globally optimal realized costs. More batteries and
+longer lookahead can increase native solve work substantially; lack of a usable
+solution raises an error rather than silently substituting another planner.
+
+Comfort has a constraint-driven initial schedule. Bounded placement evaluates
+candidate moves under fixed baseline battery policies and may trigger one
+additional battery replan around the accepted schedule, with validation before
+adoption. This is not unrestricted joint battery/appliance optimization.
+Optional appliances are ranked separately after the accepted plan, under fixed
+policies, by incremental cost then start time. They remain recommendations and
+do not compete with each other in a shared appliance schedule.
+
+The engine also produces native health, cost, flow and continuity state fields.
+See the ``planners.highs`` module introduction for preset properties and measured
+limitations, and ``docs/optimizer-api.md`` for the detailed model contract.
+"""
+
 import logging
 import time
 
 import numpy as np
 
+from .physics import (
+    MIN_GRID_CHARGE_SLOT_FRACTION,
+    battery_power_limits,
+    grid_charge_headroom_sufficient,
+    transition,
+)
+
 from .comfort_placement import (
     ComfortPlacementInput,
     ComfortPlacementResult,
     place_comfort_schedules,
+)
+from .comfort_schedule import (
+    initial_comfort_history as _initial_comfort_history,
+    fixed_comfort_schedule as _fixed_comfort_schedule,
 )
 from .models import (
     BatteryEntity,
@@ -26,7 +65,6 @@ except ImportError:
 _LOGGER = logging.getLogger(__name__)
 
 EPSILON = 1e-6
-MIN_GRID_CHARGE_SLOT_FRACTION = 0.5
 AVG_PRICE_SENTINEL = 1000.0
 PRESERVE_PROBE_MIN_KWH = 0.01
 PRESERVE_OBJECTIVE_TOLERANCE = 1e-7
@@ -77,21 +115,8 @@ def piecewise_value_interpolated(level_array, curve):
     return v1 + ratio * (v2 - v1)
 
 
-def _piecewise_scalar(level, curve):
-    return float(piecewise_value_interpolated(np.array([level]), curve)[0])
-
-
 def _battery_power_limits(entity, level):
-    if len(entity.charge_curve_kwh) == 1 and len(entity.discharge_curve_kwh) == 1:
-        return max(0.0, float(entity.charge_curve_kwh[0])), max(
-            0.0, float(entity.discharge_curve_kwh[0])
-        )
-
-    capacity = max(float(entity.capacity_kwh), EPSILON)
-    soc = np.clip((float(level) / capacity) * 100.0, 0.0, 100.0)
-    charge_limit = max(0.0, _piecewise_scalar(soc, entity.charge_curve_kwh))
-    discharge_limit = max(0.0, _piecewise_scalar(soc, entity.discharge_curve_kwh))
-    return charge_limit, discharge_limit
+    return battery_power_limits(entity, level)
 
 
 def _battery_target_bounds_kwh(entity):
@@ -136,117 +161,8 @@ def _charge_ingress_permissions(entity):
     )
 
 
-def _initial_comfort_history(entity, rolling_window_slots):
-    history_slots = max(int(rolling_window_slots) - 1, 0)
-    if entity.on_history is None:
-        # A legacy aggregate over W prior slots guarantees only max(count-k, 0)
-        # ON observations after k oldest slots have left the window. Placing that
-        # guaranteed credit at the oldest edge models those lower bounds without
-        # claiming an order the caller did not provide.
-        history = np.zeros(history_slots, dtype=np.int32)
-        guaranteed_on = min(
-            max(int(entity.on_slots_last_rolling_window) - 1, 0), history_slots
-        )
-        history[:guaranteed_on] = 1
-        return history
-    return np.asarray(entity.on_history, dtype=np.int32).copy()
-
-
 def _comfort_window_deficit(history, target):
     return max(float(target) - float(np.sum(history)), 0.0)
-
-
-def _fixed_comfort_schedule(
-    comfort_entities,
-    rolling_window_slots,
-    total_steps,
-    initial_lock_modes,
-    initial_lock_remaining,
-):
-    """Build a cheap, constraint-driven comfort schedule outside the battery MILP."""
-    schedule = np.zeros((len(comfort_entities), total_steps), dtype=np.float64)
-    history_slots = max(int(rolling_window_slots) - 1, 0)
-    for i, entity in enumerate(comfort_entities):
-        history = _initial_comfort_history(entity, rolling_window_slots).tolist()
-        previous = bool(entity.is_on_now)
-        mode = bool(initial_lock_modes[i])
-        remaining = max(int(initial_lock_remaining[i]), 0)
-        off_streak = 0 if previous else int(entity.off_streak_slots_now)
-        for t in range(total_steps):
-            target = int(entity.target_on_slots_per_rolling_window)
-            max_off = int(entity.max_consecutive_off_slots)
-            if remaining > 0:
-                enabled = mode or off_streak >= max_off
-                if enabled != mode:
-                    mode = enabled
-                    remaining = max(int(entity.min_consecutive_on_slots) - 1, 0)
-                else:
-                    remaining -= 1
-            else:
-                must_start_on = sum(history) < target or off_streak >= max_off
-                if not must_start_on and not previous:
-                    projected = history.copy()
-                    projected_off = off_streak
-                    first_required = None
-                    for offset in range(total_steps - t):
-                        if sum(projected) < target or projected_off >= max_off:
-                            first_required = offset
-                            break
-                        if history_slots:
-                            projected.append(0)
-                            projected = projected[-history_slots:]
-                        projected_off += 1
-                    if first_required is not None:
-                        slots_after_start = total_steps - (t + first_required)
-                        must_start_on = slots_after_start < int(
-                            entity.min_consecutive_on_slots
-                        )
-                enabled = must_start_on
-                if previous and not enabled:
-                    minimum_off = int(entity.min_consecutive_off_slots)
-                    if t + minimum_off > total_steps:
-                        enabled = True
-                    else:
-                        projected = history.copy()
-                        projected_off = off_streak
-                        for _ in range(minimum_off):
-                            if sum(projected) < target or projected_off >= max_off:
-                                enabled = True
-                                break
-                            if history_slots:
-                                projected.append(0)
-                                projected = projected[-history_slots:]
-                            projected_off += 1
-                        if not enabled:
-                            first_required = None
-                            for offset in range(minimum_off, total_steps - t):
-                                if sum(projected) < target or projected_off >= max_off:
-                                    first_required = offset
-                                    break
-                                if history_slots:
-                                    projected.append(0)
-                                    projected = projected[-history_slots:]
-                                projected_off += 1
-                            if first_required is not None:
-                                slots_after_start = total_steps - (t + first_required)
-                                enabled = slots_after_start < int(
-                                    entity.min_consecutive_on_slots
-                                )
-                if enabled != previous:
-                    minimum = (
-                        int(entity.min_consecutive_on_slots)
-                        if enabled
-                        else int(entity.min_consecutive_off_slots)
-                    )
-                    mode = enabled
-                    remaining = max(minimum - 1, 0)
-            schedule[i, t] = float(enabled)
-            off_streak = 0 if enabled else off_streak + 1
-            if history_slots:
-                history.append(int(enabled))
-                history = history[-history_slots:]
-            previous = enabled
-    return schedule
 
 
 def _build_reuse_plan(
@@ -1245,16 +1161,8 @@ def _battery_available_discharge_kwh(entity: BatteryEntity, level: float) -> flo
     return max(float(level) - float(entity.minimum_kwh), 0.0) * discharge_eff
 
 
-def _grid_charge_headroom_sufficient(
-    entity: BatteryEntity, level: float, charge_limit: float
-) -> bool:
-    """Return whether a capacity-limited ON slot can fill at least half a slot."""
-    if charge_limit <= EPSILON:
-        return False
-    available_input = max(float(entity.capacity_kwh) - level, 0.0) / float(
-        entity.charge_efficiency
-    )
-    return available_input + EPSILON >= MIN_GRID_CHARGE_SLOT_FRACTION * charge_limit
+def _grid_charge_headroom_sufficient(entity, level, charge_limit):
+    return grid_charge_headroom_sufficient(entity, level, charge_limit)
 
 
 def _battery_preserve_probe_kwh(entity: BatteryEntity, level: float) -> float:
@@ -2351,92 +2259,18 @@ def _replay_policy_cost(
     for t in range(first_step, total_steps):
         if trace is not None:
             trace.append((battery_levels.copy(), total_cost))
-        battery_levels_before_pv = battery_levels.copy()
-        total_usage = float(usage[t])
+        total_usage = float(usage[t]) + float(optional_usage[t])
         for i, entity in enumerate(comfort_entities):
             if comfort_enabled[i, t] == 1:
                 total_usage += float(entity.power_usage_kwh)
-        total_usage += float(optional_usage[t])
-
-        remaining_deficit = max(total_usage - float(solar_input[t]), 0.0)
-        remaining_surplus = max(float(solar_input[t]) - total_usage, 0.0)
-        charge_limits = np.zeros(len(battery_entities), dtype=np.float64)
-        pv_charge = np.zeros(len(battery_entities), dtype=np.float64)
-
-        # Preserve the runtime's stable input-order allocation of finite PV.
-        for i, entity in enumerate(battery_entities):
-            charge_limit, _ = _battery_power_limits(entity, battery_levels[i])
-            charge_limits[i] = charge_limit
-            _, can_charge_from_pv = _charge_ingress_permissions(entity)
-            if not can_charge_from_pv or remaining_surplus <= EPSILON:
-                continue
-            capacity_input = max(
-                float(entity.capacity_kwh) - battery_levels[i], 0.0
-            ) / float(entity.charge_efficiency)
-            pv_charge[i] = min(charge_limit, capacity_input, remaining_surplus)
-            battery_levels[i] += pv_charge[i] * float(entity.charge_efficiency)
-            battery_levels[i] = min(
-                battery_levels[i], float(entity.capacity_kwh)
-            )
-            remaining_surplus -= pv_charge[i]
-
-        discharge_requests = np.zeros(len(battery_entities), dtype=np.float64)
-        if remaining_deficit > EPSILON:
-            for i, entity in enumerate(battery_entities):
-                if battery_modes[i][t] != "self_consume":
-                    continue
-                _, discharge_limit = _battery_power_limits(entity, battery_levels[i])
-                available = (
-                    max(battery_levels[i] - float(entity.minimum_kwh), 0.0)
-                    * float(entity.discharge_efficiency)
-                )
-                discharge_requests[i] = min(discharge_limit, available)
-
-            requested_discharge = float(np.sum(discharge_requests))
-            if requested_discharge > EPSILON:
-                # Share a limited deficit proportionally across eligible batteries.
-                scale = min(1.0, remaining_deficit / requested_discharge)
-                discharge = discharge_requests * scale
-                remaining_deficit = max(
-                    remaining_deficit - float(np.sum(discharge)), 0.0
-                )
-                for i, entity in enumerate(battery_entities):
-                    if discharge[i] <= 0.0:
-                        continue
-                    battery_levels[i] -= discharge[i] / float(
-                        entity.discharge_efficiency
-                    )
-                    battery_levels[i] = max(
-                        battery_levels[i], float(entity.minimum_kwh)
-                    )
-
-        grid_charge = 0.0
-        for i, entity in enumerate(battery_entities):
-            if battery_modes[i][t] != "grid_charge":
-                continue
-            can_charge_from_grid, _ = _charge_ingress_permissions(entity)
-            if not can_charge_from_grid:
-                continue
-            if not _grid_charge_headroom_sufficient(
-                entity, float(battery_levels_before_pv[i]), charge_limits[i]
-            ):
-                continue
-            capacity_input = max(
-                float(entity.capacity_kwh) - battery_levels[i], 0.0
-            ) / float(entity.charge_efficiency)
-            charge_input = min(
-                max(charge_limits[i] - pv_charge[i], 0.0),
-                capacity_input,
-            )
-            battery_levels[i] += charge_input * float(entity.charge_efficiency)
-            battery_levels[i] = min(
-                battery_levels[i], float(entity.capacity_kwh)
-            )
-            grid_charge += charge_input
-
+        step = transition(
+            battery_entities, battery_levels, [modes[t] for modes in battery_modes],
+            usage=total_usage, pv=float(solar_input[t]),
+        )
+        battery_levels = np.asarray(step.levels, dtype=np.float64)
         total_cost += (
-            float(grid_import_prices[t]) * (remaining_deficit + grid_charge)
-            - float(grid_export_prices[t]) * remaining_surplus
+            float(grid_import_prices[t]) * step.grid_import
+            - float(grid_export_prices[t]) * step.grid_export
         )
 
     return float(total_cost)

@@ -91,7 +91,7 @@ async def test_outlook_generation_failure_keeps_plan_usable_and_sensor_unavailab
     entry = _entry()
     entry.add_to_hass(hass)
 
-    with patch("custom_components.wattplan.coordinator.optimize", _optimizer_result):
+    with patch("custom_components.wattplan.optimizer.optimize", _optimizer_result):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
         with caplog.at_level(logging.ERROR):
@@ -122,7 +122,7 @@ async def test_outlook_render_failure_makes_only_outlook_sensor_unavailable(
     entry = _entry()
     entry.add_to_hass(hass)
 
-    with patch("custom_components.wattplan.coordinator.optimize", _optimizer_result):
+    with patch("custom_components.wattplan.optimizer.optimize", _optimizer_result):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
         await hass.services.async_call(
@@ -149,13 +149,13 @@ async def test_outlook_render_failure_makes_only_outlook_sensor_unavailable(
     assert entry.entry_id in caplog.text
 
 
-async def test_no_plan_outlook_remains_a_status_report(hass: HomeAssistant) -> None:
-    """Genuine no-plan states should continue to provide a status report."""
+async def test_no_plan_outlook_is_unavailable(hass: HomeAssistant) -> None:
+    """Without a plan, health remains in Status and plan-derived entities stop."""
     entry = _entry()
     entry.add_to_hass(hass)
 
     with patch(
-        "custom_components.wattplan.coordinator.optimize",
+        "custom_components.wattplan.optimizer.optimize",
         side_effect=RuntimeError("optimizer failed"),
     ):
         assert await hass.config_entries.async_setup(entry.entry_id)
@@ -163,7 +163,10 @@ async def test_no_plan_outlook_remains_a_status_report(hass: HomeAssistant) -> N
 
     outlook = hass.states.get("sensor.home_plan_outlook_en")
     assert outlook is not None
-    assert outlook.state.startswith("plan_unavailable_high_")
+    assert outlook.state == STATE_UNAVAILABLE
+    status = hass.states.get("sensor.home_status")
+    assert status.state == "failed"
+    assert "optimizer failed" in status.attributes["reason_summary"]
 
 
 async def test_restored_unvalidated_plan_without_outlook_remains_a_status_report(
@@ -173,7 +176,7 @@ async def test_restored_unvalidated_plan_without_outlook_remains_a_status_report
     entry = _entry()
     entry.add_to_hass(hass)
 
-    with patch("custom_components.wattplan.coordinator.optimize", _optimizer_result):
+    with patch("custom_components.wattplan.optimizer.optimize", _optimizer_result):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
         await hass.services.async_call(

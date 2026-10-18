@@ -73,6 +73,8 @@ class LastRunDurationSensor(WattPlanCoordinatorSensor):
         snapshot = self.coordinator.snapshot
         diagnostics = snapshot.diagnostics if snapshot is not None else None
         optimizer = diagnostics.get("optimizer") if isinstance(diagnostics, dict) else None
+        if isinstance(optimizer, dict) and isinstance(optimizer.get("planner_preset"), str):
+            attributes["planner_preset"] = optimizer["planner_preset"]
         execution_time_s = (
             optimizer.get("execution_time_s") if isinstance(optimizer, dict) else None
         )

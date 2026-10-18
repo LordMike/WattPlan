@@ -7,7 +7,7 @@ from enum import IntFlag
 from typing import List
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
 
 DEFAULT_LOOKAHEAD_SLOTS = 22
@@ -22,6 +22,19 @@ GRID_CHARGE_POLICY_VERSION = 2
 class ChargeSource(IntFlag):
     GRID = 0x01
     PV = 0x02
+
+
+class DepartureRequirementParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    timeslot: int = Field(..., ge=0, strict=True)
+    minimum_kwh: float = Field(..., ge=0)
+
+    @field_validator("minimum_kwh", mode="before")
+    @classmethod
+    def _finite_minimum(cls, value):
+        if type(value) not in {int, float} or not np.isfinite(value):
+            raise ValueError("minimum_kwh must be finite and nonnegative")
+        return value
 
 
 class BatteryEntityParams(BaseModel):
@@ -82,6 +95,17 @@ class BatteryEntityParams(BaseModel):
         int(ChargeSource.PV),
         description="Bitmask of allowed charge sources: GRID=1, PV=2.",
     )
+    connected_slots: List[StrictBool] | None = None
+    external_energy_kwh: List[float] | None = None
+    departure_requirements: List[DepartureRequirementParams] = Field(default_factory=list)
+
+    @field_validator("external_energy_kwh", mode="before")
+    @classmethod
+    def _external_energy(cls, values):
+        if values is not None and (not isinstance(values, list) or any(
+            type(v) not in {int, float} or not np.isfinite(v) or v < 0 for v in values)):
+            raise ValueError("external_energy_kwh must contain finite nonnegative numbers")
+        return values
 
     @field_validator("name")
     @classmethod
@@ -139,7 +163,20 @@ class BatteryEntityParams(BaseModel):
             raise ValueError("initial_kwh must be within [0, capacity_kwh]")
         if self.target is not None and self.target.soc_kwh > self.capacity_kwh:
             raise ValueError("target.soc_kwh must be <= capacity_kwh")
+        if any(r.minimum_kwh > self.capacity_kwh for r in self.departure_requirements):
+            raise ValueError("departure minimum_kwh must be <= capacity_kwh")
         return self
+
+
+def has_battery_mobility(battery):
+    """Whether explicit metadata changes this battery's physical/service problem."""
+    return (any(not value for value in (getattr(battery, "connected_slots", None) or ()))
+            or any(getattr(battery, "external_energy_kwh", None) or ())
+            or bool(getattr(battery, "departure_requirements", ())))
+
+
+def has_mobility_inputs(params):
+    return any(has_battery_mobility(b) for b in params.battery_entities)
 
 
 class ComfortEntityParams(BaseModel):
@@ -524,6 +561,12 @@ class OptimizationParams(BaseModel):
                 )
 
         for idx, entity in enumerate(self.battery_entities):
+            for field in ("connected_slots", "external_energy_kwh"):
+                values = getattr(entity, field)
+                if values is not None and len(values) != horizon:
+                    raise ValueError(f"battery_entities[{idx}].{field} length must match horizon")
+            if any(r.timeslot >= horizon for r in entity.departure_requirements):
+                raise ValueError(f"battery_entities[{idx}] departure timeslot must be < horizon")
             if entity.target is None:
                 continue
             if entity.target.timeslot >= horizon:
@@ -585,6 +628,9 @@ class BatteryEntity:
     mode_switch_cost: float
     prefer_pv_surplus_charging: bool
     can_charge_from: int
+    connected_slots: List[bool] | None = None
+    external_energy_kwh: List[float] | None = None
+    departure_requirements: tuple[DepartureRequirementParams, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -683,6 +729,10 @@ def _entity_fingerprint(
                     e.prefer_pv_surplus_charging
                 ),
                 "can_charge_from": int(e.can_charge_from),
+                **({"connected_slots": e.connected_slots,
+                    "external_energy_kwh": e.external_energy_kwh,
+                    "departure_requirements": [r.model_dump() for r in e.departure_requirements]}
+                   if has_battery_mobility(e) else {}),
                 "target": (
                     {
                         "timeslot": int(e.target.timeslot),
@@ -1024,6 +1074,9 @@ def normalize_calculation_input(params: OptimizationParams, decoded_state=None):
                     entity.prefer_pv_surplus_charging
                 ),
                 can_charge_from=int(entity.can_charge_from),
+                connected_slots=entity.connected_slots,
+                external_energy_kwh=entity.external_energy_kwh,
+                departure_requirements=tuple(entity.departure_requirements),
             )
         )
 

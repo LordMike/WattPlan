@@ -1,4 +1,28 @@
-"""Clock-aligned near-term MPC refresh with a reprojected policy tail."""
+"""Reuse the HiGHS policy tail while refreshing a short near-term MPC prefix.
+
+This is HiGHS orchestration, not a separately selectable battery search. The
+module validates prior plan ownership, timing and configuration before choosing
+a full native replan or a prefix refresh. Full replans normally follow a clock-
+aligned four-slot cadence; eligible intervening calls optimize an eight-slot
+prefix and reproject the retained tail against current inputs and battery state.
+Missing or incompatible state can require a full replan earlier.
+
+Keeping a tail reduces native solves and limits policy churn, but also delays
+some responses to new forecasts until the next full replan. It must not be
+interpreted as resolving the whole horizon optimally on every call. Prefix and
+full paths use the same native physics, soft target semantics and published
+result contract; a prefix refresh is not one of the discrete-search alternatives.
+
+Comfort continuity and fixed schedules must survive the handoff between prefix
+and tail. Optional appliances remain recommendations evaluated against the
+resulting accepted plan, not automatic executions or joint scheduling decisions.
+This layer retains meaningful battery state across requests; the alternative
+planners currently restart battery search and reuse only shared comfort state.
+
+See ``planners.highs`` and ``mpc_power_optimizer`` for the solver's strengths,
+limitations and load-placement behavior. Native per-solve limits still do not
+constitute a hard bound on a whole prefix/full planning invocation.
+"""
 
 from __future__ import annotations
 

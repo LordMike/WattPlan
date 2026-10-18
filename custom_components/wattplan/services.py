@@ -295,6 +295,8 @@ async def async_handle_set_target_service(hass: HomeAssistant, call: ServiceCall
             )
     for runtime_data, subentry_id in _iter_target_runtime_data(loaded, matches):
         set_battery_target(runtime_data, subentry_id, target)
+    for entry_id in {eid for eid, _ in matches}:
+        await loaded[entry_id].runtime_data.coordinator.async_invalidate_plan()
     if call.data[ATTR_RUN_OPTIMIZE]:
         for entry_id in {eid for eid, _ in matches}:
             entry = loaded[entry_id]
@@ -310,6 +312,8 @@ async def async_handle_clear_target_service(hass: HomeAssistant, call: ServiceCa
         cleared_any = clear_battery_target(runtime_data, subentry_id) or cleared_any
     if not cleared_any:
         raise ServiceValidationError("No active battery targets matched the provided selectors")
+    for entry_id in {eid for eid, _ in matches}:
+        await loaded[entry_id].runtime_data.coordinator.async_invalidate_plan()
     if call.data[ATTR_RUN_OPTIMIZE]:
         for entry_id in {eid for eid, _ in matches}:
             entry = loaded[entry_id]
@@ -339,12 +343,17 @@ async def async_handle_export_planner_input_service(
 ) -> dict[str, Any]:
     entry = resolve_single_run_entry(hass, call, label="Planner input export")
     request = await entry.runtime_data.coordinator.async_build_planner_input_export()
-    return _format_service_export(
-        payload_key="model",
-        payload=request["optimizer_params"],
-        as_json_key="model_json",
-        as_json=call.data["as_json"],
-    )
+    return {
+        "planner_preset": request.get("planner_preset", "highs"),
+        "planner": request.get("planner", "highs"),
+        "planner_options": request.get("planner_options", {}),
+        **_format_service_export(
+            payload_key="model",
+            payload=request["optimizer_params"],
+            as_json_key="model_json",
+            as_json=call.data["as_json"],
+        ),
+    }
 
 
 async def async_handle_export_usage_forecast_debug_service(

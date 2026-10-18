@@ -10,16 +10,23 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
 from ..const import (
+    CONF_PLANNER_PRESET,
     CONF_HISTORICAL_BATTERY_CHARGE_SENSOR,
     CONF_HISTORICAL_BATTERY_DISCHARGE_SENSOR,
     CONF_OUTLOOK_LANGUAGES,
     CONF_PLANNER_REPRODUCTION_RETENTION_DAYS,
     CONF_RECORD_PLANNER_REPRODUCTIONS,
+    CONF_SHOW_EXPERIMENTAL_PLANNERS,
     DEFAULT_PLANNER_REPRODUCTION_RETENTION_DAYS,
     MAX_PLANNER_REPRODUCTION_RETENTION_DAYS,
     SUPPORTED_OUTLOOK_LANGUAGES,
 )
 from ..historical_cost.tracker import validate_energy_sensor
+from ..optimizer.planners.presets import (
+    DEFAULT_PRESET,
+    LEGACY_DEFAULT_PRESET,
+    get_preset,
+)
 from ..source_providers import CONF_WATTPLAN_ENTITY_ID, source_mode, source_providers
 from .forms import _validate_core_lookahead_for_comforts
 from .source_shared import (
@@ -33,9 +40,6 @@ from .source_shared import (
     CONF_HISTORICAL_USAGE_SENSOR,
     CONF_HOURS_TO_PLAN,
     CONF_NAME,
-    CONF_OPTIMIZER_LOOKAHEAD_HOURS,
-    CONF_OPTIMIZER_LOOKAHEAD_SLOTS,
-    CONF_OPTIMIZER_PROFILE,
     CONF_PLANNING_ENABLED,
     CONF_SLOT_MINUTES,
     CONF_SOURCE_EXPORT_PRICE,
@@ -44,10 +48,7 @@ from .source_shared import (
     CONF_SOURCE_PV,
     CONF_SOURCE_USAGE,
     CONF_SOURCES,
-    DEFAULT_OPTIMIZER_LOOKAHEAD_HOURS,
     DOMAIN,
-    LEGACY_OPTIMIZER_LOOKAHEAD_SLOTS,
-    OPTIMIZER_PROFILE_BALANCED,
     SOURCE_MODE_BUILT_IN,
     SOURCE_MODE_ENERGY_PROVIDER,
     SOURCE_MODE_ENTITY_ADAPTER,
@@ -62,8 +63,6 @@ from .source_shared import (
     OptionsFlowWithReload,
     _core_schema,
     _final_setup_schema,
-    _lookahead_hours_from_slots,
-    _lookahead_slots_from_hours,
     _normalize_core_input,
     _SharedSourceFlow,
     _with_source_steps,
@@ -324,7 +323,7 @@ class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
     """Handle a config flow for WattPlan."""
 
     VERSION = 1
-    MINOR_VERSION = 2
+    MINOR_VERSION = 3
 
     _core: dict[str, Any]
     _entry_options: dict[str, Any]
@@ -384,20 +383,11 @@ class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
             if not errors:
                 normalized = _normalize_core_input(user_input)
                 self._entry_options = {
+                    CONF_PLANNER_PRESET: normalized.pop(
+                        CONF_PLANNER_PRESET, DEFAULT_PRESET
+                    ),
                     CONF_PLANNING_ENABLED: True,
                     CONF_ACTION_EMISSION_ENABLED: True,
-                    CONF_OPTIMIZER_PROFILE: str(
-                        normalized.pop(
-                            CONF_OPTIMIZER_PROFILE, OPTIMIZER_PROFILE_BALANCED
-                        )
-                    ),
-                    CONF_OPTIMIZER_LOOKAHEAD_SLOTS: _lookahead_slots_from_hours(
-                        normalized.pop(
-                            CONF_OPTIMIZER_LOOKAHEAD_HOURS,
-                            DEFAULT_OPTIMIZER_LOOKAHEAD_HOURS,
-                        ),
-                        int(normalized[CONF_SLOT_MINUTES]),
-                    ),
                 }
                 self._core = normalized
                 self._sources = {}
@@ -407,7 +397,7 @@ class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="planner_setup",
             data_schema=self.add_suggested_values_to_schema(
-                _core_schema(include_name=True, include_profile=True), user_input or {}
+                _core_schema(include_name=True, recommend_default=True), user_input or {}
             ),
             errors=errors,
             last_step=False,
@@ -575,6 +565,8 @@ class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
                 options=self._entry_options,
             )
 
+        preset_name = self._entry_options.get(CONF_PLANNER_PRESET, DEFAULT_PRESET)
+        preset = get_preset(preset_name)
         return self.async_show_form(
             step_id="setup_complete",
             data_schema=_final_setup_schema(),
@@ -582,12 +574,7 @@ class WattPlanConfigFlow(_SharedSourceFlow, ConfigFlow, domain=DOMAIN):
                 "setup_name": str(self._core[CONF_NAME]),
                 "slot_minutes": str(self._core[CONF_SLOT_MINUTES]),
                 "plan_hours": str(self._core[CONF_HOURS_TO_PLAN]),
-                "lookahead_hours": str(
-                    _lookahead_hours_from_slots(
-                        self._entry_options[CONF_OPTIMIZER_LOOKAHEAD_SLOTS],
-                        int(self._core[CONF_SLOT_MINUTES]),
-                    )
-                ),
+                "planner_preset": preset.label,
                 "price_source": _source_mode_summary(
                     self._sources.get(CONF_SOURCE_IMPORT_PRICE)
                 ),
@@ -619,13 +606,11 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
         self._options.setdefault(CONF_PLANNING_ENABLED, True)
         self._options.setdefault(CONF_ACTION_EMISSION_ENABLED, True)
         self._options.setdefault(
-            CONF_OPTIMIZER_PROFILE, OPTIMIZER_PROFILE_BALANCED
-        )
-        self._options.setdefault(
-            CONF_OPTIMIZER_LOOKAHEAD_SLOTS,
-            LEGACY_OPTIMIZER_LOOKAHEAD_SLOTS,
+            CONF_PLANNER_PRESET,
+            LEGACY_DEFAULT_PRESET if config_entry.minor_version < 3 else DEFAULT_PRESET,
         )
         self._options.setdefault(CONF_RECORD_PLANNER_REPRODUCTIONS, False)
+        self._options.setdefault(CONF_SHOW_EXPERIMENTAL_PLANNERS, False)
         self._options.setdefault(
             CONF_PLANNER_REPRODUCTION_RETENTION_DAYS,
             DEFAULT_PLANNER_REPRODUCTION_RETENTION_DAYS,
@@ -638,6 +623,14 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Menu for options."""
+        preset_name = self._options.get(CONF_PLANNER_PRESET, DEFAULT_PRESET)
+        try:
+            get_preset(preset_name)
+        except ValueError:
+            self._options[CONF_PLANNER_PRESET] = DEFAULT_PRESET
+            self.hass.config_entries.async_update_entry(
+                self.config_entry, options=self._options
+            )
         menu_options = [
             "planner_core",
             "planner_timers",
@@ -670,6 +663,9 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
                 self._options[CONF_RECORD_PLANNER_REPRODUCTIONS] = user_input[
                     CONF_RECORD_PLANNER_REPRODUCTIONS
                 ]
+                self._options[CONF_SHOW_EXPERIMENTAL_PLANNERS] = user_input[
+                    CONF_SHOW_EXPERIMENTAL_PLANNERS
+                ]
                 self._options[CONF_PLANNER_REPRODUCTION_RETENTION_DAYS] = int(days)
                 self.hass.config_entries.async_update_entry(
                     self.config_entry, options=self._options
@@ -683,6 +679,10 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
                     vol.Required(
                         CONF_RECORD_PLANNER_REPRODUCTIONS,
                         default=self._options[CONF_RECORD_PLANNER_REPRODUCTIONS],
+                    ): selector.BooleanSelector(),
+                    vol.Required(
+                        CONF_SHOW_EXPERIMENTAL_PLANNERS,
+                        default=self._options[CONF_SHOW_EXPERIMENTAL_PLANNERS],
                     ): selector.BooleanSelector(),
                     vol.Required(
                         CONF_PLANNER_REPRODUCTION_RETENTION_DAYS,
@@ -715,17 +715,8 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
                 )
             if not errors:
                 normalized = _normalize_core_input(user_input)
-                self._options[CONF_OPTIMIZER_PROFILE] = str(
-                    normalized.pop(CONF_OPTIMIZER_PROFILE, OPTIMIZER_PROFILE_BALANCED)
-                )
-                self._options[CONF_OPTIMIZER_LOOKAHEAD_SLOTS] = (
-                    _lookahead_slots_from_hours(
-                        normalized.pop(
-                            CONF_OPTIMIZER_LOOKAHEAD_HOURS,
-                            DEFAULT_OPTIMIZER_LOOKAHEAD_HOURS,
-                        ),
-                        int(normalized[CONF_SLOT_MINUTES]),
-                    )
+                self._options[CONF_PLANNER_PRESET] = normalized.pop(
+                    CONF_PLANNER_PRESET, DEFAULT_PRESET
                 )
                 self._data.update(normalized)
                 self.hass.config_entries.async_update_entry(self.config_entry, data=self._data)
@@ -740,14 +731,11 @@ class WattPlanOptionsFlow(_SharedSourceFlow, OptionsFlowWithReload):
                 _core_schema(
                     {
                         **self._data,
-                        CONF_OPTIMIZER_PROFILE: self._options[CONF_OPTIMIZER_PROFILE],
-                        CONF_OPTIMIZER_LOOKAHEAD_HOURS: _lookahead_hours_from_slots(
-                            self._options[CONF_OPTIMIZER_LOOKAHEAD_SLOTS],
-                            int(self._data[CONF_SLOT_MINUTES]),
-                        ),
+                        CONF_PLANNER_PRESET: self._options[CONF_PLANNER_PRESET],
+                        CONF_SHOW_EXPERIMENTAL_PLANNERS: self._options[
+                            CONF_SHOW_EXPERIMENTAL_PLANNERS
+                        ],
                     },
-                    include_profile=True,
-                    profile_last=True,
                 ),
                 user_input or {},
             ),

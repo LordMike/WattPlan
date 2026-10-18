@@ -1,8 +1,12 @@
 # Planner Diagnostics and History
 
-WattPlan can retain the exact inputs and result of each successful planning run
-in append-only JSONL files. This is intended for temporary investigations and
+WattPlan can retain the exact inputs and result of each successful planning run,
+plus completed measured intervals, in append-only JSONL files. This is intended for investigations and
 does not use Home Assistant Recorder's attribute storage.
+
+To compare planners using these recordings, follow the
+[simulator walkthrough](simulator.md). It covers the additional historical meters,
+how long to record, downloading daily exports, and selecting planners and rounds.
 
 ## Turn on recording
 
@@ -26,6 +30,22 @@ settings and initial state), and full optimizer result. No separate settings
 file or reference is needed to replay it. Keep these files private: they contain
 household energy forecasts and battery configuration.
 
+New records use schema version 2. Plan records (`record_type: plan`) preserve
+`request.optimizer_params` and `result`, adding setup ID, timezone, currency,
+`input_captured_at`, actuals status and available preceding completed intervals.
+Plan requests also record `planner_preset`, underlying `planner`, and
+`planner_options`. The `planner_preset` field holds the configuration ID, such as
+`charge-window-96` for **Charge-window search**, rather than its dropdown name.
+See [Planner configurations](optimizer-profiles.md) to match IDs to names.
+Preserve these fields when reproducing a selected algorithm;
+the numeric input model alone does not identify it. Older records without this
+metadata use the original HiGHS planner and empty factory options.
+With historical tracking, independent `record_type: actuals` updates append
+measured usage/PV, stored tariffs, optional grid flows, source roles and quality
+flags when a slot completes, even without a successful plan. Actuals updates use
+the interval's local **start** date. Unknowns stay null; forecasts never replace
+measurements. See [Planner simulator](simulator.md) for collection and replay.
+
 After each append, WattPlan deletes this setup's day files older than the
 retention window. A one-day setting keeps today's file only. Turning recording
 off stops writes but leaves existing files until recording resumes and the next
@@ -47,10 +67,13 @@ data: '{"created_at":"...",...}\n{"created_at":"...",...}\n'
 min_available_date: "2026-09-20"
 max_available_date: "2026-09-29"
 incomplete_tail: false
+actuals_status: tracking_enabled
 ```
 
-`data` is the day's JSONL text, not a parsed or filtered list. A missing date
-returns an empty string; min/max are `null` if there are no files. Call the
+`data` is the day's JSONL text, enriched with available retained actuals absent
+from the archive, without rewriting files or changing forecasts. A date with no
+archived or retained data returns an empty string. Min/max describe disk files
+and are `null` if none exist. Call the
 service once per date to collect a range. Its response is a complete day's
 contents, **not a stream**; a large day may be several megabytes and a client
 may limit the response size.
@@ -60,12 +83,23 @@ To replay an individual line locally:
 ```python
 import json
 
-from custom_components.wattplan.optimizer import OptimizationParams, optimize
+from custom_components.wattplan.optimizer import OptimizationParams
+from custom_components.wattplan.optimizer.planners import create_planner
 
 record = json.loads(line)
-replayed = optimize(OptimizationParams(**record["request"]["optimizer_params"]))
+# Select a plan record; actuals-only updates have no request/result.
+request = record["request"]
+planner = create_planner(request.get("planner", "highs"), request.get("planner_options", {}))
+replayed = planner(OptimizationParams(**request["optimizer_params"]))
 print(replayed["entities"] == record["result"]["entities"])
 ```
+
+For a current input snapshot, `wattplan.export_planner_input` retains its
+existing `model` response (`model_json` when `as_json` is true) and adds the
+same three planner metadata fields alongside it. Replay the model with
+`create_planner(response.get("planner", "highs"), response.get("planner_options", {}))`.
+Keep the complete response so a fixed HiGHS lookahead or alternative algorithm
+is not lost when exporting just the numeric input.
 
 The former Planner Reproduction entity and its Recorder-based binary payload
 are no longer used. The existing Plan Details entities remain current inspection

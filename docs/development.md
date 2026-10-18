@@ -44,6 +44,64 @@ symlink is required for these in-repo tests.
 
 ## Testing
 
+For offline planner evaluation, activate the development environment and run
+`python scripts/simulate_planner.py /path/to/snapshots --validate-only`, then use
+`--planners charge-window-96 self-consumption --rounds 3 --output /path/to/report`
+to compare Charge-window search with Self-consumption. `--list-planners` lists
+configuration names and IDs; `--planners all` includes experimental configurations.
+Input arguments accept multiple export files, globs, or directories. See the
+[simulator walkthrough](simulator.md) for collection, downloads, variants, and
+reports. Tests use independent hand-calculated physics
+cases and explicitly synthetic datasets; real recordings are needed to assess
+real-world coverage.
+
+For users and agents running comparisons, follow the simulator's
+[comparison workflow](simulator.md#comparison-workflow-for-users-and-agents):
+validate exports first, select an explicit reference, and keep household data
+and reports out of tracked files.
+
+Before a complete real recording is available, generate a reproducible full day
+with `python scripts/generate_simulation_data.py /tmp/wattplan-synthetic`.
+Run the same simulator against that directory. These records explicitly label
+synthetic forecasts/actuals and never fill gaps in real recordings implicitly.
+See the [Optimizer API](optimizer-api.md#planner-factories) for planner factories
+and shared interfaces. Keep algorithm descriptions in their module docstrings
+and user-facing summaries in [Planner Configurations](optimizer-profiles.md).
+Store experiment notes, tuning ledgers, and benchmark reports in ignored `.tmp/`
+or outside the repository.
+
+Planner tests focus on the shared public contract. Algorithms may change their
+search mechanics and choose different valid schedules:
+
+- `tests/optimizer/test_planner_contract.py` runs every registered algorithm
+  through the common battery contract, physical projections, input isolation,
+  factory/state rules and solver-independent import checks.
+- `tests/optimizer/test_public_planner_contract.py` checks source permissions,
+  physical bounds, empty equipment, advisory loads and strict output validation.
+- `tests/optimizer/test_planner_mobility_contract.py` checks connection windows,
+  trip energy and honest service reporting for every mobility-capable algorithm.
+- `tests/optimizer/test_live_planner_parity.py` checks every named configuration's live
+  outputs, comfort accounting, health, reserve recovery and immediate targets.
+  It also compares direct factories with registry calls for every algorithm,
+  including combined comfort, optional-appliance and battery-constraint inputs.
+- `tests/optimizer/test_policy_planner_search.py` shares discrete-search
+  economics, target modes, repeatability and bounded-result tests. Explicit subsets
+  distinguish candidate-count searches from beam/DP expansion budgets. HiGHS's
+  continuous soft-target objective and passive self-consumption are not forced
+  to behave like the discrete optimizing searches.
+- Shared request models, comfort, reporting and physics helpers have focused
+  unit tests. Named configurations retain configuration and compatibility tests.
+
+Add user-visible requirements to the parameterized suites. Do not add tests for
+individual planners' search paths, internal counters, solver layouts, warm-start
+construction, value-table geometry or agreement with another implementation.
+Keep assertions about outcomes, physical accounting, capability support and
+complete results under configured budgets. Do not require identical schedules
+or global optimality. Evaluate planner-specific quality and runtime changes with
+the benchmark and simulation tools; these are outside the automated contract gate.
+The HA integration parity suite separately tests coordinator/entity wiring;
+optimizer-only contract tests cannot substitute for that boundary.
+
 Run the full suite from the repo after setup:
 
 ```bash
@@ -102,7 +160,7 @@ formatting failures, and uncached per-render catalog reads:
 
 ## Optimizer benchmarks
 
-Session 1 fixtures cover the asset shapes that should remain cheap as planner
+Benchmark fixtures cover the asset shapes that should remain cheap as planner
 behavior evolves:
 
 - `no-assets-no-pv`
@@ -115,11 +173,8 @@ behavior evolves:
 - `comfort-flexible`
 - `comfort-tight`
 
-The fixtures live in `tests/optimizer/benchmark_cases.py`. They are synthetic,
-and `comfort-tight` is explicitly labeled as a synthetic historical substitute
-because repository history contains no recoverable named slow-comfort input.
-The existing `low-pv` and `live-export` scenarios remain the recovered captured
-Home Assistant inputs.
+The fixtures live in `tests/optimizer/benchmark_cases.py`. Most are synthetic;
+`low-pv` and `live-export` use captured Home Assistant inputs.
 
 Measure one full-plan distribution and repeated five-tick prefix trajectories:
 
@@ -127,7 +182,7 @@ Measure one full-plan distribution and repeated five-tick prefix trajectories:
 python scripts/benchmark_optimizer.py --scenario mixed-batteries-pv --slots 96 --lookahead 48 --repeats 3 --serial
 ```
 
-Run the Session 1 matrix sequentially. Do not parallelize these processes; CPU
+Run the benchmark matrix sequentially. Do not parallelize these processes; CPU
 and thermal contention invalidates comparisons:
 
 ```bash
@@ -177,12 +232,7 @@ scenario, full/prefix cadence, and forecast workload.
 
 Production submits MIP starts only when the effective initial lookahead is at
 least 40 slots. Below that boundary, `--compare-mip-starts` intentionally
-compares two cold executions so the benchmark reflects deployed behavior. The
-historical forced warm/cold eligibility matrix and its exact pre-gate revision
-are recorded in the findings document.
-
-See [Optimizer benchmark findings](optimizer-benchmarks.md) for the recorded
-September 2026 measurements and rejected experiments.
+compares two cold executions so the benchmark reflects deployed behavior.
 
 ## Packaging
 

@@ -28,7 +28,6 @@ class PlanOutlookSensor(WattPlanCoordinatorSensor):
         }
     )
     _require_usable_plan = False
-    _require_snapshot = False
 
     def __init__(self, *args: Any, language: str, **kwargs: Any) -> None:
         """Initialize one language-specific Plan Outlook sensor."""

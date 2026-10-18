@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
-import math
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -31,6 +30,11 @@ from .common import (
     _subentry_name,
 )
 from .state import SourceFlowState
+from ..optimizer.planners.presets import (
+    DEFAULT_PRESET,
+    PRESETS,
+    available_preset_names,
+)
 from ..const import (
     ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
     ADAPTER_TYPE_ATTRIBUTE_VALUES,
@@ -76,11 +80,10 @@ from ..const import (
     CONF_MIN_OPTION_GAP_MINUTES,
     CONF_MINIMUM_KWH,
     CONF_ON_OFF_SOURCE,
-    CONF_OPTIMIZER_LOOKAHEAD_HOURS,
-    CONF_OPTIMIZER_LOOKAHEAD_SLOTS,
     CONF_OPTIONS_COUNT,
     CONF_PLANNING_ENABLED,
-    CONF_OPTIMIZER_PROFILE,
+    CONF_PLANNER_PRESET,
+    CONF_SHOW_EXPERIMENTAL_PLANNERS,
     CONF_PROVIDERS,
     CONF_RESAMPLE_MODE,
     CONF_ROLLING_WINDOW_HOURS,
@@ -100,17 +103,12 @@ from ..const import (
     CONF_VALUE_KEY,
     CONF_VALUE_UNIT,
     DOMAIN,
-    DEFAULT_OPTIMIZER_LOOKAHEAD_HOURS,
     EDGE_FILL_MODE_HOLD,
     EDGE_FILL_MODE_NONE,
     FIXUP_PROFILE_EXTEND,
     FIXUP_PROFILE_REPAIR,
     FIXUP_PROFILE_STRICT,
     HOURS_TO_PLAN_OPTIONS,
-    LEGACY_OPTIMIZER_LOOKAHEAD_SLOTS,
-    OPTIMIZER_PROFILE_AGGRESSIVE,
-    OPTIMIZER_PROFILE_BALANCED,
-    OPTIMIZER_PROFILE_CONSERVATIVE,
     RESAMPLE_MODE_FORWARD_FILL,
     RESAMPLE_MODE_LINEAR,
     RESAMPLE_MODE_NONE,
@@ -1069,61 +1067,40 @@ async def _async_config_translation(
     return message
 
 
-def _optimizer_profile_selector(default: str) -> selector.SelectSelector:
-    """Build selector for user-facing optimizer profiles."""
-    return selector.SelectSelector(
-        selector.SelectSelectorConfig(
-            options=[
-                selector.SelectOptionDict(
-                    value=OPTIMIZER_PROFILE_AGGRESSIVE,
-                    label="Aggressive",
-                ),
-                selector.SelectOptionDict(
-                    value=OPTIMIZER_PROFILE_BALANCED,
-                    label="Balanced",
-                ),
-                selector.SelectOptionDict(
-                    value=OPTIMIZER_PROFILE_CONSERVATIVE,
-                    label="Conservative",
-                ),
-            ],
-            mode=selector.SelectSelectorMode.DROPDOWN,
-        )
-    )
-
-
 def _core_schema(
     defaults: dict[str, Any] | None = None,
     *,
     include_name: bool = False,
-    include_profile: bool = False,
-    profile_last: bool = False,
+    recommend_default: bool = False,
 ) -> vol.Schema:
     """Build schema for the core planner settings."""
     defaults = defaults or {}
     slot_default = str(defaults.get(CONF_SLOT_MINUTES, 15))
     hours_default = str(defaults.get(CONF_HOURS_TO_PLAN, 48))
-    lookahead_default = str(
-        defaults.get(
-            CONF_OPTIMIZER_LOOKAHEAD_HOURS,
-            DEFAULT_OPTIMIZER_LOOKAHEAD_HOURS,
-        )
+    choices = available_preset_names(
+        show_experimental=bool(defaults.get(CONF_SHOW_EXPERIMENTAL_PLANNERS, False)),
+        current=defaults.get(CONF_PLANNER_PRESET),
     )
-    lookahead_step = int(slot_default) / 60
-    schema: dict[Any, Any] = {}
-    profile_field = None
-    if include_profile:
-        profile_field = (
-            vol.Required(
-                CONF_OPTIMIZER_PROFILE,
-                default=str(
-                    defaults.get(CONF_OPTIMIZER_PROFILE, OPTIMIZER_PROFILE_BALANCED)
-                ),
-            ),
-            _optimizer_profile_selector(
-                str(defaults.get(CONF_OPTIMIZER_PROFILE, OPTIMIZER_PROFILE_BALANCED))
-            ),
+    if recommend_default:
+        choices = (DEFAULT_PRESET, *(name for name in choices if name != DEFAULT_PRESET))
+    schema: dict[Any, Any] = {
+        vol.Required(
+            CONF_PLANNER_PRESET, default=defaults.get(CONF_PLANNER_PRESET, DEFAULT_PRESET)
+        ): selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=[
+                    selector.SelectOptionDict(
+                        value=name,
+                        label=(f"Recommended — {PRESETS[name].label}"
+                               if recommend_default and name == DEFAULT_PRESET
+                               else PRESETS[name].label),
+                    )
+                    for name in choices
+                ],
+                mode=selector.SelectSelectorMode.DROPDOWN,
+            )
         )
+    }
     schema.update({
         vol.Required(CONF_SLOT_MINUTES, default=slot_default): selector.SelectSelector(
             selector.SelectSelectorConfig(
@@ -1137,28 +1114,11 @@ def _core_schema(
                 mode=selector.SelectSelectorMode.DROPDOWN,
             )
         ),
-        vol.Required(
-            CONF_OPTIMIZER_LOOKAHEAD_HOURS,
-            default=float(lookahead_default),
-        ): selector.NumberSelector(
-            selector.NumberSelectorConfig(
-                min=lookahead_step * 2,
-                max=168,
-                step=lookahead_step,
-                mode=selector.NumberSelectorMode.BOX,
-            )
-        ),
     })
-    if include_profile and not profile_last:
-        assert profile_field is not None
-        schema[profile_field[0]] = profile_field[1]
     if include_name:
         schema[vol.Required(CONF_NAME, default=defaults.get(CONF_NAME, "WattPlan"))] = (
             selector.TextSelector()
         )
-    if include_profile and profile_last:
-        assert profile_field is not None
-        schema[profile_field[0]] = profile_field[1]
     return vol.Schema(schema)
 
 
@@ -1167,23 +1127,7 @@ def _normalize_core_input(user_input: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(user_input)
     normalized[CONF_SLOT_MINUTES] = int(normalized[CONF_SLOT_MINUTES])
     normalized[CONF_HOURS_TO_PLAN] = int(normalized[CONF_HOURS_TO_PLAN])
-    normalized[CONF_OPTIMIZER_LOOKAHEAD_HOURS] = float(
-        normalized.get(
-            CONF_OPTIMIZER_LOOKAHEAD_HOURS,
-            DEFAULT_OPTIMIZER_LOOKAHEAD_HOURS,
-        )
-    )
     return normalized
-
-
-def _lookahead_slots_from_hours(hours: float, slot_minutes: int) -> int:
-    """Convert a user-facing duration to optimizer slots."""
-    return int(round(float(hours) * 60 / slot_minutes))
-
-
-def _lookahead_hours_from_slots(slots: int, slot_minutes: int) -> float:
-    """Convert persisted optimizer slots to a user-facing duration."""
-    return float(slots) * slot_minutes / 60
 
 
 def _source_mode_schema(
@@ -1650,20 +1594,9 @@ def _validate_core_data(
             errors,
             max_length=MAX_NAME_LENGTH,
         )
-    slot_minutes = int(data[CONF_SLOT_MINUTES])
-    lookahead_hours = float(
-        data.get(CONF_OPTIMIZER_LOOKAHEAD_HOURS, DEFAULT_OPTIMIZER_LOOKAHEAD_HOURS)
-    )
-    exact_slots = lookahead_hours * 60 / slot_minutes
-    lookahead_slots = _lookahead_slots_from_hours(lookahead_hours, slot_minutes)
-    if (
-        not math.isclose(exact_slots, lookahead_slots, abs_tol=1e-9)
-        or lookahead_slots < 2
-        or lookahead_slots > 672
-    ):
-        errors[CONF_OPTIMIZER_LOOKAHEAD_HOURS] = (
-            "optimizer_lookahead_invalid_resolution"
-        )
+    preset = data.get(CONF_PLANNER_PRESET, DEFAULT_PRESET)
+    if preset not in PRESETS:
+        errors[CONF_PLANNER_PRESET] = "unknown_planner_preset"
     return errors
 
 

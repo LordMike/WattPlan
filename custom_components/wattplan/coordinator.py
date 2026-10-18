@@ -21,6 +21,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import DOMAIN
+from .config_identity import config_fingerprint
 from .coordinator_parts import (
     CoordinatorSnapshot,
     CycleTrigger,
@@ -40,7 +41,9 @@ from .coordinator_logic import (
     SourceStatusManager,
 )
 from .historical_on_off_provider import HistoricalOnOffProvider
-from .optimizer import OptimizationParams, optimize
+from .optimizer import OptimizationParams
+from .optimizer.planners.presets import DEFAULT_PRESET
+from .planner_process import async_drain, async_run_preset
 from .planner_history import PlannerHistory
 from .source_issues import (
     clear_entry_source_issues,
@@ -58,7 +61,12 @@ def snapshot_storage_key(entry_id: str) -> str:
 
 
 SCHEDULE_OFFSET = timedelta(seconds=2)
-MIN_OPTIMIZER_TIMEOUT_SECONDS = 60
+MAX_OPTIMIZER_TIMEOUT_SECONDS = 180
+DATA_SNAPSHOT_LOCKS = "snapshot_locks"
+
+
+class _ObsoletePlanningRun(Exception):
+    """A request outlived the config entry runtime that owns it."""
 
 
 class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
@@ -78,6 +86,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         planner_reproduction_retention_days: int = 14,
         integration_version: str = "unknown",
         config_fingerprint: str | None = None,
+        planner_preset: str = DEFAULT_PRESET,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
@@ -90,6 +99,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             update_interval=None,
         )
         self._entry_id = entry_id
+        self._shutting_down = False
         self._base_update_interval = update_interval
         self._interval: timedelta | None = update_interval
         self._scheduler_started = False
@@ -111,6 +121,11 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         self._emit_error = StageErrorState()
 
         self._plan_lock = asyncio.Lock()
+        self._plan_request_lock = asyncio.Lock()
+        self._planning_task: asyncio.Task[None] | None = None
+        self._snapshot_lock = hass.data.setdefault(DOMAIN, {}).setdefault(
+            DATA_SNAPSHOT_LOCKS, {}
+        ).setdefault(entry_id, asyncio.Lock())
         self._emit_lock = asyncio.Lock()
         self._heartbeat_start_unsub: CALLBACK_TYPE | None = None
         self._heartbeat_interval_unsub: CALLBACK_TYPE | None = None
@@ -131,6 +146,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             schema_id=self._snapshot_schema_id,
             logger=_LOGGER,
             config_fingerprint=config_fingerprint,
+            planner_preset=planner_preset,
         )
         self._config_fingerprint = config_fingerprint
         self._projection = PlannerProjectionBuilder(
@@ -308,9 +324,11 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
 
     async def async_shutdown(self) -> None:
         """Stop the scheduler, heartbeat and other background callbacks."""
+        self._shutting_down = True
         self._scheduler_started = False
         self._cancel_schedule()
         self._async_stop_heartbeat()
+        await self.async_abort_plan()
         clear_entry_source_issues(self.hass, self._entry_id)
         await super().async_shutdown()
 
@@ -370,6 +388,64 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 )
 
     async def async_plan(self, *, trigger: CycleTrigger) -> None:
+        """Replace obsolete work with a fresh request, without overlapping workers."""
+        async with self._plan_request_lock:
+            await self.async_abort_plan()
+            if self._shutting_down:
+                raise PlanningStageError(
+                    StageErrorKind.PLANNER_EXECUTION,
+                    "Planner configuration changed while planning; result discarded",
+                )
+            task = self._planning_task = asyncio.create_task(
+                self._async_plan_once(trigger=trigger), name=f"{self.name} plan"
+            )
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if not task.done():
+                await self._async_cancel_plan_task(task)
+            if asyncio.current_task().cancelling():
+                raise
+            raise PlanningStageError(
+                StageErrorKind.PLANNER_EXECUTION,
+                "Planner configuration changed or a newer request superseded this plan",
+            ) from None
+        finally:
+            if self._planning_task is task:
+                self._planning_task = None
+
+    async def _async_cancel_plan_task(self, task: asyncio.Task[None]) -> None:
+        """Cancel once and drain worker/persistence cleanup before replacing work."""
+        if not task.done() and not task.cancelling():
+            task.cancel()
+        await async_drain(asyncio.gather(task, return_exceptions=True))
+
+    async def async_abort_plan(self) -> None:
+        """Stop acquisition or computation when its environment is superseded."""
+        if (task := self._planning_task) is not None:
+            await self._async_cancel_plan_task(task)
+
+    async def async_invalidate_plan(self) -> None:
+        """Discard recommendations and cached continuity after a target change."""
+        async with self._plan_request_lock:
+            await self.async_abort_plan()
+            self._action_recommendations_validated = False
+            entry = self._require_entry()
+            entry.runtime_data.optimizer_state = None
+            await self._async_remove_snapshot()
+            self.async_update_listeners()
+
+    async def _async_remove_snapshot(self) -> None:
+        """Finish deleting the old cache before a replacement run can save."""
+        async with self._snapshot_lock:
+            remove = asyncio.create_task(self._snapshot_store.async_remove())
+            try:
+                await asyncio.shield(remove)
+            except asyncio.CancelledError:
+                await async_drain(remove)
+                raise
+
+    async def _async_plan_once(self, *, trigger: CycleTrigger) -> None:
         """Run the planning stage and replace the immutable snapshot."""
         if self._plan_lock.locked():
             self._mark_locked(Stage.PLAN, trigger)
@@ -383,12 +459,16 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         self._last_run_timings = None
 
         async with self._plan_lock:
+            runtime_data = None
             try:
                 self._source_status.reset()
                 entry = self._require_entry()
+                runtime_data = entry.runtime_data
+                self._ensure_current_planning_run(runtime_data)
                 request = await self._async_build_planning_request(entry, timer)
+                self._ensure_current_planning_run(runtime_data)
                 planner_result = await self._async_run_optimizer(
-                    request, entry.runtime_data, timer=timer
+                    request, runtime_data, timer=timer
                 )
                 self._remember_historical_price_series(entry, request)
                 timer.mark("Historical price retention")
@@ -411,18 +491,36 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 # the complete list replaces them once the run finishes.
                 self._last_run_timings = list(timer.entries)
                 await self.async_persist_snapshot()
+                self._ensure_current_planning_run(runtime_data)
                 timer.mark("Snapshot persist")
                 await self.planner_history.async_record(
                     new_snapshot.created_at, request, planner_result
                 )
+                self._ensure_current_planning_run(runtime_data)
                 timer.mark("Planner history record")
                 self._sync_source_issues(entry)
                 timer.mark("total")
                 self._last_run_timings = list(timer.entries)
                 if trigger is CycleTrigger.SERVICE:
                     self.async_update_listeners()
+            except _ObsoletePlanningRun as err:
+                # The new coordinator owns health, state and listeners now.
+                raise PlanningStageError(
+                    StageErrorKind.PLANNER_EXECUTION,
+                    "Planner configuration changed while planning; result discarded",
+                ) from err
             except PlanningStageError as err:
+                if runtime_data is not None and not self._is_current_planning_run(runtime_data):
+                    raise
                 self._set_last_plan_duration(started)
+                timer.mark("total")
+                self._last_run_timings = list(timer.entries)
+                timed_out = err.kind is StageErrorKind.PLANNER_TIMEOUT
+                if timed_out:
+                    self._snapshot = None
+                    self.data = None
+                    self._action_recommendations_validated = False
+                    runtime_data.optimizer_state = None
                 self._source_status.mark_failed_status(err, snapshot=self._snapshot)
                 self._sync_source_issues(self._require_entry())
                 self._set_stage_error(
@@ -434,8 +532,12 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 # Push state immediately so entities can reflect failures and
                 # availability changes without waiting for the next tick.
                 self.async_update_listeners()
+                if timed_out:
+                    await self._async_remove_snapshot()
                 raise
             except Exception as err:
+                if runtime_data is not None and not self._is_current_planning_run(runtime_data):
+                    raise
                 self._set_last_plan_duration(started)
                 self._source_status.mark_failed_status(err, snapshot=self._snapshot)
                 self._sync_source_issues(self._require_entry())
@@ -526,6 +628,24 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             )
         return entry
 
+    def _is_current_planning_run(self, runtime_data: Any) -> bool:
+        """Check runtime ownership after every asynchronous planning boundary."""
+        entry = self.hass.config_entries.async_get_entry(self._entry_id)
+        return (
+            not self._shutting_down
+            and entry is not None
+            and (
+                self._config_fingerprint is None
+                or config_fingerprint(entry) == self._config_fingerprint
+            )
+            and getattr(entry, "runtime_data", None) is runtime_data
+            and runtime_data.coordinator is self
+        )
+
+    def _ensure_current_planning_run(self, runtime_data: Any) -> None:
+        if not self._is_current_planning_run(runtime_data):
+            raise _ObsoletePlanningRun
+
     async def _async_build_planning_request(
         self, entry: ConfigEntry, timer: RunTimer
     ) -> dict[str, Any]:
@@ -589,7 +709,8 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         *,
         timer: RunTimer,
     ) -> dict[str, Any]:
-        """Run poweroptim in the executor and normalize planner exceptions."""
+        """Run the selected planner in a killable process and normalize errors."""
+        self._ensure_current_planning_run(runtime_data)
         optimizer_params = request["optimizer_params"]
         _LOGGER.debug(
             (
@@ -639,18 +760,24 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
             # its opaque state. Pydantic's JSON mode preserves the full numeric
             # precision while serializing dates and nested asset settings.
             request["_recorded_optimizer_params"] = params.model_dump(mode="json")
+            request["_input_captured_at"] = datetime.now(tz=UTC).isoformat()
             timer.mark("Reproduction params recording")
 
-        # Each MILP solve has its own HiGHS time limit; this bounds the whole
-        # plan so a hard instance cannot hold the plan lock past one slot.
         timeout_seconds = self._optimizer_timeout_seconds(request["slot_minutes"])
         try:
             async with asyncio.timeout(timeout_seconds):
-                result = await self.hass.async_add_executor_job(optimize, params)
+                result = await async_run_preset(
+                    params, request.get("planner_preset", DEFAULT_PRESET)
+                )
         except TimeoutError as err:
+            timer.mark("Optimizer process (timed out)")
             raise PlanningStageError(
-                StageErrorKind.PLANNER_EXECUTION,
-                f"Optimizer did not finish within {timeout_seconds} seconds",
+                StageErrorKind.PLANNER_TIMEOUT,
+                f"Planner timed out after {timeout_seconds} seconds. Pick another planner.",
+                details={
+                    "timeout_seconds": timeout_seconds,
+                    "planner_preset": request.get("planner_preset", DEFAULT_PRESET),
+                },
             ) from err
         except Exception as err:
             raise PlanningStageError(
@@ -658,13 +785,14 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 f"Optimizer execution failed: {err}",
             ) from err
 
-        timer.mark("Optimizer executor job")
+        timer.mark("Optimizer process")
+        self._ensure_current_planning_run(runtime_data)
         runtime_data.optimizer_state = result.get("state")
         return result
 
     def _optimizer_timeout_seconds(self, slot_minutes: int) -> float:
         """Return the wall-clock bound for one optimizer call."""
-        return max(MIN_OPTIMIZER_TIMEOUT_SECONDS, slot_minutes * 60)
+        return min(MAX_OPTIMIZER_TIMEOUT_SECONDS, slot_minutes * 60)
 
     def _sample_values(self, values: list[float], sample_size: int = 6) -> list[float]:
         """Return a short rounded sample for debug logging."""
@@ -920,10 +1048,22 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         return True
 
     async def async_persist_snapshot(self) -> None:
-        """Persist current snapshot cache for this config entry."""
-        await self._persistence.async_persist_snapshot(
-            snapshot=self._snapshot,
-            last_success_at=self._last_success_at,
-            last_duration_ms=self._last_duration_ms,
-            last_run_timings=self._last_run_timings,
-        )
+        """Serialize writes across reloads and finish an in-flight commit on abort."""
+        async with self._snapshot_lock:
+            entry = self.hass.config_entries.async_get_entry(self._entry_id)
+            runtime = getattr(entry, "runtime_data", None)
+            if runtime is None or not self._is_current_planning_run(runtime):
+                return
+            save = asyncio.create_task(self._persistence.async_persist_snapshot(
+                snapshot=self._snapshot,
+                last_success_at=self._last_success_at,
+                last_duration_ms=self._last_duration_ms,
+                last_run_timings=self._last_run_timings,
+            ))
+            try:
+                await asyncio.shield(save)
+            except asyncio.CancelledError:
+                # Store's disk executor write cannot be interrupted safely.
+                # Keep the entry lock until it drains, before any newer commit.
+                await async_drain(save)
+                raise

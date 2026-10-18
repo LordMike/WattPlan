@@ -38,6 +38,7 @@ After installing WattPlan via HACS, configure the following:
 - **PV Source**: Optional. Set up your solar production data source if applicable.
 - **Export Price Source**: Optional. If PV is configured, you can provide a value for exported power. Otherwise WattPlan treats export value as zero.
 - **Optional Loads**: Optional. Configure any additional loads you wish to manage, such as batteries or comfort loads.
+- **Planner Configuration**: Initial setup preselects **Recommended — Local search**, a quick price-aware starting choice. General settings offers Local search, Self-consumption, Charge-window search, Guarded value policy, and Joint seed search. Experimental configurations can be shown under Options → Troubleshooting. Existing setups keep their selected algorithm. See [Planner Configurations](docs/optimizer-profiles.md) for all planners, configuration names, IDs, differences, and limits.
 - **Historical Cost Tracking**: Optional and disabled by default. See [Historical Cost Tracking](docs/historical-cost-tracking.md) for setup requirements and how to read the numbers.
 
 ## Tracking Performance
@@ -61,7 +62,8 @@ Use [Historical Cost Tracking](docs/historical-cost-tracking.md) to compare meas
 - [Extras and Automations](docs/extras.md) - Batteries, comfort loads, optional loads, real-life examples, and how to wire WattPlan actions into your own automations
 - [Entities and Services](docs/entities-and-services.md) - Planner, battery, load entities, services, and battery targets
 - [Planner Diagnostics and History](docs/planner-diagnostics.md) - Optional disk-backed plan recording, daily JSONL exports, and local replay
-- [Optimizer Profiles](docs/optimizer-profiles.md) - What Aggressive, Balanced, and Conservative mean in practice
+- [Planner simulator](docs/simulator.md) - Enable recording, export complete days from Home Assistant, and compare selected planners locally
+- [Planner Configurations](docs/optimizer-profiles.md) - All planners and configurations, their strengths and limits, exact UI names, IDs, and experimental status
 - [Error Handling](docs/error-handling.md) - Health states, degraded operation, and what `ok`, `degraded`, and `failed` mean
 - [Development](docs/development.md) - Local setup with `uv`, local test env caveats, optional symlink workflow, packaging
 - [Architecture](docs/architecture.md) - Code layout, runtime boundaries, planning flow

@@ -51,6 +51,7 @@ class StageErrorKind(StrEnum):
     SOURCE_VALIDATION = "source_validation"
     PLANNER_INPUT = "planner_input"
     PLANNER_EXECUTION = "planner_execution"
+    PLANNER_TIMEOUT = "planner_timeout"
     EMIT_NO_SNAPSHOT = "emit_no_snapshot"
     EMIT_PROJECTION = "emit_projection"
     INTERNAL = "internal"

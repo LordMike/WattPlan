@@ -2,6 +2,36 @@
 
 This document describes the direct Python API for the optimizer packaged inside this repository.
 
+Interchangeable planners use this API through built-in names or a
+`module:factory` adapter. See [Planner factories](#planner-factories) for the
+extension interface and [Planner simulator](simulator.md) for causal execution.
+Home Assistant selects a finite named configuration through
+`optimizer.planners.presets.run_preset(params, name)`. Its default configuration
+is **Local search** (`local-search-3`), presented as **Recommended — Local search**
+in initial Home Assistant setup. The other normal choices are **Charge-window
+search**, **Guarded value policy**, **Joint seed search**, and **Self-consumption**;
+see [Planner configurations](optimizer-profiles.md#choosing-a-configuration) for
+their IDs and behavior. Existing Home Assistant entries keep their stored
+selection; entries that relied on the old implicit default are migrated to an
+explicit `highs` selection. The `highs` configuration fixes the legacy 22-slot
+lookahead; `highs-8`, `highs-16`, and `highs-24`
+select fixed lookahead **slots**. Every named configuration fixes algorithm tuning,
+including zero throughput, deadband, and mode-switch penalties, a 20-second
+HiGHS solve limit, and preserve-policy inference. These settings are applied
+after request validation and do not change the supplied equipment, forecasts,
+comfort requirements, targets, slot duration, horizon, or carried state.
+Direct `optimize(params)` callers continue to select HiGHS and use the tuning
+fields supplied in `params`. See [planner configurations](optimizer-profiles.md).
+
+The detailed solver semantics below describe HiGHS unless stated otherwise.
+The policy-search alternatives share the input model and live result fields,
+but use full-horizon discrete battery actions, target-first scoring, and their
+own search budgets. The shared wrapper handles comfort and optional appliances; see
+[shared features and limits](optimizer-profiles.md#shared-features-and-limits)
+for scheduling order and reporting semantics.
+Algorithm-specific diagnostics live under `diagnostics`; HiGHS solve/cadence
+counters are absent from planners that do not perform those operations.
+
 - **Package:** `custom_components.wattplan.optimizer`
 - **Primary Module:** `custom_components.wattplan.optimizer.mpc_power_optimizer`
 - **Primary Function:** `optimize(params: OptimizationParams) -> dict`
@@ -14,14 +44,20 @@ The model does not export battery energy, add an export-first battery mode, curt
 
 The continuous model can still prefer exporting PV over storing it when stored energy has no modeled future value, even though an empty PV-capable battery receiving the coarse `self_consume` policy would normally charge from surplus first. PV charging under `self_consume` is ordinary inverter behavior, not a separate controllable action in this policy model.
 
-If you are using WattPlan through the Home Assistant integration, see [optimizer-profiles.md](optimizer-profiles.md) for the user-facing `Aggressive`, `Balanced`, and `Conservative` presets. Those profiles are integration-level presets that map onto the numeric optimizer fields documented here. New Home Assistant setups use a 12-hour economic lookahead. Existing setups are migrated to the historical 22-slot lookahead and may edit the displayed duration in General settings.
+If you are using WattPlan through Home Assistant, the selected planner configuration owns
+algorithm tuning. Earlier profile and lookahead options saved in a config entry
+are ignored; `hours_to_plan` still controls the forecast horizon. The request
+model fields below remain available to direct `optimize(params)` callers and
+custom planner experiments.
 
 ## Time Resolution (Timeslots)
 All time-indexed fields use **timeslots**.
 - A timeslot is one fixed slice of time at your chosen resolution (for example, 15 minutes).
 - Every array index corresponds to one timeslot.
 - The API does not enforce a specific minutes-per-timeslot value; the caller is responsible for consistent input resolution.
-- `lookahead_slots` is also expressed in this same resolution. The Home Assistant integration converts its hour-based economic lookahead setting to slots (`hours * 60 / slot_minutes`).
+- `lookahead_slots` is also expressed in this same resolution. Named configurations
+  select a fixed slot count; direct `optimize(params)` callers supply it in the
+  request.
 
 ## Conceptual Model
 The solve combines three kinds of entities:
@@ -50,7 +86,7 @@ result = optimize(params)
 | `action_deadband_kwh` | `float` | No | `0.0` | Finite, `>= 0` | Battery flow is constrained to zero or at least this inclusive threshold. |
 | `mode_switch_cost` | `float` | No | `0.0` | Finite, `>= 0` | Heuristic objective weight that discourages changing modeled battery behavior. It is not a monetary switching or wear estimate. |
 | `infer_battery_preserve_policy` | `bool` | No | `true` | - | Enables the model-backed counterfactual used to emit `preserve` battery policy states. When disabled, all `battery_preserve` booleans are `false` and non-grid-charging battery slots fall back to `self_consume`. |
-| `solver_time_limit_seconds` | `float` | No | `20` | `> 0`, `<= 3600` | Wall-clock limit for each MILP solve. A solve stopped by the limit is used when HiGHS holds a feasible solution (logged as a warning) and fails otherwise. The integration additionally bounds the whole optimizer call by the slot length (at least 60 seconds) and reports a timeout as a `planner_execution` error. |
+| `solver_time_limit_seconds` | `float` | No | `20` | `> 0`, `<= 3600` | Wall-clock limit for each MILP solve. A solve stopped by the limit is used when HiGHS holds a feasible solution (logged as a warning) and fails otherwise. The integration additionally bounds the complete worker invocation at 180 seconds, kills and reaps timed-out work, discards the plan and its disk cache, and reports a `planner_timeout` error with guidance to pick another planner. |
 | `battery_entities` | `list[BatteryEntityParams]` | Yes | - | May be empty | Main controllable storage entities. |
 | `comfort_entities` | `list[ComfortEntityParams]` | Yes | - | May be empty | Required comfort entities with bounded cost-aware placement. |
 | `optional_entities` | `list[OptionalEntityParams]` | No | `[]` | Fully validated for feasibility | Advisory start-time options only. |
@@ -71,7 +107,7 @@ result = optimize(params)
 | `name` | `str` | Yes | - | Non-empty | Unique globally. |
 | `initial_kwh` | `float` | Yes | - | Finite, `0..capacity_kwh` | Initial state of charge (kWh). |
 | `target` | `BatteryEntityParams.TargetParams \| None` | No | `null` | If set: `timeslot < horizon` | Optional deadline target constraint. |
-| `minimum_kwh` | `float` | Yes | - | Finite, `0..capacity_kwh` | Minimum desired state (kWh). Soft floor: the solve penalizes, rather than forbids, ending a slot below it. A battery that starts below it is planned to recover as fast as its limits allow, and the plan reports `battery_min_unmet` for as long as the planned SoC stays below the floor. |
+| `minimum_kwh` | `float` | Yes | - | Finite, `0..capacity_kwh` | Minimum desired state (kWh). Soft floor: search penalizes, rather than forbids, ending a slot below it. Planners declaring reserve recovery pursue recovery within their limits; passive controls only observe it. The plan reports `battery_min_unmet` for as long as the planned SoC stays below the floor. |
 | `capacity_kwh` | `float` | Yes | - | Finite, `> 0` | Storage capacity (kWh). |
 | `charge_curve_kwh` | `list[float]` | Yes | - | Non-empty, finite, `>= 0` | Chargeable energy per slot by SoC curve (kWh per slot). |
 | `discharge_curve_kwh` | `list[float]` | Yes | - | Non-empty, finite, `>= 0` | Dischargeable energy per slot by SoC curve (kWh per slot). |
@@ -79,6 +115,87 @@ result = optimize(params)
 | `discharge_efficiency` | `float` | No | `1.0` | Finite, `(0, 1]` | Fraction of discharged SoC energy delivered to load. |
 | `prefer_pv_surplus_charging` | `bool` | No | `false` | - | Internal/deferred hint for routing PV surplus into this battery. This is not exposed as a battery action state and should not be used as a user-facing control contract. |
 | `can_charge_from` | `int` | No | `2` | `0`, `1`, `2`, `3` | Allowed charging-ingress flags (`1=GRID`, `2=PV`, `3`=both; `0` means charging disabled). |
+| `connected_slots` | `list[bool] \| null` | No | `null` | Strict booleans, exactly horizon length | `false` disables all site AC exchange for this battery in that slot. Null means always connected. |
+| `external_energy_kwh` | `list[float] \| null` | No | `null` | Finite nonnegative DC energy, exactly horizon length | Withdrawal from this battery at the end of each slot, after household exchange and departure checks; null means zero. |
+| `departure_requirements` | `list[DepartureRequirementParams]` | No | `[]` | Each `timeslot` within horizon and `minimum_kwh` within capacity | Repeated minimum-energy checks before that slot's external withdrawal. |
+
+### Mobility input and planner contract
+
+`DepartureRequirementParams` has `timeslot` (nonnegative slot index) and
+`minimum_kwh` (finite nonnegative DC stored energy, at most battery capacity).
+It is separate from the ordinary end-slot battery `target`: departures are
+checked after that slot's permitted site exchange but **before** its external
+withdrawal; an ordinary target checks the post-withdrawal level. External draws
+can consume energy below the household reserve, down to zero. Excess draw is
+reported as unserved energy and never manufactured. An away battery cannot
+charge, absorb PV or discharge into household demand; its external withdrawal
+still occurs.
+
+Active mobility metadata requires an explicit planner capability
+`PlannerCapabilities(mobility=True)`. The new `mobility-baseline`,
+`mobility-tariff-seeds`, `mobility-hybrid-seeds` and `mobility-fleet-beam` factories
+provide it. Existing families reject active metadata before planning; all-true connection lists,
+zero external draws and no departure requirements are inert. The ordinary
+default request, score and result fields retain their previous behavior.
+Capability `targets="observed"` distinguishes the passive household control in
+the baseline and two-seed mobility planners from ordinary target search.
+`economic_scope` is `household` (household economics, with optional mobility),
+`mobility` (only mobile charging economics), or `none`. `reserve_recovery` states
+whether deliberate initial-below-reserve recovery is pursued across the
+supported fleet. Neither field promises feasibility or optimality. Mobility
+baseline declares none/false; tariff seeds mobility/false; fleet beam declares
+household/true with mobility enabled. Existing self-consumption declares
+none/false. Merely observing reserve and target misses does not imply an
+algorithm attempts to fix them.
+
+`mobility-hybrid-seeds` also declares household economics, reserve recovery and
+optimized targets. Its four complete seeds combine metadata-free raw stationary
+hybrid-policy (default grid 4, no scenario branches) or passive control with two
+mobile charging controls, using joint shared physics and full service-first
+scores. Ordinary mobile targets use a disclosed whole-fleet bounded beam fallback
+(width 4, 1500 expansions). These declarations describe search intent, not an
+optimality or feasibility guarantee; input-order PV allocation is unchanged.
+
+Shared `physics.transition_at(batteries, levels, modes, *, slot, usage, pv,
+slot_fraction=1.0, apply_external=True, grid_eligible=None)` applies availability
+and then the end-slot withdrawal. Fractional execution applies the external draw
+once at the original slot boundary, not once per fractional substep. Its optional
+`levels_before_external`, `external_energy` (served DC) and `external_shortfall`
+lists describe that boundary accounting; final `levels` are post-withdrawal.
+
+For active requests shared `Evaluation.score` is
+`(mobility_miss_kwh, target_miss_kwh, objective)`, where mobility miss adds
+departure shortfalls and unserved DC energy. Without active mobility it retains
+the existing two-component score. Full-horizon original-input reporting adds
+`projections.mobility_served_kwh`, `mobility_unserved_kwh`, `departure_checks`
+and `service_feasible`; per-slot flows add `external_energy_kwh` and
+`external_unserved_kwh`. Served trips are not site AC import, inverter throughput
+or electricity tariff expense. Infeasible forecast service remains visible.
+The conventional household-without-storage `baseline_cost` excludes vehicle
+service. Active projections therefore disclose
+`baseline_kind="household_without_storage_excludes_mobility_service"` and
+`projected_savings_comparable=False`; its generic savings field is not an EV
+service comparison. Compare electricity cost against a mobility-capable baseline
+only when departure service and unserved draws are equivalent, with terminal
+stored energy also visible.
+
+Completed simulator runs containing active mobility report `battery_flows` on
+every actual interval, including intervals whose current forecast has no mobility
+events. Entries follow request battery order and contain `name`, AC
+`charge_kwh` (PV plus grid), AC `discharge_kwh`, `level_before_kwh`,
+`level_before_external_kwh` and final `level_kwh`. The interval's
+`external_energy_by_battery` contains served DC withdrawals. These fields allow
+independent per-battery conservation, availability and power-limit checks;
+external DC draws are excluded from site AC balance and conversion loss.
+Simulator totals disclose unserved energy, departure misses and
+`service_feasible`. Incomplete or service-infeasible runs cannot enter savings
+comparisons; diagnostic costs remain visible. A service-infeasible reference
+suppresses comparisons rather than substituting a different baseline. Runs with
+only inert metadata retain the legacy report shape.
+
+See [mobility configurations](optimizer-profiles.md#mobility-aware-planners) for search
+budgets, baseline behavior and limitations. These additions provide optimizer
+and simulator API support, not a Home Assistant vehicle-source configuration.
 
 **Curve Unit Note:**
 - `charge_curve_kwh` and `discharge_curve_kwh` are **kWh per slot**, not kW.
@@ -110,10 +227,17 @@ result = optimize(params)
 | `power_usage_kwh` | `float` | Yes | - | Finite, `> 0` | Energy draw when ON (kWh per slot). |
 | `is_on_now` | `bool` | Yes | - | - | Current ON/OFF runtime state. |
 | `on_slots_last_rolling_window` | `int` | No | `0` | `>= 0`, `<= rolling_window_slots` | Deprecated aggregate retained for compatibility when ordered history is unavailable. |
-| `on_history` | `list[bool] \| null` | No | `null` | Exactly `rolling_window_slots - 1` values when present | Ordered observed states, oldest first, immediately before forecast slot 0. Used by the deterministic scheduler to enforce rolling demand. |
+| `on_history` | `list[bool] \| null` | No | `null` | Exactly `rolling_window_slots - 1` values when present | Ordered observed states, oldest first, immediately before forecast slot 0. Used by the deterministic scheduler to enforce rolling demand and infer an unfinished ON run. |
 | `off_streak_slots_now` | `int` | Yes | - | `>= 0` | Current OFF streak (slots). |
 | `measured_power_source` | `str \| null` | No | `null` | - | Optional source of observed power telemetry. |
 | `recent_avg_on_power_kw` | `float \| null` | No | `null` | Finite, `> 0` | Optional observed ON power average. |
+
+With ordered history, a trailing OFF observation followed by `is_on_now=true`
+is treated as a newly started ON run. The planner keeps that run ON for the
+configured minimum duration. While currently OFF, `off_streak_slots_now` supplies
+the completed OFF duration and determines the remaining minimum-OFF commitment.
+If ordered ON history is unavailable, the age of a currently ON run cannot be
+inferred, so the planner does not restart its minimum-ON timer on each refresh.
 
 ## Optional Entity Model (`OptionalEntityParams`)
 Optional entities provide advisory start-time suggestions and do not change the published battery/comfort schedule. Each candidate is valued by replaying the supplied forecast horizon from the original battery state under the unchanged published battery modes and comfort schedule. The replay applies the candidate load to physical PV, battery, import, and export flows, including later tariff cost caused by changed battery state, and compares it with the same fixed-policy replay without the load. Signed import and export tariffs are used in both replays. Heuristic throughput and mode-switch weights are not added to replay costs or used to rank optional-load starts.
@@ -312,3 +436,33 @@ This pre-validation/normalization design ensures the calculation phase operates 
 - `grid import`: Energy bought from the grid.
 - `grid export`: Energy sent back to the grid. Also commonly called `feed-in`, `export`, or `export to grid`.
 - `grid_import_price_per_kwh` / `grid_export_price_per_kwh` are the optimizer terms because they are symmetric and match the physical energy flow direction.
+
+## Planner factories
+
+`optimizer.planners.create_planner(name, options)` accepts a built-in algorithm
+name or an importable `module:factory`. The factory receives keyword options and
+returns a callable taking `OptimizationParams`. It validates options and declares
+`PlannerCapabilities`. See the planner modules' opening docstrings for algorithm
+details; the [user guide](optimizer-profiles.md) describes available configurations.
+
+Battery implementations return a complete schedule for every named battery in
+request order, with finite projected levels. Shared policy actions are
+`self_consume`, `preserve`, and `grid_charge`, subject to each battery's permitted
+energy sources. `planners.evaluation.evaluate_schedule` supplies physical replay;
+`build_result` can reuse that evaluation for projections and reporting.
+`planners.shared.wrap_battery_planner` adds comfort scheduling and continuity,
+optional-appliance recommendations, and whole-call timing. The battery search
+receives comfort consumption as part of its demand forecast.
+
+The policy evaluator ranks target misses before its economic score, which
+includes reserve shortfall and cycling/switching preferences. Published costs
+contain only tariffs. This score is not comparable with HiGHS's internal
+objective. Search budgets must count evaluated candidates; algorithms using a
+shorter search horizon must still return complete schedules and disclose ignored
+preferences. Registry-wide tests cover the shared contract; see
+[test organization](development.md#testing) for coverage and planner-quality evaluation.
+
+The registry namespaces returned state by implementation, options, and state
+version. A mismatch resets it. Stateless battery searches return `None`, though
+the comfort wrapper can still retain runtime commitments. Cached plans must be
+checked against current forecasts, equipment, targets, and time before reuse.

@@ -10,6 +10,7 @@ from homeassistant.core import callback
 from homeassistant.helpers.storage import Store
 
 from ..coordinator_parts import CoordinatorSnapshot, TimingEntry, parse_snapshot_datetime
+from ..optimizer.planners.presets import DEFAULT_PRESET
 
 
 @dataclass(slots=True)
@@ -21,6 +22,7 @@ class RestoredCoordinatorState:
     last_duration_ms: int | None
     last_run_timings: list[TimingEntry] | None
     config_fingerprint: str | None = None
+    planner_preset: str | None = None
 
 
 class CoordinatorSnapshotStore:
@@ -34,9 +36,11 @@ class CoordinatorSnapshotStore:
         schema_id: str,
         logger: logging.Logger,
         config_fingerprint: str | None = None,
+        planner_preset: str = DEFAULT_PRESET,
     ) -> None:
         self._store = store
         self._config_fingerprint = config_fingerprint
+        self._planner_preset = planner_preset
         self._entry_id = entry_id
         self._schema_id = schema_id
         self._logger = logger
@@ -55,6 +59,7 @@ class CoordinatorSnapshotStore:
         return {
             "schema_id": self._schema_id,
             "config_fingerprint": self._config_fingerprint,
+            "planner_preset": self._planner_preset,
             "snapshot": snapshot.to_dict(),
             "last_success_at": (
                 last_success_at.isoformat() if last_success_at is not None else None
@@ -75,6 +80,17 @@ class CoordinatorSnapshotStore:
                 self._entry_id,
                 payload.get("schema_id"),
                 self._schema_id,
+            )
+            return None
+
+        cached_preset = payload.get("planner_preset")
+        if cached_preset != self._planner_preset:
+            self._logger.debug(
+                "Discarding cached snapshot with mismatched planner preset "
+                "(entry_id=%s, cached=%r, current=%r)",
+                self._entry_id,
+                cached_preset,
+                self._planner_preset,
             )
             return None
 
@@ -100,6 +116,9 @@ class CoordinatorSnapshotStore:
                 fingerprint
                 if isinstance(fingerprint := payload.get("config_fingerprint"), str)
                 else None
+            ),
+            planner_preset=(
+                preset if isinstance(preset := cached_preset, str) else None
             ),
         )
 
