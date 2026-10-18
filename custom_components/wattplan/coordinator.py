@@ -273,6 +273,8 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
     @callback
     def async_start_scheduler(self) -> None:
         """Start planning at every slot boundary until shutdown."""
+        if self._shutting_down:
+            return
         self._scheduler_started = True
         self._arm_schedule()
 

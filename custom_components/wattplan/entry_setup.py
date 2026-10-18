@@ -57,6 +57,17 @@ async def async_try_initial_plan(entry: WattPlanConfigEntry) -> None:
         mark_runtime_updated(entry.runtime_data, when=datetime.now(tz=UTC))
 
 
+async def async_initial_plan_then_schedule(entry: WattPlanConfigEntry) -> None:
+    """Start slot-boundary runs only after the initial plan settles.
+
+    Otherwise a boundary shortly after setup supersedes the initial run.
+    """
+    try:
+        await async_try_initial_plan(entry)
+    finally:
+        entry.runtime_data.coordinator.async_start_scheduler()
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) -> bool:
     """Set up WattPlan from a config entry."""
     configured_preset = entry.options.get(CONF_PLANNER_PRESET, DEFAULT_PRESET)
@@ -165,15 +176,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: WattPlanConfigEntry) -> 
     had_snapshot = await coordinator.async_restore_snapshot()
     entry.async_on_unload(entry.add_update_listener(async_update_listener))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    coordinator.async_start_scheduler()
     if had_snapshot:
         # The restored plan keeps the sensors available; replace it with fresh
         # data in the background so slow sources cannot delay setup.
         entry.async_create_background_task(
-            hass, async_try_initial_plan(entry), f"{DOMAIN} initial plan"
+            hass, async_initial_plan_then_schedule(entry), f"{DOMAIN} initial plan"
         )
     else:
-        await async_try_initial_plan(entry)
+        await async_initial_plan_then_schedule(entry)
     return True
 
 
