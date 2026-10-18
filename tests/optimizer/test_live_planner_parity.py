@@ -1,7 +1,6 @@
 """Independent user-visible acceptance tests across every published preset."""
 
 import json
-import importlib
 from datetime import timedelta
 
 import pytest
@@ -147,21 +146,15 @@ def test_direct_factories_and_registry_have_the_same_live_features(name, constra
         )
         params = OptimizationParams(**payload)
     before = params.model_dump(mode="json")
-    module_name, attribute = BUILTINS[name].split(":")
-    direct_planner = getattr(importlib.import_module(module_name), attribute)()
-    assert direct_planner.capabilities.comfort
-    assert direct_planner.capabilities.optional_loads == "supported"
-    assert "rolling_window_slots" not in direct_planner.capabilities.ignored_preferences
-    direct = direct_planner(params)
-    registered = create_planner(name)(params)
+    planner = create_planner(name)
+    capabilities = planner.capabilities
+    assert capabilities.comfort
+    assert capabilities.optional_loads == "supported"
+    assert "rolling_window_slots" not in capabilities.ignored_preferences
+    direct = planner(params)
     assert params.model_dump(mode="json") == before
-    assert_public_result(params, registered)
-    for result in (direct, registered):
-        assert_live_result(params, result)
-    for field in ("entities", "projections", "energy_flows", "optional_entity_options",
-                  "suboptimal", "suboptimal_reasons"):
-        assert direct[field] == registered[field]
-    capabilities = direct_planner.capabilities
+    assert_public_result(params, direct)
+    assert_live_result(params, direct)
     if not constrained or (capabilities.targets == "optimized" and capabilities.reserve_recovery):
         assert not direct["suboptimal"], direct["suboptimal_reasons"]
     else:

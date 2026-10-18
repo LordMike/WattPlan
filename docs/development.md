@@ -173,7 +173,7 @@ behavior evolves:
 - `comfort-flexible`
 - `comfort-tight`
 
-The fixtures live in `tests/optimizer/benchmark_cases.py`. Most are synthetic;
+The fixtures live in `scripts/benchmark_cases.py`, next to the benchmark script. Most are synthetic;
 `low-pv` and `live-export` use captured Home Assistant inputs.
 
 Measure one full-plan distribution and repeated five-tick prefix trajectories:

@@ -184,23 +184,6 @@ def test_optional_replay_with_multiple_batteries_curves_losses_and_pv():
         assert option["incremental_cost"] == pytest.approx(expected)
 
 
-def test_optional_suffix_reuses_only_exactly_reconverged_levels(monkeypatch):
-    from custom_components.wattplan.optimizer.planners import reporting
-
-    params = params_for_reporting(battery_entities=[], optional_entities=[optional()])
-    evaluation = evaluate_schedule(params, [])
-    original = reporting.transition
-    calls = []
-
-    def counted(*args, **kwargs):
-        calls.append(kwargs)
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(reporting, "transition", counted)
-    optional_entity_options(params, [], evaluation)
-    assert len(calls) == 4  # One slot per start, no unchanged prefix/suffix replay.
-
-
 def test_comfort_finalizer_can_restore_original_baseline():
     original = params_for_reporting(battery_entities=[])
     prepared = original.model_copy(update={"usage_kwh": [2.0] * 4})

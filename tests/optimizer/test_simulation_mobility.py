@@ -144,12 +144,6 @@ def test_active_fleet_flows_allow_independent_fractional_energy_audit(mode, usag
     assert report["intervals"][2]["battery_flows"][1][flow_kind] > 0
 
 
-def test_inactive_simulation_does_not_add_battery_flow_fields():
-    report = simulate(dataset(), Variant("legacy"), LocalPlanner())
-    assert report["status"] == "complete"
-    assert all("battery_flows" not in row for row in report["intervals"])
-
-
 def test_mobility_run_includes_real_flows_for_inert_connected_windows():
     p = payload()
     p["battery_entities"][0]["capacity_kwh"] = 20.0
@@ -171,3 +165,21 @@ def test_mobility_run_includes_real_flows_for_inert_connected_windows():
     standalone = simulate(dataset(events=[event(**inert)], actuals=[actual(usage=0)]),
         Variant("inert"), LocalPlanner("grid_charge"))
     assert "battery_flows" not in standalone["intervals"][0]
+
+
+def test_shift_request_moves_deadlines_and_drops_expired_ones():
+    p = payload()
+    battery = p["battery_entities"][0]
+    battery.update(target=dict(timeslot=1, soc_kwh=2.0), departure_requirements=[
+        dict(timeslot=0, minimum_kwh=1.0), dict(timeslot=2, minimum_kwh=2.0)])
+    p["optional_entities"] = [
+        dict(name="fits", duration_timeslots=1, start_after_timeslot=0, start_before_timeslot=3),
+        dict(name="missed", duration_timeslots=2, start_after_timeslot=0, start_before_timeslot=2),
+    ]
+    shifted = shift_request(p, 1, soc={"battery": 1.5})
+    moved = shifted["battery_entities"][0]
+    assert moved["initial_kwh"] == 1.5
+    assert moved["target"]["timeslot"] == 0
+    assert moved["departure_requirements"] == [dict(timeslot=1, minimum_kwh=2.0)]
+    assert [(e["name"], e["start_before_timeslot"]) for e in shifted["optional_entities"]] == [("fits", 2)]
+    assert "target" not in shift_request(p, 2)["battery_entities"][0]

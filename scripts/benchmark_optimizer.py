@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import importlib.util
 import json
 import math
 import os
@@ -31,17 +30,8 @@ from custom_components.wattplan.optimizer import OptimizationParams, optimize
 from custom_components.wattplan.optimizer import mpc_power_optimizer as core
 from custom_components.wattplan.optimizer.simulation.engine import Variant, simulate
 from custom_components.wattplan.optimizer.simulation.scenarios import shift_request, synthetic_dataset
-_cases_spec = importlib.util.spec_from_file_location(
-    "wattplan_benchmark_cases",
-    HARNESS_ROOT / "tests" / "optimizer" / "benchmark_cases.py",
-)
-if _cases_spec is None or _cases_spec.loader is None:
-    raise RuntimeError("unable to load benchmark cases")
-_cases = importlib.util.module_from_spec(_cases_spec)
-_cases_spec.loader.exec_module(_cases)
-CASE_METADATA = _cases.CASE_METADATA
-build_case = _cases.build_case
-from tests.optimizer.live_scenarios import (
+from benchmark_cases import CASE_METADATA, build_case
+from live_scenarios import (
     _live_exported_deye_low_pv_low_soc_payload,
     _live_grid_export_benchmark_payload,
 )
