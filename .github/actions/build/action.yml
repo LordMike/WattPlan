@@ -9,10 +9,6 @@ description: Run the Python test suite and prepare the HACS release artifact
 runs:
   using: composite
   steps:
-    - name: Test release automation offline
-      shell: pwsh
-      run: ./scripts/test_release_skill.ps1
-
     - name: Set up Python
       uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
       with:

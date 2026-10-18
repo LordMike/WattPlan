@@ -44,18 +44,6 @@ symlink is required for these in-repo tests.
 
 ## Testing
 
-Release automation has a separate offline check, runnable on Windows or Linux
-with PowerShell 7 and Git:
-
-```powershell
-pwsh -NoProfile -File scripts/test_release_skill.ps1
-```
-
-It uses temporary local Git repositories and simulated GitHub responses, never
-publishes a release, and prints the fixture directory for inspection. CI runs
-this check alongside the Python suite. See the
-[release skill](../.agents/skills/wattplan-release/SKILL.md) for publication.
-
 For offline planner evaluation, activate the development environment and run
 `python scripts/simulate_planner.py /path/to/snapshots --validate-only`, then use
 `--planners charge-window-96 self-consumption --rounds 3 --output /path/to/report`
