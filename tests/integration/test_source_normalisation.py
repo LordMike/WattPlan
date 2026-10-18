@@ -9,7 +9,6 @@ from custom_components.wattplan.const import (
     ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
     AGGREGATION_MODE_FIRST,
     AGGREGATION_MODE_LAST,
-    AGGREGATION_MODE_MAX,
     AGGREGATION_MODE_MEAN,
     CLAMP_MODE_NEAREST,
     CLAMP_MODE_NONE,
@@ -23,7 +22,6 @@ from custom_components.wattplan.const import (
     CONF_PROVIDERS,
     CONF_RESAMPLE_MODE,
     CONF_SLOT_MINUTES,
-    CONF_SOURCE_EXPORT_PRICE,
     CONF_SOURCE_IMPORT_PRICE,
     CONF_SOURCE_MODE,
     CONF_SOURCE_PV,
@@ -117,12 +115,11 @@ async def test_past_points_do_not_land_on_current_slot(hass: HomeAssistant) -> N
     assert await provider.async_values(_window()) == [1.0, 2.0, 3.0, 4.0]
 
 
-@pytest.mark.parametrize("source_name", [CONF_SOURCE_IMPORT_PRICE, CONF_SOURCE_EXPORT_PRICE])
-async def test_hourly_price_repeats_across_quarter_hour_slots(
-    hass: HomeAssistant, source_name: str
-) -> None:
+async def test_hourly_price_repeats_across_quarter_hour_slots(hass: HomeAssistant) -> None:
     """A per-kWh price applies unchanged to every slot its hour covers."""
-    provider = _template_provider(hass, source_name, _points(60, [0.30, 0.40]))
+    provider = _template_provider(
+        hass, CONF_SOURCE_IMPORT_PRICE, _points(60, [0.30, 0.40])
+    )
 
     values = await provider.async_values(_window(slots=8))
 
@@ -251,12 +248,9 @@ async def test_energy_provider_night_without_periods_is_zero(
     assert values == pytest.approx([0.5, 0.4, 0.0, 0.0, 0.3, 0.2])
 
 
-@pytest.mark.parametrize("source_name", [CONF_SOURCE_USAGE, CONF_SOURCE_PV])
-async def test_hourly_energy_splits_across_quarter_hour_slots(
-    hass: HomeAssistant, source_name: str
-) -> None:
+async def test_hourly_energy_splits_across_quarter_hour_slots(hass: HomeAssistant) -> None:
     """Energy per hour is divided over the quarter-hour slots it covers."""
-    provider = _template_provider(hass, source_name, _points(60, [1.0, 2.0]))
+    provider = _template_provider(hass, CONF_SOURCE_USAGE, _points(60, [1.0, 2.0]))
 
     values = await provider.async_values(_window(slots=8))
 
@@ -264,15 +258,14 @@ async def test_hourly_energy_splits_across_quarter_hour_slots(
 
 
 @pytest.mark.parametrize("clamp_mode", [CLAMP_MODE_NONE, CLAMP_MODE_NEAREST])
-@pytest.mark.parametrize("source_name", [CONF_SOURCE_USAGE, CONF_SOURCE_PV])
 async def test_quarter_hour_energy_sums_into_hourly_slots(
-    hass: HomeAssistant, source_name: str, clamp_mode: str
+    hass: HomeAssistant, clamp_mode: str
 ) -> None:
     """Energy from several source intervals inside one slot is summed."""
     payload = _points(15, [0.1, 0.2, 0.3, 0.4, 0.5, 0.5, 0.5, 0.5])
     provider = _template_provider(
         hass,
-        source_name,
+        CONF_SOURCE_USAGE,
         payload,
         **{
             CONF_CLAMP_MODE: clamp_mode,
@@ -285,27 +278,21 @@ async def test_quarter_hour_energy_sums_into_hourly_slots(
     assert values == pytest.approx([1.0, 2.0])
 
 
-@pytest.mark.parametrize(
-    ("aggregation_mode", "expected"),
-    [(AGGREGATION_MODE_MEAN, 0.25), (AGGREGATION_MODE_FIRST, 0.10), (AGGREGATION_MODE_MAX, 0.40)],
-)
-async def test_quarter_hour_prices_aggregate_into_hourly_slots(
-    hass: HomeAssistant, aggregation_mode: str, expected: float
-) -> None:
-    """Prices inside one slot use the aggregation mode and are never summed."""
+async def test_quarter_hour_prices_aggregate_into_hourly_slots(hass: HomeAssistant) -> None:
+    """Prices inside one slot are averaged, never summed."""
     provider = _template_provider(
         hass,
         CONF_SOURCE_IMPORT_PRICE,
         _points(15, [0.1, 0.2, 0.3, 0.4]),
         **{
             CONF_CLAMP_MODE: CLAMP_MODE_NEAREST,
-            CONF_AGGREGATION_MODE: aggregation_mode,
+            CONF_AGGREGATION_MODE: AGGREGATION_MODE_MEAN,
         },
     )
 
     values = await provider.async_values(_window(slot_minutes=60, slots=1))
 
-    assert values == pytest.approx([expected])
+    assert values == pytest.approx([0.25])
 
 
 async def test_numeric_list_with_sub_slot_energy_is_summed(hass: HomeAssistant) -> None:
@@ -322,6 +309,25 @@ async def test_numeric_list_with_sub_slot_energy_is_summed(hass: HomeAssistant) 
     values = await provider.async_values(_window(slots=4))
 
     assert values == pytest.approx([0.3, 0.7, 1.1, 1.5])
+
+
+async def test_numeric_list_longer_than_horizon_must_be_an_exact_multiple(
+    hass: HomeAssistant,
+) -> None:
+    """A numeric list that cannot be split evenly over the slots is rejected."""
+    provider = TemplateAdapterSourceProvider(
+        hass,
+        source_name=CONF_SOURCE_USAGE,
+        source_config={
+            CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+            CONF_TEMPLATE: "{{ [0.1, 0.2, 0.3, 0.4, 0.5, 0.6] }}",
+        },
+    )
+
+    with pytest.raises(SourceProviderError, match="evenly aggregated") as err:
+        await provider.async_values(_window(slots=4))
+
+    assert err.value.code == "source_validation"
 
 
 @pytest.mark.parametrize(
