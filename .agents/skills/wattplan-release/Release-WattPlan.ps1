@@ -166,15 +166,12 @@ try {
     $sha = Invoke-Git rev-parse HEAD
     Write-Host "Release commit: $sha"
 
-    $stage = 'push main and wait for CI'
+    # A version-only commit cannot break main CI; the tag CI builds, tests, and
+    # validates the manifest version before anything is published.
+    $stage = 'push main'
     Invoke-Git -c push.followTags=false push origin 'HEAD:refs/heads/main' | Write-Host
-    Wait-CI main $sha
 
     $stage = 'create and push tag'
-    Assert-Clean
-    if ((Invoke-Git branch --show-current) -ne 'main' -or (Invoke-Git rev-parse HEAD) -ne $sha) {
-        throw 'Checkout changed while CI was running.'
-    }
     Assert-UnusedTag
     Invoke-Git tag -a $Tag $sha -m "WattPlan $version" | Write-Host
     Invoke-Git -c push.followTags=false push origin "refs/tags/${Tag}:refs/tags/$Tag" | Write-Host

@@ -17,8 +17,11 @@ description: Prepare and publish a WattPlan release or prerelease using its targ
    ```
 
    Substitute the intended tag and notes path; `-Notes 'Markdown text'` also
-   accepts notes directly. The script owns checkout, versions, pushes, CI waits,
-   tagging, release verification, and notes. `-TimeoutMinutes` defaults to 30
-   per CI wait.
+   accepts notes directly. The script owns checkout, versions, pushes, tagging,
+   the tag CI wait, release verification, and notes. It tags the version commit
+   right after pushing main: a version-only change cannot break CI, and the tag
+   CI rebuilds, retests, and validates the manifest version before publishing.
+   Because a failed tag CI consumes the version, confirm main's latest CI passed
+   before releasing. `-TimeoutMinutes` defaults to 30.
 3. Report the release URL, or the failure stage and CI URL. On failure, inspect
    the preserved state before retrying; never move a published tag.
