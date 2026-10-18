@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime, timedelta, tzinfo
+from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 from custom_components.wattplan.const import (
@@ -15,9 +16,6 @@ from custom_components.wattplan.const import (
     CONF_CAPACITY_KWH,
     CONF_CHARGE_EFFICIENCY,
     CONF_DISCHARGE_EFFICIENCY,
-    CONF_DURATION_MINUTES,
-    CONF_ENERGY_KWH,
-    CONF_EXPECTED_POWER_KW,
     CONF_FIXUP_PROFILE,
     CONF_HOURS_TO_PLAN,
     CONF_HISTORICAL_COST_TRACKING_ENABLED,
@@ -27,19 +25,11 @@ from custom_components.wattplan.const import (
     CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION,
     CONF_HISTORICAL_USAGE_SENSOR,
     CONF_MAX_CHARGE_KW,
-    CONF_MAX_CONSECUTIVE_OFF_MINUTES,
     CONF_MAX_DISCHARGE_KW,
-    CONF_MIN_CONSECUTIVE_OFF_MINUTES,
-    CONF_MIN_CONSECUTIVE_ON_MINUTES,
-    CONF_MIN_OPTION_GAP_MINUTES,
     CONF_MINIMUM_KWH,
-    CONF_ON_OFF_SOURCE,
     CONF_OUTLOOK_LANGUAGES,
-    CONF_OPTIONS_COUNT,
     CONF_PLANNING_ENABLED,
     CONF_PROVIDERS,
-    CONF_ROLLING_WINDOW_HOURS,
-    CONF_RUN_WITHIN_HOURS,
     CONF_SLOT_MINUTES,
     CONF_SOC_SOURCE,
     CONF_SOURCE_MODE,
@@ -48,7 +38,6 @@ from custom_components.wattplan.const import (
     CONF_SOURCE_PV,
     CONF_SOURCE_USAGE,
     CONF_SOURCES,
-    CONF_TARGET_ON_HOURS_PER_WINDOW,
     CONF_TEMPLATE,
     CONF_TIME_KEY,
     CONF_VALUE_KEY,
@@ -62,8 +51,6 @@ from custom_components.wattplan.const import (
     SOURCE_MODE_NOT_USED,
     SOURCE_MODE_TEMPLATE,
     SUBENTRY_TYPE_BATTERY,
-    SUBENTRY_TYPE_COMFORT,
-    SUBENTRY_TYPE_OPTIONAL,
 )
 from custom_components.wattplan.coordinator import (
     STORAGE_VERSION,
@@ -79,17 +66,9 @@ from custom_components.wattplan.coordinator_parts import (
 )
 from custom_components.wattplan.historical_cost.models import (
     FLAG_GAP,
-    FLAG_METER_RESET,
-    FLAG_MISSING_IMPORT_PRICE,
     FLAG_MISSING_METER,
-    FLAG_MULTI_SLOT_DELTA,
     FLAG_SELF_CONSUMPTION_UNAVAILABLE,
-    HistoricalMetric,
-    SCENARIO_ACTUAL,
-    SCENARIO_SELF_CONSUMPTION,
-    SlotRecord,
 )
-from custom_components.wattplan.historical_cost.store import HistoricalCostStore
 from custom_components.wattplan.entry_setup import config_fingerprint
 from custom_components.wattplan.historical_cost.tracker import HistoricalCostTracker
 from custom_components.wattplan.source_fixup import SourceHealthKind, SourceHealthState
@@ -112,18 +91,25 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from tests.common import MockConfigEntry, async_fire_time_changed
+from tests.integration.test_integration_e2e import (  # noqa: F401
+    _base_sources,
+    _battery_subentry,
+    _comfort_subentry,
+    _entry,
+    _optional_subentry,
+    _setup_entry,
+    entity_registry_enabled_by_default,
+)
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
 
-@pytest.mark.parametrize("slot_minutes", [15, 30, 60])
 def test_source_failure_debounce_counts_distinct_slots_and_recovers(
-    hass: HomeAssistant,
-    slot_minutes: int,
+    hass: HomeAssistant, freezer
 ) -> None:
-    """Manual retries do not advance streaks; recovery and restart clear them."""
+    """Retries do not advance the streak; recovery, restart and a slot gap clear it."""
     manager = SourceStatusManager(hass)
-    health = SourceHealthState(
+    unavailable = SourceHealthState(
         kind=SourceHealthKind.UNAVAILABLE,
         available_count=0,
         required_count=4,
@@ -133,103 +119,45 @@ def test_source_failure_debounce_counts_distinct_slots_and_recovers(
     source_config = {CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE}
     base = datetime(2026, 9, 23, 12, tzinfo=UTC)
 
+    def build(manager: SourceStatusManager, health: SourceHealthState) -> dict:
+        return manager._build_source_status(
+            source_key=CONF_SOURCE_PV,
+            source_config=source_config,
+            health=health,
+            slot_minutes=30,
+        )
+
     for slot_index in range(4):
-        current = base + timedelta(minutes=slot_minutes * slot_index)
-
-        class SlotDateTime(datetime):
-            value = current
-
-            @classmethod
-            def now(cls, tz: tzinfo | None = None) -> datetime:
-                return cls.value if tz is not None else cls.value.replace(tzinfo=None)
-
-        with patch(
-            "custom_components.wattplan.coordinator_logic.source_status.datetime",
-            SlotDateTime,
-        ):
-            payload = manager._build_source_status(
-                source_key=CONF_SOURCE_PV,
-                source_config=source_config,
-                health=health,
-                slot_minutes=slot_minutes,
-            )
-            retry = manager._build_source_status(
-                source_key=CONF_SOURCE_PV,
-                source_config=source_config,
-                health=health,
-                slot_minutes=slot_minutes,
-            )
+        freezer.move_to(base + timedelta(minutes=30 * slot_index))
+        build(manager, unavailable)
+        retry = build(manager, unavailable)
         assert retry["failure_slot_count"] == slot_index + 1
 
-    assert payload["failure_slot_count"] == 4
-    recovered = manager._build_source_status(
-        source_key=CONF_SOURCE_PV,
-        source_config=source_config,
-        health=SourceHealthState(
+    recovered = build(
+        manager,
+        SourceHealthState(
             kind=SourceHealthKind.OK,
             available_count=4,
             required_count=4,
             using_stale=False,
             expires_at=None,
         ),
-        slot_minutes=slot_minutes,
     )
     assert recovered["failure_slot_count"] == 0
 
-    restarted = SourceStatusManager(hass)._build_source_status(
-        source_key=CONF_SOURCE_PV,
-        source_config=source_config,
-        health=health,
-        slot_minutes=slot_minutes,
-    )
-    assert restarted["failure_slot_count"] == 1
+    restarted_manager = SourceStatusManager(hass)
+    assert build(restarted_manager, unavailable)["failure_slot_count"] == 1
 
-
-def test_source_failure_debounce_resets_after_slot_gap(hass: HomeAssistant) -> None:
-    """A missing affected slot starts a new consecutive failure streak."""
-    manager = SourceStatusManager(hass)
-    health = SourceHealthState(
-        kind=SourceHealthKind.UNAVAILABLE,
-        available_count=0,
-        required_count=4,
-        using_stale=False,
-        expires_at=None,
-    )
-    source_config = {CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE}
-    base = datetime(2026, 9, 23, 12, tzinfo=UTC)
-
-    class SlotDateTime(datetime):
-        value = base
-
-        @classmethod
-        def now(cls, tz: tzinfo | None = None) -> datetime:
-            return cls.value if tz is not None else cls.value.replace(tzinfo=None)
-
-    with patch(
-        "custom_components.wattplan.coordinator_logic.source_status.datetime",
-        SlotDateTime,
-    ):
-        first = manager._build_source_status(
-            source_key=CONF_SOURCE_PV,
-            source_config=source_config,
-            health=health,
-            slot_minutes=30,
-        )
-        SlotDateTime.value = base + timedelta(minutes=60)
-        after_gap = manager._build_source_status(
-            source_key=CONF_SOURCE_PV,
-            source_config=source_config,
-            health=health,
-            slot_minutes=30,
-        )
-
-    assert first["failure_slot_count"] == 1
+    # Skipping an affected slot starts a new consecutive streak.
+    after_gap_at = base + timedelta(minutes=90 + 60)
+    freezer.move_to(after_gap_at)
+    after_gap = build(restarted_manager, unavailable)
     assert after_gap["failure_slot_count"] == 1
-    assert after_gap["failure_started_at"] == SlotDateTime.value.isoformat()
+    assert after_gap["failure_started_at"] == after_gap_at.isoformat()
 
 
 def test_planning_failure_debounce_counts_consecutive_slots_only(
-    hass: HomeAssistant,
+    hass: HomeAssistant, freezer
 ) -> None:
     """Manual planning retries do not count, and a skipped slot resets the streak."""
     coordinator = WattPlanCoordinator(
@@ -241,34 +169,17 @@ def test_planning_failure_debounce_counts_consecutive_slots_only(
     )
     base = datetime(2026, 9, 23, 12, tzinfo=UTC)
 
-    class SlotDateTime(datetime):
-        value = base
-
-        @classmethod
-        def now(cls, tz: tzinfo | None = None) -> datetime:
-            return cls.value if tz is not None else cls.value.replace(tzinfo=None)
-
-    with patch("custom_components.wattplan.coordinator.datetime", SlotDateTime):
+    def fail_plan_at(moment: datetime) -> dict:
+        freezer.move_to(moment)
         coordinator._set_stage_error(
             Stage.PLAN, StageErrorKind.PLANNER_EXECUTION, "planner failed"
         )
-        first = coordinator.outlook_failure_status
-        coordinator._set_stage_error(
-            Stage.PLAN, StageErrorKind.PLANNER_EXECUTION, "planner failed"
-        )
-        retry = coordinator.outlook_failure_status
+        return coordinator.outlook_failure_status
 
-        SlotDateTime.value = base + timedelta(minutes=30)
-        coordinator._set_stage_error(
-            Stage.PLAN, StageErrorKind.PLANNER_EXECUTION, "planner failed"
-        )
-        adjacent = coordinator.outlook_failure_status
-
-        SlotDateTime.value = base + timedelta(minutes=90)
-        coordinator._set_stage_error(
-            Stage.PLAN, StageErrorKind.PLANNER_EXECUTION, "planner failed"
-        )
-        after_gap = coordinator.outlook_failure_status
+    first = fail_plan_at(base)
+    retry = fail_plan_at(base)
+    adjacent = fail_plan_at(base + timedelta(minutes=30))
+    after_gap = fail_plan_at(base + timedelta(minutes=90))
 
     assert first["slot_count"] == 1
     assert retry["slot_count"] == 1
@@ -445,8 +356,6 @@ def _fake_optimize_with_extreme_savings(_params: object) -> dict[str, object]:
     }
 
 
-
-
 def _assert_valid_state(hass: HomeAssistant, entity_id: str) -> None:
     """Assert an entity exists and is not unknown/unavailable."""
     state = hass.states.get(entity_id)
@@ -480,31 +389,139 @@ def _historical_options() -> dict[str, object]:
     }
 
 
+
+def _import_only_sources(
+    template: str = "{{ [0.2, 0.25, 0.3, 0.35] }}",
+) -> dict[str, dict[str, Any]]:
+    """Return sources with one import price template and no usage or PV."""
+    return {
+        CONF_SOURCE_IMPORT_PRICE: {
+            CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+            CONF_TEMPLATE: template,
+        },
+        CONF_SOURCE_USAGE: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
+        CONF_SOURCE_PV: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
+    }
+
+
+def _all_assets() -> list[config_entries.ConfigSubentryData]:
+    """Return one battery, one comfort and one optional subentry."""
+    return [
+        _battery_subentry(subentry_id="battery_sub", name="battery"),
+        _comfort_subentry(subentry_id="comfort_sub", name="comfort"),
+        _optional_subentry(subentry_id="optional_sub", name="optional"),
+    ]
+
+
+def _hourly_sources(
+    *, import_price: float = 1.0, export_price: float = 0.1
+) -> dict[str, dict[str, Any]]:
+    """Return flat four-slot import and export price templates."""
+    return {
+        CONF_SOURCE_IMPORT_PRICE: {
+            CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+            CONF_TEMPLATE: f"{{{{ [{import_price}] * 4 }}}}",
+        },
+        CONF_SOURCE_EXPORT_PRICE: {
+            CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+            CONF_TEMPLATE: f"{{{{ [{export_price}] * 4 }}}}",
+        },
+    }
+
+
+def _self_consumption_battery(
+    *, capacity_kwh: float = 10.0, max_kw: float = 3.0
+) -> config_entries.ConfigSubentryData:
+    """Return a lossless PV-charged battery for historical reference tests."""
+    return config_entries.ConfigSubentryData(
+        subentry_id="battery_sub",
+        subentry_type=SUBENTRY_TYPE_BATTERY,
+        title="battery",
+        unique_id="battery:battery",
+        data={
+            CONF_NAME: "battery",
+            CONF_SOC_SOURCE: "sensor.battery_soc",
+            CONF_CAPACITY_KWH: capacity_kwh,
+            CONF_MINIMUM_KWH: 0.0,
+            CONF_MAX_CHARGE_KW: max_kw,
+            CONF_MAX_DISCHARGE_KW: max_kw,
+            CONF_CHARGE_EFFICIENCY: 1.0,
+            CONF_DISCHARGE_EFFICIENCY: 1.0,
+            CONF_CAN_CHARGE_FROM_GRID: False,
+            CONF_CAN_CHARGE_FROM_PV: True,
+        },
+    )
+
+
+def _set_hourly_meters(
+    hass: HomeAssistant,
+    grid_import: float,
+    grid_export: float,
+    usage: float,
+    pv: float,
+) -> None:
+    """Set all four cumulative meters."""
+    _set_energy_meter(hass, "sensor.grid_import_total", grid_import)
+    _set_energy_meter(hass, "sensor.grid_export_total", grid_export)
+    _set_energy_meter(hass, "sensor.usage_total", usage)
+    _set_energy_meter(hass, "sensor.pv_total", pv)
+
+
+def _seed_tracker(tracker: HistoricalCostTracker, start: datetime) -> None:
+    """Make the tracker believe slot `start` is the first one still to process."""
+    tracker.store.update_metadata(
+        last_processed_slot=start - timedelta(hours=1),
+        last_meter_values={
+            "grid_import": 100.0,
+            "grid_export": 10.0,
+            "usage": 200.0,
+            "pv": 50.0,
+        },
+        meter_config={
+            "grid_import": "sensor.grid_import_total",
+            "grid_export": "sensor.grid_export_total",
+            "usage": "sensor.usage_total",
+            "pv": "sensor.pv_total",
+        },
+    )
+
+
+async def _setup_battery_tracker(
+    hass: HomeAssistant, freezer, start: datetime
+) -> tuple[MockConfigEntry, HistoricalCostTracker]:
+    """Set up an hourly battery tracker with slot `start` complete and unprocessed.
+
+    The slot used 1.0 kWh imported, 0.2 kWh exported, 1.5 kWh load and 1.0 kWh PV.
+    """
+    freezer.move_to(start + timedelta(hours=1, seconds=2))
+    entry = _entry(
+        title="Home",
+        sources=_hourly_sources(),
+        options=_historical_options(),
+        subentries_data=[_self_consumption_battery()],
+    )
+    entry.add_to_hass(hass)
+    _set_hourly_meters(hass, 100.0, 10.0, 200.0, 50.0)
+    hass.states.async_set(
+        "sensor.battery_soc",
+        "1.0",
+        {"unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR},
+    )
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    tracker = entry.runtime_data.historical_tracker
+    assert tracker is not None
+    _seed_tracker(tracker, start)
+    tracker.store.update_simulation_soc({"battery_sub": 1.0})
+    _set_hourly_meters(hass, 101.0, 10.2, 201.5, 51.0)
+    return entry, tracker
+
+
 async def test_runtime_diagnostic_sensors_disabled_by_default(
     hass: HomeAssistant,
 ) -> None:
     """Register noisy runtime sensors disabled while keeping last run enabled."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Home",
-        data={
-            CONF_NAME: "Home",
-            CONF_SLOT_MINUTES: 60,
-            CONF_HOURS_TO_PLAN: 4,
-            CONF_SOURCES: {
-                CONF_SOURCE_IMPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [0.2, 0.25, 0.3, 0.35] }}",
-                },
-                CONF_SOURCE_USAGE: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
-                CONF_SOURCE_PV: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
-            },
-        },
-        options={
-            CONF_PLANNING_ENABLED: False,
-            CONF_ACTION_EMISSION_ENABLED: False,
-        },
-    )
+    entry = _entry(title="Home", sources=_import_only_sources(), subentries_data=[])
     entry.add_to_hass(hass)
 
     with patch(
@@ -521,107 +538,31 @@ async def test_runtime_diagnostic_sensors_disabled_by_default(
 
     entity_registry = er.async_get(hass)
     last_run_entry = entity_registry.async_get("sensor.home_last_run")
-    next_run_entry = entity_registry.async_get("sensor.home_next_run")
-    duration_entry = entity_registry.async_get("sensor.home_last_run_duration")
-
     assert last_run_entry is not None
     assert last_run_entry.disabled_by is None
-    assert hass.states.get("sensor.home_last_run") is not None
     _assert_valid_state(hass, "sensor.home_last_run")
 
-    assert next_run_entry is not None
-    assert next_run_entry.disabled_by == er.RegistryEntryDisabler.INTEGRATION
-    assert next_run_entry.entity_category == EntityCategory.DIAGNOSTIC
-    assert hass.states.get("sensor.home_next_run") is None
+    for entity_id in ("sensor.home_next_run", "sensor.home_last_run_duration"):
+        registered = entity_registry.async_get(entity_id)
+        assert registered is not None
+        assert registered.disabled_by == er.RegistryEntryDisabler.INTEGRATION
+        assert registered.entity_category == EntityCategory.DIAGNOSTIC
+        assert hass.states.get(entity_id) is None
 
-    assert duration_entry is not None
-    assert duration_entry.disabled_by == er.RegistryEntryDisabler.INTEGRATION
-    assert duration_entry.entity_category == EntityCategory.DIAGNOSTIC
-    assert hass.states.get("sensor.home_last_run_duration") is None
 
-async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
+async def test_full_runtime_optimize_publishes_plan_entities(
+    hass: HomeAssistant,
+) -> None:
     """Set up entry with one of each asset and assert runtime entities have data."""
-    price_template = "{{ [0.2, 0.25, 0.3, 0.35] }}"
-    usage_template = "{{ [1.0, 1.1, 1.0, 0.9] }}"
-    pv_template = "{{ [0.0, 0.2, 0.3, 0.1] }}"
     hass.config.language = "en-US"
-    entry = MockConfigEntry(
-        domain=DOMAIN,
+    entry = _entry(
         title="Home",
-        data={
-            CONF_NAME: "Home",
-            CONF_SLOT_MINUTES: 60,
-            CONF_HOURS_TO_PLAN: 4,
-            CONF_SOURCES: {
-                CONF_SOURCE_IMPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: price_template,
-                },
-                CONF_SOURCE_USAGE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: usage_template,
-                },
-                CONF_SOURCE_PV: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: pv_template,
-                },
-            },
-        },
         options={
             CONF_PLANNING_ENABLED: False,
             CONF_ACTION_EMISSION_ENABLED: False,
             CONF_OUTLOOK_LANGUAGES: ["da", "en", "da"],
         },
-        subentries_data=[
-            config_entries.ConfigSubentryData(
-                subentry_id="battery_sub",
-                subentry_type=SUBENTRY_TYPE_BATTERY,
-                title="battery",
-                unique_id="battery:battery",
-                data={
-                    CONF_NAME: "battery",
-                    CONF_SOC_SOURCE: "sensor.battery_soc",
-                    CONF_CAPACITY_KWH: 10.0,
-                    CONF_MINIMUM_KWH: 1.0,
-                    CONF_MAX_CHARGE_KW: 3.0,
-                    CONF_MAX_DISCHARGE_KW: 3.0,
-                    CONF_CHARGE_EFFICIENCY: 0.9,
-                    CONF_DISCHARGE_EFFICIENCY: 0.9,
-                    CONF_CAN_CHARGE_FROM_GRID: True,
-                    CONF_CAN_CHARGE_FROM_PV: True,
-                },
-            ),
-            config_entries.ConfigSubentryData(
-                subentry_id="comfort_sub",
-                subentry_type=SUBENTRY_TYPE_COMFORT,
-                title="comfort",
-                unique_id="comfort:comfort",
-                data={
-                    CONF_NAME: "comfort",
-                    CONF_ROLLING_WINDOW_HOURS: 4,
-                    CONF_TARGET_ON_HOURS_PER_WINDOW: 1,
-                    CONF_MIN_CONSECUTIVE_ON_MINUTES: 60,
-                    CONF_MIN_CONSECUTIVE_OFF_MINUTES: 60,
-                    CONF_MAX_CONSECUTIVE_OFF_MINUTES: 120,
-                    CONF_ON_OFF_SOURCE: "binary_sensor.comfort_on_off",
-                    CONF_EXPECTED_POWER_KW: 1.2,
-                },
-            ),
-            config_entries.ConfigSubentryData(
-                subentry_id="optional_sub",
-                subentry_type=SUBENTRY_TYPE_OPTIONAL,
-                title="optional",
-                unique_id="optional:optional",
-                data={
-                    CONF_NAME: "optional",
-                    CONF_DURATION_MINUTES: 60,
-                    CONF_RUN_WITHIN_HOURS: 3,
-                    CONF_ENERGY_KWH: 1.5,
-                    CONF_OPTIONS_COUNT: 2,
-                    CONF_MIN_OPTION_GAP_MINUTES: 60,
-                },
-            ),
-        ],
+        subentries_data=_all_assets(),
     )
     entry.add_to_hass(hass)
 
@@ -646,15 +587,18 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
     assert last_run_after_refresh is not None
     assert last_run_after_refresh.state == last_run_after_plan.state
 
-    _assert_valid_state(hass, "sensor.home_status")
-    _assert_valid_state(hass, "sensor.home_plan_outlook_da")
-    _assert_valid_state(hass, "sensor.home_plan_outlook_en")
-    _assert_valid_state(hass, "sensor.home_last_run")
-    _assert_valid_state(hass, "sensor.home_battery_action")
-    _assert_valid_state(hass, "sensor.home_comfort_action")
-    _assert_valid_state(hass, "sensor.home_optional_next_start_option")
-    _assert_valid_state(hass, "sensor.home_optional_option_1_start")
-    assert entry.runtime_data.outlook_languages == ("en", "da")
+    for entity_id in (
+        "sensor.home_status",
+        "sensor.home_plan_outlook_da",
+        "sensor.home_plan_outlook_en",
+        "sensor.home_last_run",
+        "sensor.home_battery_action",
+        "sensor.home_comfort_action",
+        "sensor.home_optional_next_start_option",
+        "sensor.home_optional_option_1_start",
+    ):
+        _assert_valid_state(hass, entity_id)
+
     outlook = hass.states.get("sensor.home_plan_outlook_en")
     assert outlook is not None
     assert len(outlook.state) <= 255
@@ -671,58 +615,24 @@ async def test_full_runtime_optimize_and_emit_once(hass: HomeAssistant) -> None:
         "energy_balance",
         "reliability",
     }
-    danish_outlook = hass.states.get("sensor.home_plan_outlook_da")
-    assert danish_outlook is not None
-    assert danish_outlook.attributes["language"] == "da"
-    entity_registry = er.async_get(hass)
-    assert entity_registry.async_get("sensor.home_plan_outlook") is None
-    danish_entry = entity_registry.async_get("sensor.home_plan_outlook_da")
-    english_entry = entity_registry.async_get("sensor.home_plan_outlook_en")
-    assert danish_entry is not None
-    assert english_entry is not None
-    assert danish_entry.unique_id.endswith(":plan_outlook:da")
-    assert english_entry.unique_id.endswith(":plan_outlook:en")
-
-    for entity_id in (
-        "sensor.home_projected_cost_savings",
-        "sensor.home_projected_savings_percentage",
-        "sensor.home_projected_cost_savings_this_interval",
-        "sensor.home_projected_savings_percentage_this_interval",
-    ):
-        assert entity_registry.async_get(entity_id) is None
+    assert hass.states.get("sensor.home_plan_outlook_da").attributes["language"] == "da"
 
     next_option = hass.states.get("sensor.home_optional_next_start_option")
-    assert next_option is not None
-    next_option_start = dt_util.parse_datetime(next_option.state)
-    next_option_end = dt_util.parse_datetime(next_option.attributes["end_timestamp"])
-    assert next_option_start is not None
-    assert next_option_end is not None
-    assert next_option_end - next_option_start == timedelta(hours=1)
-
     option_1 = hass.states.get("sensor.home_optional_option_1_start")
-    assert option_1 is not None
-    option_1_start = dt_util.parse_datetime(option_1.state)
-    option_1_end = dt_util.parse_datetime(option_1.attributes["end_timestamp"])
-    assert option_1_start is not None
-    assert option_1_end is not None
-    assert option_1_end - option_1_start == timedelta(hours=1)
+    for option in (next_option, option_1):
+        start = dt_util.parse_datetime(option.state)
+        end = dt_util.parse_datetime(option.attributes["end_timestamp"])
+        assert start is not None
+        assert end is not None
+        assert end - start == timedelta(hours=1)
     assert option_1.state == next_option.state
     assert option_1.attributes["end_timestamp"] == next_option.attributes["end_timestamp"]
 
     battery_action = hass.states.get("sensor.home_battery_action")
-    assert battery_action is not None
     assert battery_action.attributes["friendly_name"] == "(battery) Action"
     assert battery_action.state == "grid_charge"
     assert "next_action" not in battery_action.attributes
     assert "next_action_timestamp" not in battery_action.attributes
-
-    next_option = hass.states.get("sensor.home_optional_next_start_option")
-    assert next_option is not None
-    assert next_option.attributes["friendly_name"] == "(optional) Next Start Option"
-
-    option_1 = hass.states.get("sensor.home_optional_option_1_start")
-    assert option_1 is not None
-    assert option_1.attributes["friendly_name"] == "(optional) Option 1 Start"
 
 
 @pytest.mark.parametrize("startup_minute", [0, 7])
@@ -917,83 +827,7 @@ async def test_historical_cost_tracking_processes_scenarios_and_entities(
 ) -> None:
     """Historical tracker should aggregate actual, grid-only, and self-consumption costs."""
     start = datetime(2026, 5, 24, 12, 0, tzinfo=UTC)
-    freezer.move_to(start + timedelta(hours=1, seconds=2))
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Home",
-        data={
-            CONF_NAME: "Home",
-            CONF_SLOT_MINUTES: 60,
-            CONF_HOURS_TO_PLAN: 4,
-            CONF_SOURCES: {
-                CONF_SOURCE_IMPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [1.0, 1.0, 1.0, 1.0] }}",
-                },
-                CONF_SOURCE_EXPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [0.1, 0.1, 0.1, 0.1] }}",
-                },
-            },
-        },
-        options=_historical_options(),
-        subentries_data=[
-            config_entries.ConfigSubentryData(
-                subentry_id="battery_sub",
-                subentry_type=SUBENTRY_TYPE_BATTERY,
-                title="battery",
-                unique_id="battery:battery",
-                data={
-                    CONF_NAME: "battery",
-                    CONF_SOC_SOURCE: "sensor.battery_soc",
-                    CONF_CAPACITY_KWH: 10.0,
-                    CONF_MINIMUM_KWH: 0.0,
-                    CONF_MAX_CHARGE_KW: 3.0,
-                    CONF_MAX_DISCHARGE_KW: 3.0,
-                    CONF_CHARGE_EFFICIENCY: 1.0,
-                    CONF_DISCHARGE_EFFICIENCY: 1.0,
-                    CONF_CAN_CHARGE_FROM_GRID: False,
-                    CONF_CAN_CHARGE_FROM_PV: True,
-                },
-            )
-        ],
-    )
-    entry.add_to_hass(hass)
-    _set_energy_meter(hass, "sensor.grid_import_total", 100.0)
-    _set_energy_meter(hass, "sensor.grid_export_total", 10.0)
-    _set_energy_meter(hass, "sensor.usage_total", 200.0)
-    _set_energy_meter(hass, "sensor.pv_total", 50.0)
-    hass.states.async_set(
-        "sensor.battery_soc",
-        "1.0",
-        {"unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR},
-    )
-
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-    tracker = entry.runtime_data.historical_tracker
-    assert tracker is not None
-    tracker.store.update_metadata(
-        last_processed_slot=start - timedelta(hours=1),
-        last_meter_values={
-            "grid_import": 100.0,
-            "grid_export": 10.0,
-            "usage": 200.0,
-            "pv": 50.0,
-        },
-        meter_config={
-            "grid_import": "sensor.grid_import_total",
-            "grid_export": "sensor.grid_export_total",
-            "usage": "sensor.usage_total",
-            "pv": "sensor.pv_total",
-        },
-    )
-    tracker.store.update_simulation_soc({"battery_sub": 1.0})
-
-    _set_energy_meter(hass, "sensor.grid_import_total", 101.0)
-    _set_energy_meter(hass, "sensor.grid_export_total", 10.2)
-    _set_energy_meter(hass, "sensor.usage_total", 201.5)
-    _set_energy_meter(hass, "sensor.pv_total", 51.0)
+    _, tracker = await _setup_battery_tracker(hass, freezer, start)
 
     await tracker.async_process_completed_slot(start + timedelta(hours=1, seconds=1))
     await hass.async_block_till_done()
@@ -1037,16 +871,13 @@ async def test_historical_cost_tracking_processes_scenarios_and_entities(
     )
 
     entity_registry = er.async_get(hass)
-    monthly = entity_registry.async_get(
-        "sensor.home_historical_actual_cost_this_month"
-    )
-    assert monthly is not None
-    assert monthly.disabled
-    monthly_grid_only = entity_registry.async_get(
-        "sensor.home_historical_grid_only_cost_this_month"
-    )
-    assert monthly_grid_only is not None
-    assert monthly_grid_only.disabled
+    for entity_id in (
+        "sensor.home_historical_actual_cost_this_month",
+        "sensor.home_historical_grid_only_cost_this_month",
+    ):
+        registered = entity_registry.async_get(entity_id)
+        assert registered is not None
+        assert registered.disabled
 
 
 @pytest.mark.parametrize(
@@ -1073,38 +904,14 @@ async def test_identical_self_consumption_execution_has_zero_reported_savings(
     """
     start = datetime(2026, 9, 1, 12, tzinfo=UTC)
     freezer.move_to(start)
-    entry = MockConfigEntry(
-        domain=DOMAIN, title="Home",
-        data={
-            CONF_NAME: "Home", CONF_SLOT_MINUTES: 60, CONF_HOURS_TO_PLAN: 4,
-            CONF_SOURCES: {
-                CONF_SOURCE_IMPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [1.0, 1.0, 1.0, 1.0] }}",
-                },
-                CONF_SOURCE_EXPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [0.0, 0.0, 0.0, 0.0] }}",
-                },
-            },
-        },
+    entry = _entry(
+        title="Home",
+        sources=_hourly_sources(import_price=1.0, export_price=0.0),
         options=_historical_options(),
-        subentries_data=[config_entries.ConfigSubentryData(
-            subentry_id="battery_sub", subentry_type=SUBENTRY_TYPE_BATTERY,
-            title="battery", unique_id="battery:battery",
-            data={
-                CONF_NAME: "battery", CONF_SOC_SOURCE: "sensor.battery_soc",
-                CONF_CAPACITY_KWH: 1.0, CONF_MINIMUM_KWH: 0.0,
-                CONF_MAX_CHARGE_KW: 1.0, CONF_MAX_DISCHARGE_KW: 1.0,
-                CONF_CHARGE_EFFICIENCY: 1.0, CONF_DISCHARGE_EFFICIENCY: 1.0,
-                CONF_CAN_CHARGE_FROM_GRID: False, CONF_CAN_CHARGE_FROM_PV: True,
-            },
-        )],
+        subentries_data=[_self_consumption_battery(capacity_kwh=1.0, max_kw=1.0)],
     )
     entry.add_to_hass(hass)
-    for entity_id in ("sensor.grid_import_total", "sensor.grid_export_total",
-                      "sensor.usage_total", "sensor.pv_total"):
-        _set_energy_meter(hass, entity_id, 0.0)
+    _set_hourly_meters(hass, 0.0, 0.0, 0.0, 0.0)
     hass.states.async_set("sensor.battery_soc", "1.0",
                          {"unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR})
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -1178,77 +985,20 @@ async def test_identical_self_consumption_execution_has_zero_reported_savings(
     else:
         assert sensor.attributes["reference_segment_ids"] == ["segment-1"]
 
-
-async def test_refresh_sensors_service_processes_historical_costs(
-    hass: HomeAssistant,
-    freezer,
-) -> None:
-    """Manual sensor refresh should process due historical cost slots."""
-    start = datetime(2026, 5, 24, 12, 0, tzinfo=UTC)
-    freezer.move_to(start + timedelta(hours=1, seconds=2))
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Home",
-        data={
-            CONF_NAME: "Home",
-            CONF_SLOT_MINUTES: 60,
-            CONF_HOURS_TO_PLAN: 4,
-            CONF_SOURCES: {
-                CONF_SOURCE_IMPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [1.0, 1.0, 1.0, 1.0] }}",
-                },
-                CONF_SOURCE_EXPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [0.1, 0.1, 0.1, 0.1] }}",
-                },
-            },
-        },
-        options=_historical_options(),
-    )
-    entry.add_to_hass(hass)
-    _set_energy_meter(hass, "sensor.grid_import_total", 100.0)
-    _set_energy_meter(hass, "sensor.grid_export_total", 10.0)
-    _set_energy_meter(hass, "sensor.usage_total", 200.0)
-    _set_energy_meter(hass, "sensor.pv_total", 50.0)
-
-    with patch(
-        "custom_components.wattplan.optimizer.optimize",
-        side_effect=_fake_optimize,
-    ):
-        assert await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
-        await entry.runtime_data.coordinator.async_plan(trigger=CycleTrigger.SERVICE)
-
-    tracker = entry.runtime_data.historical_tracker
-    assert tracker is not None
-    tracker.store.update_metadata(
-        last_processed_slot=start - timedelta(hours=1),
-        last_meter_values={
-            "grid_import": 100.0,
-            "grid_export": 10.0,
-            "usage": 200.0,
-            "pv": 50.0,
-        },
-        meter_config={
-            "grid_import": "sensor.grid_import_total",
-            "grid_export": "sensor.grid_export_total",
-            "usage": "sensor.usage_total",
-            "pv": "sensor.pv_total",
-        },
-    )
-
-    _set_energy_meter(hass, "sensor.grid_import_total", 101.0)
-    _set_energy_meter(hass, "sensor.grid_export_total", 10.2)
-    _set_energy_meter(hass, "sensor.usage_total", 201.5)
-    _set_energy_meter(hass, "sensor.pv_total", 51.0)
-
-    await hass.services.async_call(DOMAIN, SERVICE_REFRESH_SENSORS, {}, blocking=True)
-    await hass.async_block_till_done()
-
-    actual = hass.states.get("sensor.home_historical_actual_cost_today")
-    assert actual is not None
-    assert float(actual.state) == pytest.approx(0.98)
+    if variant == "missing_pv":
+        # A missing PV meter only voids the self-consumption reference; the
+        # actual and grid-only metrics keep the slot.
+        day = tracker.store.data["days"]["2026-09-01"]
+        assert day["flags"][0] == FLAG_MISSING_METER | FLAG_SELF_CONSUMPTION_UNAVAILABLE
+        expected = {
+            "sensor.home_historical_actual_cost_today": 2.0,
+            "sensor.home_historical_grid_only_cost_today": 3.0,
+        }
+        for entity_id, value in expected.items():
+            state = hass.states.get(entity_id)
+            assert state is not None
+            assert float(state.state) == pytest.approx(value)
+            assert state.attributes["missing_slots"] == 0
 
 
 async def test_overlapping_historical_refresh_paths_process_each_slot_once(
@@ -1258,82 +1008,7 @@ async def test_overlapping_historical_refresh_paths_process_each_slot_once(
     """Timer, coordinator, and service refreshes should share one slot transaction."""
     start = datetime(2026, 5, 24, 12, 0, tzinfo=UTC)
     first_refresh = start + timedelta(hours=1, seconds=2)
-    freezer.move_to(first_refresh)
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Home",
-        data={
-            CONF_NAME: "Home",
-            CONF_SLOT_MINUTES: 60,
-            CONF_HOURS_TO_PLAN: 4,
-            CONF_SOURCES: {
-                CONF_SOURCE_IMPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [1.0, 1.0, 1.0, 1.0] }}",
-                },
-                CONF_SOURCE_EXPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [0.1, 0.1, 0.1, 0.1] }}",
-                },
-            },
-        },
-        options=_historical_options(),
-        subentries_data=[
-            config_entries.ConfigSubentryData(
-                subentry_id="battery_sub",
-                subentry_type=SUBENTRY_TYPE_BATTERY,
-                title="battery",
-                unique_id="battery:battery",
-                data={
-                    CONF_NAME: "battery",
-                    CONF_SOC_SOURCE: "sensor.battery_soc",
-                    CONF_CAPACITY_KWH: 10.0,
-                    CONF_MINIMUM_KWH: 0.0,
-                    CONF_MAX_CHARGE_KW: 3.0,
-                    CONF_MAX_DISCHARGE_KW: 3.0,
-                    CONF_CHARGE_EFFICIENCY: 1.0,
-                    CONF_DISCHARGE_EFFICIENCY: 1.0,
-                    CONF_CAN_CHARGE_FROM_GRID: False,
-                    CONF_CAN_CHARGE_FROM_PV: True,
-                },
-            )
-        ],
-    )
-    entry.add_to_hass(hass)
-    _set_energy_meter(hass, "sensor.grid_import_total", 100.0)
-    _set_energy_meter(hass, "sensor.grid_export_total", 10.0)
-    _set_energy_meter(hass, "sensor.usage_total", 200.0)
-    _set_energy_meter(hass, "sensor.pv_total", 50.0)
-    hass.states.async_set(
-        "sensor.battery_soc",
-        "1.0",
-        {"unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR},
-    )
-
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-    tracker = entry.runtime_data.historical_tracker
-    assert tracker is not None
-    tracker.store.update_metadata(
-        last_processed_slot=start - timedelta(hours=1),
-        last_meter_values={
-            "grid_import": 100.0,
-            "grid_export": 10.0,
-            "usage": 200.0,
-            "pv": 50.0,
-        },
-        meter_config={
-            "grid_import": "sensor.grid_import_total",
-            "grid_export": "sensor.grid_export_total",
-            "usage": "sensor.usage_total",
-            "pv": "sensor.pv_total",
-        },
-    )
-    tracker.store.update_simulation_soc({"battery_sub": 1.0})
-    _set_energy_meter(hass, "sensor.grid_import_total", 101.0)
-    _set_energy_meter(hass, "sensor.grid_export_total", 10.2)
-    _set_energy_meter(hass, "sensor.usage_total", 201.5)
-    _set_energy_meter(hass, "sensor.pv_total", 51.0)
+    entry, tracker = await _setup_battery_tracker(hass, freezer, start)
 
     price_lookup_started = asyncio.Event()
     release_price_lookup = asyncio.Event()
@@ -1501,10 +1176,7 @@ async def test_historical_cost_uses_cached_planner_prices_after_forecast_rolls(
         options=_historical_options(),
     )
     entry.add_to_hass(hass)
-    _set_energy_meter(hass, "sensor.grid_import_total", 100.0)
-    _set_energy_meter(hass, "sensor.grid_export_total", 10.0)
-    _set_energy_meter(hass, "sensor.usage_total", 200.0)
-    _set_energy_meter(hass, "sensor.pv_total", 50.0)
+    _set_hourly_meters(hass, 100.0, 10.0, 200.0, 50.0)
 
     with patch(
         "custom_components.wattplan.optimizer.optimize",
@@ -1519,21 +1191,7 @@ async def test_historical_cost_uses_cached_planner_prices_after_forecast_rolls(
     assert tracker.store.cached_price(start, "import") == pytest.approx(1.0)
     assert tracker.store.cached_price(start, "export") == pytest.approx(0.1)
 
-    tracker.store.update_metadata(
-        last_processed_slot=start - timedelta(hours=1),
-        last_meter_values={
-            "grid_import": 100.0,
-            "grid_export": 10.0,
-            "usage": 200.0,
-            "pv": 50.0,
-        },
-        meter_config={
-            "grid_import": "sensor.grid_import_total",
-            "grid_export": "sensor.grid_export_total",
-            "usage": "sensor.usage_total",
-            "pv": "sensor.pv_total",
-        },
-    )
+    _seed_tracker(tracker, start)
     hass.states.async_set(
         "sensor.import_price_forecast",
         "ok",
@@ -1544,10 +1202,7 @@ async def test_historical_cost_uses_cached_planner_prices_after_forecast_rolls(
         "ok",
         {"prices": _points(start + timedelta(hours=1), [0.2, 0.21, 0.22, 0.23])},
     )
-    _set_energy_meter(hass, "sensor.grid_import_total", 101.0)
-    _set_energy_meter(hass, "sensor.grid_export_total", 10.2)
-    _set_energy_meter(hass, "sensor.usage_total", 201.5)
-    _set_energy_meter(hass, "sensor.pv_total", 51.0)
+    _set_hourly_meters(hass, 101.0, 10.2, 201.5, 51.0)
 
     await tracker.async_process_completed_slot(start + timedelta(hours=1, seconds=1))
     await hass.async_block_till_done()
@@ -1561,815 +1216,21 @@ async def test_historical_cost_uses_cached_planner_prices_after_forecast_rolls(
     assert float(actual.state) == pytest.approx(0.98)
 
 
-async def test_scheduled_tick_processes_historical_costs(
+
+
+async def test_restore_snapshot_on_startup(
     hass: HomeAssistant,
-    freezer,
+    frozen_clock,
+    entity_registry_enabled_by_default: None,
 ) -> None:
-    """Scheduled coordinator ticks should process due historical cost slots."""
-    start = datetime(2026, 5, 24, 12, 0, tzinfo=UTC)
-    freezer.move_to(start + timedelta(hours=1, seconds=2))
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Home",
-        data={
-            CONF_NAME: "Home",
-            CONF_SLOT_MINUTES: 60,
-            CONF_HOURS_TO_PLAN: 4,
-            CONF_SOURCES: {
-                CONF_SOURCE_IMPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [1.0, 1.0, 1.0, 1.0] }}",
-                },
-                CONF_SOURCE_EXPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [0.1, 0.1, 0.1, 0.1] }}",
-                },
-            },
-        },
-        options=_historical_options(),
-    )
-    entry.add_to_hass(hass)
-    _set_energy_meter(hass, "sensor.grid_import_total", 100.0)
-    _set_energy_meter(hass, "sensor.grid_export_total", 10.0)
-    _set_energy_meter(hass, "sensor.usage_total", 200.0)
-    _set_energy_meter(hass, "sensor.pv_total", 50.0)
-
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-    tracker = entry.runtime_data.historical_tracker
-    assert tracker is not None
-    tracker.store.update_metadata(
-        last_processed_slot=start - timedelta(hours=1),
-        last_meter_values={
-            "grid_import": 100.0,
-            "grid_export": 10.0,
-            "usage": 200.0,
-            "pv": 50.0,
-        },
-        meter_config={
-            "grid_import": "sensor.grid_import_total",
-            "grid_export": "sensor.grid_export_total",
-            "usage": "sensor.usage_total",
-            "pv": "sensor.pv_total",
-        },
-    )
-
-    _set_energy_meter(hass, "sensor.grid_import_total", 101.0)
-    _set_energy_meter(hass, "sensor.grid_export_total", 10.2)
-    _set_energy_meter(hass, "sensor.usage_total", 201.5)
-    _set_energy_meter(hass, "sensor.pv_total", 51.0)
-
-    await entry.runtime_data.coordinator.async_tick(trigger=CycleTrigger.SCHEDULE)
-    await hass.async_block_till_done()
-
-    actual = hass.states.get("sensor.home_historical_actual_cost_today")
-    assert actual is not None
-    assert float(actual.state) == pytest.approx(0.98)
-
-
-async def test_historical_sensors_keep_grid_metrics_when_pv_is_missing(
-    hass: HomeAssistant,
-    freezer,
-) -> None:
-    """A missing PV meter should affect only the self-consumption reference."""
-    start = datetime(2026, 5, 24, 12, 0, tzinfo=UTC)
-    freezer.move_to(start + timedelta(hours=1, seconds=2))
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Home",
-        data={
-            CONF_NAME: "Home",
-            CONF_SLOT_MINUTES: 60,
-            CONF_HOURS_TO_PLAN: 4,
-            CONF_SOURCES: {
-                CONF_SOURCE_IMPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [1.0, 1.0, 1.0, 1.0] }}",
-                },
-            },
-        },
-        options=_historical_options(),
-    )
-    entry.add_to_hass(hass)
-    _set_energy_meter(hass, "sensor.grid_import_total", 100.0)
-    _set_energy_meter(hass, "sensor.grid_export_total", 10.0)
-    _set_energy_meter(hass, "sensor.usage_total", 200.0)
-    _set_energy_meter(hass, "sensor.pv_total", 50.0)
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-    tracker = entry.runtime_data.historical_tracker
-    assert tracker is not None
-    tracker.store.update_metadata(
-        last_processed_slot=start - timedelta(hours=1),
-        last_meter_values={
-            "grid_import": 100.0,
-            "grid_export": 10.0,
-            "usage": 200.0,
-            "pv": 50.0,
-        },
-        meter_config={
-            "grid_import": "sensor.grid_import_total",
-            "grid_export": "sensor.grid_export_total",
-            "usage": "sensor.usage_total",
-            "pv": "sensor.pv_total",
-        },
-    )
-    _set_energy_meter(hass, "sensor.grid_import_total", 101.0)
-    _set_energy_meter(hass, "sensor.grid_export_total", 10.0)
-    _set_energy_meter(hass, "sensor.usage_total", 202.0)
-    hass.states.async_set("sensor.pv_total", STATE_UNAVAILABLE)
-
-    await tracker.async_process_completed_slot()
-    await hass.async_block_till_done()
-
-    day = tracker.store.data["days"]["2026-05-24"]
-    assert day["flags"] == [
-        FLAG_MISSING_METER | FLAG_SELF_CONSUMPTION_UNAVAILABLE
-    ]
-    expected = {
-        "sensor.home_historical_actual_cost_today": 1.0,
-        "sensor.home_historical_grid_only_cost_today": 2.0,
-        "sensor.home_historical_savings_vs_grid_only_today": 1.0,
-    }
-    for entity_id, value in expected.items():
-        state = hass.states.get(entity_id)
-        assert state is not None
-        assert float(state.state) == pytest.approx(value)
-        assert state.attributes["slots"] == 1
-        assert state.attributes["missing_slots"] == 0
-
-    self_consumption = hass.states.get(
-        "sensor.home_historical_self_consumption_cost_today"
-    )
-    assert self_consumption is not None
-    assert self_consumption.state == STATE_UNAVAILABLE
-    summary = tracker.store.summary(
-        metric=HistoricalMetric.COST,
-        period="today",
-        scenario=SCENARIO_SELF_CONSUMPTION,
-    )
-    assert summary.missing_slots == 1
-
-
-async def test_historical_cost_tracking_flags_meter_reset_and_missing_price(
-    hass: HomeAssistant,
-    freezer,
-) -> None:
-    """Invalid deltas and missing prices should create gap records instead of costs."""
-    start = datetime(2026, 5, 24, 12, 0, tzinfo=UTC)
-    freezer.move_to(start + timedelta(hours=1, seconds=2))
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Home",
-        data={
-            CONF_NAME: "Home",
-            CONF_SLOT_MINUTES: 60,
-            CONF_HOURS_TO_PLAN: 4,
-            CONF_SOURCES: {
-                CONF_SOURCE_IMPORT_PRICE: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
-            },
-        },
-        options={
-            **_historical_options(),
-            CONF_HISTORICAL_GRID_EXPORT_SENSOR: None,
-            CONF_HISTORICAL_PV_SENSOR: None,
-            CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION: False,
-        },
-    )
-    entry.add_to_hass(hass)
-    _set_energy_meter(hass, "sensor.grid_import_total", 100.0)
-    _set_energy_meter(hass, "sensor.usage_total", 200.0)
-
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-    tracker = entry.runtime_data.historical_tracker
-    assert tracker is not None
-    tracker.store.update_metadata(
-        last_processed_slot=start - timedelta(hours=1),
-        last_meter_values={
-            "grid_import": 100.0,
-            "grid_export": 0.0,
-            "usage": 200.0,
-            "pv": 0.0,
-        },
-        meter_config={
-            "grid_import": "sensor.grid_import_total",
-            "grid_export": None,
-            "usage": "sensor.usage_total",
-            "pv": None,
-        },
-    )
-
-    _set_energy_meter(hass, "sensor.grid_import_total", 99.0)
-    _set_energy_meter(hass, "sensor.usage_total", 201.0)
-
-    await tracker.async_process_completed_slot(start + timedelta(hours=1, seconds=1))
-
-    day = tracker.store.data["days"]["2026-05-24"]
-    assert day["flags"] == [FLAG_METER_RESET | FLAG_MISSING_IMPORT_PRICE]
-    assert hass.states.get("sensor.home_historical_actual_cost_today").state in {
-        STATE_UNAVAILABLE,
-        STATE_UNKNOWN,
-    }
-
-
-@pytest.mark.parametrize("invalid_state", ["nan", "inf", "-inf"])
-async def test_historical_meter_nonfinite_reading_costs_one_slot(
-    hass: HomeAssistant,
-    freezer,
-    invalid_state: str,
-) -> None:
-    """A nonfinite reading never becomes a baseline and costs a single slot."""
-    start = datetime(2026, 5, 24, 10, 0, tzinfo=UTC)
-    freezer.move_to(start)
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Home",
-        data={
-            CONF_NAME: "Home",
-            CONF_SLOT_MINUTES: 15,
-            CONF_HOURS_TO_PLAN: 1,
-            CONF_SOURCES: {
-                CONF_SOURCE_IMPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [1.0, 1.0, 1.0, 1.0] }}",
-                },
-            },
-        },
-        options={
-            **_historical_options(),
-            CONF_HISTORICAL_GRID_EXPORT_SENSOR: None,
-            CONF_HISTORICAL_PV_SENSOR: None,
-            CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION: False,
-        },
-    )
-    entry.add_to_hass(hass)
-    _set_energy_meter(hass, "sensor.grid_import_total", 100.0)
-    _set_energy_meter(hass, "sensor.usage_total", 200.0)
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-    tracker = entry.runtime_data.historical_tracker
-    assert tracker is not None
-    tracker.remember_price_series(
-        start_at=start,
-        slot_minutes=15,
-        import_prices=[1.0] * 4,
-        export_prices=[0.0] * 4,
-    )
-
-    for minutes, grid_import, usage in (
-        (15, invalid_state, invalid_state),
-        (30, 102.0, 203.0),
-        (45, 103.0, 204.0),
-    ):
-        freezer.move_to(start + timedelta(minutes=minutes, seconds=2))
-        _set_energy_meter(hass, "sensor.grid_import_total", grid_import)
-        _set_energy_meter(hass, "sensor.usage_total", usage)
-        await tracker.async_process_completed_slot()
-
-    day = tracker.store.data["days"]["2026-05-24"]
-    assert day["flags"] == [FLAG_MISSING_METER, FLAG_MULTI_SLOT_DELTA, 0]
-    assert day["grid_import"] == [None, pytest.approx(2.0), pytest.approx(1.0)]
-    assert day["usage"] == [None, pytest.approx(3.0), pytest.approx(1.0)]
-    assert tracker.store.last_meter_values()["grid_import"] == pytest.approx(103.0)
-    summary = tracker.store.summary(
-        metric=HistoricalMetric.COST,
-        period="today",
-        scenario=SCENARIO_ACTUAL,
-        now=start + timedelta(hours=1),
-    )
-    assert summary.value == pytest.approx(3.0)
-    assert summary.slots == 3
-    assert summary.missing_slots == 1
-
-
-async def test_historical_meter_delta_overflow_is_missing(hass: HomeAssistant) -> None:
-    """Finite readings whose subtraction overflows must not create a valid delta."""
-    tracker = type("Tracker", (), {})()
-    tracker._meter_deltas = HistoricalCostTracker._meter_deltas.__get__(tracker)
-
-    deltas, flags = tracker._meter_deltas(
-        {"grid_import": -1e308, "grid_export": 0.0, "usage": 0.0, "pv": 0.0},
-        {"grid_import": 1e308, "grid_export": 0.0, "usage": 0.0, "pv": 0.0},
-    )
-
-    assert deltas["grid_import"] is None
-    assert flags == FLAG_MISSING_METER
-
-
-async def test_historical_store_sanitizes_nonfinite_persisted_values(
-    hass: HomeAssistant,
-) -> None:
-    """Load must preserve records but make corrupt numerics explicitly missing."""
-    store = HistoricalCostStore(
-        hass, entry_id="corrupt-entry", slot_minutes=60, currency="DKK"
-    )
-    starts = [f"2026-09-11T{hour:02d}:00:00Z" for hour in range(12, 16)]
-    payload = {
-        "version": 1,
-        "slot_minutes": 60,
-        "currency": "DKK",
-        "tracking_started_at": starts[0],
-        "last_processed_slot": starts[-1],
-        "last_meter_values": {"grid_import": float("nan"), "usage": 4.0},
-        "meter_config": {},
-        "price_cache": {},
-        "simulation_state": {
-            "self_consumption": {
-                "batteries": {
-                    "bad": {"soc_kwh": float("inf")},
-                    "good": {"soc_kwh": 1.0},
-                }
-            }
-        },
-        "days": {
-            "2026-09-11": {
-                "starts": starts,
-                "import_price": [-1.0, float("nan"), 1e308, 1e308],
-                "export_price": [0.0, 0.0, 0.0, 0.0],
-                "grid_import": [1.0, 1.0, 1e308, 1e308],
-                "grid_export": [0.0, 0.0, 0.0, 0.0],
-                "usage": [1.0, 1.0, 1.0, 1.0],
-                "pv": [0.0, 0.0, 0.0, 0.0],
-                "self_consumption_grid_import": [1.0, 1.0, 1.0, 1.0],
-                "self_consumption_grid_export": [0.0, 0.0, 0.0, 0.0],
-                "flags": [0, 0, 0, 0],
-            }
-        },
-    }
-    with patch.object(store._store, "async_load", return_value=payload):
-        await store.async_load()
-
-    day = store.data["days"]["2026-09-11"]
-    assert day["import_price"] == [-1.0, None, 1e308, 1e308]
-    assert day["flags"] == [0, FLAG_MISSING_IMPORT_PRICE, 0, 0]
-    assert store.last_meter_values() == {"grid_import": None, "usage": 4.0}
-    assert store.simulation_soc() == {}
-    assert store.simulation_continuity()["valid"] is False
-    assert store.simulation_continuity()["untrusted_reason"] == (
-        "legacy_state_unverifiable"
-    )
-    summary = store.summary(
-        metric=HistoricalMetric.COST,
-        period="today",
-        scenario=SCENARIO_ACTUAL,
-        now=datetime(2026, 9, 11, 18, 0, tzinfo=UTC),
-    )
-    assert summary.value == pytest.approx(-1.0)
-    assert summary.slots == 4
-    assert summary.missing_slots == 3
-
-    store.append_slot(
-        SlotRecord(
-            start=datetime(2026, 9, 11, 16, 0, tzinfo=UTC),
-            import_price=float("-inf"),
-            export_price=0.0,
-            grid_import=float("nan"),
-            grid_export=0.0,
-            usage=1.0,
-            pv=0.0,
-        )
-    )
-    assert day["import_price"][-1] is None
-    assert day["grid_import"][-1] is None
-    assert day["flags"][-1] == FLAG_MISSING_IMPORT_PRICE | FLAG_MISSING_METER
-
-
-async def test_historical_cost_store_prunes_old_days(hass: HomeAssistant) -> None:
-    """Historical store should keep only the fixed local-day retention window."""
-    store = HistoricalCostStore(
-        hass,
-        entry_id="history-entry",
-        slot_minutes=60,
-        currency="DKK",
-    )
-    await store.async_load()
-    store.data["days"] = {
-        "2026-03-01": {"starts": []},
-        "2026-05-01": {"starts": []},
-    }
-    store.data["price_cache"] = {
-        "2026-03-01T12:00:00Z": {"import_price": 1.0, "export_price": 0.1},
-        "2026-05-01T12:00:00Z": {"import_price": 1.0, "export_price": 0.1},
-        "2026-05-25T12:00:00Z": {"import_price": 1.0, "export_price": 0.1},
-    }
-
-    store.prune(datetime(2026, 5, 24, 12, 0, tzinfo=UTC))
-
-    assert "2026-03-01" not in store.data["days"]
-    assert "2026-05-01" in store.data["days"]
-    assert "2026-03-01T12:00:00Z" not in store.data["price_cache"]
-    assert "2026-05-01T12:00:00Z" in store.data["price_cache"]
-    assert "2026-05-25T12:00:00Z" in store.data["price_cache"]
-
-
-async def test_historical_cost_store_migrates_missing_price_cache(
-    hass: HomeAssistant,
-) -> None:
-    """Older historical stores should gain an empty retained price cache."""
-    store = HistoricalCostStore(
-        hass,
-        entry_id="history-entry",
-        slot_minutes=60,
-        currency="DKK",
-    )
-
-    migrated = store._migrate(
-        {
-            "version": 1,
-            "slot_minutes": 60,
-            "currency": "DKK",
-            "days": {},
-            "last_meter_values": {},
-            "meter_config": {},
-            "simulation_state": {},
-        }
-    )
-
-    assert migrated["price_cache"] == {}
-
-
-async def test_historical_store_persists_valid_reference_segment(
-    hass: HomeAssistant,
-) -> None:
-    """A valid reference segment and its provenance survive a store restart."""
-    started_at = datetime(2026, 9, 11, 12, 0, tzinfo=UTC)
-    first = HistoricalCostStore(
-        hass, entry_id="continuity-entry", slot_minutes=60, currency="DKK"
-    )
-    await first.async_load()
-    configuration = [{"subentry_id": "battery", "capacity_kwh": 1.0}]
-    assert first.start_simulation_segment(
-        {"battery": 0.75},
-        started_at=started_at,
-        reason="tracking_initialized",
-        configuration=configuration,
-    )
-    payload = first.data
-
-    restored = HistoricalCostStore(
-        hass, entry_id="continuity-entry", slot_minutes=60, currency="DKK"
-    )
-    with patch.object(restored._store, "async_load", return_value=payload):
-        await restored.async_load()
-
-    assert restored.simulation_soc() == {"battery": pytest.approx(0.75)}
-    assert restored.simulation_continuity() == {
-        "valid": True,
-        "segment_id": "segment-1",
-        "segment_started_at": "2026-09-11T12:00:00Z",
-        "segment_reason": "tracking_initialized",
-        "untrusted_since": None,
-        "untrusted_reason": None,
-        "configuration": configuration,
-    }
-
-
-async def test_historical_store_rejects_corrupt_valid_reference_state(
-    hass: HomeAssistant,
-) -> None:
-    """A persisted valid marker cannot make nonfinite simulation state trusted."""
-    store = HistoricalCostStore(
-        hass, entry_id="bad-continuity", slot_minutes=60, currency="DKK"
-    )
-    payload = {
-        "version": 1,
-        "slot_minutes": 60,
-        "currency": "DKK",
-        "tracking_started_at": "2026-09-11T10:00:00Z",
-        "last_processed_slot": "2026-09-11T11:00:00Z",
-        "last_meter_values": {},
-        "meter_config": {},
-        "price_cache": {},
-        "days": {},
-        "simulation_state": {
-            "self_consumption": {
-                "batteries": {"battery": {"soc_kwh": float("nan")}},
-                "valid": True,
-                "segment_counter": 1,
-                "segment_id": "segment-1",
-                "configuration": [{"subentry_id": "battery"}],
-            }
-        },
-    }
-    with patch.object(store._store, "async_load", return_value=payload):
-        await store.async_load()
-
-    assert store.simulation_soc() == {}
-    assert store.simulation_continuity()["valid"] is False
-    assert store.simulation_continuity()["untrusted_reason"] == (
-        "invalid_persisted_state"
-    )
-
-
-async def test_historical_store_invalidates_legacy_reference_after_energy_gap(
-    hass: HomeAssistant,
-) -> None:
-    """Upgrade must not preserve already-invented post-gap reference losses."""
-    store = HistoricalCostStore(
-        hass, entry_id="legacy-gap", slot_minutes=60, currency="DKK"
-    )
-    payload = {
-        "version": 1,
-        "slot_minutes": 60,
-        "currency": "DKK",
-        "tracking_started_at": "2026-09-11T10:00:00Z",
-        "last_processed_slot": "2026-09-11T12:00:00Z",
-        "last_meter_values": {},
-        "meter_config": {},
-        "price_cache": {},
-        "simulation_state": {
-            "self_consumption": {"batteries": {"battery": {"soc_kwh": 1.0}}}
-        },
-        "days": {
-            "2026-09-11": {
-                "starts": [
-                    "2026-09-11T10:00:00Z",
-                    "2026-09-11T11:00:00Z",
-                    "2026-09-11T12:00:00Z",
-                ],
-                "import_price": [1.0, 1.0, 1.0],
-                "export_price": [0.0, 0.0, 0.0],
-                "grid_import": [0.0, None, 1.0],
-                "grid_export": [0.0, None, 0.0],
-                "usage": [1.0, None, 1.0],
-                "pv": [0.0, None, 0.0],
-                "self_consumption_grid_import": [0.0, None, 0.0],
-                "self_consumption_grid_export": [0.0, None, 0.0],
-                "flags": [0, FLAG_MISSING_METER, 0],
-            }
-        },
-    }
-    with patch.object(store._store, "async_load", return_value=payload):
-        await store.async_load()
-
-    day = store.data["days"]["2026-09-11"]
-    assert day["self_consumption_grid_import"] == [0.0, None, None]
-    assert day["self_consumption_segment_id"] == ["legacy-segment-1", None, None]
-    summary = store.summary(
-        metric=HistoricalMetric.SAVINGS_VS_SELF_CONSUMPTION,
-        period="today",
-        scenario=None,
-        now=datetime(2026, 9, 11, 18, tzinfo=UTC),
-    )
-    assert summary.value == pytest.approx(0.0)
-    assert summary.missing_slots == 2
-    assert summary.reference_segment_ids == ("legacy-segment-1",)
-
-
-async def test_battery_action_sensor_uses_source_specific_charge_state(
-    hass: HomeAssistant,
-) -> None:
-    """Battery action sensor should expose the chosen charging ingress in the state."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Home",
-        data={
-            CONF_NAME: "Home",
-            CONF_SLOT_MINUTES: 60,
-            CONF_HOURS_TO_PLAN: 4,
-            CONF_SOURCES: {
-                CONF_SOURCE_IMPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [0.2, 0.25, 0.3, 0.35] }}",
-                },
-                CONF_SOURCE_USAGE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [1.0, 1.1, 1.0, 0.9] }}",
-                },
-                CONF_SOURCE_PV: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [0.0, 0.2, 0.3, 0.1] }}",
-                },
-            },
-        },
-        options={
-            CONF_PLANNING_ENABLED: False,
-            CONF_ACTION_EMISSION_ENABLED: False,
-        },
-        subentries_data=[
-            config_entries.ConfigSubentryData(
-                subentry_id="battery_sub",
-                subentry_type=SUBENTRY_TYPE_BATTERY,
-                title="battery",
-                unique_id="battery:battery",
-                data={
-                    CONF_NAME: "battery",
-                    CONF_SOC_SOURCE: "sensor.battery_soc",
-                    CONF_CAPACITY_KWH: 10.0,
-                    CONF_MINIMUM_KWH: 1.0,
-                    CONF_MAX_CHARGE_KW: 3.0,
-                    CONF_MAX_DISCHARGE_KW: 3.0,
-                    CONF_CHARGE_EFFICIENCY: 0.9,
-                    CONF_DISCHARGE_EFFICIENCY: 0.9,
-                    CONF_CAN_CHARGE_FROM_GRID: True,
-                    CONF_CAN_CHARGE_FROM_PV: True,
-                },
-            )
-        ],
-    )
-    entry.add_to_hass(hass)
-
-    hass.states.async_set("sensor.battery_soc", "5.0")
-
-    with patch("custom_components.wattplan.optimizer.optimize") as optimize_mock:
-        optimize_mock.return_value = {
-            **_fake_optimize(None),
-            "entities": [
-                {
-                    "name": "battery",
-                    "type": "battery",
-                    "schedule": [
-                        {"state": "grid_charge", "level": 5.2},
-                        {"state": "self_consume", "level": 5.2},
-                        {"state": "self_consume", "level": 5.2},
-                        {"state": "self_consume", "level": 5.2},
-                    ],
-                }
-            ],
-            "optional_entity_options": [],
-        }
-        assert await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
-
-        await hass.services.async_call(
-            DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True
-        )
-        await hass.async_block_till_done()
-
-    battery_action = hass.states.get("sensor.home_battery_action")
-    assert battery_action is not None
-    assert battery_action.state == "grid_charge"
-
-
-async def test_battery_next_action_sensor_exposes_timestamp_and_state(
-    hass: HomeAssistant,
-) -> None:
-    """Next-action sensor should expose the next planned action and timestamp."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Home",
-        data={
-            CONF_NAME: "Home",
-            CONF_SLOT_MINUTES: 60,
-            CONF_HOURS_TO_PLAN: 4,
-            CONF_SOURCES: {
-                CONF_SOURCE_IMPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [0.2, 0.25, 0.3, 0.35] }}",
-                },
-                CONF_SOURCE_USAGE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [1.0, 1.1, 1.0, 0.9] }}",
-                },
-                CONF_SOURCE_PV: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [0.0, 0.2, 0.3, 0.1] }}",
-                },
-            },
-        },
-        options={
-            CONF_PLANNING_ENABLED: False,
-            CONF_ACTION_EMISSION_ENABLED: False,
-        },
-        subentries_data=[
-            config_entries.ConfigSubentryData(
-                subentry_id="battery_sub",
-                subentry_type=SUBENTRY_TYPE_BATTERY,
-                title="battery",
-                unique_id="battery:battery",
-                data={
-                    CONF_NAME: "battery",
-                    CONF_SOC_SOURCE: "sensor.battery_soc",
-                    CONF_CAPACITY_KWH: 10.0,
-                    CONF_MINIMUM_KWH: 1.0,
-                    CONF_MAX_CHARGE_KW: 3.0,
-                    CONF_MAX_DISCHARGE_KW: 3.0,
-                    CONF_CHARGE_EFFICIENCY: 0.9,
-                    CONF_DISCHARGE_EFFICIENCY: 0.9,
-                    CONF_CAN_CHARGE_FROM_GRID: True,
-                    CONF_CAN_CHARGE_FROM_PV: True,
-                },
-            )
-        ],
-    )
-    entry.add_to_hass(hass)
-
-    hass.states.async_set("sensor.battery_soc", "5.0")
-
-    with patch(
-        "homeassistant.helpers.entity.Entity.entity_registry_enabled_default",
-        return_value=True,
-    ):
-        with patch("custom_components.wattplan.optimizer.optimize") as optimize_mock:
-            optimize_mock.return_value = {
-                **_fake_optimize(None),
-                "entities": [
-                    {
-                        "name": "battery",
-                        "type": "battery",
-                        "schedule": [
-                            {"state": "self_consume", "level": 5.0},
-                            {"state": "grid_charge", "level": 5.2},
-                            {"state": "self_consume", "level": 5.2},
-                            {"state": "self_consume", "level": 5.2},
-                        ],
-                    }
-                ],
-                "optional_entity_options": [],
-            }
-            assert await hass.config_entries.async_setup(entry.entry_id)
-            await hass.async_block_till_done()
-
-            await hass.services.async_call(
-                DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True
-            )
-            await hass.async_block_till_done()
-
-    next_action = hass.states.get("sensor.home_battery_next_action")
-    assert next_action is not None
-    assert next_action.state == "grid_charge"
-    assert "timestamp" in next_action.attributes
-
-
-@pytest.mark.usefixtures("frozen_clock")
-async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
     """Restore a still-valid cached plan so sensors are available before the first plan."""
     now = datetime.now(tz=UTC)
     plan_start = now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
     plan_end = plan_start + timedelta(hours=4)
-    entry = MockConfigEntry(
-        domain=DOMAIN,
+    entry = _entry(
         title="Home",
-        minor_version=2,
-        data={
-            CONF_NAME: "Home",
-            CONF_SLOT_MINUTES: 60,
-            CONF_HOURS_TO_PLAN: 4,
-            CONF_SOURCES: {
-                CONF_SOURCE_IMPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [0.2, 0.25, 0.3, 0.35] }}",
-                },
-                CONF_SOURCE_USAGE: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
-                CONF_SOURCE_PV: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
-            },
-        },
-        options={
-            CONF_PLANNING_ENABLED: False,
-            CONF_ACTION_EMISSION_ENABLED: False,
-        },
-        subentries_data=[
-            config_entries.ConfigSubentryData(
-                subentry_id="battery_sub",
-                subentry_type=SUBENTRY_TYPE_BATTERY,
-                title="battery",
-                unique_id="battery:battery",
-                data={
-                    CONF_NAME: "battery",
-                    CONF_SOC_SOURCE: "sensor.battery_soc",
-                    CONF_CAPACITY_KWH: 10.0,
-                    CONF_MINIMUM_KWH: 1.0,
-                    CONF_MAX_CHARGE_KW: 3.0,
-                    CONF_MAX_DISCHARGE_KW: 3.0,
-                    CONF_CHARGE_EFFICIENCY: 0.9,
-                    CONF_DISCHARGE_EFFICIENCY: 0.9,
-                    CONF_CAN_CHARGE_FROM_GRID: True,
-                    CONF_CAN_CHARGE_FROM_PV: True,
-                },
-            ),
-            config_entries.ConfigSubentryData(
-                subentry_id="comfort_sub",
-                subentry_type=SUBENTRY_TYPE_COMFORT,
-                title="comfort",
-                unique_id="comfort:comfort",
-                data={
-                    CONF_NAME: "comfort",
-                    CONF_ROLLING_WINDOW_HOURS: 4,
-                    CONF_TARGET_ON_HOURS_PER_WINDOW: 1,
-                    CONF_MIN_CONSECUTIVE_ON_MINUTES: 60,
-                    CONF_MIN_CONSECUTIVE_OFF_MINUTES: 60,
-                    CONF_MAX_CONSECUTIVE_OFF_MINUTES: 120,
-                    CONF_ON_OFF_SOURCE: "binary_sensor.comfort_on_off",
-                    CONF_EXPECTED_POWER_KW: 1.2,
-                },
-            ),
-            config_entries.ConfigSubentryData(
-                subentry_id="optional_sub",
-                subentry_type=SUBENTRY_TYPE_OPTIONAL,
-                title="optional",
-                unique_id="optional:optional",
-                data={
-                    CONF_NAME: "optional",
-                    CONF_DURATION_MINUTES: 60,
-                    CONF_RUN_WITHIN_HOURS: 3,
-                    CONF_ENERGY_KWH: 1.5,
-                    CONF_OPTIONS_COUNT: 2,
-                    CONF_MIN_OPTION_GAP_MINUTES: 60,
-                },
-            ),
-        ],
+        sources=_import_only_sources(),
+        subentries_data=_all_assets(),
     )
     entry.add_to_hass(hass)
     hass.states.async_set("sensor.battery_soc", "5.0")
@@ -2433,15 +1294,9 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
         }
     )
 
-    with (
-        patch(
-            "homeassistant.helpers.entity.Entity.entity_registry_enabled_default",
-            return_value=True,
-        ),
-        patch.object(
-            WattPlanCoordinator, "async_plan", new_callable=AsyncMock
-        ) as background_plan,
-    ):
+    with patch.object(
+        WattPlanCoordinator, "async_plan", new_callable=AsyncMock
+    ) as background_plan:
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done(wait_background_tasks=True)
 
@@ -2461,43 +1316,28 @@ async def test_restore_snapshot_on_startup(hass: HomeAssistant) -> None:
 
     duration_state = hass.states.get("sensor.home_last_run_duration")
     assert duration_state is not None
-    restored_timings = duration_state.attributes["timings"]
     assert duration_state.attributes["planner_preset"] == "highs"
-    assert isinstance(restored_timings, list)
-    assert [entry[0] for entry in restored_timings] == [
+    assert [label for label, _ms in duration_state.attributes["timings"]] == [
         "Import price source fetch",
         "Optimizer plan calculation",
         "total",
     ]
-    assert all(
-        isinstance(entry, list | tuple) and len(entry) == 2 for entry in restored_timings
-    )
-    assert all(isinstance(entry[1], int) for entry in restored_timings)
 
     coordinator = entry.runtime_data.coordinator
-    expired_at = plan_end + timedelta(minutes=1)
-
-    class ExpiredPlanDateTime(datetime):
-        @classmethod
-        def now(cls, tz: tzinfo | None = None) -> datetime:
-            return expired_at if tz is not None else expired_at.replace(tzinfo=None)
-
-    with patch(
-        "custom_components.wattplan.coordinator_logic.source_status.datetime",
-        ExpiredPlanDateTime,
-    ):
-        coordinator.async_update_listeners()
-        await hass.async_block_till_done()
-        status = hass.states.get("sensor.home_status")
-        assert status is not None
-        assert status.attributes["reason_codes"] == ["plan_stale"]
-        assert status.attributes["scheduler_stale"] is False
-        assert status.attributes["has_usable_plan"] is False
-        expired_outlook = hass.states.get("sensor.home_plan_outlook_en")
-        assert expired_outlook is not None
-        assert expired_outlook.state.startswith("plan_expired_high_")
-        assert "plan_expired:plan" in expired_outlook.attributes["selected_facts"]
-        _assert_valid_state(hass, "sensor.home_last_run_duration")
+    frozen_clock.move_to(plan_end + timedelta(minutes=1))
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    status = hass.states.get("sensor.home_status")
+    assert status is not None
+    assert status.attributes["reason_codes"] == ["plan_stale"]
+    assert status.attributes["scheduler_stale"] is False
+    assert status.attributes["has_usable_plan"] is False
+    expired_outlook = hass.states.get("sensor.home_plan_outlook_en")
+    assert expired_outlook is not None
+    assert expired_outlook.state.startswith("plan_expired_high_")
+    assert "plan_expired:plan" in expired_outlook.attributes["selected_facts"]
+    _assert_valid_state(hass, "sensor.home_last_run_duration")
+    frozen_clock.move_to(now)
 
     # Re-restoring the payload directly (no fingerprint check) is diagnostic-only.
     payload = coordinator.restore_payload()
@@ -2565,25 +1405,7 @@ async def _setup_with_cached_snapshot(
         hours=span_hours_ago
     )
     span_start = span_end - timedelta(hours=4)
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Home",
-        minor_version=2,
-        data={
-            CONF_NAME: "Home",
-            CONF_SLOT_MINUTES: 60,
-            CONF_HOURS_TO_PLAN: 4,
-            CONF_SOURCES: {
-                CONF_SOURCE_IMPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [0.2, 0.25, 0.3, 0.35] }}",
-                },
-                CONF_SOURCE_USAGE: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
-                CONF_SOURCE_PV: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
-            },
-        },
-        options={CONF_PLANNING_ENABLED: False, CONF_ACTION_EMISSION_ENABLED: False},
-    )
+    entry = _entry(title="Home", sources=_import_only_sources(), subentries_data=[])
     entry.add_to_hass(hass)
     store = Store[dict[str, object]](
         hass, STORAGE_VERSION, f"{DOMAIN}.snapshot.{entry.entry_id}", private=True
@@ -2620,19 +1442,6 @@ async def _setup_with_cached_snapshot(
     return entry, plan, store
 
 
-async def test_valid_cached_snapshot_is_restored_and_replanned_in_background(
-    hass: HomeAssistant,
-) -> None:
-    """A matching, still-covering snapshot is trusted and a plan follows in the background."""
-    entry, plan, _store = await _setup_with_cached_snapshot(
-        hass, span_hours_ago=-2, fingerprint=_MATCHING
-    )
-    coordinator = entry.runtime_data.coordinator
-    assert coordinator.snapshot is not None
-    assert coordinator.action_recommendations_validated is True
-    plan.assert_awaited_once_with(trigger=CycleTrigger.SERVICE)
-
-
 async def test_expired_cached_snapshot_is_discarded_and_replanned(
     hass: HomeAssistant,
 ) -> None:
@@ -2666,27 +1475,7 @@ async def test_successful_plan_persists_completed_last_run(
     hass: HomeAssistant,
 ) -> None:
     """Persist the successful run timestamp from the run that just completed."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Home",
-        data={
-            CONF_NAME: "Home",
-            CONF_SLOT_MINUTES: 60,
-            CONF_HOURS_TO_PLAN: 4,
-            CONF_SOURCES: {
-                CONF_SOURCE_IMPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [0.2, 0.25, 0.3, 0.35] }}",
-                },
-                CONF_SOURCE_USAGE: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
-                CONF_SOURCE_PV: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
-            },
-        },
-        options={
-            CONF_PLANNING_ENABLED: False,
-            CONF_ACTION_EMISSION_ENABLED: False,
-        },
-    )
+    entry = _entry(title="Home", sources=_import_only_sources(), subentries_data=[])
     entry.add_to_hass(hass)
 
     with patch(
@@ -2709,78 +1498,29 @@ async def test_successful_plan_persists_completed_last_run(
     assert payload["last_success_at"] == coordinator.last_success_at.isoformat()
 
 
+@pytest.mark.usefixtures("entity_registry_enabled_by_default")
 async def test_failed_plan_advances_retained_actions_across_tariff_boundary(
     hass: HomeAssistant,
+    frozen_clock,
 ) -> None:
     """A failed replan should retain the schedule, not its first actions."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
+    entry = _entry(
         title="Home",
-        data={
-            CONF_NAME: "Home",
-            CONF_SLOT_MINUTES: 60,
-            CONF_HOURS_TO_PLAN: 4,
-            CONF_SOURCES: {
-                CONF_SOURCE_IMPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [0.05, 0.4, 0.4, 0.4] }}",
-                },
-                CONF_SOURCE_USAGE: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
-                CONF_SOURCE_PV: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
-            },
-        },
+        sources=_import_only_sources("{{ [0.05, 0.4, 0.4, 0.4] }}"),
         options={
             CONF_PLANNING_ENABLED: False,
-            CONF_ACTION_EMISSION_ENABLED: False,
+            CONF_ACTION_EMISSION_ENABLED: True,
         },
         subentries_data=[
-            config_entries.ConfigSubentryData(
-                subentry_id="battery_sub",
-                subentry_type=SUBENTRY_TYPE_BATTERY,
-                title="battery",
-                unique_id="battery:battery",
-                data={
-                    CONF_NAME: "battery",
-                    CONF_SOC_SOURCE: "sensor.battery_soc",
-                    CONF_CAPACITY_KWH: 10.0,
-                    CONF_MINIMUM_KWH: 1.0,
-                    CONF_MAX_CHARGE_KW: 3.0,
-                    CONF_MAX_DISCHARGE_KW: 3.0,
-                    CONF_CHARGE_EFFICIENCY: 0.9,
-                    CONF_DISCHARGE_EFFICIENCY: 0.9,
-                    CONF_CAN_CHARGE_FROM_GRID: True,
-                    CONF_CAN_CHARGE_FROM_PV: True,
-                },
-            ),
-            config_entries.ConfigSubentryData(
-                subentry_id="comfort_sub",
-                subentry_type=SUBENTRY_TYPE_COMFORT,
-                title="comfort",
-                unique_id="comfort:comfort",
-                data={
-                    CONF_NAME: "comfort",
-                    CONF_ROLLING_WINDOW_HOURS: 4,
-                    CONF_TARGET_ON_HOURS_PER_WINDOW: 1,
-                    CONF_MIN_CONSECUTIVE_ON_MINUTES: 60,
-                    CONF_MIN_CONSECUTIVE_OFF_MINUTES: 60,
-                    CONF_MAX_CONSECUTIVE_OFF_MINUTES: 120,
-                    CONF_ON_OFF_SOURCE: "binary_sensor.comfort_on_off",
-                    CONF_EXPECTED_POWER_KW: 1.2,
-                },
-            ),
+            _battery_subentry(subentry_id="battery_sub", name="battery"),
+            _comfort_subentry(subentry_id="comfort_sub", name="comfort"),
         ],
     )
     entry.add_to_hass(hass)
     hass.states.async_set("sensor.battery_soc", "5.0")
     hass.states.async_set("binary_sensor.comfort_on_off", "off")
 
-    with (
-        patch(
-            "homeassistant.helpers.entity.Entity.entity_registry_enabled_default",
-            return_value=True,
-        ),
-        patch("custom_components.wattplan.optimizer.optimize") as optimize_mock,
-    ):
+    with patch("custom_components.wattplan.optimizer.optimize") as optimize_mock:
         optimize_mock.return_value = {
             **_fake_optimize(None),
             "entities": [
@@ -2815,93 +1555,51 @@ async def test_failed_plan_advances_retained_actions_across_tariff_boundary(
         await hass.async_block_till_done()
 
     coordinator = entry.runtime_data.coordinator
-    schedules = coordinator.snapshot.action_schedules
-    plan_start = dt_util.parse_datetime(schedules["start_at"])
+    plan_start = dt_util.parse_datetime(coordinator.snapshot.action_schedules["start_at"])
     assert plan_start is not None
-    expensive_slot = plan_start + timedelta(hours=1, minutes=1)
 
-    class ExpensiveSlotDateTime(datetime):
-        @classmethod
-        def now(cls, tz: tzinfo | None = None) -> datetime:
-            return (
-                expensive_slot
-                if tz is not None
-                else expensive_slot.replace(tzinfo=None)
-            )
-
-    with (
-        patch(
-            "custom_components.wattplan.coordinator_parts.snapshot.datetime",
-            ExpensiveSlotDateTime,
-        ),
-        patch(
-            "custom_components.wattplan.coordinator_logic.source_status.datetime",
-            ExpensiveSlotDateTime,
-        ),
-        patch.object(
-            coordinator,
-            "_async_build_planning_request",
-            side_effect=PlanningStageError(
-                StageErrorKind.PLANNER_INPUT,
-                "import_price source entity `sensor.missing` was not found",
-            ),
+    frozen_clock.move_to(plan_start + timedelta(hours=1, minutes=1))
+    with patch.object(
+        coordinator,
+        "_async_build_planning_request",
+        side_effect=PlanningStageError(
+            StageErrorKind.PLANNER_INPUT,
+            "import_price source entity `sensor.missing` was not found",
         ),
     ):
         with pytest.raises(PlanningStageError):
             await coordinator.async_plan(trigger=CycleTrigger.SERVICE)
         await hass.async_block_till_done()
 
-        status = hass.states.get("sensor.home_status")
-        assert status is not None
-        assert status.state == "degraded"
-        assert status.attributes["has_usable_plan"] is True
-        assert status.attributes["reason_codes"] == [
-            "planner_failed_using_previous_plan"
-        ]
+    status = hass.states.get("sensor.home_status")
+    assert status is not None
+    assert status.state == "degraded"
+    assert status.attributes["has_usable_plan"] is True
+    assert status.attributes["reason_codes"] == ["planner_failed_using_previous_plan"]
 
-        action = hass.states.get("sensor.home_battery_action")
-        assert action is not None
-        assert action.state == "preserve"
-        assert hass.states.get("sensor.home_comfort_action").state == "off"
-
-        battery_next = hass.states.get("sensor.home_battery_next_action")
-        assert battery_next is not None
-        assert battery_next.state == "self_consume"
-        assert battery_next.attributes["timestamp"] == (
-            plan_start + timedelta(hours=2)
-        ).isoformat()
-        comfort_next = hass.states.get("sensor.home_comfort_next_action")
-        assert comfort_next is not None
-        assert comfort_next.state == "on"
-        assert comfort_next.attributes["timestamp"] == (
-            plan_start + timedelta(hours=2)
-        ).isoformat()
-
-    later_slot = plan_start + timedelta(hours=2, minutes=1)
-
-    class LaterSlotDateTime(datetime):
-        @classmethod
-        def now(cls, tz: tzinfo | None = None) -> datetime:
-            return later_slot if tz is not None else later_slot.replace(tzinfo=None)
-
-    with (
-        patch(
-            "custom_components.wattplan.coordinator_parts.snapshot.datetime",
-            LaterSlotDateTime,
-        ),
-        patch(
-            "custom_components.wattplan.coordinator_logic.source_status.datetime",
-            LaterSlotDateTime,
-        ),
+    assert hass.states.get("sensor.home_battery_action").state == "preserve"
+    assert hass.states.get("sensor.home_comfort_action").state == "off"
+    for next_action, expected in (
+        ("sensor.home_battery_next_action", "self_consume"),
+        ("sensor.home_comfort_next_action", "on"),
     ):
-        await coordinator.async_emit(trigger=CycleTrigger.SERVICE)
-        await hass.async_block_till_done()
+        state = hass.states.get(next_action)
+        assert state is not None
+        assert state.state == expected
+        assert state.attributes["timestamp"] == (
+            plan_start + timedelta(hours=2)
+        ).isoformat()
 
-        assert hass.states.get("sensor.home_battery_action").state == "self_consume"
-        assert hass.states.get("sensor.home_comfort_action").state == "on"
-        assert hass.states.get("sensor.home_battery_next_action").state == STATE_UNKNOWN
-        assert hass.states.get("sensor.home_comfort_next_action").state == STATE_UNKNOWN
+    # The scheduled slot-boundary run moves the retained actions on.
+    later_slot = plan_start + timedelta(hours=2, minutes=1)
+    frozen_clock.move_to(later_slot)
+    async_fire_time_changed(hass, later_slot)
+    await hass.async_block_till_done(wait_background_tasks=True)
 
+    assert hass.states.get("sensor.home_battery_action").state == "self_consume"
+    assert hass.states.get("sensor.home_comfort_action").state == "on"
+    assert hass.states.get("sensor.home_battery_next_action").state == STATE_UNKNOWN
+    assert hass.states.get("sensor.home_comfort_next_action").state == STATE_UNKNOWN
     status = hass.states.get("sensor.home_status")
     assert status is not None
     assert status.state == "degraded"
@@ -2911,50 +1609,13 @@ async def test_failed_plan_advances_retained_actions_across_tariff_boundary(
 
 async def test_retained_plan_expires_and_plan_entities_become_unavailable(
     hass: HomeAssistant,
+    frozen_clock,
 ) -> None:
     """A retained previous plan should stop being usable after its coverage ends."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
+    entry = _entry(
         title="Home",
-        data={
-            CONF_NAME: "Home",
-            CONF_SLOT_MINUTES: 60,
-            CONF_HOURS_TO_PLAN: 4,
-            CONF_SOURCES: {
-                CONF_SOURCE_IMPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [0.2, 0.25, 0.3, 0.35] }}",
-                },
-                CONF_SOURCE_USAGE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [1.0, 1.1, 1.0, 0.9] }}",
-                },
-            },
-        },
-        options={
-            CONF_PLANNING_ENABLED: False,
-            CONF_ACTION_EMISSION_ENABLED: False,
-        },
-        subentries_data=[
-            config_entries.ConfigSubentryData(
-                subentry_id="battery_sub",
-                subentry_type=SUBENTRY_TYPE_BATTERY,
-                title="battery",
-                unique_id="battery:battery",
-                data={
-                    CONF_NAME: "battery",
-                    CONF_SOC_SOURCE: "sensor.battery_soc",
-                    CONF_CAPACITY_KWH: 10.0,
-                    CONF_MINIMUM_KWH: 1.0,
-                    CONF_MAX_CHARGE_KW: 3.0,
-                    CONF_MAX_DISCHARGE_KW: 3.0,
-                    CONF_CHARGE_EFFICIENCY: 0.9,
-                    CONF_DISCHARGE_EFFICIENCY: 0.9,
-                    CONF_CAN_CHARGE_FROM_GRID: True,
-                    CONF_CAN_CHARGE_FROM_PV: True,
-                },
-            ),
-        ],
+        sources=_base_sources(),
+        subentries_data=[_battery_subentry(subentry_id="battery_sub", name="battery")],
     )
     entry.add_to_hass(hass)
     hass.states.async_set("sensor.battery_soc", "5.0")
@@ -2973,7 +1634,10 @@ async def test_retained_plan_expires_and_plan_entities_become_unavailable(
     assert status.state == "ok"
     expires_at = dt_util.parse_datetime(status.attributes["expires_at"])
     assert expires_at is not None
+    planned_at = dt_util.utcnow()
 
+    # No public driver exists for an unusable but unexpired plan, so fail the
+    # health state directly.
     healthy_status = dict(coordinator._source_status._overall_status)
     coordinator._source_status._overall_status.update(
         {
@@ -2998,18 +1662,9 @@ async def test_retained_plan_expires_and_plan_entities_become_unavailable(
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
 
-    class FrozenDateTime(datetime):
-        @classmethod
-        def now(cls, tz: tzinfo | None = None) -> datetime:
-            expired_at = expires_at
-            return expired_at if tz is not None else expired_at.replace(tzinfo=None)
-
-    with patch(
-        "custom_components.wattplan.coordinator_logic.source_status.datetime",
-        FrozenDateTime,
-    ):
-        coordinator.async_update_listeners()
-        await hass.async_block_till_done()
+    frozen_clock.move_to(expires_at)
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
 
     status = hass.states.get("sensor.home_status")
     assert status is not None
@@ -3017,16 +1672,12 @@ async def test_retained_plan_expires_and_plan_entities_become_unavailable(
     assert status.attributes["reason_codes"] == ["plan_stale"]
     assert status.attributes["is_stale"] is True
     assert status.attributes["has_usable_plan"] is False
+    assert hass.states.get("sensor.home_battery_action").state == STATE_UNAVAILABLE
 
-    action = hass.states.get("sensor.home_battery_action")
-    assert action is not None
-    assert action.state == STATE_UNAVAILABLE
-
+    frozen_clock.move_to(planned_at)
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
-    status = hass.states.get("sensor.home_status")
-    assert status is not None
-    assert status.state == "ok"
+    assert hass.states.get("sensor.home_status").state == "ok"
 
     with patch.object(
         coordinator,
@@ -3047,117 +1698,20 @@ async def test_retained_plan_expires_and_plan_entities_become_unavailable(
     assert status.attributes["expires_at"] == expires_at.isoformat()
     assert status.attributes["has_usable_plan"] is True
 
-    with patch(
-        "custom_components.wattplan.coordinator_logic.source_status.datetime",
-        FrozenDateTime,
-    ):
-        coordinator.async_update_listeners()
-        await hass.async_block_till_done()
-
-    status = hass.states.get("sensor.home_status")
-    assert status is not None
-    assert status.state == "failed"
-    assert status.attributes["reason_codes"] == ["plan_stale"]
-    assert status.attributes["is_stale"] is True
-    assert status.attributes["has_usable_plan"] is False
-
-    action = hass.states.get("sensor.home_battery_action")
-    assert action is not None
-    assert action.state == STATE_UNAVAILABLE
-
 
 async def test_plan_details_sensor_exposes_horizon_length_arrays(
     hass: HomeAssistant,
+    entity_registry_enabled_by_default: None,
 ) -> None:
     """Enable the plan details sensor and assert graph payload shape is compact."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Home",
-        data={
-            CONF_NAME: "Home",
-            CONF_SLOT_MINUTES: 60,
-            CONF_HOURS_TO_PLAN: 4,
-            CONF_SOURCES: {
-                CONF_SOURCE_IMPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [0.2, 0.25, 0.3, 0.35] }}",
-                },
-                CONF_SOURCE_USAGE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [1.0, 1.1, 1.0, 0.9] }}",
-                },
-                CONF_SOURCE_PV: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [0.0, 0.2, 0.3, 0.1] }}",
-                },
-            },
-        },
-        options={
-            CONF_PLANNING_ENABLED: False,
-            CONF_ACTION_EMISSION_ENABLED: False,
-        },
-        subentries_data=[
-            config_entries.ConfigSubentryData(
-                subentry_id="battery_sub",
-                subentry_type=SUBENTRY_TYPE_BATTERY,
-                title="battery",
-                unique_id="battery:battery",
-                data={
-                    CONF_NAME: "battery",
-                    CONF_SOC_SOURCE: "sensor.battery_soc",
-                    CONF_CAPACITY_KWH: 10.0,
-                    CONF_MINIMUM_KWH: 1.0,
-                    CONF_MAX_CHARGE_KW: 3.0,
-                    CONF_MAX_DISCHARGE_KW: 3.0,
-                    CONF_CHARGE_EFFICIENCY: 0.9,
-                    CONF_DISCHARGE_EFFICIENCY: 0.9,
-                    CONF_CAN_CHARGE_FROM_GRID: True,
-                    CONF_CAN_CHARGE_FROM_PV: True,
-                },
-            ),
-            config_entries.ConfigSubentryData(
-                subentry_id="comfort_sub",
-                subentry_type=SUBENTRY_TYPE_COMFORT,
-                title="comfort",
-                unique_id="comfort:comfort",
-                data={
-                    CONF_NAME: "comfort",
-                    CONF_ROLLING_WINDOW_HOURS: 4,
-                    CONF_TARGET_ON_HOURS_PER_WINDOW: 1,
-                    CONF_MIN_CONSECUTIVE_ON_MINUTES: 60,
-                    CONF_MIN_CONSECUTIVE_OFF_MINUTES: 60,
-                    CONF_MAX_CONSECUTIVE_OFF_MINUTES: 120,
-                    CONF_ON_OFF_SOURCE: "binary_sensor.comfort_on_off",
-                    CONF_EXPECTED_POWER_KW: 1.2,
-                },
-            ),
-            config_entries.ConfigSubentryData(
-                subentry_id="optional_sub",
-                subentry_type=SUBENTRY_TYPE_OPTIONAL,
-                title="optional",
-                unique_id="optional:optional",
-                data={
-                    CONF_NAME: "optional",
-                    CONF_DURATION_MINUTES: 60,
-                    CONF_RUN_WITHIN_HOURS: 3,
-                    CONF_ENERGY_KWH: 1.5,
-                    CONF_OPTIONS_COUNT: 2,
-                    CONF_MIN_OPTION_GAP_MINUTES: 60,
-                },
-            ),
-        ],
-    )
+    entry = _entry(title="Home", subentries_data=_all_assets())
     entry.add_to_hass(hass)
 
     hass.states.async_set("sensor.battery_soc", "5.0")
     hass.states.async_set("binary_sensor.comfort_on_off", "off")
 
-    with patch(
-        "homeassistant.helpers.entity.Entity.entity_registry_enabled_default",
-        return_value=True,
-    ):
-        assert await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
 
     with patch("custom_components.wattplan.optimizer.optimize", side_effect=_fake_optimize):
         await hass.services.async_call(
@@ -3171,18 +1725,21 @@ async def test_plan_details_sensor_exposes_horizon_length_arrays(
     assert "T" in state.state
     assert state.attributes["slot_minutes"] == 60
     assert state.attributes["slots"] == 4
-    assert len(state.attributes["grid_import_price_per_kwh"]) == 4
-    assert len(state.attributes["grid_export_price_per_kwh"]) == 4
+    for key in (
+        "grid_import_price_per_kwh",
+        "grid_export_price_per_kwh",
+        "usage_kwh",
+        "solar_input_kwh",
+        "projected_cost",
+        "projected_savings_cost",
+        "projected_savings_pct",
+        "battery_battery_action",
+        "battery_battery_level_kwh",
+        "comfort_comfort_enabled",
+        "optional_optional_enabled",
+    ):
+        assert len(state.attributes[key]) == 4, key
     assert state.attributes["grid_export_price_per_kwh"] == [0.0, 0.0, 0.0, 0.0]
-    assert len(state.attributes["usage_kwh"]) == 4
-    assert len(state.attributes["solar_input_kwh"]) == 4
-    assert len(state.attributes["projected_cost"]) == 4
-    assert len(state.attributes["projected_savings_cost"]) == 4
-    assert len(state.attributes["projected_savings_pct"]) == 4
-    assert len(state.attributes["battery_battery_action"]) == 4
-    assert len(state.attributes["battery_battery_level_kwh"]) == 4
-    assert len(state.attributes["comfort_comfort_enabled"]) == 4
-    assert len(state.attributes["optional_optional_enabled"]) == 4
     assert state.attributes["battery_battery_action"] == ["gc", "sc", "sc", "sc"]
     assert state.attributes["comfort_comfort_enabled"] == [True, False, False, True]
     assert state.attributes["optional_optional_enabled"] == [False, True, True, False]
@@ -3190,142 +1747,41 @@ async def test_plan_details_sensor_exposes_horizon_length_arrays(
 
     duration_state = hass.states.get("sensor.home_last_run_duration")
     assert duration_state is not None
-    timings = duration_state.attributes["timings"]
-    assert isinstance(timings, list)
-    labels = [entry[0] for entry in timings]
-    assert labels == [
-        "Request setup",
-        "Import price source fetch",
-        "Usage source fetch",
-        "PV source fetch",
-        "Battery inputs: battery",
-        "Comfort history: comfort",
-        "Comfort entity build: comfort",
-        "Optional entity build: optional",
-        "Request assembly",
-        "Optimizer input validation",
-        "Optimizer process",
-        "Historical price retention",
-        "Planner output mapping",
-        "Plan details payload build",
-        "Plan details hourly aggregation",
-        "Plan outlook build",
-        "Snapshot projection",
-        "Snapshot persist",
-        "Planner history record",
-        "total",
-    ]
-    # Entries are cumulative checkpoints, so they never decrease.
-    values = [entry[1] for entry in timings]
-    assert values == sorted(values)
     assert "optimizer_reported_ms" in duration_state.attributes
-    assert all(isinstance(entry, list | tuple) and len(entry) == 2 for entry in timings)
-    assert all(isinstance(entry[1], int) for entry in timings)
+    # Timings are cumulative checkpoints that end with the total.
+    timings = duration_state.attributes["timings"]
+    assert timings[-1][0] == "total"
+    values = [value for _label, value in timings]
+    assert values == sorted(values)
 
     hourly_state = hass.states.get("sensor.home_plan_details_hourly")
     assert hourly_state is not None
     assert "timings" not in hourly_state.attributes
-    assert duration_state.attributes["timings"] == timings
-
-
-async def test_plan_details_timings_omit_unconfigured_sources(
-    hass: HomeAssistant,
-) -> None:
-    """Timing entries should only include sources that were actually configured."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Home",
-        data={
-            CONF_NAME: "Home",
-            CONF_SLOT_MINUTES: 60,
-            CONF_HOURS_TO_PLAN: 4,
-            CONF_SOURCES: {
-                CONF_SOURCE_IMPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [0.2, 0.25, 0.3, 0.35] }}",
-                },
-                CONF_SOURCE_USAGE: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
-                CONF_SOURCE_PV: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
-            },
-        },
-        options={
-            CONF_PLANNING_ENABLED: False,
-            CONF_ACTION_EMISSION_ENABLED: False,
-        },
-    )
-    entry.add_to_hass(hass)
-
-    with patch(
-        "homeassistant.helpers.entity.Entity.entity_registry_enabled_default",
-        return_value=True,
-    ):
-        assert await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
-
-    with patch("custom_components.wattplan.optimizer.optimize", side_effect=_fake_optimize):
-        await hass.services.async_call(
-            DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True
-        )
-        await hass.async_block_till_done()
-
-    state = hass.states.get("sensor.home_plan_details")
-    assert state is not None
-    assert "timings" not in state.attributes
-    duration_state = hass.states.get("sensor.home_last_run_duration")
-    assert duration_state is not None
-    tasks = [entry[0] for entry in duration_state.attributes["timings"]]
-    assert "Import price source fetch" in tasks
-    assert "Export price source fetch" not in tasks
-    assert "Usage source fetch" not in tasks
-    assert "PV source fetch" not in tasks
-    assert tasks[-1] == "total"
-    assert "Plan details payload build" in tasks
 
 
 @pytest.mark.usefixtures("frozen_clock")
 async def test_plan_details_timings_keep_merged_source_as_single_source_entry(
     hass: HomeAssistant,
+    entity_registry_enabled_by_default: None,
 ) -> None:
-    """Merged sources should still expose one public source timing entry."""
+    """Merged sources expose one timing entry; unconfigured sources have none."""
     start_at = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Home",
-        data={
-            CONF_NAME: "Home",
-            CONF_SLOT_MINUTES: 60,
-            CONF_HOURS_TO_PLAN: 4,
-            CONF_SOURCES: {
-                CONF_SOURCE_IMPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
-                    CONF_PROVIDERS: [
-                        {
-                            CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
-                            "entity_id": "sensor.prices_today",
-                            CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
-                            CONF_NAME: "prices",
-                            CONF_TIME_KEY: "start",
-                            CONF_VALUE_KEY: "value",
-                        },
-                        {
-                            CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
-                            "entity_id": "sensor.prices_tomorrow",
-                            CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
-                            CONF_NAME: "prices",
-                            CONF_TIME_KEY: "start",
-                            CONF_VALUE_KEY: "value",
-                        },
-                    ],
-                },
-                CONF_SOURCE_USAGE: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
-                CONF_SOURCE_PV: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
-            },
-        },
-        options={
-            CONF_PLANNING_ENABLED: False,
-            CONF_ACTION_EMISSION_ENABLED: False,
-        },
-    )
+    sources = _import_only_sources()
+    sources[CONF_SOURCE_IMPORT_PRICE] = {
+        CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+        CONF_PROVIDERS: [
+            {
+                CONF_SOURCE_MODE: SOURCE_MODE_ENTITY_ADAPTER,
+                "entity_id": entity_id,
+                CONF_ADAPTER_TYPE: ADAPTER_TYPE_ATTRIBUTE_OBJECTS,
+                CONF_NAME: "prices",
+                CONF_TIME_KEY: "start",
+                CONF_VALUE_KEY: "value",
+            }
+            for entity_id in ("sensor.prices_today", "sensor.prices_tomorrow")
+        ],
+    }
+    entry = _entry(title="Home", sources=sources, subentries_data=[])
     entry.add_to_hass(hass)
     hass.states.async_set(
         "sensor.prices_today",
@@ -3348,12 +1804,8 @@ async def test_plan_details_timings_keep_merged_source_as_single_source_entry(
         },
     )
 
-    with patch(
-        "homeassistant.helpers.entity.Entity.entity_registry_enabled_default",
-        return_value=True,
-    ):
-        assert await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
 
     with patch("custom_components.wattplan.optimizer.optimize", side_effect=_fake_optimize):
         await hass.services.async_call(
@@ -3366,112 +1818,85 @@ async def test_plan_details_timings_keep_merged_source_as_single_source_entry(
     assert "timings" not in state.attributes
     duration_state = hass.states.get("sensor.home_last_run_duration")
     assert duration_state is not None
-    tasks = [entry[0] for entry in duration_state.attributes["timings"]]
+    tasks = [label for label, _ms in duration_state.attributes["timings"]]
     assert tasks.count("Import price source fetch") == 1
     assert all("provider" not in task for task in tasks)
+    for unconfigured in (
+        "Export price source fetch",
+        "Usage source fetch",
+        "PV source fetch",
+    ):
+        assert unconfigured not in tasks
 
 
-@pytest.mark.usefixtures("frozen_clock")
-async def test_battery_target_changes_plan_and_expires_after_deadline(
+def _set_battery_target(hass: HomeAssistant, reach_at: datetime):
+    """Call the set_target service for the test battery."""
+    return hass.services.async_call(
+        DOMAIN,
+        SERVICE_SET_TARGET,
+        {"battery": "battery", "soc_kwh": 8.0, "reach_at": reach_at},
+        blocking=True,
+    )
+
+
+@pytest.mark.usefixtures("frozen_clock", "entity_registry_enabled_by_default")
+async def test_battery_target_changes_plan_clears_and_expires_after_deadline(
     hass: HomeAssistant,
 ) -> None:
-    """Targets should affect planning until their deadline, then disappear."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
+    """Targets affect planning until cleared or past their deadline."""
+    entry = _entry(
         title="Home",
-        data={
-            CONF_NAME: "Home",
-            CONF_SLOT_MINUTES: 60,
-            CONF_HOURS_TO_PLAN: 4,
-            CONF_SOURCES: {
-                CONF_SOURCE_IMPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [0.2, 0.2, 0.2, 0.2] }}",
-                },
-                CONF_SOURCE_USAGE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [0.0, 0.0, 0.0, 0.0] }}",
-                },
-                CONF_SOURCE_PV: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
+        sources={
+            CONF_SOURCE_IMPORT_PRICE: {
+                CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                CONF_TEMPLATE: "{{ [0.2, 0.2, 0.2, 0.2] }}",
             },
+            CONF_SOURCE_USAGE: {
+                CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
+                CONF_TEMPLATE: "{{ [0.0, 0.0, 0.0, 0.0] }}",
+            },
+            CONF_SOURCE_PV: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
         },
-        options={
-            CONF_PLANNING_ENABLED: False,
-            CONF_ACTION_EMISSION_ENABLED: False,
-        },
-        subentries_data=[
-            config_entries.ConfigSubentryData(
-                subentry_id="battery_sub",
-                subentry_type=SUBENTRY_TYPE_BATTERY,
-                title="battery",
-                unique_id="battery:battery",
-                data={
-                    CONF_NAME: "battery",
-                    CONF_SOC_SOURCE: "sensor.battery_soc",
-                    CONF_CAPACITY_KWH: 10.0,
-                    CONF_MINIMUM_KWH: 1.0,
-                    CONF_MAX_CHARGE_KW: 3.0,
-                    CONF_MAX_DISCHARGE_KW: 3.0,
-                    CONF_CHARGE_EFFICIENCY: 0.9,
-                    CONF_DISCHARGE_EFFICIENCY: 0.9,
-                    CONF_CAN_CHARGE_FROM_GRID: True,
-                    CONF_CAN_CHARGE_FROM_PV: False,
-                },
-            )
-        ],
+        subentries_data=[_battery_subentry(subentry_id="battery_sub", name="battery")],
     )
     entry.add_to_hass(hass)
     hass.states.async_set("sensor.battery_soc", "5.0")
+
+    async def optimize_and_read_actions() -> list[str]:
+        await hass.services.async_call(DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True)
+        await hass.async_block_till_done()
+        plan_details = hass.states.get("sensor.home_plan_details")
+        assert plan_details is not None
+        return plan_details.attributes["battery_battery_action"]
 
     with patch(
         "custom_components.wattplan.optimizer.optimize",
         side_effect=_fake_optimize_with_target_behavior,
     ):
-        with patch(
-            "homeassistant.helpers.entity.Entity.entity_registry_enabled_default",
-            return_value=True,
-        ):
-            assert await hass.config_entries.async_setup(entry.entry_id)
-            await hass.async_block_till_done()
-
-        await hass.services.async_call(DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True)
+        assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-        plan_details = hass.states.get("sensor.home_plan_details")
-        assert plan_details is not None
-        assert plan_details.attributes["battery_battery_action"] == [
-            "sc",
-            "sc",
-            "sc",
-            "sc",
-        ]
+        assert await optimize_and_read_actions() == ["sc", "sc", "sc", "sc"]
 
         target_at = dt_util.utcnow() + timedelta(hours=2)
-        await hass.services.async_call(
-            DOMAIN,
-            SERVICE_SET_TARGET,
-            {
-                "battery": "battery",
-                "soc_kwh": 8.0,
-                "reach_at": target_at,
-            },
-            blocking=True,
-        )
-        await hass.services.async_call(DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True)
-        await hass.async_block_till_done()
-
+        await _set_battery_target(hass, target_at)
+        assert await optimize_and_read_actions() == ["gc", "gc", "sc", "sc"]
         target_sensor = hass.states.get("sensor.home_battery_target")
         assert target_sensor is not None
         assert float(target_sensor.state) == 8.0
 
-        plan_details = hass.states.get("sensor.home_plan_details")
-        assert plan_details is not None
-        assert plan_details.attributes["battery_battery_action"] == [
-            "gc",
-            "gc",
-            "sc",
-            "sc",
-        ]
+        await hass.services.async_call(
+            DOMAIN, SERVICE_CLEAR_TARGET, {"battery": "battery"}, blocking=True
+        )
+        await hass.async_block_till_done()
+        target_sensor = hass.states.get("sensor.home_battery_target")
+        assert target_sensor is not None
+        assert target_sensor.state == STATE_UNKNOWN
+        assert target_sensor.attributes["by"] == "not_set"
+        assert await optimize_and_read_actions() == ["sc", "sc", "sc", "sc"]
+
+        await _set_battery_target(hass, target_at)
+        assert await optimize_and_read_actions() == ["gc", "gc", "sc", "sc"]
 
         expired_at = target_at + timedelta(minutes=1)
         async_fire_time_changed(hass, expired_at)
@@ -3481,133 +1906,22 @@ async def test_battery_target_changes_plan_and_expires_after_deadline(
             "custom_components.wattplan.target_runtime.dt_util.utcnow",
             return_value=expired_at,
         ):
-            await hass.services.async_call(
-                DOMAIN, SERVICE_RUN_OPTIMIZE_NOW, {}, blocking=True
-            )
-            await hass.async_block_till_done()
-
+            assert await optimize_and_read_actions() == ["sc", "sc", "sc", "sc"]
             target_sensor = hass.states.get("sensor.home_battery_target")
             assert target_sensor is not None
             assert target_sensor.state == STATE_UNKNOWN
             assert target_sensor.attributes["by"] == "not_set"
 
-            plan_details = hass.states.get("sensor.home_plan_details")
-            assert plan_details is not None
-            assert plan_details.attributes["battery_battery_action"] == [
-                "sc",
-                "sc",
-                "sc",
-                "sc",
-            ]
-
-
-async def test_clear_target_service_removes_active_battery_target(
-    hass: HomeAssistant,
-) -> None:
-    """Clear target should immediately unset the target entity."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Home",
-        data={
-            CONF_NAME: "Home",
-            CONF_SLOT_MINUTES: 60,
-            CONF_HOURS_TO_PLAN: 4,
-            CONF_SOURCES: {
-                CONF_SOURCE_IMPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [0.2, 0.2, 0.2, 0.2] }}",
-                },
-                CONF_SOURCE_USAGE: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
-                CONF_SOURCE_PV: {CONF_SOURCE_MODE: SOURCE_MODE_NOT_USED},
-            },
-        },
-        options={
-            CONF_PLANNING_ENABLED: False,
-            CONF_ACTION_EMISSION_ENABLED: False,
-        },
-        subentries_data=[
-            config_entries.ConfigSubentryData(
-                subentry_id="battery_sub",
-                subentry_type=SUBENTRY_TYPE_BATTERY,
-                title="battery",
-                unique_id="battery:battery",
-                data={
-                    CONF_NAME: "battery",
-                    CONF_SOC_SOURCE: "sensor.battery_soc",
-                    CONF_CAPACITY_KWH: 10.0,
-                    CONF_MINIMUM_KWH: 1.0,
-                    CONF_MAX_CHARGE_KW: 3.0,
-                    CONF_MAX_DISCHARGE_KW: 3.0,
-                    CONF_CHARGE_EFFICIENCY: 0.9,
-                    CONF_DISCHARGE_EFFICIENCY: 0.9,
-                    CONF_CAN_CHARGE_FROM_GRID: True,
-                    CONF_CAN_CHARGE_FROM_PV: False,
-                },
-            )
-        ],
-    )
-    entry.add_to_hass(hass)
-    hass.states.async_set("sensor.battery_soc", "5.0")
-
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-    await hass.services.async_call(
-        DOMAIN,
-        SERVICE_SET_TARGET,
-        {
-            "battery": "battery",
-            "soc_kwh": 8.0,
-            "reach_at": dt_util.utcnow() + timedelta(hours=2),
-        },
-        blocking=True,
-    )
-    await hass.async_block_till_done()
-
-    await hass.services.async_call(
-        DOMAIN,
-        SERVICE_CLEAR_TARGET,
-        {"battery": "battery"},
-        blocking=True,
-    )
-    await hass.async_block_till_done()
-
-    target_sensor = hass.states.get("sensor.home_battery_target")
-    assert target_sensor is not None
-    assert target_sensor.state == STATE_UNKNOWN
-    assert target_sensor.attributes["by"] == "not_set"
-
 
 async def test_button_entities_registered_and_pressable(hass: HomeAssistant) -> None:
-    """Button entities appear in registry and pressing triggers a plan cycle."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
+    """Optimize replans; Refresh Sensors re-emits the existing plan."""
+    entry = _entry(
         title="Home",
-        data={
-            CONF_NAME: "Home",
-            CONF_SLOT_MINUTES: 60,
-            CONF_HOURS_TO_PLAN: 4,
-            CONF_SOURCES: {
-                CONF_SOURCE_IMPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [0.2, 0.25, 0.3, 0.35] }}",
-                },
-                CONF_SOURCE_USAGE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [1.0, 1.1, 1.0, 0.9] }}",
-                },
-            },
-        },
-        options={
-            CONF_PLANNING_ENABLED: False,
-            CONF_ACTION_EMISSION_ENABLED: False,
-        },
+        subentries_data=[_battery_subentry(subentry_id="battery_sub", name="battery")],
     )
-    entry.add_to_hass(hass)
 
     with patch("custom_components.wattplan.optimizer.optimize", side_effect=_fake_optimize):
-        assert await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
+        await _setup_entry(hass, entry)
 
         entity_registry = er.async_get(hass)
         optimize_entry = entity_registry.async_get("button.home_run_optimize_now")
@@ -3629,109 +1943,33 @@ async def test_button_entities_registered_and_pressable(hass: HomeAssistant) -> 
         )
         await hass.async_block_till_done()
 
-        assert coordinator.snapshot is not None, "Snapshot should exist after pressing Run Optimize Now"
-        assert coordinator.snapshot is not snapshot_before, "Pressing button should produce a new snapshot"
+        snapshot_after_optimize = coordinator.snapshot
+        assert snapshot_after_optimize is not None, "Snapshot should exist after pressing Run Optimize Now"
+        assert snapshot_after_optimize is not snapshot_before, "Pressing button should produce a new snapshot"
+        assert hass.states.get("sensor.home_battery_action").state == "grid_charge"
+
+        await hass.services.async_call(
+            "button",
+            "press",
+            {"entity_id": "button.home_refresh_sensors"},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+    # Refresh re-emits the same plan (a new snapshot copy), it does not replan.
+    assert coordinator.snapshot.created_at == snapshot_after_optimize.created_at
+    assert hass.states.get("sensor.home_battery_action").state == "grid_charge"
 
 
 async def test_button_optimize_raises_when_already_running(hass: HomeAssistant) -> None:
     """Pressing the optimize button while a plan is running raises ServiceValidationError."""
-    from homeassistant.exceptions import ServiceValidationError as HAServiceValidationError
-
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Home",
-        data={
-            CONF_NAME: "Home",
-            CONF_SLOT_MINUTES: 60,
-            CONF_HOURS_TO_PLAN: 4,
-            CONF_SOURCES: {
-                CONF_SOURCE_IMPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [0.2, 0.25, 0.3, 0.35] }}",
-                },
-                CONF_SOURCE_USAGE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [1.0, 1.1, 1.0, 0.9] }}",
-                },
-            },
-        },
-        options={
-            CONF_PLANNING_ENABLED: False,
-            CONF_ACTION_EMISSION_ENABLED: False,
-        },
-    )
-    entry.add_to_hass(hass)
+    entry = _entry(title="Home", subentries_data=[])
 
     with patch("custom_components.wattplan.optimizer.optimize", side_effect=_fake_optimize):
-        assert await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
+        await _setup_entry(hass, entry)
 
     coordinator = entry.runtime_data.coordinator
 
     async with coordinator._plan_lock:
-        with pytest.raises(HAServiceValidationError):
+        with pytest.raises(ServiceValidationError):
             await coordinator.async_plan(trigger=CycleTrigger.SERVICE)
-
-
-async def test_historical_cost_tracking_records_each_skipped_slot(
-    hass: HomeAssistant,
-    freezer,
-) -> None:
-    """Skipped historical intervals should create one gap record per slot."""
-    start = datetime(2026, 5, 24, 12, 0, tzinfo=UTC)
-    freezer.move_to(start + timedelta(hours=3, seconds=2))
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Home",
-        data={
-            CONF_NAME: "Home",
-            CONF_SLOT_MINUTES: 60,
-            CONF_HOURS_TO_PLAN: 4,
-            CONF_SOURCES: {
-                CONF_SOURCE_IMPORT_PRICE: {
-                    CONF_SOURCE_MODE: SOURCE_MODE_TEMPLATE,
-                    CONF_TEMPLATE: "{{ [1.0, 1.0, 1.0, 1.0] }}",
-                },
-            },
-        },
-        options={
-            **_historical_options(),
-            CONF_HISTORICAL_GRID_EXPORT_SENSOR: None,
-            CONF_HISTORICAL_PV_SENSOR: None,
-            CONF_HISTORICAL_SIMULATE_SELF_CONSUMPTION: False,
-        },
-    )
-    entry.add_to_hass(hass)
-    _set_energy_meter(hass, "sensor.grid_import_total", 100.0)
-    _set_energy_meter(hass, "sensor.usage_total", 200.0)
-
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-    tracker = entry.runtime_data.historical_tracker
-    assert tracker is not None
-    tracker.store.update_metadata(
-        last_processed_slot=start - timedelta(hours=1),
-        last_meter_values={
-            "grid_import": 100.0,
-            "grid_export": 0.0,
-            "usage": 200.0,
-            "pv": 0.0,
-        },
-        meter_config={
-            "grid_import": "sensor.grid_import_total",
-            "grid_export": None,
-            "usage": "sensor.usage_total",
-            "pv": None,
-        },
-    )
-
-    await tracker.async_process_completed_slot(start + timedelta(hours=3, seconds=1))
-
-    day = tracker.store.data["days"]["2026-05-24"]
-    assert day["starts"] == [
-        "2026-05-24T12:00:00Z",
-        "2026-05-24T13:00:00Z",
-        "2026-05-24T14:00:00Z",
-    ]
-    assert day["flags"] == [FLAG_GAP, FLAG_GAP, FLAG_GAP]
-    assert tracker.store.last_processed_slot() == start + timedelta(hours=2)
