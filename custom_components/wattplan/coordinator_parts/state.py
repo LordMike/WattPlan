@@ -73,6 +73,10 @@ class PlanningStageError(Exception):
         self.details = details or {}
 
 
+class PlanSupersededError(PlanningStageError):
+    """Planning was replaced by newer work or shutdown; not a failure."""
+
+
 class EmitStageError(Exception):
     """Error raised for categorized emission stage failures."""
 

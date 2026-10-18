@@ -26,7 +26,7 @@ from .const import (
     MAX_PLANNER_REPRODUCTION_RETENTION_DAYS,
 )
 from .config_identity import config_fingerprint
-from .coordinator import CycleTrigger, WattPlanCoordinator
+from .coordinator import CycleTrigger, PlanSupersededError, WattPlanCoordinator
 from .historical_cost.tracker import HistoricalCostTracker
 from .optimizer.planners.presets import DEFAULT_PRESET, get_preset
 from .outlook_languages import resolve_outlook_languages
@@ -47,6 +47,12 @@ async def async_try_initial_plan(entry: WattPlanConfigEntry) -> None:
     """Run one immediate planning cycle after setup or reload."""
     try:
         await entry.runtime_data.coordinator.async_plan(trigger=CycleTrigger.SERVICE)
+    except PlanSupersededError as err:
+        _LOGGER.info(
+            "Initial planner run superseded after setup/reload (entry_id=%s): %s",
+            entry.entry_id,
+            err,
+        )
     except Exception as err:  # noqa: BLE001
         _LOGGER.warning(
             "Initial planner run failed after setup/reload (entry_id=%s): %s",

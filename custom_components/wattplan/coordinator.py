@@ -27,6 +27,7 @@ from .coordinator_parts import (
     CycleTrigger,
     EmitStageError,
     PlanningStageError,
+    PlanSupersededError,
     RunTimer,
     Stage,
     StageErrorKind,
@@ -349,6 +350,13 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         if self._planning_enabled:
             try:
                 await self.async_plan(trigger=trigger)
+            except PlanSupersededError as err:
+                _LOGGER.info(
+                    "Plan stage superseded (entry_id=%s, trigger=%s): %s",
+                    self._entry_id,
+                    trigger,
+                    err,
+                )
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning(
                     "Plan stage failed (entry_id=%s, trigger=%s): %s",
@@ -394,7 +402,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
         async with self._plan_request_lock:
             await self.async_abort_plan()
             if self._shutting_down:
-                raise PlanningStageError(
+                raise PlanSupersededError(
                     StageErrorKind.PLANNER_EXECUTION,
                     "Planner configuration changed while planning; result discarded",
                 )
@@ -408,7 +416,7 @@ class WattPlanCoordinator(DataUpdateCoordinator[CoordinatorSnapshot | None]):
                 await self._async_cancel_plan_task(task)
             if asyncio.current_task().cancelling():
                 raise
-            raise PlanningStageError(
+            raise PlanSupersededError(
                 StageErrorKind.PLANNER_EXECUTION,
                 "Planner configuration changed or a newer request superseded this plan",
             ) from None

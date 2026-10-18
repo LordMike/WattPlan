@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime
 from unittest.mock import patch
 
@@ -14,6 +15,7 @@ from custom_components.wattplan.const import (
     CONF_ACTION_EMISSION_ENABLED,
     CONF_PLANNING_ENABLED,
 )
+from custom_components.wattplan.coordinator_parts import CycleTrigger
 from custom_components.wattplan.optimizer.planners.presets import run_preset
 
 from .test_integration_e2e import _battery_subentry, _entry
@@ -79,3 +81,26 @@ async def test_unload_during_initial_plan_leaves_scheduler_stopped(
         patcher.stop()
 
     assert coordinator.next_refresh_at is None
+
+
+async def test_superseded_initial_plan_is_not_reported_as_failure(
+    hass: HomeAssistant, freezer, caplog
+):
+    entry, setup, release, patcher = await _start_gated_setup(hass, freezer)
+    coordinator = entry.runtime_data.coordinator
+    caplog.set_level(logging.INFO, logger="custom_components.wattplan")
+    try:
+        newer = asyncio.create_task(coordinator.async_plan(trigger=CycleTrigger.SERVICE))
+        assert await setup
+        release.set()
+        await newer
+        await hass.async_block_till_done()
+    finally:
+        release.set()
+        patcher.stop()
+
+    records = [r for r in caplog.records if "Initial planner run" in r.getMessage()]
+    assert [(r.levelno, "superseded" in r.getMessage()) for r in records] == [
+        (logging.INFO, True)
+    ]
+    assert coordinator.snapshot is not None
