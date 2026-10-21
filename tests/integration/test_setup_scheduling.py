@@ -19,7 +19,14 @@ from custom_components.wattplan.const import (
 from custom_components.wattplan.coordinator_parts import CycleTrigger
 from custom_components.wattplan.optimizer.planners.presets import run_preset
 
-from .test_integration_e2e import _battery_subentry, _entry
+from tests.common import async_fire_time_changed
+
+from .test_integration_e2e import (  # noqa: F401
+    _battery_subentry,
+    _entry,
+    _setup_entry,
+    entity_registry_enabled_by_default,
+)
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
@@ -131,3 +138,22 @@ async def test_failed_initial_plan_still_starts_scheduler(
         r.levelno == logging.WARNING and "Initial planner run failed" in r.getMessage()
         for r in caplog.records
     )
+
+
+@pytest.mark.usefixtures("entity_registry_enabled_by_default")
+async def test_next_run_sensor_tracks_armed_schedule(hass: HomeAssistant, freezer):
+    """Next Run publishes the armed boundary after setup and after each scheduled run."""
+    freezer.move_to("2026-06-15 12:30:00+00:00")
+    entry = _entry(
+        title="Home",
+        subentries_data=[_battery_subentry(subentry_id="battery", name="battery")],
+        options={CONF_PLANNING_ENABLED: True, CONF_ACTION_EMISSION_ENABLED: True},
+    )
+    await _setup_entry(hass, entry)
+    assert hass.states.get("sensor.home_next_run").state == "2026-06-15T13:00:02+00:00"
+
+    freezer.move_to("2026-06-15 13:00:02+00:00")
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert hass.states.get("sensor.home_next_run").state == "2026-06-15T14:00:02+00:00"
