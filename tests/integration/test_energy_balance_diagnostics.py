@@ -231,6 +231,12 @@ async def test_sensor_units_signed_totals_and_coverage(hass, freezer):
     assert energy.state_class == SensorStateClass.TOTAL
     assert power.entity_category == EntityCategory.DIAGNOSTIC
     assert energy.last_reset == START.replace(hour=0)
+    # Cost and savings totals reset with their period so statistics stay correct.
+    cost_today = sensors["historical_actual_cost_today"]
+    cost_month = sensors["historical_actual_cost_this_month"]
+    assert cost_today.state_class == cost_month.state_class == SensorStateClass.TOTAL
+    assert cost_today.last_reset == START.replace(hour=0)
+    assert cost_month.last_reset == START.replace(day=1, hour=0)
     attributes = energy.extra_state_attributes
     assert attributes["valid_slots"] == 2
     assert attributes["missing_slots"] == 1
