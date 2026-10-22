@@ -28,6 +28,11 @@ Use cumulative `kWh` counters with device class `energy` and state class `total`
 
 Historical tracking also needs prices for each completed slot. WattPlan keeps the normalized import/export prices from successful planner runs and falls back to live price source reads when needed. When the export price source was unavailable during a planner run, the zeros the planner substitutes are not kept as prices; the slot then uses a live export price read, or is marked as missing an export price, rather than booking zero export revenue.
 
+The cost and savings sensors record Home Assistant long-term statistics as
+totals that reset at local midnight (today) or on the first of the month (this
+month), so daily and monthly results remain available after the recorder
+purges state history. Savings can be negative.
+
 ## Energy Balance Diagnostics
 
 When historical tracking is enabled, WattPlan also creates two diagnostic sensors:
