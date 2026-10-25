@@ -132,6 +132,7 @@ class HistoricalCostSensor(SensorEntity):
 
     _attr_should_poll = False
     _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_state_class = SensorStateClass.TOTAL
     _attr_suggested_display_precision = 2
 
     def __init__(
@@ -203,11 +204,8 @@ class HistoricalCostSensor(SensorEntity):
 
     @property
     def last_reset(self) -> datetime | None:
-        """Identify the daily reset of the signed energy total for statistics."""
-        if (
-            self._description.metric is HistoricalMetric.ENERGY_BALANCE_DISCREPANCY
-            and self._description.period == PERIOD_TODAY
-        ):
+        """Identify the daily or monthly reset of the signed total for statistics."""
+        if self._description.period != PERIOD_LAST_SLOT:
             summary = self._summary()
             if summary.value is not None:
                 return datetime.fromisoformat(summary.period_start)
