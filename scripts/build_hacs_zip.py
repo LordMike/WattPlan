@@ -36,9 +36,11 @@ def _build_zip(output_path: Path) -> None:
                 continue
             if any(part in EXCLUDED_DIRECTORIES for part in file_path.relative_to(INTEGRATION_ROOT).parts):
                 continue
-            relative_path = file_path.relative_to(REPO_ROOT)
+            relative_path = file_path.relative_to(INTEGRATION_ROOT)
             if "__pycache__" in relative_path.parts:
                 continue
+            # HACS (zip_release) extracts the archive straight into
+            # custom_components/wattplan, so files must sit at the zip root.
             archive_name = relative_path.as_posix()
             archive.write(file_path, archive_name)
 
