@@ -27,11 +27,12 @@ def test_build_hacs_zip_uses_hacs_archive_layout(tmp_path) -> None:
     with zipfile.ZipFile(output_path) as archive:
         names = archive.namelist()
 
-    assert "custom_components/wattplan/manifest.json" in names
-    assert "custom_components/wattplan/__init__.py" in names
-    assert "custom_components/wattplan/locales/en/plan_outlook.ftl" in names
-    assert "custom_components/wattplan/locales/da/plan_outlook.ftl" in names
-    assert all(name.startswith("custom_components/wattplan/") for name in names)
+    # HACS extracts the zip straight into custom_components/wattplan.
+    assert "manifest.json" in names
+    assert "__init__.py" in names
+    assert "locales/en/plan_outlook.ftl" in names
+    assert "locales/da/plan_outlook.ftl" in names
+    assert not any(name.startswith("custom_components/") for name in names)
     assert all("utilities/" not in name for name in names)
     assert all("__pycache__/" not in name for name in names)
     assert all(not name.endswith((".pyc", ".pyo")) for name in names)
