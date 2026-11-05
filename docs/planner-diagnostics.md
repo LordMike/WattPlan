@@ -76,7 +76,10 @@ archived or retained data returns an empty string. Min/max describe disk files
 and are `null` if none exist. Call the
 service once per date to collect a range. Its response is a complete day's
 contents, **not a stream**; a large day may be several megabytes and a client
-may limit the response size.
+may limit the response size. Pass `compress: gzip` to receive `data` as
+base64-encoded gzip of the JSONL text (the response then also has
+`data_encoding: gzip+base64`). Decode it with
+`gzip.decompress(base64.b64decode(data)).decode("utf-8")`.
 
 To replay an individual line locally:
 

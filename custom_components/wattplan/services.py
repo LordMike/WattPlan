@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Iterable
 from datetime import UTC, date, datetime
+import gzip
 import json
 from typing import Any
 
@@ -97,6 +99,7 @@ EXPORT_PLANNER_REPRODUCTIONS_SERVICE_SCHEMA = vol.Schema(
         vol.Optional(ATTR_ENTITY_ID): cv.entity_id,
         vol.Optional(CONF_NAME): cv.string,
         vol.Required("date"): cv.string,
+        vol.Optional("compress"): vol.Any(None, vol.In(["gzip"])),
     }
 )
 
@@ -386,6 +389,17 @@ async def async_handle_export_usage_forecast_debug_service(
     )
 
 
+def compress_reproduction_export(response: dict[str, Any]) -> dict[str, Any]:
+    """Return the export with `data` as base64-encoded gzip of its UTF-8 JSONL text."""
+    raw = response["data"].encode("utf-8")
+    packed = gzip.compress(raw, mtime=0)
+    return {
+        **response,
+        "data": base64.b64encode(packed).decode("ascii"),
+        "data_encoding": "gzip+base64",
+    }
+
+
 async def async_handle_export_planner_reproductions_service(
     hass: HomeAssistant, call: ServiceCall
 ) -> dict[str, Any]:
@@ -399,7 +413,12 @@ async def async_handle_export_planner_reproductions_service(
     if local_date.isoformat() != requested:
         raise ServiceValidationError("`date` must be YYYY-MM-DD")
     try:
-        return await entry.runtime_data.coordinator.planner_history.async_read_date(local_date)
+        response = await entry.runtime_data.coordinator.planner_history.async_read_date(
+            local_date
+        )
+        if call.data.get("compress") == "gzip":
+            return await hass.async_add_executor_job(compress_reproduction_export, response)
+        return response
     except (OSError, UnicodeError) as err:
         raise ServiceValidationError(f"Could not read planner reproductions: {err}") from err
 

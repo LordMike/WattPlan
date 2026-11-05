@@ -152,3 +152,33 @@ async def test_disk_error_never_breaks_plan_or_actuals(tmp_path, caplog):
     bad_result = _history(tmp_path)
     await bad_result.async_record(created, _request(created), {"bad": object()})
     assert not (tmp_path / "wattplan_reproductions").exists()
+
+
+def test_compressed_export_round_trips_and_schema_accepts_gzip_or_null():
+    """`compress` returns base64 gzip of the JSONL text; null or omitted means plain."""
+    import base64
+    import gzip
+
+    import pytest
+    import voluptuous as vol
+
+    from custom_components.wattplan.services import (
+        EXPORT_PLANNER_REPRODUCTIONS_SERVICE_SCHEMA as schema,
+        compress_reproduction_export,
+    )
+
+    text = '{"name":"Batteri æøå"}\n' * 50
+    response = {"date": "2026-09-22", "data": text, "incomplete_tail": False}
+    packed = compress_reproduction_export(response)
+
+    assert packed["data_encoding"] == "gzip+base64"
+    assert packed["date"] == "2026-09-22"
+    assert gzip.decompress(base64.b64decode(packed["data"])).decode("utf-8") == text
+    assert len(packed["data"]) < len(text)
+    assert "data_encoding" not in response
+
+    assert schema({"date": "2026-09-22"}) == {"date": "2026-09-22"}
+    assert schema({"date": "2026-09-22", "compress": None})["compress"] is None
+    assert schema({"date": "2026-09-22", "compress": "gzip"})["compress"] == "gzip"
+    with pytest.raises(vol.Invalid):
+        schema({"date": "2026-09-22", "compress": "zip"})

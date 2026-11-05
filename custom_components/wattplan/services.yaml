@@ -194,3 +194,11 @@ export_planner_reproductions:
       required: false
       selector:
         text:
+    compress:
+      name: Compression
+      description: Set to gzip to return data as base64-encoded gzip of the JSONL text, for clients that limit response size
+      required: false
+      selector:
+        select:
+          options:
+            - gzip

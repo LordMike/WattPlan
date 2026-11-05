@@ -249,6 +249,11 @@ Fields:
   - Optional setup title filter.
 - `entry_id`
   - Optional config entry filter.
+- `compress`
+  - Optional. Omit or set to `null` for the plain JSONL text. Set to `gzip` to
+    return `data` as base64-encoded gzip of that text, with
+    `"data_encoding": "gzip+base64"` added to the response. Use it when a client
+    limits response size.
 
 ## Repairs Issues
 
